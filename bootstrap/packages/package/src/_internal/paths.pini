@@ -5,12 +5,12 @@ value: String = ""
 reason: String = ""
 
 ; 成员路径规范化：拒绝绝对路径与反斜杠，逐段吃掉 `.` 与 `..`；`..` 弹空栈即越界。
-normalizeMemberPath|func(path: String,) -> (PathResult,):
+normalizeMemberPath|func(_path: String,) -> (PathResult,):
     var out = PathResult()
     if len(path) == 0:
         out.reason = "路径为空"
         return out
-    if startsWith(path, "/") || startsWith(path, "\\"):
+    if startsWith(text = path, prefix = "/") || startsWith(text = path, prefix = "\\"):
         out.reason = "成员必须是工作区相对路径"
         return out
     if path.contains("\\"):
@@ -47,7 +47,7 @@ normalizeMemberPath|func(path: String,) -> (PathResult,):
     return out
 
 ; 去掉末元素：数组按值传递，重建一份比原地删除更直白。
-dropLast|func(items: Array<String>,) -> (Array<String>,):
+dropLast|func(_items: Array<String>,) -> (Array<String>,):
     var out: Array<String> = []
     var i = 0
     while i < len(items) - 1:
@@ -56,7 +56,7 @@ dropLast|func(items: Array<String>,) -> (Array<String>,):
     return out
 
 ; 单一路径分量：非空、不是 `.` / `..`、不含分隔符；包名与 target 名共用。
-isPathComponent|func(value: String,) -> (Bool,):
+isPathComponent|func(_value: String,) -> (Bool,):
     if len(value) == 0:
         return false
     if value == "." || value == "..":
@@ -66,10 +66,10 @@ isPathComponent|func(value: String,) -> (Bool,):
     return true
 
 ; 入口路径：包根相对、非绝对、每段都不是 `.` / `..`；不检查磁盘上是否存在。
-isCleanEntry|func(value: String,) -> (Bool,):
+isCleanEntry|func(_value: String,) -> (Bool,):
     if len(value) == 0:
         return false
-    if startsWith(value, "/") || value.contains("\\"):
+    if startsWith(text = value, prefix = "/") || value.contains("\\"):
         return false
     let parts = value.split("/")
     var i = 0

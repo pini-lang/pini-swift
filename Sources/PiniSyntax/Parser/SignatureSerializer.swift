@@ -373,7 +373,7 @@ public enum SignatureSerializer {
     private static func paramsText(_ params: [Parameter]) -> String {
         var s = ""
         for p in params {
-            s += "\(p.name):\(p.typeAnnotation.map(typeText) ?? "") "
+            s += "\(p.writtenName):\(p.typeAnnotation.map(typeText) ?? "") "
         }
         return s
     }

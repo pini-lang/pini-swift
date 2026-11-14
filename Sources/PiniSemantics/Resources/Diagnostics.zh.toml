@@ -198,6 +198,18 @@ suggestion = "变参尾只收 I8 / U8 / I32 / I64 / U64 / F64 / Bool / *T / Stri
 message = "`{type}` 只在 C 面上成立"
 suggestion = "写在 `[名称|foreign]` 的符号声明里，或写在带 `|c` 条目的函数签名上；普通变量、字段与方法不收句柄"
 
+[E4-036]
+message = "调用 '{callee}' 缺少实参标签：形参 '{param}' 要求写 '{param} = ...'"
+suggestion = "在实参前写 '{param} = '；若这个参数本就该按位置传，把声明改成 '_{param}: ...'"
+
+[E4-037]
+message = "调用 '{callee}' 的形参 '{param}' 已退出标签面"
+suggestion = "删掉实参前的 '{param} = '；声明写成 '_{param}' 就表示按位置传"
+
+[E4-038]
+message = "调用 '{callee}' 重复写了形参 '{param}' 的标签"
+suggestion = "每个形参只给一个实参；去掉重复的那个"
+
 [E5-001]
 message = "未定义变量 '{name}'"
 suggestion = "你是想说 '{closest}' 吗？"

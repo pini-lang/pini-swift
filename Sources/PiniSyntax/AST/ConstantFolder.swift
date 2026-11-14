@@ -149,7 +149,7 @@ public enum ConstantFolder {
         case .unary(let op, let operand, let loc):
             return foldUnary(op, fold(operand), loc)
         case .call(let callee, let args, let loc):
-            return .call(callee: fold(callee), arguments: args.map { CallArgument(label: $0.label, expression: fold($0.expression)) }, location: loc)
+            return .call(callee: fold(callee), arguments: args.map { CallArgument(label: $0.label, expression: fold($0.expression), location: $0.location) }, location: loc)
         case .member(let obj, let name, let loc):
             return .member(object: fold(obj), name: name, location: loc)
         case .tryExpression(let operand, let errorVar, let handler, let loc):

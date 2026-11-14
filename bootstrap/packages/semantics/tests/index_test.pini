@@ -4,7 +4,7 @@ _module_loader = "../../module-loader"
 
 ; 造索引单元：从源码字符串装载；装载失败即断言。
 造索引单元|func(path: String, src: String,) -> (CompilationUnit,):
-    let loaded = loadUnit(path, src)
+    let loaded = loadUnit(path = path, text = src)
     assert(!loaded.failed, "样例应可加载：" + path)
     return loaded.unit
 
@@ -24,18 +24,18 @@ _module_loader = "../../module-loader"
         return false
     var i = 0
     while i < first.slotCount():
-        if !sameKey(first.slotAt(i).ownerKey, second.slotAt(i).ownerKey):
+        if !sameKey(first = first.slotAt(i).ownerKey, second = second.slotAt(i).ownerKey):
             return false
-        if !sameKey(first.slotAt(i).key, second.slotAt(i).key):
+        if !sameKey(first = first.slotAt(i).key, second = second.slotAt(i).key):
             return false
         if first.slotAt(i).symbol != second.slotAt(i).symbol:
             return false
         i = i + 1
     var j = 0
     while j < first.importCount():
-        if !sameKey(first.importAt(j).fileKey, second.importAt(j).fileKey):
+        if !sameKey(first = first.importAt(j).fileKey, second = second.importAt(j).fileKey):
             return false
-        if !sameKey(first.importAt(j).key, second.importAt(j).key):
+        if !sameKey(first = first.importAt(j).key, second = second.importAt(j).key):
             return false
         if first.importAt(j).symbol != second.importAt(j).symbol:
             return false
@@ -48,7 +48,7 @@ _module_loader = "../../module-loader"
         return false
     var i = 0
     while i < first.slotCount():
-        if !sameKey(first.slotAt(i).fileKey, second.slotAt(i).fileKey):
+        if !sameKey(first = first.slotAt(i).fileKey, second = second.slotAt(i).fileKey):
             return false
         if first.slotAt(i).offset != second.slotAt(i).offset:
             return false
@@ -61,7 +61,7 @@ _module_loader = "../../module-loader"
 
 ; 符号对齐：索引对每个已登记符号都答出与线性查找相同的下标。
 符号对齐|test() -> ():
-    let units = [造索引单元("packages/p/src/api/a.pini", 包源码()), 造索引单元("packages/p/src/api/b.pini", 导入源码())]
+    let units = [造索引单元(path = "packages/p/src/api/a.pini", src = 包源码()), 造索引单元(path = "packages/p/src/api/b.pini", src = 导入源码())]
     let table = registerPackage(units)
     let index = makeSymbolIndex(table)
     assert(table.symbolCount() > 0, "样例应登记出符号")
@@ -69,57 +69,57 @@ _module_loader = "../../module-loader"
     while i < table.symbolCount():
         let symbol = table.symbolAt(i)
         if len(symbol.owner) == 0:
-            assert(lookupTop(index, symbol.key) == table.topIndex(symbol.key), "顶层查 " + symbol.spelling)
+            assert(lookupTop(index = index, key = symbol.key) == table.topIndex(symbol.key), "顶层查 " + symbol.spelling)
         else:
-            assert(lookupMember(index, symbol.owner, symbol.key) == table.memberIndex(symbol.owner, symbol.key), "成员查 " + symbol.spelling)
+            assert(lookupMember(index = index, owner = symbol.owner, key = symbol.key) == table.memberIndex(owner = symbol.owner, key = symbol.key), "成员查 " + symbol.spelling)
         i = i + 1
     return
 
 ; 导入对齐：别名索引与线性查找同答，文件不同则互不可见。
 导入对齐|test() -> ():
-    let units = [造索引单元("packages/p/src/api/a.pini", 包源码()), 造索引单元("packages/p/src/api/b.pini", 导入源码())]
+    let units = [造索引单元(path = "packages/p/src/api/a.pini", src = 包源码()), 造索引单元(path = "packages/p/src/api/b.pini", src = 导入源码())]
     let table = registerPackage(units)
     let index = makeSymbolIndex(table)
     assert(table.importCount() == 1, "应有一个导入别名")
     let alias = table.importAt(0)
-    assert(lookupImport(index, alias.file, alias.key) == table.importIndex(alias.file, alias.key), "导入别名应命中")
-    assert(lookupImport(index, "packages/p/src/api/else.pini", alias.key) < 0, "别的文件不得命中")
+    assert(lookupImport(index = index, file = alias.file, key = alias.key) == table.importIndex(file = alias.file, key = alias.key), "导入别名应命中")
+    assert(lookupImport(index = index, file = "packages/p/src/api/else.pini", key = alias.key) < 0, "别的文件不得命中")
     return
 
 ; 未命中：未知顶层、未知成员、未知所有者与空键都答 -1。
 未命中|test() -> ():
-    let units = [造索引单元("packages/p/src/api/a.pini", 包源码())]
+    let units = [造索引单元(path = "packages/p/src/api/a.pini", src = 包源码())]
     let index = makeSymbolIndex(registerPackage(units))
-    assert(lookupTop(index, keyOfText("没有这个名字")) < 0, "未知顶层应未命中")
-    assert(lookupMember(index, "P", keyOfText("没有这个成员")) < 0, "未知成员应未命中")
-    assert(lookupMember(index, "没有这个类型", keyOfText("x")) < 0, "未知所有者应未命中")
+    assert(lookupTop(index = index, key = keyOfText("没有这个名字")) < 0, "未知顶层应未命中")
+    assert(lookupMember(index = index, owner = "P", key = keyOfText("没有这个成员")) < 0, "未知成员应未命中")
+    assert(lookupMember(index = index, owner = "没有这个类型", key = keyOfText("x")) < 0, "未知所有者应未命中")
     var empty: Array<U8> = []
-    assert(lookupTop(index, empty) < 0, "空键应未命中")
+    assert(lookupTop(index = index, key = empty) < 0, "空键应未命中")
     return
 
 ; 排序：槽位按所有者键再按键升序，同键相邻。
 符号排序|test() -> ():
-    let units = [造索引单元("packages/p/src/api/a.pini", 包源码())]
+    let units = [造索引单元(path = "packages/p/src/api/a.pini", src = 包源码())]
     let index = makeSymbolIndex(registerPackage(units))
     var i = 1
     while i < index.slotCount():
-        let order = compareKeys(index.slotAt(i - 1).ownerKey, index.slotAt(i).ownerKey)
+        let order = compareKeys(first = index.slotAt(i - 1).ownerKey, second = index.slotAt(i).ownerKey)
         assert(order <= 0, "所有者键应升序")
         if order == 0:
-            assert(compareKeys(index.slotAt(i - 1).key, index.slotAt(i).key) <= 0, "同所有者内键应升序")
+            assert(compareKeys(first = index.slotAt(i - 1).key, second = index.slotAt(i).key) <= 0, "同所有者内键应升序")
         i = i + 1
     return
 
 ; 索引确定：同一张表建两次，槽位与导入逐项相同。
 索引确定|test() -> ():
-    let units = [造索引单元("packages/p/src/api/a.pini", 包源码()), 造索引单元("packages/p/src/api/b.pini", 导入源码())]
+    let units = [造索引单元(path = "packages/p/src/api/a.pini", src = 包源码()), 造索引单元(path = "packages/p/src/api/b.pini", src = 导入源码())]
     let table = registerPackage(units)
-    assert(同索引(makeSymbolIndex(table), makeSymbolIndex(table)), "两次建索引应逐项相同")
+    assert(同索引(first = makeSymbolIndex(table), second = makeSymbolIndex(table)), "两次建索引应逐项相同")
     return
 
 ; 声明对齐：每个声明节点都能按文件与起始偏移找回自身。
 声明对齐|test() -> ():
-    let units = [造索引单元("packages/p/src/api/a.pini", 包源码()), 造索引单元("packages/p/src/api/b.pini", 导入源码())]
+    let units = [造索引单元(path = "packages/p/src/api/a.pini", src = 包源码()), 造索引单元(path = "packages/p/src/api/b.pini", src = 导入源码())]
     let index = makeDeclIndex(units)
     var u = 0
     while u < len(units):
@@ -127,7 +127,7 @@ _module_loader = "../../module-loader"
         var d = 0
         while d < unit.ast.declCount():
             let decl = unit.ast.decls[d]
-            let ref = lookupDecl(index, unit.path, decl.start)
+            let ref = lookupDecl(index = index, file = unit.path, offset = decl.start)
             assert(ref.unit == u, "单元下标不符：" + unit.path)
             assert(ref.decl == d, "声明下标不符：" + unit.path)
             d = d + 1
@@ -136,11 +136,11 @@ _module_loader = "../../module-loader"
 
 ; 同偏移分文件：两份源码的声明都从 0 附近起步，按文件键分开。
 同偏移分文件|test() -> ():
-    let a = 造索引单元("packages/p/src/api/a.pini", 包源码())
-    let b = 造索引单元("packages/p/src/api/b.pini", 导入源码())
+    let a = 造索引单元(path = "packages/p/src/api/a.pini", src = 包源码())
+    let b = 造索引单元(path = "packages/p/src/api/b.pini", src = 导入源码())
     let index = makeDeclIndex([a, b])
-    let first = lookupDecl(index, a.path, 0)
-    let second = lookupDecl(index, b.path, 0)
+    let first = lookupDecl(index = index, file = a.path, offset = 0)
+    let second = lookupDecl(index = index, file = b.path, offset = 0)
     assert(first.unit == 0, "首文件应命中第一个单元")
     assert(second.unit == 1, "次文件应命中第二个单元")
     assert(first.decl != second.decl || first.unit != second.unit, "同偏移不得混为一条")
@@ -148,14 +148,14 @@ _module_loader = "../../module-loader"
 
 ; 声明未命中：未知文件、负偏移与越界偏移都答 -1。
 声明未命中|test() -> ():
-    let index = makeDeclIndex([造索引单元("packages/p/src/api/a.pini", 包源码())])
-    assert(lookupDecl(index, "packages/p/src/api/else.pini", 0).unit < 0, "未知文件应未命中")
-    assert(lookupDecl(index, "packages/p/src/api/a.pini", -1).unit < 0, "负偏移应未命中")
-    assert(lookupDecl(index, "packages/p/src/api/a.pini", 999999).unit < 0, "越界偏移应未命中")
+    let index = makeDeclIndex([造索引单元(path = "packages/p/src/api/a.pini", src = 包源码())])
+    assert(lookupDecl(index = index, file = "packages/p/src/api/else.pini", offset = 0).unit < 0, "未知文件应未命中")
+    assert(lookupDecl(index = index, file = "packages/p/src/api/a.pini", offset = -1).unit < 0, "负偏移应未命中")
+    assert(lookupDecl(index = index, file = "packages/p/src/api/a.pini", offset = 999999).unit < 0, "越界偏移应未命中")
     return
 
 ; 声明确定：同一组单元建两次，槽位逐项相同。
 声明确定|test() -> ():
-    let units = [造索引单元("packages/p/src/api/a.pini", 包源码()), 造索引单元("packages/p/src/api/b.pini", 导入源码())]
-    assert(同声明索引(makeDeclIndex(units), makeDeclIndex(units)), "两次建索引应逐项相同")
+    let units = [造索引单元(path = "packages/p/src/api/a.pini", src = 包源码()), 造索引单元(path = "packages/p/src/api/b.pini", src = 导入源码())]
+    assert(同声明索引(first = makeDeclIndex(units), second = makeDeclIndex(units)), "两次建索引应逐项相同")
     return

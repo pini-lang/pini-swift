@@ -272,7 +272,7 @@ def build_scripts(ranges):
         "; 脚本号：0 其它，1 拉丁，2 西里尔，3 希腊。",
         "",
         "; 码点脚本号：只区分三个高风险脚本，其余一律 0；越界码点按 0。",
-        "scriptClassOf|func(code: I32,) -> (I32,):",
+        "scriptClassOf|func(_code: I32,) -> (I32,):",
         "    if code < 0:",
         "        return 0",
         "    if code > %s:" % hex_literal(MAX_CODE),
@@ -327,7 +327,7 @@ def build_class(ranges):
         "; 分类：0 其它，1 字母（L*），2 数字（N*），3 空白（White_Space）。",
         "",
         "; 码点分类：0 其它，1 字母，2 数字，3 空白；越界码点一律按其它。",
-        "unicodeClassOf|func(code: I32,) -> (I32,):",
+        "unicodeClassOf|func(_code: I32,) -> (I32,):",
         "    if code < 0:",
         "        return 0",
         "    if code > %s:" % hex_literal(MAX_CODE),
@@ -359,13 +359,13 @@ def build_nfc(table, ccc, groups):
         '    return "%s"' % pini_string(pool),
         "",
         "; 码点的分解在池中的位置：字节偏移左移 %d 位或上字节长度；-1 表示无分解。" % DECOMP_SHIFT,
-        "decompositionPacked|func(code: I32,) -> (I32,):",
+        "decompositionPacked|func(_code: I32,) -> (I32,):",
     ]
     emit_blocked_exact(entries, lines, 1)
     lines += [
         "",
         "; 组合类（Canonical_Combining_Class）区间：0 为起始字符，覆盖整个码点空间。",
-        "combiningClassOf|func(code: I32,) -> (I32,):",
+        "combiningClassOf|func(_code: I32,) -> (I32,):",
         "    if code < 0:",
         "        return 0",
         "    if code > %s:" % hex_literal(MAX_CODE),
@@ -397,7 +397,7 @@ def build_confusable(table):
         '    return "%s"' % pini_string(pool),
         "",
         "; 源码点的目标在池中的位置：字节偏移左移 %d 位或上字节长度；-1 表示无映射。" % CONFUSABLE_SHIFT,
-        "confusablePacked|func(code: I32,) -> (I32,):",
+        "confusablePacked|func(_code: I32,) -> (I32,):",
     ]
     emit_blocked_exact(entries, lines, 1)
     lines.append("")

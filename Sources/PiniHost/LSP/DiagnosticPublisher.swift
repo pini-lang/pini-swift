@@ -194,6 +194,9 @@ public struct DiagnosticPublisher {
         case .foreignVarargsOnNonFunction(_, let loc): return loc
         case .foreignVariadicArgument(_, _, _, let loc): return loc
         case .stringHandleOutsideCFace(_, let loc): return loc
+        case .missingArgumentLabel(_, _, _, _, _, let loc): return loc
+        case .unexpectedArgumentLabel(_, _, let loc): return loc
+        case .duplicateArgumentLabel(_, _, let loc): return loc
         }
     }
 }

@@ -34,7 +34,7 @@ struct SchedulerWiringTests: Sendable, PiniSourceLowering {
     /// 这正是本件避开线程竞争的办法。刻意不读字段：用户整块替换声明时预置字段随之消失，读字段名就会
     /// 变成验「用户有没有把字段也写一遍」。取用形参留着，它还证明替换声明后取用位仍解析得出这个类型名。
     private static let 同步语料 = """
-    取|func(using d: 调度器,) -> (I32,):
+    取|func(using _d: 调度器,) -> (I32,):
         return 1
 
     main|func() -> ():
@@ -122,7 +122,7 @@ struct SchedulerWiringTests: Sendable, PiniSourceLowering {
         /// 「任何名字都放行」，本条会红。它与判据 1 合起来，把「换对了东西」与
         /// 「顺手把门开大了」两件事分开。
         let source = """
-        取默认|func(using s: 没有这个类型,) -> (String,):
+        取默认|func(using _s: 没有这个类型,) -> (String,):
             return "x"
 
         main|func() -> ():

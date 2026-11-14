@@ -1,5 +1,5 @@
 ; 行首表：首行从 0 起，每个 LF 之后另起一行；CRLF 的 CR 留在上一行内。
-lineStartsOf|func(bytes: Array<U8>,) -> (Array<I32>,):
+lineStartsOf|func(_bytes: Array<U8>,) -> (Array<I32>,):
     var starts: Array<I32> = []
     starts = starts.append(0)
     let lf: U8 = 10

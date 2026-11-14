@@ -335,6 +335,12 @@ public enum ErrorFormatter {
             return "变参的第 \(position) 个实参类型 `\(type)` 不能传给 C：\(reason)"
         case .stringHandleOutsideCFace(let type, _):
             return "`\(type)` 只在 C 面上成立：写在外部函数声明里，或写在带 `|c` 条目的函数签名上"
+        case .missingArgumentLabel(let callee, let param, _, _, _, _):
+            return "调用 '\(callee)' 缺少实参标签：形参 '\(param)' 要求写 '\(param) = ...'"
+        case .unexpectedArgumentLabel(let callee, let param, _):
+            return "调用 '\(callee)' 的形参 '\(param)' 已退出标签面（声明为 '_\(param)'），实参不要写标签"
+        case .duplicateArgumentLabel(let callee, let param, _):
+            return "调用 '\(callee)' 重复写了形参 '\(param)' 的标签"
         }
     }
 

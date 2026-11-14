@@ -11,28 +11,28 @@ checkCondition|func(unit: CompilationUnit, unitIndex: I32, node: I32, out: Store
     var working = out
     if node < 0 || node >= unit.ast.exprCount():
         return working
-    let typed = checkInitializer(unit, unitIndex, node, -1, "", working)
+    let typed = checkInitializer(unit = unit, unitIndex = unitIndex, node = node, expected = -1, name = "", out = working)
     working = typed.check
     if typed.typeId < 0 || typed.typeId >= len(working.pool.entries):
         return working
-    if isBoolType(working.pool, typed.typeId):
+    if isBoolType(pool = working.pool, id = typed.typeId):
         return working
-    let got = storeTypeText(working.pool, typed.typeId)
+    let got = storeTypeText(pool = working.pool, id = typed.typeId)
     let offset = unit.ast.exprAt(node).start
-    return appendStoreError(working, unit, offset, storeConditionNotBool, "", "", "Bool", got)
+    return appendStoreError(out = working, unit = unit, offset = offset, kind = storeConditionNotBool, name = "", op = "", expected = "Bool", got = got)
 
 ; 遍历元素：字典按键、值两字段，数组与集合按一个元素字段；其余形态答空表。
 loopComponents|func(pool: TypePool, id: I32,) -> (Array<I32>,):
     var out: Array<I32> = []
     if id < 0 || id >= len(pool.entries):
         return out
-    let name = containerNameOf(pool, id)
+    let name = containerNameOf(pool = pool, id = id)
     if name == "Dictionary":
-        out = out.append(keyTypeOf(pool, id))
-        out = out.append(valueTypeOf(pool, id))
+        out = out.append(keyTypeOf(pool = pool, id = id))
+        out = out.append(valueTypeOf(pool = pool, id = id))
         return out
     if name == "Array" || name == "Set":
-        out = out.append(elementTypeOf(pool, id))
+        out = out.append(elementTypeOf(pool = pool, id = id))
         return out
     return out
 
@@ -49,12 +49,12 @@ loopPatternFields|func(unit: CompilationUnit, pattern: I32,) -> (Array<I32>,):
 declareLoopField|func(out: StoreCheck, unit: CompilationUnit, kid: I32, typeId: I32,) -> (StoreCheck,):
     if !unit.ast.isIdentifierExpr(kid):
         let offset = unit.ast.exprAt(kid).start
-        return appendStoreError(out, unit, offset, storeBadLoopPattern, "", "", "名字或占位", "其他形态")
+        return appendStoreError(out = out, unit = unit, offset = offset, kind = storeBadLoopPattern, name = "", op = "", expected = "名字或占位", got = "其他形态")
     let expr = unit.ast.exprAt(kid)
-    let name = decodeRange(tempUtf8Bytes(unit.text), expr.nameStart, expr.nameEnd)
+    let name = decodeRange(bytes = tempUtf8Bytes(unit.text), start = expr.nameStart, end = expr.nameEnd)
     if name == "_":
         return out
-    return declareStoreAs(out, unit, localLoopVar, name, typeId, true, expr.start)
+    return declareStoreAs(out = out, unit = unit, kind = localLoopVar, name = name, typeId = typeId, mutable = true, offset = expr.start)
 
 ; 条件语句：逐个分支查条件再走块；末位落单的是 else 块，没有条件可查。
 walkIfStmt|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmtId: I32, out: StoreCheck,) -> (StoreCheck,):
@@ -62,30 +62,30 @@ walkIfStmt|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmtI
     let count = len(kids)
     var done = out
     if count > 0:
-        done = checkCondition(unit, unitIndex, kids[0], done)
+        done = checkCondition(unit = unit, unitIndex = unitIndex, node = kids[0], out = done)
     if count > 1:
-        done = walkStoreStmt(world, unit, unitIndex, kids[1], done)
+        done = walkStoreStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = kids[1], out = done)
     var i = 2
     while i < count:
         if i + 1 < count:
-            done = checkCondition(unit, unitIndex, kids[i], done)
-            done = walkStoreStmt(world, unit, unitIndex, kids[i + 1], done)
+            done = checkCondition(unit = unit, unitIndex = unitIndex, node = kids[i], out = done)
+            done = walkStoreStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = kids[i + 1], out = done)
             i = i + 2
         else:
-            done = walkStoreStmt(world, unit, unitIndex, kids[i], done)
+            done = walkStoreStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = kids[i], out = done)
             i = i + 1
     return done
 
 ; 循环语句：条件在循环外判，体与 step 块都在循环帧内走。
 walkWhileStmt|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmtId: I32, out: StoreCheck,) -> (StoreCheck,):
     let kids = unit.ast.stmtAt(stmtId).kids
-    var done = checkCondition(unit, unitIndex, kids[0], out)
-    done.scope = enterScope(done.scope, scopeLoop, unit.path, unit.ast.stmtAt(stmtId).start)
+    var done = checkCondition(unit = unit, unitIndex = unitIndex, node = kids[0], out = out)
+    done.scope = enterScope(stack = done.scope, kind = scopeLoop, file = unit.path, offset = unit.ast.stmtAt(stmtId).start)
     done.loopDepth = out.loopDepth + 1
     if len(kids) > 1:
-        done = walkStoreStmt(world, unit, unitIndex, kids[1], done)
+        done = walkStoreStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = kids[1], out = done)
     if len(kids) > 2:
-        done = walkStoreStmt(world, unit, unitIndex, kids[2], done)
+        done = walkStoreStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = kids[2], out = done)
     done.scope = leaveScope(done.scope)
     done.loopDepth = out.loopDepth
     return done
@@ -98,34 +98,34 @@ walkForStmt|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmt
     let pattern = kids[0]
     let iter = kids[1]
     var done = out
-    let typed = checkInitializer(unit, unitIndex, iter, -1, "", done)
+    let typed = checkInitializer(unit = unit, unitIndex = unitIndex, node = iter, expected = -1, name = "", out = done)
     done = typed.check
     var components: Array<I32> = []
     if typed.typeId >= 0 && typed.typeId < len(done.pool.entries):
-        components = loopComponents(done.pool, typed.typeId)
+        components = loopComponents(pool = done.pool, id = typed.typeId)
         if len(components) == 0:
-            let got = storeTypeText(done.pool, typed.typeId)
+            let got = storeTypeText(pool = done.pool, id = typed.typeId)
             let offset = unit.ast.exprAt(iter).start
-            done = appendStoreError(done, unit, offset, storeNotIterable, "", "", "数组、字典或集合", got)
-    let fields = loopPatternFields(unit, pattern)
+            done = appendStoreError(out = done, unit = unit, offset = offset, kind = storeNotIterable, name = "", op = "", expected = "数组、字典或集合", got = got)
+    let fields = loopPatternFields(unit = unit, pattern = pattern)
     if len(components) > 0 && len(fields) != len(components):
         let expected = countText(len(components))
         let got = countText(len(fields))
         let offset = unit.ast.exprAt(pattern).start
-        done = appendStoreError(done, unit, offset, storeIterableArity, "", "", expected, got)
-    done.scope = enterScope(done.scope, scopeLoop, unit.path, unit.ast.stmtAt(stmtId).start)
+        done = appendStoreError(out = done, unit = unit, offset = offset, kind = storeIterableArity, name = "", op = "", expected = expected, got = got)
+    done.scope = enterScope(stack = done.scope, kind = scopeLoop, file = unit.path, offset = unit.ast.stmtAt(stmtId).start)
     done.loopDepth = out.loopDepth + 1
     var i = 0
     while i < len(fields):
         var typeId = -1
         if i < len(components):
             typeId = components[i]
-        done = declareLoopField(done, unit, fields[i], typeId)
+        done = declareLoopField(out = done, unit = unit, kid = fields[i], typeId = typeId)
         i = i + 1
     if len(kids) > 2:
-        done = walkStoreStmt(world, unit, unitIndex, kids[2], done)
+        done = walkStoreStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = kids[2], out = done)
     if len(kids) > 3:
-        done = walkStoreStmt(world, unit, unitIndex, kids[3], done)
+        done = walkStoreStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = kids[3], out = done)
     done.scope = leaveScope(done.scope)
     done.loopDepth = out.loopDepth
     return done
@@ -134,7 +134,7 @@ walkForStmt|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmt
 checkLoopControl|func(unit: CompilationUnit, stmtId: I32, keyword: String, out: StoreCheck,) -> (StoreCheck,):
     if out.loopDepth > 0:
         return out
-    return appendStoreError(out, unit, unit.ast.stmtAt(stmtId).start, storeLoopControlOutside, "", keyword, "循环内", "循环外")
+    return appendStoreError(out = out, unit = unit, offset = unit.ast.stmtAt(stmtId).start, kind = storeLoopControlOutside, name = "", op = keyword, expected = "循环内", got = "循环外")
 
 ; 合并臂错误：把补报的几条接在匹配面记录之后，顺序按臂的源序。
 appendArmErrors|func(left: Array<MatchError>, right: Array<MatchError>,) -> (Array<MatchError>,):
@@ -163,22 +163,22 @@ walkMatchStmt|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, st
     var working = out
     if len(kids) < 1:
         return working
-    let subjectType = typeOfExprNode(unit, unitIndex, kids[0], working.scope, working.types, working.pool)
+    let subjectType = typeOfExprNode(unit = unit, unitIndex = unitIndex, node = kids[0], scope = working.scope, types = working.types, pool = working.pool)
     if subjectType >= 0:
-        working.types = writeExprType(working.types, unitIndex, kids[0], subjectType)
-    let checked = checkMatch(world, unit, unitIndex, stmtId, working.types)
+        working.types = writeExprType(table = working.types, unit = unitIndex, node = kids[0], typeId = subjectType)
+    let checked = checkMatch(world = world, unit = unit, unitIndex = unitIndex, stmt = stmtId, types = working.types)
     working.matchCheck = checked
     var i = 1
     while i + 1 < len(kids):
         let before = len(working.scope.locals)
-        let bound = bindArm(world, unit, subjectType, kids[i], working.scope)
+        let bound = bindArm(world = world, unit = unit, subjectType = subjectType, patternNode = kids[i], scope = working.scope)
         working.scope = bound.scope
-        working.declared = recordArmLocals(working.declared, working.scope, before)
+        working.declared = recordArmLocals(declared = working.declared, scope = working.scope, from = before)
         if checked.deferred:
             var merged = working.matchCheck
-            merged.errors = appendArmErrors(merged.errors, bound.errors)
+            merged.errors = appendArmErrors(left = merged.errors, right = bound.errors)
             working.matchCheck = merged
-        working = walkStoreStmt(world, unit, unitIndex, kids[i + 1], working)
+        working = walkStoreStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = kids[i + 1], out = working)
         working.scope = leaveScope(working.scope)
         i = i + 2
     return working
@@ -188,7 +188,7 @@ walkMatchStmt|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, st
 walkDeferStmt|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmtId: I32, out: StoreCheck,) -> (StoreCheck,):
     var working = out
     working.defers = working.defers.append(stmtId)
-    let body = unit.ast.stmtChild(stmtId, 0)
+    let body = unit.ast.stmtChild(id = stmtId, index = 0)
     if body < 0:
         return working
-    return walkStoreStmt(world, unit, unitIndex, body, working)
+    return walkStoreStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = body, out = working)

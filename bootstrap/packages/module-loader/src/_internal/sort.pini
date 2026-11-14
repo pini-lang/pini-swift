@@ -23,7 +23,7 @@ insertPath|func(items: Array<String>, value: String,) -> (Array<String>,):
     var placed = false
     var i = 0
     while i < len(items):
-        if !placed && comparePaths(value, items[i]) < 0:
+        if !placed && comparePaths(first = value, second = items[i]) < 0:
             out = out.append(value)
             placed = true
         out = out.append(items[i])
@@ -33,10 +33,10 @@ insertPath|func(items: Array<String>, value: String,) -> (Array<String>,):
     return out
 
 ; 排序：同一批只有几十个名字，插入排序的稳定与可读优先于复杂度。
-sortPaths|func(items: Array<String>,) -> (Array<String>,):
+sortPaths|func(_items: Array<String>,) -> (Array<String>,):
     var out: Array<String> = []
     var i = 0
     while i < len(items):
-        out = insertPath(out, items[i])
+        out = insertPath(items = out, value = items[i])
         i = i + 1
     return out

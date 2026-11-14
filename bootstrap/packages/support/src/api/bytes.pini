@@ -9,7 +9,7 @@ end: I32 = 0
 byteLength|self() -> (I32,):
     return self.end - self.start
 ; 按切片内下标读字节；越界落到数组下标的运行时陷阱。
-byteAt|self(index: I32,) -> (U8,):
+byteAt|self(_index: I32,) -> (U8,):
     return self.bytes[self.start + index]
 ; 子切片相对本切片取界，夹紧到 [0, 本长]；仍共享存储。
 slice|self(start: I32, end: I32,) -> (ByteSlice,):
@@ -32,7 +32,7 @@ slice|self(start: I32, end: I32,) -> (ByteSlice,):
     out.end = self.start + hi
     return out
 ; 逐字节相等；长度不同直接假。
-equal|self(other: ByteSlice,) -> (Bool,):
+equal|self(_other: ByteSlice,) -> (Bool,):
     if self.byteLength() != other.byteLength():
         return false
     var i = 0
@@ -47,7 +47,7 @@ equal|self(other: ByteSlice,) -> (Bool,):
 bytes: Array<U8> = []
 
 ; 从文本取字节：一次 UTF-8 复制，之后扫描不再按字素切分。
-makeByteBuffer|func(text: String,) -> (ByteBuffer,):
+makeByteBuffer|func(_text: String,) -> (ByteBuffer,):
     var out = ByteBuffer()
     out.bytes = tempUtf8Bytes(text)
     return out
@@ -55,7 +55,7 @@ makeByteBuffer|func(text: String,) -> (ByteBuffer,):
 ((ByteBuffer))
 byteLength|self() -> (I32,):
     return len(self.bytes)
-byteAt|self(index: I32,) -> (U8,):
+byteAt|self(_index: I32,) -> (U8,):
     return self.bytes[index]
 ; 切片共享存储：只记录区间，不复制字节；两界夹紧，空区间合法。
 slice|self(start: I32, end: I32,) -> (ByteSlice,):
@@ -78,12 +78,12 @@ slice|self(start: I32, end: I32,) -> (ByteSlice,):
     out.end = hi
     return out
 ; 追加一个字节，返回新缓冲；原缓冲不动，写时分裂由数组承担。
-append|self(value: U8,) -> (ByteBuffer,):
+append|self(_value: U8,) -> (ByteBuffer,):
     var out = ByteBuffer()
     out.bytes = self.bytes.append(value)
     return out
 ; 追加一段切片，按字节逐个写入；返回值须替换原缓冲。
-appendSlice|self(part: ByteSlice,) -> (ByteBuffer,):
+appendSlice|self(_part: ByteSlice,) -> (ByteBuffer,):
     var out = self
     var i = 0
     while i < part.byteLength():
@@ -98,12 +98,12 @@ bytes: Array<U8> = []
 ((ByteBuilder))
 byteLength|self() -> (I32,):
     return len(self.bytes)
-appendByte|self(value: U8,) -> (ByteBuilder,):
+appendByte|self(_value: U8,) -> (ByteBuilder,):
     var out = ByteBuilder()
     out.bytes = self.bytes.append(value)
     return out
 ; 只接 ASCII：非 ASCII 走 appendScalar，避免把多标量字素压成一个字节。
-appendAscii|self(text: String,) -> (ByteBuilder,):
+appendAscii|self(_text: String,) -> (ByteBuilder,):
     var out = self
     let pieces = chars(text)
     var i = 0
@@ -114,7 +114,7 @@ appendAscii|self(text: String,) -> (ByteBuilder,):
         i = i + 1
     return out
 ; 按 Unicode 标量写 UTF-8；负值、超出 U+10FFFF 与代理区直接拒绝。
-appendScalar|self(code: I32,) -> (ByteBuilder,):
+appendScalar|self(_code: I32,) -> (ByteBuilder,):
     assert(code >= 0, "码点不得为负")
     assert(code <= 1114111, "码点超出 U+10FFFF")
     assert(code < 55296 || code > 57343, "代理区不得编码")

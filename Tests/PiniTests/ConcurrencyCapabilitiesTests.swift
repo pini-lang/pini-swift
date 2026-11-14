@@ -82,11 +82,11 @@ struct ConcurrencyCapabilitiesTests: Sendable, PiniSourceLowering {
     /// 子任务先睡一会儿，是为了让 `await` 到达时它确实未决；否则走「已决直接取值」那条路，
     /// 两后端都会给出正确结果，但那条路测不到让出判定本身。
     private static let 共用语料 = """
-    慢|func(n: I32,) => (I32,):
+    慢|func(_n: I32,) => (I32,):
         sleep(40)
         return ok(n)
 
-    父|func(n: I32,) => (I32,):
+    父|func(_n: I32,) => (I32,):
         let a = 慢(n)
         let x = try await a else e:
             return err(Error("failed"))

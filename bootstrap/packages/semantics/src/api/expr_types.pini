@@ -28,7 +28,7 @@ errorTypeId|func() -> (I32,):
     return -2
 
 ; 建表：逐单元按表达式池长度铺未写槽。
-makeExprTypes|func(units: Array<CompilationUnit>,) -> (ExprTypes,):
+makeExprTypes|func(_units: Array<CompilationUnit>,) -> (ExprTypes,):
     var out = ExprTypes()
     var u = 0
     while u < len(units):
@@ -68,7 +68,7 @@ unitTypeCount|func(table: ExprTypes, unit: I32,) -> (I32,):
 
 ; 表达式类型：先读表；未写时标识符回查作用域里的局部，其余一律答未写。
 typeOfExprNode|func(unit: CompilationUnit, unitIndex: I32, node: I32, scope: ScopeStack, types: ExprTypes, pool: TypePool,) -> (I32,):
-    let known = exprTypeAt(types, unitIndex, node)
+    let known = exprTypeAt(table = types, unit = unitIndex, node = node)
     if known >= 0 && known < len(pool.entries):
         return known
     if node < 0 || node >= unit.ast.exprCount():
@@ -76,8 +76,8 @@ typeOfExprNode|func(unit: CompilationUnit, unitIndex: I32, node: I32, scope: Sco
     if !unit.ast.isIdentifierExpr(node):
         return unsetTypeId()
     let expr = unit.ast.exprAt(node)
-    let name = decodeRange(tempUtf8Bytes(unit.text), expr.nameStart, expr.nameEnd)
-    let at = lookupName(scope, name)
+    let name = decodeRange(bytes = tempUtf8Bytes(unit.text), start = expr.nameStart, end = expr.nameEnd)
+    let at = lookupName(stack = scope, spelling = name)
     if at < 0:
         return unsetTypeId()
     let typeId = scope.locals[at].typeId

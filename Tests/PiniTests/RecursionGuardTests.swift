@@ -91,9 +91,9 @@ struct RecursionGuardTests: Sendable {
         包(内: 节点, 位置: 位置,)
 
         绕|func(层: I32, 位置: 位置,) -> (节点,):
-            return 包(绕(层 + 1, 位置,), 位置,)
+            return 包(绕(层 = 层 + 1, 位置 = 位置,), 位置,)
 
-        数|func(n: 节点,) -> (I32,):
+        数|func(_n: 节点,) -> (I32,):
             match n:
                 case 叶(名, 位置):
                     return 1
@@ -103,7 +103,7 @@ struct RecursionGuardTests: Sendable {
         main|func() -> (I32,):
             var 址 = 位置()
             址.行号 = 1
-            print(数(绕(0, 址,),),)
+            print(数(绕(层 = 0, 位置 = 址,),),)
             return 0
         """
 
@@ -114,10 +114,10 @@ struct RecursionGuardTests: Sendable {
         loopA|func(n: I32, limit: I32,) -> (I32,):
             if n >= limit:
                 return n
-            return loopA(n + 1, limit,)
+            return loopA(n = n + 1, limit = limit,)
 
         main|func() -> (I32,):
-            print(loopA(0, \(depth),),)
+            print(loopA(n = 0, limit = \(depth),),)
             return 0
         """
     }

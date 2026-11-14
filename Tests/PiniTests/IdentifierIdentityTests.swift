@@ -51,7 +51,7 @@ struct IdentifierIdentityTests: Sendable {
     @Test("NFD 拼写的标识符合法通过")
     func acceptsDecomposedIdentifier() throws {
         let 源码 = """
-            cafe\u{0301}|func(起始: I32,) -> (I32,):
+            cafe\u{0301}|func(_起始: I32,) -> (I32,):
                 return 起始
             """
         try SemanticAnalyzer().analyze(module: try module(源码))
@@ -95,7 +95,7 @@ struct IdentifierIdentityTests: Sendable {
     @Test("Jamo 序列单独作标识符合法通过")
     func acceptsJamoIdentifier() throws {
         let 源码 = """
-            \u{1100}\u{1161}\u{11A8}|func(起始: I32,) -> (I32,):
+            \u{1100}\u{1161}\u{11A8}|func(_起始: I32,) -> (I32,):
                 return 起始
             """
         try SemanticAnalyzer().analyze(module: try module(源码))
@@ -187,7 +187,7 @@ struct IdentifierIdentityTests: Sendable {
     @Test("中文与拉丁混写不算混写")
     func acceptsChineseWithLatin() throws {
         let 源码 = """
-            计数2|func(起始: I32,) -> (I32,):
+            计数2|func(_起始: I32,) -> (I32,):
                 return 起始
             """
         try SemanticAnalyzer().analyze(module: try module(源码))
@@ -233,7 +233,7 @@ struct IdentifierIdentityTests: Sendable {
     @Test("中文标识符不受规范化与不可见字符判据影响")
     func acceptsChineseIdentifier() throws {
         let 源码 = """
-            计数|func(起始: I32,) -> (I32,):
+            计数|func(_起始: I32,) -> (I32,):
                 var 结果 = 起始
                 return 结果
             """

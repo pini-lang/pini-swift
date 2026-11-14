@@ -36,20 +36,20 @@ struct StdlibExtensionTests: Sendable {
                 i = i + 1
         return out
 
-    startsWith|self(prefix: String,) -> (Bool,):
+    startsWith|self(_prefix: String,) -> (Bool,):
         var m = len(prefix)
         if m > len(self):
             return false
         return self.slice(0, m) == prefix
 
-    endsWith|self(suffix: String,) -> (Bool,):
+    endsWith|self(_suffix: String,) -> (Bool,):
         var n = len(self)
         var m = len(suffix)
         if m > n:
             return false
         return self.slice(n - m, n) == suffix
 
-    repeat|self(times: I32,) -> (String,):
+    repeat|self(_times: I32,) -> (String,):
         var out = ""
         var i = 0
         while i < times:
@@ -57,7 +57,7 @@ struct StdlibExtensionTests: Sendable {
             i = i + 1
         return out
 
-    contains|self(needle: String,) -> (Bool,):
+    contains|self(_needle: String,) -> (Bool,):
         return true
 
     caps|self() -> (String,):
@@ -71,10 +71,10 @@ struct StdlibExtensionTests: Sendable {
         return arr[0]
 
     main|func() -> ():
-        print("a-b-c".replace("-", "+"))
-        print("a--b".replace("--", "+"))
-        print("abc".replace("", "x"))
-        print("abc".replace("z", "x"))
+        print("a-b-c".replace(old = "-", new = "+"))
+        print("a--b".replace(old = "--", new = "+"))
+        print("abc".replace(old = "", new = "x"))
+        print("abc".replace(old = "z", new = "x"))
         print("hello".startsWith("he"))
         print("hello".startsWith("hello!"))
         print("中文".endsWith("文"))
@@ -83,8 +83,8 @@ struct StdlibExtensionTests: Sendable {
         print("abc".contains("z"))
         print("abc".indexOf("b"))
         print([10, 20, 30].second())
-        print(first<I32>([7, 8]))
-        print(first<String>(["x", "y"]))
+        print(first<I32>(arr = [7, 8]))
+        print(first<String>(arr = ["x", "y"]))
         print("ab".caps())
         return
     """#

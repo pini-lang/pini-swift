@@ -1,5 +1,5 @@
 ; 测试助手：把 I32 字面量列表转成字节数组，便于手写非法序列。
-bytesOf|func(values: Array<I32>,) -> (Array<U8>,):
+bytesOf|func(_values: Array<I32>,) -> (Array<U8>,):
     var out: Array<U8> = []
     var i = 0
     while i < len(values):
@@ -11,15 +11,15 @@ bytesOf|func(values: Array<I32>,) -> (Array<U8>,):
 类别专用|test() -> ():
     let bom = checkSourceBytes(bytesOf([239, 187, 191, 65]))
     assert(!bom.passed, "BOM 应被拒绝")
-    assert(isLoadErrorKind(bom.kind, errorSourceBom), "BOM 应报专用类别")
+    assert(isLoadErrorKind(kind = bom.kind, expected = errorSourceBom), "BOM 应报专用类别")
     assert(bom.offset == 0, "BOM 偏移应在起点")
     let nul = checkSourceBytes(bytesOf([65, 0, 66]))
     assert(!nul.passed, "NUL 应被拒绝")
-    assert(isLoadErrorKind(nul.kind, errorSourceNul), "NUL 应报专用类别")
+    assert(isLoadErrorKind(kind = nul.kind, expected = errorSourceNul), "NUL 应报专用类别")
     assert(nul.offset == 1, "NUL 偏移应指向该字节")
     let broken = checkSourceBytes(bytesOf([65, 255, 66]))
     assert(!broken.passed, "非法 UTF-8 应被拒绝")
-    assert(isLoadErrorKind(broken.kind, errorSourceNotUtf8), "非法 UTF-8 应报专用类别")
+    assert(isLoadErrorKind(kind = broken.kind, expected = errorSourceNotUtf8), "非法 UTF-8 应报专用类别")
     assert(broken.offset == 1, "偏移应指向坏字节")
     return
 
@@ -49,12 +49,12 @@ bytesOf|func(values: Array<I32>,) -> (Array<U8>,):
 
 ; 单元构造：干净源产出树，坏源不解析且带错误。
 单元构造|test() -> ():
-    let good = loadUnit("a.pini", "main|func() -> ():\n    return\n")
+    let good = loadUnit(path = "a.pini", text = "main|func() -> ():\n    return\n")
     assert(!good.failed, "干净源应成单元，实际 " + loadErrorName(good.error.kind))
     assert(good.unit.ast.itemCount() > 0, "应产出顶层声明")
     assert(len(good.unit.text) > 0, "单元应携带源文本")
-    let bad = loadUnit("b.pini", "main|func() -> ():\n    return" + chr(0) + "\n")
+    let bad = loadUnit(path = "b.pini", text = "main|func() -> ():\n    return" + chr(0) + "\n")
     assert(bad.failed, "含 NUL 的源不成单元")
-    assert(isLoadErrorKind(bad.error.kind, errorSourceNul), "应报 NUL 类别")
+    assert(isLoadErrorKind(kind = bad.error.kind, expected = errorSourceNul), "应报 NUL 类别")
     assert(bad.error.path == "b.pini", "错误应带单元路径")
     return

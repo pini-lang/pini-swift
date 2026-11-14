@@ -14,10 +14,10 @@ struct IRFutureTypeTests: Sendable, PiniSourceLowering {
     /// 语料刻意**只用一个维度**：一个异步函数、一个同步函数、两条等待。
     /// 同步那一条是阳性对照 —— 它证明分叉是**只在异步上**发生的，不是「所有调用都变了」。
     private static let corpus = #"""
-    慢|func(n: I32,) => (I32,):
+    慢|func(_n: I32,) => (I32,):
         return ok(n)
 
-    同步取|func(n: I32,) -> (I32,):
+    同步取|func(_n: I32,) -> (I32,):
         return n
 
     main|func() -> ():

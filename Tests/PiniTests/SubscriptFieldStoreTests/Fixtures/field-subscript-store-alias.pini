@@ -12,7 +12,7 @@ put|self(i: I32, v: I32,) -> ():
 main|func() -> ():
     var h = Holder()
     let snapshot: Array<I32> = h.xs
-    h.put(1, 7)
+    h.put(i = 1, v = 7)
     print(h.xs[1])
     print(snapshot[1])
     return

@@ -7,6 +7,8 @@ end: I32 = 0
 nameStart: I32 = 0
 nameEnd: I32 = 0
 segments: Array<Segment> = []
+; 标识符词面以下划线起头（参数位的调用面标记）；解析参数表时据此摘掉前导 `_`。
+leadingUnderscore: Bool = false
 
 ; 字符串段：字面段的范围含转义原文，插值段的范围是括号内的表达式，都不含两侧定界。
 (Segment)
@@ -119,7 +121,7 @@ eof
 
 ; 类别码：区间边界即类别边界，字面量 0..7、关键字 8..41、运算符 42..74、定界符 75..87、布局 88..91。
 ; 分支按解析期的命中频率排序，返回值仍按区间分配；顺序只影响匹配快慢，不参与语义。
-kindTag|func(kind: TokenKind,) -> (I32,):
+kindTag|func(_kind: TokenKind,) -> (I32,):
     match kind:
         case identifier:
             return 1
@@ -308,7 +310,7 @@ kindTag|func(kind: TokenKind,) -> (I32,):
     return 0
 
 ; 类别名：诊断与测试用的可读拼写，取该类别的默认语言写法。
-kindName|func(kind: TokenKind,) -> (String,):
+kindName|func(_kind: TokenKind,) -> (String,):
     match kind:
         case unknown:
             return "unknown"
@@ -497,7 +499,7 @@ kindName|func(kind: TokenKind,) -> (String,):
     return "unknown"
 
 ; 类别码反查：关键字词表靠区间起点与下标合成类别，不做第二份顺序表。
-kindFromTag|func(tag: I32,) -> (TokenKind,):
+kindFromTag|func(_tag: I32,) -> (TokenKind,):
     match tag:
         case 0:
             return .unknown
@@ -690,24 +692,24 @@ isKind|func(token: Token, kind: TokenKind,) -> (Bool,):
     return token.tag == kindTag(kind)
 
 ; 字面量区间不含 `unknown`：未识别字节不算字面量。
-isLiteralKind|func(kind: TokenKind,) -> (Bool,):
+isLiteralKind|func(_kind: TokenKind,) -> (Bool,):
     let tag = kindTag(kind)
     return tag >= 1 && tag <= 7
 
-isKeywordKind|func(kind: TokenKind,) -> (Bool,):
+isKeywordKind|func(_kind: TokenKind,) -> (Bool,):
     let tag = kindTag(kind)
     return tag >= 8 && tag <= 41
 
-isOperatorKind|func(kind: TokenKind,) -> (Bool,):
+isOperatorKind|func(_kind: TokenKind,) -> (Bool,):
     let tag = kindTag(kind)
     return tag >= 42 && tag <= 74
 
-isDelimiterKind|func(kind: TokenKind,) -> (Bool,):
+isDelimiterKind|func(_kind: TokenKind,) -> (Bool,):
     let tag = kindTag(kind)
     return tag >= 75 && tag <= 87
 
 ; 布局记号：解析器靠它切分块边界，普通表达式扫描里一律跳过。
-isLayoutKind|func(kind: TokenKind,) -> (Bool,):
+isLayoutKind|func(_kind: TokenKind,) -> (Bool,):
     return kindTag(kind) >= 88
 
 ((Token))
@@ -719,11 +721,11 @@ hasName|self() -> (Bool,):
     return self.nameEnd > self.nameStart
 segmentCount|self() -> (I32,):
     return len(self.segments)
-segmentAt|self(index: I32,) -> (Segment,):
+segmentAt|self(_index: I32,) -> (Segment,):
     return self.segments[index]
 
 ; 运算符拼写：按类别码回符号本身，非运算符答空串；诊断与语义判定共用这一条。
-opSymbol|func(tag: I32,) -> (String,):
+opSymbol|func(_tag: I32,) -> (String,):
     if tag == kindTag(opAdd):
         return "+"
     if tag == kindTag(opSub):
@@ -793,7 +795,7 @@ opSymbol|func(tag: I32,) -> (String,):
     return ""
 
 ; 复合赋值对应的二元运算：`+=` 到 `>>=` 逐个映射；普通赋值与非赋值答 0。
-compoundBinaryTag|func(tag: I32,) -> (I32,):
+compoundBinaryTag|func(_tag: I32,) -> (I32,):
     if tag == kindTag(opAssignAdd):
         return kindTag(opAdd)
     if tag == kindTag(opAssignSub):

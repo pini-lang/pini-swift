@@ -26,6 +26,6 @@ compareInt|func(left: I32, right: I32,) -> (I32,):
     return 0
 
 ; 续字节判据：0x80..0xBF；U8 不能直接与整数字面量比较，先取值。
-isContinuationByte|func(byte: U8,) -> (Bool,):
+isContinuationByte|func(_byte: U8,) -> (Bool,):
     let value = tempByteToInt(byte)
     return value >= 128 && value < 192

@@ -5,7 +5,7 @@
 e
 c(n: I32, t: L,)
 
-lLen|func(list: L,) -> (I32,):
+lLen|func(_list: L,) -> (I32,):
     var k = 0
     var cur = list
     var go = true

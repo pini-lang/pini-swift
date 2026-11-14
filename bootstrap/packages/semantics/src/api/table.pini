@@ -7,25 +7,25 @@ errors: Array<SymbolError> = []
 ((SymbolTable))
 symbolCount|self() -> (I32,):
     return len(self.symbols)
-symbolAt|self(index: I32,) -> (Symbol,):
+symbolAt|self(_index: I32,) -> (Symbol,):
     return self.symbols[index]
 importCount|self() -> (I32,):
     return len(self.imports)
-importAt|self(index: I32,) -> (Symbol,):
+importAt|self(_index: I32,) -> (Symbol,):
     return self.imports[index]
 errorCount|self() -> (I32,):
     return len(self.errors)
-errorAt|self(index: I32,) -> (SymbolError,):
+errorAt|self(_index: I32,) -> (SymbolError,):
     return self.errors[index]
 ; 无错误即注册完成；有错时符号集只作诊断用，不得继续向下游交付。
 isOK|self() -> (Bool,):
     return len(self.errors) == 0
 ; 顶层查找：键相同且 owner 为空；找不到答 -1。
-topIndex|self(key: Array<U8>,) -> (I32,):
+topIndex|self(_key: Array<U8>,) -> (I32,):
     var i = 0
     while i < len(self.symbols):
         let symbol = self.symbols[i]
-        if len(symbol.owner) == 0 && sameKey(symbol.key, key):
+        if len(symbol.owner) == 0 && sameKey(first = symbol.key, second = key):
             return i
         i = i + 1
     return -1
@@ -34,7 +34,7 @@ fileTopIndex|self(file: String, key: Array<U8>,) -> (I32,):
     var i = 0
     while i < len(self.symbols):
         let symbol = self.symbols[i]
-        if symbol.file == file && len(symbol.owner) == 0 && sameKey(symbol.key, key):
+        if symbol.file == file && len(symbol.owner) == 0 && sameKey(first = symbol.key, second = key):
             return i
         i = i + 1
     return -1
@@ -43,7 +43,7 @@ memberIndex|self(owner: String, key: Array<U8>,) -> (I32,):
     var i = 0
     while i < len(self.symbols):
         let symbol = self.symbols[i]
-        if symbol.owner == owner && sameKey(symbol.key, key):
+        if symbol.owner == owner && sameKey(first = symbol.key, second = key):
             return i
         i = i + 1
     return -1
@@ -52,7 +52,7 @@ importIndex|self(file: String, key: Array<U8>,) -> (I32,):
     var i = 0
     while i < len(self.imports):
         let symbol = self.imports[i]
-        if symbol.file == file && sameKey(symbol.key, key):
+        if symbol.file == file && sameKey(first = symbol.key, second = key):
             return i
         i = i + 1
     return -1
@@ -61,7 +61,7 @@ importIndex|self(file: String, key: Array<U8>,) -> (I32,):
 defineTop|func(table: SymbolTable, symbol: Symbol,) -> (SymbolTable,):
     var out = table
     if table.topIndex(symbol.key) >= 0:
-        out.errors = out.errors.append(makeSymbolError(symbolRedeclared, symbol.file, symbol.offset, symbol.spelling))
+        out.errors = out.errors.append(makeSymbolError(kind = symbolRedeclared, file = symbol.file, offset = symbol.offset, name = symbol.spelling))
         return out
     out.symbols = out.symbols.append(symbol)
     return out
@@ -69,15 +69,15 @@ defineTop|func(table: SymbolTable, symbol: Symbol,) -> (SymbolTable,):
 ; 定义成员符号：同一所有者下同键即报成员同名，保留先声明者。
 defineMember|func(table: SymbolTable, symbol: Symbol,) -> (SymbolTable,):
     var out = table
-    if table.memberIndex(symbol.owner, symbol.key) >= 0:
-        out.errors = out.errors.append(makeSymbolError(symbolMemberDuplicated, symbol.file, symbol.offset, symbol.spelling))
+    if table.memberIndex(owner = symbol.owner, key = symbol.key) >= 0:
+        out.errors = out.errors.append(makeSymbolError(kind = symbolMemberDuplicated, file = symbol.file, offset = symbol.offset, name = symbol.spelling))
         return out
     out.symbols = out.symbols.append(symbol)
     return out
 
 ; 覆盖成员：扩展块之间的同名按「后声明者覆盖」，替换原位而不追加。
 redefineMember|func(table: SymbolTable, symbol: Symbol,) -> (SymbolTable,):
-    let at = table.memberIndex(symbol.owner, symbol.key)
+    let at = table.memberIndex(owner = symbol.owner, key = symbol.key)
     if at < 0:
         var out = table
         out.symbols = out.symbols.append(symbol)
@@ -95,11 +95,11 @@ addError|func(table: SymbolTable, error: SymbolError,) -> (SymbolTable,):
 ; 定义导入别名：同文件重复别名报错，与本文件顶层名字相撞同样报错。
 defineImport|func(table: SymbolTable, symbol: Symbol,) -> (SymbolTable,):
     var out = table
-    if table.importIndex(symbol.file, symbol.key) >= 0:
-        out.errors = out.errors.append(makeSymbolError(symbolImportAmbiguous, symbol.file, symbol.offset, symbol.spelling))
+    if table.importIndex(file = symbol.file, key = symbol.key) >= 0:
+        out.errors = out.errors.append(makeSymbolError(kind = symbolImportAmbiguous, file = symbol.file, offset = symbol.offset, name = symbol.spelling))
         return out
-    if table.fileTopIndex(symbol.file, symbol.key) >= 0:
-        out.errors = out.errors.append(makeSymbolError(symbolImportAmbiguous, symbol.file, symbol.offset, symbol.spelling))
+    if table.fileTopIndex(file = symbol.file, key = symbol.key) >= 0:
+        out.errors = out.errors.append(makeSymbolError(kind = symbolImportAmbiguous, file = symbol.file, offset = symbol.offset, name = symbol.spelling))
         return out
     out.imports = out.imports.append(symbol)
     return out

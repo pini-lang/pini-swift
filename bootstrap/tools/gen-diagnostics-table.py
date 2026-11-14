@@ -50,7 +50,7 @@ def build(codes):
         "    return %d" % len(codes),
         "",
         "; 码的消息模板；未登记答空串。占位符由调用方按诊断负载填充。",
-        "diagnosticMessage|func(code: String,) -> (String,):",
+        "diagnosticMessage|func(_code: String,) -> (String,):",
     ]
     for code, (message, _) in codes.items():
         lines.append('    if code == "%s":' % code)
@@ -59,7 +59,7 @@ def build(codes):
     lines += [
         "",
         "; 码的修复建议模板；没有建议答空串。",
-        "diagnosticSuggestion|func(code: String,) -> (String,):",
+        "diagnosticSuggestion|func(_code: String,) -> (String,):",
     ]
     for code, (_, suggestion) in codes.items():
         if not suggestion:

@@ -10,8 +10,8 @@ bytes: Array<U8> = []
 file: String = ""
 
 ; 取参数：解析一段最小函数，返回首个形参；解析失败即断言。
-取参数|func(src: String,) -> (参数样本,):
-    let loaded = loadUnit("packages/p/src/api/a.pini", src)
+取参数|func(_src: String,) -> (参数样本,):
+    let loaded = loadUnit(path = "packages/p/src/api/a.pini", text = src)
     assert(!loaded.failed, "样例应可解析")
     let unit = loaded.unit
     let fn = unit.ast.decls[unit.ast.items[0]]
@@ -24,8 +24,8 @@ file: String = ""
     return out
 
 ; 函数栈：进一个函数帧，文件取样本。
-函数栈|func(sample: 参数样本,) -> (ScopeStack,):
-    return enterScope(ScopeStack(), scopeFunction, sample.file, 0)
+函数栈|func(_sample: 参数样本,) -> (ScopeStack,):
+    return enterScope(stack = ScopeStack(), kind = scopeFunction, file = sample.file, offset = 0)
 
 ; 两栈同形：帧起点、局部键、槽位与种类逐项相同。
 同栈|func(first: ScopeStack, second: ScopeStack,) -> (Bool,):
@@ -37,39 +37,39 @@ file: String = ""
     while i < len(first.frames):
         if first.frames[i].start != second.frames[i].start:
             return false
-        if !isScopeKind(first.frames[i].kind, second.frames[i].kind):
+        if !isScopeKind(kind = first.frames[i].kind, expected = second.frames[i].kind):
             return false
         i = i + 1
     var j = 0
     while j < len(first.locals):
-        if !sameKey(first.locals[j].key, second.locals[j].key):
+        if !sameKey(first = first.locals[j].key, second = second.locals[j].key):
             return false
         if first.locals[j].slot != second.locals[j].slot:
             return false
-        if !isLocalKind(first.locals[j].kind, second.locals[j].kind):
+        if !isLocalKind(kind = first.locals[j].kind, expected = second.locals[j].kind):
             return false
         j = j + 1
     return true
 
 ; 固定栈：函数帧一个局部，块帧再放一个同名遮蔽。
 固定栈|func() -> (ScopeStack,):
-    var stack = enterScope(ScopeStack(), scopeFunction, "a.pini", 0)
-    let outer = declareLocal(stack, localVariable, "x", 1, true, "a.pini", 0, -1)
+    var stack = enterScope(stack = ScopeStack(), kind = scopeFunction, file = "a.pini", offset = 0)
+    let outer = declareLocal(stack = stack, kind = localVariable, spelling = "x", typeId = 1, mutable = true, file = "a.pini", offset = 0, decl = -1)
     stack = outer.stack
-    stack = enterScope(stack, scopeBlock, "a.pini", 1)
-    let inner = declareLocal(stack, localVariable, "x", 2, true, "a.pini", 1, -1)
+    stack = enterScope(stack = stack, kind = scopeBlock, file = "a.pini", offset = 1)
+    let inner = declareLocal(stack = stack, kind = localVariable, spelling = "x", typeId = 2, mutable = true, file = "a.pini", offset = 1, decl = -1)
     return inner.stack
 
 ; 参数：名字经 NFC 键查找，种类、可变性与槽位都对。
 参数入帧|test() -> ():
     let sample = 取参数("f|func(名字: String,) -> ():\n    return\n")
-    let declared = declareParam(函数栈(sample), sample.decl, sample.declId, 7, sample.file, sample.bytes)
+    let declared = declareParam(stack = 函数栈(sample), decl = sample.decl, declId = sample.declId, typeId = 7, file = sample.file, bytes = sample.bytes)
     assert(!declared.failed, "参数应声明成功：" + declared.error.spelling)
     let stack = declared.stack
-    let at = lookupName(stack, "名字")
+    let at = lookupName(stack = stack, spelling = "名字")
     assert(at >= 0, "参数应可查找")
     let local = stack.localAt(at)
-    assert(isLocalKind(local.kind, localParam), "种类应为参数")
+    assert(isLocalKind(kind = local.kind, expected = localParam), "种类应为参数")
     assert(local.mutable, "参数默认可变")
     assert(local.typeId == 7, "类型下标应原样保留")
     assert(local.slot == 0, "首个局部应占槽位 0")
@@ -78,107 +78,107 @@ file: String = ""
 
 ; 自身：只登记 self，不可赋值；查找命中自身种类。
 自身入帧|test() -> ():
-    let stack = enterScope(ScopeStack(), scopeFunction, "a.pini", 0)
-    let declared = declareSelf(stack, "self", 3, "a.pini", 0)
+    let stack = enterScope(stack = ScopeStack(), kind = scopeFunction, file = "a.pini", offset = 0)
+    let declared = declareSelf(stack = stack, spelling = "self", typeId = 3, file = "a.pini", offset = 0)
     assert(!declared.failed, "自身应声明成功")
-    let at = lookupName(declared.stack, "self")
+    let at = lookupName(stack = declared.stack, spelling = "self")
     assert(at >= 0, "自身应可查找")
     let local = declared.stack.localAt(at)
-    assert(isLocalKind(local.kind, localSelf), "种类应为自身")
+    assert(isLocalKind(kind = local.kind, expected = localSelf), "种类应为自身")
     assert(!local.mutable, "自身不可赋值")
     return
 
 ; 遮蔽：跨帧同名放行，查找取最内层，退帧后回到外层。
 跨帧遮蔽|test() -> ():
-    var stack = enterScope(ScopeStack(), scopeFunction, "a.pini", 0)
-    let outer = declareLocal(stack, localVariable, "x", 1, true, "a.pini", 0, -1)
+    var stack = enterScope(stack = ScopeStack(), kind = scopeFunction, file = "a.pini", offset = 0)
+    let outer = declareLocal(stack = stack, kind = localVariable, spelling = "x", typeId = 1, mutable = true, file = "a.pini", offset = 0, decl = -1)
     stack = outer.stack
-    let outerAt = lookupName(stack, "x")
-    stack = enterScope(stack, scopeBlock, "a.pini", 1)
-    let inner = declareLocal(stack, localVariable, "x", 2, true, "a.pini", 1, -1)
+    let outerAt = lookupName(stack = stack, spelling = "x")
+    stack = enterScope(stack = stack, kind = scopeBlock, file = "a.pini", offset = 1)
+    let inner = declareLocal(stack = stack, kind = localVariable, spelling = "x", typeId = 2, mutable = true, file = "a.pini", offset = 1, decl = -1)
     assert(!inner.failed, "跨帧同名应放行")
     stack = inner.stack
-    let innerAt = lookupName(stack, "x")
+    let innerAt = lookupName(stack = stack, spelling = "x")
     assert(innerAt != outerAt, "内层应命中新声明")
     assert(stack.localAt(innerAt).typeId == 2, "内层类型应生效")
     stack = leaveScope(stack)
-    assert(lookupName(stack, "x") == outerAt, "退帧后应回到外层")
+    assert(lookupName(stack = stack, spelling = "x") == outerAt, "退帧后应回到外层")
     return
 
 ; 同帧重名：报专用错误，栈与槽位都不变。
 同帧重名|test() -> ():
-    var stack = enterScope(ScopeStack(), scopeFunction, "a.pini", 0)
-    let first = declareLocal(stack, localVariable, "x", 1, true, "a.pini", 0, -1)
-    let second = declareLocal(first.stack, localVariable, "x", 2, true, "a.pini", 1, -1)
+    var stack = enterScope(stack = ScopeStack(), kind = scopeFunction, file = "a.pini", offset = 0)
+    let first = declareLocal(stack = stack, kind = localVariable, spelling = "x", typeId = 1, mutable = true, file = "a.pini", offset = 0, decl = -1)
+    let second = declareLocal(stack = first.stack, kind = localVariable, spelling = "x", typeId = 2, mutable = true, file = "a.pini", offset = 1, decl = -1)
     assert(!first.failed, "首个声明应成功")
     assert(second.failed, "同帧重名应失败")
-    assert(isScopeError(second.error, scopeLocalDuplicated), "错误类别应为局部重名")
+    assert(isScopeError(error = second.error, kind = scopeLocalDuplicated), "错误类别应为局部重名")
     assert(len(second.stack.locals) == len(first.stack.locals), "失败不得改动局部表")
     assert(second.stack.slotCount() == first.stack.slotCount(), "失败不得占用槽位")
     return
 
 ; NFC 同键：预组合与分解拼写在同一帧内按同一符号判重。
 NFC同键|test() -> ():
-    var stack = enterScope(ScopeStack(), scopeFunction, "a.pini", 0)
-    let first = declareLocal(stack, localVariable, "é", 1, true, "a.pini", 0, -1)
+    var stack = enterScope(stack = ScopeStack(), kind = scopeFunction, file = "a.pini", offset = 0)
+    let first = declareLocal(stack = stack, kind = localVariable, spelling = "é", typeId = 1, mutable = true, file = "a.pini", offset = 0, decl = -1)
     let decomposed = "e" + "\(chr(769))"
-    let second = declareLocal(first.stack, localVariable, decomposed, 2, true, "a.pini", 1, -1)
+    let second = declareLocal(stack = first.stack, kind = localVariable, spelling = decomposed, typeId = 2, mutable = true, file = "a.pini", offset = 1, decl = -1)
     assert(!first.failed, "预组合名应成功")
     assert(second.failed, "NFC 相同的分解拼写应判重名")
     return
 
 ; 槽位：函数内单调，块退出不归还，函数退出归还。
 槽位单调|test() -> ():
-    var stack = enterScope(ScopeStack(), scopeFunction, "a.pini", 0)
-    let a = declareLocal(stack, localVariable, "a", 1, true, "a.pini", 0, -1)
+    var stack = enterScope(stack = ScopeStack(), kind = scopeFunction, file = "a.pini", offset = 0)
+    let a = declareLocal(stack = stack, kind = localVariable, spelling = "a", typeId = 1, mutable = true, file = "a.pini", offset = 0, decl = -1)
     stack = a.stack
     assert(stack.localAt(a.index).slot == 0, "首槽应为 0")
-    stack = enterScope(stack, scopeBlock, "a.pini", 1)
-    let b = declareLocal(stack, localVariable, "b", 1, true, "a.pini", 1, -1)
+    stack = enterScope(stack = stack, kind = scopeBlock, file = "a.pini", offset = 1)
+    let b = declareLocal(stack = stack, kind = localVariable, spelling = "b", typeId = 1, mutable = true, file = "a.pini", offset = 1, decl = -1)
     stack = b.stack
     assert(stack.localAt(b.index).slot == 1, "块内应续用槽位")
     stack = leaveScope(stack)
-    let c = declareLocal(stack, localVariable, "c", 1, true, "a.pini", 2, -1)
+    let c = declareLocal(stack = stack, kind = localVariable, spelling = "c", typeId = 1, mutable = true, file = "a.pini", offset = 2, decl = -1)
     stack = c.stack
     assert(stack.localAt(c.index).slot == 2, "块退出不归还槽位")
     stack = leaveScope(stack)
     assert(stack.slotCount() == 0, "函数退出应归还槽位")
-    let next = enterScope(stack, scopeFunction, "a.pini", 3)
-    let d = declareLocal(next, localVariable, "d", 1, true, "a.pini", 3, -1)
+    let next = enterScope(stack = stack, kind = scopeFunction, file = "a.pini", offset = 3)
+    let d = declareLocal(stack = next, kind = localVariable, spelling = "d", typeId = 1, mutable = true, file = "a.pini", offset = 3, decl = -1)
     assert(d.stack.localAt(d.index).slot == 0, "新函数应从零起算")
     return
 
 ; 空栈：查找未命中，声明报无帧，退帧为空操作。
 空栈|test() -> ():
     let empty = ScopeStack()
-    assert(lookupName(empty, "x") < 0, "空栈查找应未命中")
-    let declared = declareLocal(empty, localVariable, "x", 1, true, "a.pini", 0, -1)
+    assert(lookupName(stack = empty, spelling = "x") < 0, "空栈查找应未命中")
+    let declared = declareLocal(stack = empty, kind = localVariable, spelling = "x", typeId = 1, mutable = true, file = "a.pini", offset = 0, decl = -1)
     assert(declared.failed, "无帧声明应失败")
-    assert(isScopeError(declared.error, scopeNoFrame), "错误类别应为无帧")
+    assert(isScopeError(error = declared.error, kind = scopeNoFrame), "错误类别应为无帧")
     assert(len(leaveScope(empty).frames) == 0, "空栈退帧应为空操作")
     return
 
 ; 帧与局部：四类帧、五类局部都能落位，帧起点与归属可回读。
 帧与局部|test() -> ():
-    var stack = enterScope(ScopeStack(), scopeFunction, "a.pini", 0)
-    let local = declareLocal(stack, localVariable, "x", 1, true, "a.pini", 0, -1)
-    stack = enterScope(local.stack, scopeLoop, "a.pini", 1)
-    let loopVar = declareLocal(stack, localLoopVar, "i", 2, true, "a.pini", 1, -1)
+    var stack = enterScope(stack = ScopeStack(), kind = scopeFunction, file = "a.pini", offset = 0)
+    let local = declareLocal(stack = stack, kind = localVariable, spelling = "x", typeId = 1, mutable = true, file = "a.pini", offset = 0, decl = -1)
+    stack = enterScope(stack = local.stack, kind = scopeLoop, file = "a.pini", offset = 1)
+    let loopVar = declareLocal(stack = stack, kind = localLoopVar, spelling = "i", typeId = 2, mutable = true, file = "a.pini", offset = 1, decl = -1)
     stack = loopVar.stack
-    let binding = declareLocal(stack, localBinding, "v", 3, false, "a.pini", 2, -1)
+    let binding = declareLocal(stack = stack, kind = localBinding, spelling = "v", typeId = 3, mutable = false, file = "a.pini", offset = 2, decl = -1)
     stack = binding.stack
     assert(stack.frameCount() == 2, "应有两帧")
-    assert(isScopeKind(stack.frameAt(0).kind, scopeFunction), "外层应为函数帧")
-    assert(isScopeKind(stack.frameAt(1).kind, scopeLoop), "内层应为循环帧")
+    assert(isScopeKind(kind = stack.frameAt(0).kind, expected = scopeFunction), "外层应为函数帧")
+    assert(isScopeKind(kind = stack.frameAt(1).kind, expected = scopeLoop), "内层应为循环帧")
     assert(stack.frameAt(1).start == 1, "循环帧应从第二个局部起")
     assert(stack.localAt(0).frame == 0, "首个局部属函数帧")
     assert(stack.localAt(1).frame == 1, "第二个局部属循环帧")
-    assert(isLocalKind(stack.localAt(1).kind, localLoopVar), "种类应为循环变量")
-    assert(isLocalKind(stack.localAt(2).kind, localBinding), "种类应为模式绑定")
+    assert(isLocalKind(kind = stack.localAt(1).kind, expected = localLoopVar), "种类应为循环变量")
+    assert(isLocalKind(kind = stack.localAt(2).kind, expected = localBinding), "种类应为模式绑定")
     assert(!stack.localAt(2).mutable, "模式绑定应沿用不可变")
     return
 
 ; 确定性：同一组声明构造两次，帧与局部逐项相同。
 构造确定|test() -> ():
-    assert(同栈(固定栈(), 固定栈()), "两次构造应逐项相同")
+    assert(同栈(first = 固定栈(), second = 固定栈()), "两次构造应逐项相同")
     return

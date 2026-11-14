@@ -6,7 +6,7 @@
 
 main|func() -> ():
     var g = func (n,) -> (I32,): return n + 1
-    print(应用(g, 5)) ; 6：自底向上：n+1 推 n:I32, 返 I32
-    print(应用(func (n,) -> (I32,): return n, 5)) ; 5：内联 func 体只有 n，靠期望 (I32)->(I32) 定型
-    print(应用(func (n,) -> (I32,): return n * 2, 5)) ; 10：自底向上(n*2) + 期望类型双重确认
+    print(应用(f = g, x = 5)) ; 6：自底向上：n+1 推 n:I32, 返 I32
+    print(应用(f = func (n,) -> (I32,): return n, x = 5)) ; 5：内联 func 体只有 n，靠期望 (I32)->(I32) 定型
+    print(应用(f = func (n,) -> (I32,): return n * 2, x = 5)) ; 10：自底向上(n*2) + 期望类型双重确认
     return

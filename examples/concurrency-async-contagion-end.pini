@@ -3,7 +3,7 @@
 ; Pini 的 `await` 只许写在异步体（=>）内、`wait` 只许写在同步体（->）内；本例 main 是同步函数，用 wait 就地截断整条链。
 
 ; —— 真正并发的末端服务（标 `=>`）——
-fetchPrice|func(id: I32,) => (I32,):
+fetchPrice|func(_id: I32,) => (I32,):
     sleep(100)
     return ok(id * 10) ; => 体必须 ok/err 包裹（errors-as-data）
 

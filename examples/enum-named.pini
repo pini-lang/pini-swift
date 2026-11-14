@@ -5,7 +5,7 @@
 identifier(text: String, loc: I32,)
 plus
 
-取文本|func(t: Token,) -> (String,):
+取文本|func(_t: Token,) -> (String,):
     match t:
         case identifier(text, loc,):
             return text
@@ -13,7 +13,7 @@ plus
             return "plus"
     return "?"
 
-具名取文本|func(t: Token,) -> (String,):
+具名取文本|func(_t: Token,) -> (String,):
     match t:
         case identifier(text: s, loc: l,):
             return s
@@ -21,7 +21,7 @@ plus
             return "plus"
     return "?"
 
-取位置|func(t: Token,) -> (I32,):
+取位置|func(_t: Token,) -> (I32,):
     match t:
         case identifier(_, l,):
             return l

@@ -1,5 +1,5 @@
 ; 规范重排：组合类非零的连续段按类值升序稳定插入，段首的起始字符不移动。
-reorderCanonical|func(codes: Array<I32>,) -> (Array<I32>,):
+reorderCanonical|func(_codes: Array<I32>,) -> (Array<I32>,):
     var out = codes
     var i = 1
     while i < len(out):
@@ -21,7 +21,7 @@ reorderCanonical|func(codes: Array<I32>,) -> (Array<I32>,):
     return out
 
 ; 全量规范分解（NFD）：逐标量查表展开，韩文按算术拆成字母，最后按组合类重排。
-nfdOfCodes|func(codes: Array<I32>,) -> (Array<I32>,):
+nfdOfCodes|func(_codes: Array<I32>,) -> (Array<I32>,):
     let pool = tempUtf8Bytes(decompositionPool())
     var out: Array<I32> = []
     var i = 0
@@ -38,7 +38,7 @@ nfdOfCodes|func(codes: Array<I32>,) -> (Array<I32>,):
             if packed < 0:
                 out = out.append(code)
             else:
-                out = appendPoolScalars(out, pool, packed >> 4, packed & 15)
+                out = appendPoolScalars(codes = out, pool = pool, start = packed >> 4, length = packed & 15)
         i = i + 1
     return reorderCanonical(out)
 
@@ -49,10 +49,10 @@ composePair|func(first: I32, second: I32,) -> (I32,):
     if first >= 0xAC00 && first <= 0xD7A3 && second >= 0x11A8 && second <= 0x11C2:
         if (first - 0xAC00) % 28 == 0:
             return first + (second - 0x11A7)
-    return compositionOf(first, second)
+    return compositionOf(first = first, second = second)
 
 ; 规范组合（NFC）：在 NFD 结果上按 UAX15 逐字符尝试合成，被阻止的对保持分解形式。
-nfcOfCodes|func(codes: Array<I32>,) -> (Array<I32>,):
+nfcOfCodes|func(_codes: Array<I32>,) -> (Array<I32>,):
     let decomposed = nfdOfCodes(codes)
     var out: Array<I32> = []
     var starter = -1
@@ -64,7 +64,7 @@ nfcOfCodes|func(codes: Array<I32>,) -> (Array<I32>,):
         var merged = false
         if starter >= 0:
             if lastClass < cc || lastClass == 0:
-                let composite = composePair(out[starter], code)
+                let composite = composePair(first = out[starter], second = code)
                 if composite >= 0:
                     out[starter] = composite
                     merged = true

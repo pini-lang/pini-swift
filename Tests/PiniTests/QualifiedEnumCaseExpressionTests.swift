@@ -42,7 +42,7 @@ struct QualifiedEnumCaseExpressionTests: Sendable, PiniSourceLowering {
         红
         绿
 
-        查|func(c: 色彩,) -> (I32,):
+        查|func(_c: 色彩,) -> (I32,):
             match c:
                 case 红:
                     return 1
@@ -74,7 +74,7 @@ struct QualifiedEnumCaseExpressionTests: Sendable, PiniSourceLowering {
         同
         异
 
-        取|func(x: 甲,) -> (I32,):
+        取|func(_x: 甲,) -> (I32,):
             match x:
                 case 同:
                     return 10
@@ -127,7 +127,7 @@ struct QualifiedEnumCaseExpressionTests: Sendable, PiniSourceLowering {
         圆(半径: I32,)
         方(边长: I32,)
 
-        面|func(s: 形状,) -> (I32,):
+        面|func(_s: 形状,) -> (I32,):
             match s:
                 case 圆(半径):
                     return 半径

@@ -113,7 +113,7 @@ struct ContainerElementOwnershipTests: PiniSourceLowering, Sendable {
     func 新造键写入后仍有效() throws {
         let listing = try emitted(
             """
-            键|func(n: I32,) -> (String,):
+            键|func(_n: I32,) -> (String,):
                 return "k\\(n)"
 
             main|func() -> ():

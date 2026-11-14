@@ -37,7 +37,7 @@ cases: Array<ShapeCase> = []
 entries: Array<ShapeEntry> = []
 
 ; 类别名：诊断、测试与回执共用一份拼写。
-shapeKindName|func(kind: ShapeKind,) -> (String,):
+shapeKindName|func(_kind: ShapeKind,) -> (String,):
     match kind:
         case shapeStruct:
             return "结构"
@@ -58,7 +58,7 @@ isShapeKind|func(kind: ShapeKind, expected: ShapeKind,) -> (Bool,):
     return shapeKindName(kind) == shapeKindName(expected)
 
 ; 名义声明：结构、对象与枚举三类，其余不算。
-isNominalDeclCode|func(code: I32,) -> (Bool,):
+isNominalDeclCode|func(_code: I32,) -> (Bool,):
     if isStructDeclCode(code) || isObjectDeclCode(code):
         return true
     return isEnumDeclCode(code)
@@ -74,7 +74,7 @@ findNominalDecl|func(world: MemberWorld, name: String,) -> (DeclRef,):
         while i < len(unit.ast.items):
             let id = unit.ast.items[i]
             let decl = unit.ast.decls[id]
-            if isNominalDeclCode(decl.kind) && decodeRange(bytes, decl.nameStart, decl.nameEnd) == name:
+            if isNominalDeclCode(decl.kind) && decodeRange(bytes = bytes, start = decl.nameStart, end = decl.nameEnd) == name:
                 out.unit = u
                 out.decl = id
                 return out
@@ -89,7 +89,7 @@ variantPayload|func(world: MemberWorld, unitIndex: I32, decl: DeclNode,) -> (Arr
     while i < len(decl.kids):
         let kid = decl.kids[i]
         if isParamDeclCode(world.units[unitIndex].ast.decls[kid].kind):
-            out = out.append(world.types.typeOf(unitIndex, kid))
+            out = out.append(world.types.typeOf(unit = unitIndex, decl = kid))
         i = i + 1
     return out
 
@@ -112,27 +112,27 @@ shapeOfDecl|func(world: MemberWorld, ref: DeclRef, typeId: I32,) -> (ShapeEntry,
         let child = unit.ast.decls[kid]
         if isFieldDeclCode(child.kind):
             var field = ShapeField()
-            field.name = decodeRange(bytes, child.nameStart, child.nameEnd)
-            field.typeId = world.types.typeOf(ref.unit, kid)
+            field.name = decodeRange(bytes = bytes, start = child.nameStart, end = child.nameEnd)
+            field.typeId = world.types.typeOf(unit = ref.unit, decl = kid)
             out.fields = out.fields.append(field)
         elif isVariantDeclCode(child.kind):
             var variant = ShapeCase()
-            variant.name = decodeRange(bytes, child.nameStart, child.nameEnd)
-            variant.payload = variantPayload(world, ref.unit, child)
+            variant.name = decodeRange(bytes = bytes, start = child.nameStart, end = child.nameEnd)
+            variant.payload = variantPayload(world = world, unitIndex = ref.unit, decl = child)
             out.cases = out.cases.append(variant)
         i = i + 1
     return out
 
 ; 建表：按池序取全部名义类型，逐个找声明成形；条目因此恒按类型下标升序。
-makeShapeTable|func(world: MemberWorld,) -> (ShapeTable,):
+makeShapeTable|func(_world: MemberWorld,) -> (ShapeTable,):
     var out = ShapeTable()
     var i = 0
     while i < len(world.types.pool.entries):
         let entry = world.types.pool.entries[i]
         if isNominalClass(entry.kind):
-            let ref = findNominalDecl(world, entry.name)
+            let ref = findNominalDecl(world = world, name = entry.name)
             if ref.unit >= 0:
-                out.entries = out.entries.append(shapeOfDecl(world, ref, i))
+                out.entries = out.entries.append(shapeOfDecl(world = world, ref = ref, typeId = i))
         i = i + 1
     return out
 
@@ -141,7 +141,7 @@ makeShapeTable|func(world: MemberWorld,) -> (ShapeTable,):
 count|self() -> (I32,):
     return len(self.entries)
 ; 条目读：下标越界是运行时陷阱，调用方先经 findShape 取下标。
-entryAt|self(index: I32,) -> (ShapeEntry,):
+entryAt|self(_index: I32,) -> (ShapeEntry,):
     return self.entries[index]
 
 ; 按类型下标查条目：升序表线性扫，未命中答 -1。
@@ -155,7 +155,7 @@ findShape|func(table: ShapeTable, typeId: I32,) -> (I32,):
 
 ; 取条目：未命中答空条目，调用方不必先判下标。
 shapeAt|func(table: ShapeTable, typeId: I32,) -> (ShapeEntry,):
-    let at = findShape(table, typeId)
+    let at = findShape(table = table, typeId = typeId)
     if at < 0:
         return ShapeEntry()
     return table.entries[at]

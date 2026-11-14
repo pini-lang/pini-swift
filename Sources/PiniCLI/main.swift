@@ -1332,6 +1332,41 @@ func runCheckCommand(source: String, fileName: String) throws {
     CommentStyleHint.emit()
 }
 
+/// 收集模式：只回类型错误。语义错误先行拦下（与 `checkSingleFileDiagnostics` 同序），
+/// 有语义错误时不进类型层，避免把「没跑到」当成「没有」。
+func checkSingleFileTypeErrors(source: String, fileName: String) -> [TypeError] {
+    let module = parseOrReport(source: source, fileName: fileName)
+    let analyzer = SemanticAnalyzer()
+    if !analyzer.analyzeCollecting(module: module).isEmpty { return [] }
+    return TypeChecker().checkCollecting(module: module)
+}
+
+/// 迁移普查用的 TSV：文件 行 列 码 被调 形参 形参下标 声明文件 声明行。
+/// 只输出标签判据的三条码；其余错误走原有格式化渲染，不进这张表。
+func emitTypeErrorTSV(_ errors: [TypeError]) {
+    for error in errors {
+        let code = error.diagnosticCode
+        guard code == "E4-036" || code == "E4-037" || code == "E4-038" else { continue }
+        let loc = error.diagnosticLocation
+        var callee = ""
+        var param = ""
+        var index = -1
+        var declFile = ""
+        var declLine = 0
+        switch error {
+        case .missingArgumentLabel(let c, let p, let i, let df, let dl, _):
+            callee = c; param = p; index = i; declFile = df; declLine = dl
+        case .unexpectedArgumentLabel(let c, let p, _):
+            callee = c; param = p
+        case .duplicateArgumentLabel(let c, let p, _):
+            callee = c; param = p
+        default:
+            break
+        }
+        print("\(loc.fileName)\t\(loc.line)\t\(loc.column)\t\(code)\t\(callee)\t\(param)\t\(index)\t\(declFile)\t\(declLine)")
+    }
+}
+
 // 测试执行通道：同一套收集范围与门禁，两条后端。它只决定最后一步怎么跑（解释器执行 / 发射后运行），
 // 不影响「收集哪些」与「门禁怎么做」——那两件事两条通道共用同一份代码，否则「两后端一致」没有载体。
 enum TestChannel {
@@ -1701,7 +1736,7 @@ func emitAndRunLLVMTests(
 
 // check / build 接收文件或目录：文件 → 单文件收集式 check；目录含 `pini.toml` → 显式多文件模块，
 // 跨文件 analyze/check 首个错误即报；目录无清单 → 逐 `.pini` 独立 check，并跳过嵌套模块子目录。
-func runCheckPath(_ path: String) {
+func runCheckPath(_ path: String, reportTSV: Bool = false) {
     var isDir: ObjCBool = false
     guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir) else {
         printError("Error: 路径不存在：\(path)")
@@ -1712,6 +1747,12 @@ func runCheckPath(_ path: String) {
         let source: String
         do { source = try readFile(path) } catch {
             printError("Error: \(error.localizedDescription)"); exit(1)
+        }
+        if reportTSV {
+            let errors = checkSingleFileTypeErrors(source: source, fileName: path)
+            emitTypeErrorTSV(errors)
+            if !errors.isEmpty { exit(1) }
+            return
         }
         do {
             try runCheckCommand(source: source, fileName: path)
@@ -1755,7 +1796,13 @@ func runCheckPath(_ path: String) {
             try analyzer.analyze(package: pkg)
             emitSemanticWarnings(analyzer)
             let checker = TypeChecker()
-            try checker.check(package: pkg)
+            if reportTSV {
+                let errors = checker.checkCollecting(package: pkg)
+                emitTypeErrorTSV(errors)
+                if !errors.isEmpty { exit(1) }
+            } else {
+                try checker.check(package: pkg)
+            }
             /// 宏常量在检查阶段就求值：值展不开是声明或配置的问题，不该等到运行才显形。
             _ = try evaluateForeignMacros(
                 symbols: pkg.fileUnits.flatMap { foreignSymbols(in: $0.module) },
@@ -1800,6 +1847,12 @@ func runCheckPath(_ path: String) {
             continue
         }
         let fileName = (full as NSString).lastPathComponent
+        if reportTSV {
+            let errors = checkSingleFileTypeErrors(source: source, fileName: full)
+            emitTypeErrorTSV(errors)
+            if !errors.isEmpty { failed.append(fileName) }
+            continue
+        }
         let checkResult = checkSingleFileDiagnostics(source: source, fileName: fileName)
         if !checkResult.diagnostics.isEmpty {
             for d in checkResult.diagnostics {
@@ -2480,16 +2533,27 @@ case "repl":
     ReplSession().run()
     exit(0)
 case "check":
-    guard args.count >= 3 else {
+    var reportTSV = false
+    var checkPath: String? = nil
+    for arg in args.dropFirst(2) {
+        if arg == "--report=tsv" {
+            reportTSV = true
+        } else if arg.hasPrefix("--") {
+            printError("Error: \(arg)")
+            printError("  合法用法：pini \(command) <路径> [--report=tsv]")
+            exit(1)
+        } else if checkPath == nil {
+            checkPath = arg
+        } else {
+            printError("Error: 多余的参数 \(arg)")
+            exit(1)
+        }
+    }
+    guard let path = checkPath else {
         printError("Error: \(command) command requires a file or directory path")
         exit(1)
     }
-    if let unknown = args.dropFirst(3).first(where: { $0.hasPrefix("--") }) {
-        printError("Error: \(unknown)")
-        printError("  合法用法：pini \(command) <路径>")
-        exit(1)
-    }
-    runCheckPath(args[2])
+    runCheckPath(path, reportTSV: reportTSV)
 case "build":
     var shared = false
     var outputPath: String?

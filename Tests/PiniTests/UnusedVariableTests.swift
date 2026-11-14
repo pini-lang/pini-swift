@@ -26,7 +26,7 @@ struct UnusedVariableTests: Sendable {
             (盒)
             值: I32 = 0
 
-            取|func(t: I32,) -> (盒,):
+            取|func(_t: I32,) -> (盒,):
                 var b = 盒()
                 b.值 = t
                 return b

@@ -9,7 +9,7 @@ toCString: (String,) -> (*U8,)
 puts: (*U8,) -> (I32,)
 
 ; |unsafe 自由函数：函数体自动处于不安全上下文，内部无需 unsafe 前缀
-量长度|unsafe(s: String,) -> (U64,):
+量长度|unsafe(_s: String,) -> (U64,):
     var p = toCString(s)
     var n = strlen(p)
     free(p)

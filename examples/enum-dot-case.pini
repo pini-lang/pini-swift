@@ -12,7 +12,7 @@
 开
 关
 
-取半径|func(s: 形状,) -> (F64,):
+取半径|func(_s: 形状,) -> (F64,):
     match s:
         case 圆(r,):
             return r

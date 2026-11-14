@@ -66,10 +66,10 @@ takeSymbolSlots|func(values: Array<SymbolSlot>, start: I32, end: I32,) -> (Array
 
 ; 符号槽比较：先比所有者键，再比名字键。
 compareSymbolSlots|func(first: SymbolSlot, second: SymbolSlot,) -> (I32,):
-    let ownerOrder = compareKeys(first.ownerKey, second.ownerKey)
+    let ownerOrder = compareKeys(first = first.ownerKey, second = second.ownerKey)
     if ownerOrder != 0:
         return ownerOrder
-    return compareKeys(first.key, second.key)
+    return compareKeys(first = first.key, second = second.key)
 
 ; 归并：两段已有序，稳定取小者，故同键保持登记序。
 mergeSymbolSlots|func(left: Array<SymbolSlot>, right: Array<SymbolSlot>,) -> (Array<SymbolSlot>,):
@@ -77,7 +77,7 @@ mergeSymbolSlots|func(left: Array<SymbolSlot>, right: Array<SymbolSlot>,) -> (Ar
     var i = 0
     var j = 0
     while i < len(left) && j < len(right):
-        if compareSymbolSlots(left[i], right[j]) <= 0:
+        if compareSymbolSlots(first = left[i], second = right[j]) <= 0:
             out = out.append(left[i])
             i = i + 1
         else:
@@ -92,13 +92,13 @@ mergeSymbolSlots|func(left: Array<SymbolSlot>, right: Array<SymbolSlot>,) -> (Ar
     return out
 
 ; 排序：两路归并，槽数上万时仍是 n log n。
-sortSymbolSlots|func(values: Array<SymbolSlot>,) -> (Array<SymbolSlot>,):
+sortSymbolSlots|func(_values: Array<SymbolSlot>,) -> (Array<SymbolSlot>,):
     if len(values) <= 1:
         return values
     let mid = len(values) / 2
-    let left = sortSymbolSlots(takeSymbolSlots(values, 0, mid))
-    let right = sortSymbolSlots(takeSymbolSlots(values, mid, len(values)))
-    return mergeSymbolSlots(left, right)
+    let left = sortSymbolSlots(takeSymbolSlots(values = values, start = 0, end = mid))
+    let right = sortSymbolSlots(takeSymbolSlots(values = values, start = mid, end = len(values)))
+    return mergeSymbolSlots(left = left, right = right)
 
 ; 取区间：导入槽版本。
 takeImportSlots|func(values: Array<ImportSlot>, start: I32, end: I32,) -> (Array<ImportSlot>,):
@@ -111,10 +111,10 @@ takeImportSlots|func(values: Array<ImportSlot>, start: I32, end: I32,) -> (Array
 
 ; 导入槽比较：先比文件键，再比别名键。
 compareImportSlots|func(first: ImportSlot, second: ImportSlot,) -> (I32,):
-    let fileOrder = compareKeys(first.fileKey, second.fileKey)
+    let fileOrder = compareKeys(first = first.fileKey, second = second.fileKey)
     if fileOrder != 0:
         return fileOrder
-    return compareKeys(first.key, second.key)
+    return compareKeys(first = first.key, second = second.key)
 
 ; 归并：导入槽版本。
 mergeImportSlots|func(left: Array<ImportSlot>, right: Array<ImportSlot>,) -> (Array<ImportSlot>,):
@@ -122,7 +122,7 @@ mergeImportSlots|func(left: Array<ImportSlot>, right: Array<ImportSlot>,) -> (Ar
     var i = 0
     var j = 0
     while i < len(left) && j < len(right):
-        if compareImportSlots(left[i], right[j]) <= 0:
+        if compareImportSlots(first = left[i], second = right[j]) <= 0:
             out = out.append(left[i])
             i = i + 1
         else:
@@ -137,13 +137,13 @@ mergeImportSlots|func(left: Array<ImportSlot>, right: Array<ImportSlot>,) -> (Ar
     return out
 
 ; 排序：导入槽版本。
-sortImportSlots|func(values: Array<ImportSlot>,) -> (Array<ImportSlot>,):
+sortImportSlots|func(_values: Array<ImportSlot>,) -> (Array<ImportSlot>,):
     if len(values) <= 1:
         return values
     let mid = len(values) / 2
-    let left = sortImportSlots(takeImportSlots(values, 0, mid))
-    let right = sortImportSlots(takeImportSlots(values, mid, len(values)))
-    return mergeImportSlots(left, right)
+    let left = sortImportSlots(takeImportSlots(values = values, start = 0, end = mid))
+    let right = sortImportSlots(takeImportSlots(values = values, start = mid, end = len(values)))
+    return mergeImportSlots(left = left, right = right)
 
 ; 取区间：声明槽版本。
 takeDeclSlots|func(values: Array<DeclSlot>, start: I32, end: I32,) -> (Array<DeclSlot>,):
@@ -156,7 +156,7 @@ takeDeclSlots|func(values: Array<DeclSlot>, start: I32, end: I32,) -> (Array<Dec
 
 ; 声明槽比较：先比文件键，再比偏移。
 compareDeclSlots|func(first: DeclSlot, second: DeclSlot,) -> (I32,):
-    let fileOrder = compareKeys(first.fileKey, second.fileKey)
+    let fileOrder = compareKeys(first = first.fileKey, second = second.fileKey)
     if fileOrder != 0:
         return fileOrder
     if first.offset < second.offset:
@@ -171,7 +171,7 @@ mergeDeclSlots|func(left: Array<DeclSlot>, right: Array<DeclSlot>,) -> (Array<De
     var i = 0
     var j = 0
     while i < len(left) && j < len(right):
-        if compareDeclSlots(left[i], right[j]) <= 0:
+        if compareDeclSlots(first = left[i], second = right[j]) <= 0:
             out = out.append(left[i])
             i = i + 1
         else:
@@ -186,16 +186,16 @@ mergeDeclSlots|func(left: Array<DeclSlot>, right: Array<DeclSlot>,) -> (Array<De
     return out
 
 ; 排序：声明槽版本。
-sortDeclSlots|func(values: Array<DeclSlot>,) -> (Array<DeclSlot>,):
+sortDeclSlots|func(_values: Array<DeclSlot>,) -> (Array<DeclSlot>,):
     if len(values) <= 1:
         return values
     let mid = len(values) / 2
-    let left = sortDeclSlots(takeDeclSlots(values, 0, mid))
-    let right = sortDeclSlots(takeDeclSlots(values, mid, len(values)))
-    return mergeDeclSlots(left, right)
+    let left = sortDeclSlots(takeDeclSlots(values = values, start = 0, end = mid))
+    let right = sortDeclSlots(takeDeclSlots(values = values, start = mid, end = len(values)))
+    return mergeDeclSlots(left = left, right = right)
 
 ; 建符号索引：符号与导入各扫一遍，排序后只读。
-makeSymbolIndex|func(table: SymbolTable,) -> (SymbolIndex,):
+makeSymbolIndex|func(_table: SymbolTable,) -> (SymbolIndex,):
     var slots: Array<SymbolSlot> = []
     var i = 0
     while i < table.symbolCount():
@@ -222,7 +222,7 @@ makeSymbolIndex|func(table: SymbolTable,) -> (SymbolIndex,):
     return out
 
 ; 建声明索引：逐单元扫声明池；单元次序即 type 面的单元下标。
-makeDeclIndex|func(units: Array<CompilationUnit>,) -> (DeclIndex,):
+makeDeclIndex|func(_units: Array<CompilationUnit>,) -> (DeclIndex,):
     var slots: Array<DeclSlot> = []
     var u = 0
     while u < len(units):
@@ -248,13 +248,13 @@ lowerBoundSymbol|func(slots: Array<SymbolSlot>, ownerKey: Array<U8>, key: Array<
     var hi = len(slots)
     while lo < hi:
         let mid = (lo + hi) / 2
-        let order = compareKeys(slots[mid].ownerKey, ownerKey)
+        let order = compareKeys(first = slots[mid].ownerKey, second = ownerKey)
         if order < 0:
             lo = mid + 1
         elif order > 0:
             hi = mid
         else:
-            if compareKeys(slots[mid].key, key) < 0:
+            if compareKeys(first = slots[mid].key, second = key) < 0:
                 lo = mid + 1
             else:
                 hi = mid
@@ -263,19 +263,19 @@ lowerBoundSymbol|func(slots: Array<SymbolSlot>, ownerKey: Array<U8>, key: Array<
 ; 顶层查找：所有者键为空；命中答符号下标，否则 -1。
 lookupTop|func(index: SymbolIndex, key: Array<U8>,) -> (I32,):
     var empty: Array<U8> = []
-    let at = lowerBoundSymbol(index.slots, empty, key)
+    let at = lowerBoundSymbol(slots = index.slots, ownerKey = empty, key = key)
     if at < len(index.slots):
-        if len(index.slots[at].ownerKey) == 0 && sameKey(index.slots[at].key, key):
+        if len(index.slots[at].ownerKey) == 0 && sameKey(first = index.slots[at].key, second = key):
             return index.slots[at].symbol
     return -1
 
 ; 成员查找：所有者名折成 NFC 键后二分；命中答符号下标，否则 -1。
 lookupMember|func(index: SymbolIndex, owner: String, key: Array<U8>,) -> (I32,):
     let ownerKey = keyOfText(owner)
-    let at = lowerBoundSymbol(index.slots, ownerKey, key)
+    let at = lowerBoundSymbol(slots = index.slots, ownerKey = ownerKey, key = key)
     if at < len(index.slots):
         let slot = index.slots[at]
-        if sameKey(slot.ownerKey, ownerKey) && sameKey(slot.key, key):
+        if sameKey(first = slot.ownerKey, second = ownerKey) && sameKey(first = slot.key, second = key):
             return slot.symbol
     return -1
 
@@ -285,13 +285,13 @@ lowerBoundImport|func(slots: Array<ImportSlot>, fileKey: Array<U8>, key: Array<U
     var hi = len(slots)
     while lo < hi:
         let mid = (lo + hi) / 2
-        let order = compareKeys(slots[mid].fileKey, fileKey)
+        let order = compareKeys(first = slots[mid].fileKey, second = fileKey)
         if order < 0:
             lo = mid + 1
         elif order > 0:
             hi = mid
         else:
-            if compareKeys(slots[mid].key, key) < 0:
+            if compareKeys(first = slots[mid].key, second = key) < 0:
                 lo = mid + 1
             else:
                 hi = mid
@@ -300,10 +300,10 @@ lowerBoundImport|func(slots: Array<ImportSlot>, fileKey: Array<U8>, key: Array<U
 ; 导入别名查找：文件与别名都要对上；命中答导入表下标，否则 -1。
 lookupImport|func(index: SymbolIndex, file: String, key: Array<U8>,) -> (I32,):
     let fileKey = keyOfText(file)
-    let at = lowerBoundImport(index.imports, fileKey, key)
+    let at = lowerBoundImport(slots = index.imports, fileKey = fileKey, key = key)
     if at < len(index.imports):
         let slot = index.imports[at]
-        if sameKey(slot.fileKey, fileKey) && sameKey(slot.key, key):
+        if sameKey(first = slot.fileKey, second = fileKey) && sameKey(first = slot.key, second = key):
             return slot.symbol
     return -1
 
@@ -313,7 +313,7 @@ lowerBoundDecl|func(slots: Array<DeclSlot>, fileKey: Array<U8>, offset: I32,) ->
     var hi = len(slots)
     while lo < hi:
         let mid = (lo + hi) / 2
-        let order = compareKeys(slots[mid].fileKey, fileKey)
+        let order = compareKeys(first = slots[mid].fileKey, second = fileKey)
         if order < 0:
             lo = mid + 1
         elif order > 0:
@@ -329,10 +329,10 @@ lowerBoundDecl|func(slots: Array<DeclSlot>, fileKey: Array<U8>, offset: I32,) ->
 lookupDecl|func(index: DeclIndex, file: String, offset: I32,) -> (DeclRef,):
     var out = DeclRef()
     let fileKey = keyOfText(file)
-    let at = lowerBoundDecl(index.slots, fileKey, offset)
+    let at = lowerBoundDecl(slots = index.slots, fileKey = fileKey, offset = offset)
     if at < len(index.slots):
         let slot = index.slots[at]
-        if sameKey(slot.fileKey, fileKey) && slot.offset == offset:
+        if sameKey(first = slot.fileKey, second = fileKey) && slot.offset == offset:
             out.unit = slot.unit
             out.decl = slot.decl
     return out
@@ -345,10 +345,10 @@ slotCount|self() -> (I32,):
 importCount|self() -> (I32,):
     return len(self.imports)
 ; 槽读取：下标越界是运行时陷阱，调用方先经查找取符号下标。
-slotAt|self(index: I32,) -> (SymbolSlot,):
+slotAt|self(_index: I32,) -> (SymbolSlot,):
     return self.slots[index]
 ; 导入槽读取：与 slotAt 同规。
-importAt|self(index: I32,) -> (ImportSlot,):
+importAt|self(_index: I32,) -> (ImportSlot,):
     return self.imports[index]
 
 ((DeclIndex))
@@ -356,5 +356,5 @@ importAt|self(index: I32,) -> (ImportSlot,):
 slotCount|self() -> (I32,):
     return len(self.slots)
 ; 槽读取：与 SymbolIndex.slotAt 同规。
-slotAt|self(index: I32,) -> (DeclSlot,):
+slotAt|self(_index: I32,) -> (DeclSlot,):
     return self.slots[index]

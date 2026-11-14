@@ -38,7 +38,6 @@ public final class TypeChecker {
     /// 同步调用完全不受影响。形参名单独存是因为 `TypeEnvironment.FunctionSignature` 只保留类型，
     /// 而一条好的隔离报错必须指名道姓说出是哪个形参。
     private var asyncFunctionParamNames: [String: [String]] = [:]
-    private var functionParamNames: [String: [String]] = [:]
 
     /// B3-1：`Type.method` → 形参名列表，覆盖标了 `=>` 的**方法**（与自由函数同等对待）。
     private var asyncMethodParamNames: [String: [String]] = [:]
@@ -168,7 +167,7 @@ public final class TypeChecker {
             name: "Future",
             genericParams: ["T", "E"],
             fields: [],
-            methods: [(name: "cancel", params: [], returns: [])]
+            methods: [(name: "cancel", params: [], returns: [], paramCalls: [])]
         )
 
         // Result<T, E>：内建泛型枚举（B0-1 已打通泛型枚举特化链路）
@@ -761,6 +760,72 @@ public final class TypeChecker {
                 location: package.location))
     }
 
+    /// 整包收集模式：与 `check(package:)` 同一套注册与上下文，逐条捕获而不首错即停。
+    /// 目录检查与迁移普查用它；单文件包委托 `checkCollecting(module:)`。
+    public func checkCollecting(package: Package) -> [TypeError] {
+        if package.fileUnits.count <= 1 {
+            let module =
+                package.fileUnits.first?.module
+                ?? Module(
+                    declarations: [], imports: [], exports: [],
+                    location: SourceLocation(line: 0, column: 0, fileName: package.name))
+            return checkCollecting(module: module)
+        }
+        diagnostics = []
+        collecting = true
+        defer { collecting = false }
+
+        let index = PackageSymbolIndex(package: package)
+        collectExportCContext(package.fileUnits.flatMap { $0.module.declarations })
+        cExportPiniNames = Self.cExportedPiniNames(package.fileUnits.flatMap { $0.module.exports })
+        for unit in package.fileUnits {
+            preregisterTraits(unit.module)
+        }
+        registerImplicitImports(package.fileUnits.map(\.module))
+        for unit in package.fileUnits {
+            for decl in unit.module.declarations {
+                registerTopLevelDeclSignature(decl)
+            }
+        }
+        for unit in package.fileUnits {
+            packageContext = (index: index, currentFileName: unit.fileName)
+            importAliasNames = Set(unit.module.imports.map(\.alias))
+            for decl in unit.module.declarations {
+                do {
+                    try enforceDeclTypeVisibility(decl)
+                    try checkTopLevelDecl(decl)
+                } catch let error as TypeError {
+                    diagnostics.append(error)
+                } catch {
+                    // 非 TypeError 不应发生；保持防御
+                }
+            }
+            for block in unit.module.exports {
+                do {
+                    try enforceExportBlockVisibility(block)
+                    try checkExportSurface(block)
+                } catch let error as TypeError {
+                    diagnostics.append(error)
+                } catch {
+                    // 非 TypeError 不应发生；保持防御
+                }
+            }
+            packageContext = nil
+        }
+        do {
+            try checkErrorCodeTable(
+                Module(
+                    declarations: package.fileUnits.flatMap { $0.module.declarations },
+                    exports: package.fileUnits.flatMap { $0.module.exports },
+                    location: package.location))
+        } catch let error as TypeError {
+            diagnostics.append(error)
+        } catch {
+            // 非 TypeError 不应发生；保持防御
+        }
+        return DiagnosticDedupe.unique(diagnostics)
+    }
+
     /// 码表缺陷（载体写错、码值撞固定码、派生区或 tag 空间溢出）只有在整张表排出来时才成立，
     /// 故合成整个模块查一次；警告侧走同一个 `ErrorCodePlan`，两边看到的是同一张表。
     private func checkErrorCodeTable(_ module: Module) throws {
@@ -966,21 +1031,31 @@ public final class TypeChecker {
         for traitName in traits {
             guard let trait = typeEnv.lookupTrait(name: traitName) else { continue }
             for sig in trait.signatures where sig.body != nil {
-                let params = traitParamsWithoutSelf(sig.params, location: location)
+                let kept = traitParamsDroppingSelf(sig.params)
+                let params = kept.map {
+                    $0.typeAnnotation ?? TypeAnnotation.simple(name: "_", location: location)
+                }
                 let returns = sig.returnTypes.map { replaceSelf($0, with: typeName) }
-                typeEnv.defineMethod(typeName: typeName, methodName: sig.name, params: params, returns: returns)
+                typeEnv.defineMethod(
+                    typeName: typeName, methodName: sig.name, params: params, returns: returns,
+                    paramCalls: Self.paramCalls(of: kept, at: sig.location))
             }
         }
     }
 
-    /// trait 方法签名参数：剥离首参数若为 `self`（与 struct/object 方法修饰符 self 不进 params 的约定一致，
-    /// 也与运行时成员派发剥离 self 对齐）。缺省类型注解以 "_" 占位。
-    private func traitParamsWithoutSelf(_ params: [Parameter], location: SourceLocation) -> [TypeAnnotation] {
-        let mapped = params.map { $0.typeAnnotation ?? TypeAnnotation.simple(name: "_", location: location) }
+    /// 剥掉首参数里的 `self`（与 struct/object 方法修饰符 self 不进 params 的约定一致）。
+    private func traitParamsDroppingSelf(_ params: [Parameter]) -> [Parameter] {
         if let first = params.first, first.name == "self" {
-            return Array(mapped.dropFirst())
+            return Array(params.dropFirst())
         }
-        return mapped
+        return params
+    }
+
+    /// trait 方法签名参数：剥离首参数若为 `self`，缺省类型注解以 "_" 占位。
+    private func traitParamsWithoutSelf(_ params: [Parameter], location: SourceLocation) -> [TypeAnnotation] {
+        return traitParamsDroppingSelf(params).map {
+            $0.typeAnnotation ?? TypeAnnotation.simple(name: "_", location: location)
+        }
     }
 
     /// 类型层 trait 约束求解：声明 `traits: [T]` 的类型必须满足 T 的全部抽象方法
@@ -1008,6 +1083,18 @@ public final class TypeChecker {
                             location: location
                         ))
                     continue
+                }
+                let reqKept = traitParamsDroppingSelf(req.params)
+                for (i, rp) in reqKept.enumerated() where i < provided.paramCalls.count {
+                    let pp = provided.paramCalls[i]
+                    if rp.takesLabel != pp.takesLabel {
+                        try report(
+                            TypeError.traitMethodSignatureMismatch(
+                                typeName: typeName, traitName: traitName, methodName: req.name,
+                                detail: "第 \(i + 1) 个参数的标签面不符：特征\(rp.takesLabel ? "要求标签" : "按位置")，实现\(pp.takesLabel ? "要求标签" : "按位置")",
+                                location: location
+                            ))
+                    }
                 }
                 for (i, rp) in reqParams.enumerated() {
                     let pp = provided.params[i]
@@ -1526,21 +1613,22 @@ public final class TypeChecker {
             let returnTypes = TypeChecker.signatureReturns(of: f)
             // B3-1：登记并发进程的形参名，供任务隔离检查在报错时指名道姓
             if f.isAsync { asyncFunctionParamNames[f.name] = f.params.map { $0.name } }
-            /// 登记全部函数形参名，供调用点标签校验（缺了它标签不匹配也静默通过，运行期才报未知参数名）。
-            functionParamNames[f.name] = f.params.map { $0.name }
+            let paramCalls = Self.paramCalls(of: f.params, at: f.location)
             if !f.genericParams.isEmpty {
                 // P3-0：泛型函数模板注册——供调用点 T 占位通配比对（端到端）
                 typeEnv.defineGenericFunction(
                     name: f.name,
                     genericParams: f.genericParams.map { $0.name },
                     params: paramTypes,
-                    returns: returnTypes
+                    returns: returnTypes,
+                    paramCalls: paramCalls
                 )
             } else {
                 typeEnv.defineFunction(
                     name: f.name, params: paramTypes, returns: returnTypes,
                     returnLabels: TypeChecker.signatureReturnLabels(of: f),
-                    usingParamIndices: TypeChecker.usingParamIndices(of: f.params)
+                    usingParamIndices: TypeChecker.usingParamIndices(of: f.params),
+                    paramCalls: paramCalls
                 )
             }
             /// 回调候选表：只收顶层、非泛型、非 `|test`、非 `main` 的自由函数。
@@ -1559,7 +1647,8 @@ public final class TypeChecker {
                     (
                         name: $0.name,
                         params: $0.params.map { $0.typeAnnotation ?? TypeAnnotation.simple(name: "_", location: loc) },
-                        returns: $0.returnTypes
+                        returns: $0.returnTypes,
+                        paramCalls: TypeChecker.paramCalls(of: $0.params, at: $0.location)
                     )
                 }
                 typeEnv.defineGenericStruct(
@@ -1587,7 +1676,8 @@ public final class TypeChecker {
                     (
                         name: $0.name,
                         params: $0.params.map { $0.typeAnnotation ?? TypeAnnotation.simple(name: "_", location: loc) },
-                        returns: $0.returnTypes
+                        returns: $0.returnTypes,
+                        paramCalls: TypeChecker.paramCalls(of: $0.params, at: $0.location)
                     )
                 }
                 typeEnv.defineGenericStruct(
@@ -1617,7 +1707,8 @@ public final class TypeChecker {
                     (
                         name: $0.name,
                         params: $0.params.map { $0.typeAnnotation ?? TypeAnnotation.simple(name: "_", location: loc) },
-                        returns: $0.returnTypes
+                        returns: $0.returnTypes,
+                        paramCalls: TypeChecker.paramCalls(of: $0.params, at: $0.location)
                     )
                 }
                 typeEnv.defineGenericStruct(
@@ -1796,23 +1887,37 @@ public final class TypeChecker {
         }
     }
 
+    /// 形参的调用面：名字、标签要求与声明位置。内建与外部函数不走这里，留空即豁免标签判据。
+    /// 标准库前奏与内建同一面：它的声明位置是虚拟文件名，调用点不判标签。
+    private static func paramCalls(
+        of params: [Parameter], at location: SourceLocation
+    ) -> [TypeEnvironment.ParamCallInfo] {
+        if location.fileName.hasPrefix("<") { return [] }
+        return params.map {
+            TypeEnvironment.ParamCallInfo(
+                name: $0.name, takesLabel: $0.takesLabel,
+                declFile: location.fileName, declLine: location.line)
+        }
+    }
+
     private func registerMethodSignature(
         _ method: FuncDecl,
         typeName: String,
         paramTypes: [TypeAnnotation]
     ) {
         let usingIndices = TypeChecker.usingParamIndices(of: method.params)
+        let calls = Self.paramCalls(of: method.params, at: method.location)
         if method.modifiers.contains("own") {
             typeEnv.defineOwnMethod(
                 typeName: typeName, methodName: method.name, params: paramTypes,
                 returns: method.returnTypes, returnLabels: method.returnLabels,
-                usingParamIndices: usingIndices
+                usingParamIndices: usingIndices, paramCalls: calls
             )
         } else {
             typeEnv.defineMethod(
                 typeName: typeName, methodName: method.name, params: paramTypes,
                 returns: method.returnTypes, returnLabels: method.returnLabels,
-                usingParamIndices: usingIndices
+                usingParamIndices: usingIndices, paramCalls: calls
             )
         }
     }
@@ -2788,7 +2893,7 @@ public final class TypeChecker {
                         try checkForeignVariadicArguments(
                             callee: calleeName, arguments: arguments, signature: sig, location: location)
                     }
-                    try validateCallArguments(arguments: arguments, signature: sig, location: location, paramNames: functionParamNames[calleeName])
+                    try validateCallArguments(arguments: arguments, signature: sig, location: location, callee: calleeName)
                     // B3-1：并发进程调用点的任务隔离——引用类型不得越过 `=>` 边界（消解 R6）
                     if let paramNames = asyncFunctionParamNames[calleeName] {
                         try enforceTaskIsolation(
@@ -2811,7 +2916,9 @@ public final class TypeChecker {
                 if case .identifier(let typeName, _) = object,
                     let sig = typeEnv.lookupOwnMethod(typeName: typeName, methodName: memberName)
                 {
-                    try validateCallArguments(arguments: arguments, signature: sig, location: location)
+                    try validateCallArguments(
+                        arguments: arguments, signature: sig, location: location,
+                        callee: "\(typeName).\(memberName)")
                 } else if case .identifier(let parentName, _) = object,
                     typeEnv.lookupEnumCase(enumName: parentName, caseName: memberName) != nil
                 {
@@ -2820,7 +2927,8 @@ public final class TypeChecker {
                     // 跨模块限定调用——类型层不透明（运行时限定派发），仅校验实参
                     for arg in arguments { try checkExpression(arg.expression) }
                 } else if let sig = lookupMethodSignature(for: object, memberName: memberName) {
-                    try validateCallArguments(arguments: arguments, signature: sig, location: location)
+                    try validateCallArguments(
+                        arguments: arguments, signature: sig, location: location, callee: memberName)
                     // B3-1：标了 `=>` 的方法与自由函数同等对待（方法也是并发进程的派发入口）
                     if let recv = inference.infer(expression: object) {
                         let recvName: String?
@@ -2969,7 +3077,8 @@ public final class TypeChecker {
                             location: location
                         ))
                 } else if let sig = typeEnv.lookupSpecializedFunctionSignature(name: typeName, typeArgs: typeArgs) {
-                    try validateCallArguments(arguments: arguments, signature: sig, location: location)
+                    try validateCallArguments(
+                        arguments: arguments, signature: sig, location: location, callee: typeName)
                 }
             } else if let expectedCount = typeEnv.genericParamCount(name: typeName) {
                 // P2-2.3：泛型实例化实参个数须与声明泛型形参个数一致
@@ -3172,33 +3281,21 @@ public final class TypeChecker {
         }
     }
 
-    /// 校验一次调用的实参数目与实参类型（结构等价，P2-2.1）。
-    /// 跳过未标注形参 "_" 与 Any 形参；实参无法推断则跳过。
+    /// 校验一次调用的实参：标签按名对位、位置实参填剩余位；标签面未知时沿用按位置对位。
+    /// 标签面来自签名（`paramCalls`）：空数组 = 内建、函数值或未登记声明，只做类型比对。
     private func validateCallArguments(
         arguments: [CallArgument],
         signature sig: TypeEnvironment.FunctionSignature,
         location: SourceLocation,
-        paramNames: [String]? = nil
+        callee: String = "函数"
     ) throws {
-        // G-P11：带标签实参须命中形参名（缺名册时保守跳过——与既有推断不了就不误报一致）
-        if let names = paramNames, !sig.isVariadic {
-            for arg in arguments {
-                if let label = arg.label, !names.contains(label) {
-                    try report(
-                        TypeError.unknownMember(
-                            typeName: "函数", memberName: label, location: location
-                        ))
-                }
-            }
-        }
         // 值位：无返回值调用不能做实参 —— 形参宽松（`_` / `Any`）不等于值位宽松。
         // 独立成一轮，不依赖形参位置映射：变参溢出位的实参不在下方下标循环里。
         for arg in arguments where isVoidCall(arg.expression) {
             try report(TypeError.mismatch(expected: "值", got: "()", location: location))
         }
         /// `using` 形参的实参可由编译器插入 ⇒ 除「全显式」外「省略式」也合法（实参个数 = 形参个数 −
-        /// using 个数）。映射助手把两种形态统一成「形参位置序列」，下面两处消费（实参类型比对 / 任务
-        /// 隔离）都按它取形参：省略式下实参下标与形参位置不再重合，按下标索引会取到错的形参类型。
+        /// using 个数）。映射助手把两种形态统一成「形参位置序列」，标签与位置两条通路共用它。
         let paramIndices = sig.argumentToParamIndices(argumentCount: arguments.count)
         if !sig.isVariadic && paramIndices == nil {
             try report(
@@ -3209,9 +3306,41 @@ public final class TypeChecker {
                 ))
         }
         let effectiveIndices = paramIndices ?? Array(sig.params.indices)
-        for (index, arg) in arguments.enumerated() {
-            guard index < effectiveIndices.count else { break }
-            let paramType = sig.params[effectiveIndices[index]]
+        let labels = sig.paramCalls.count == sig.params.count ? sig.paramCalls : []
+        var filled = Array(repeating: false, count: sig.params.count)
+        var cursor = 0
+
+        for arg in arguments {
+            let index: Int
+            if let label = arg.label, !labels.isEmpty {
+                guard let at = labels.firstIndex(where: { $0.name == label }) else {
+                    try report(TypeError.unknownMember(typeName: "函数", memberName: label, location: location))
+                    continue
+                }
+                if filled[at] {
+                    try report(TypeError.duplicateArgumentLabel(callee: callee, param: label, location: location))
+                    continue
+                }
+                if !labels[at].takesLabel {
+                    try report(TypeError.unexpectedArgumentLabel(callee: callee, param: label, location: location))
+                }
+                filled[at] = true
+                index = at
+            } else {
+                while cursor < effectiveIndices.count && filled[effectiveIndices[cursor]] { cursor += 1 }
+                guard cursor < effectiveIndices.count else { continue }
+                index = effectiveIndices[cursor]
+                cursor += 1
+                if !labels.isEmpty, labels[index].takesLabel {
+                    try report(
+                        TypeError.missingArgumentLabel(
+                            callee: callee, param: labels[index].name, paramIndex: index,
+                            declFile: labels[index].declFile, declLine: labels[index].declLine,
+                            location: arg.location ?? arg.expression.location))
+                }
+                filled[index] = true
+            }
+            let paramType = sig.params[index]
             if case .simple(let pname, _) = paramType, (pname == "_" || pname == "Any") { continue }
             guard let argType = inference.infer(expression: arg.expression, expected: paramType) else { continue }
             try noteBareCaseOutcome(arg.expression, actual: argType, location: location)

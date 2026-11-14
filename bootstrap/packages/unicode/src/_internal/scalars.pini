@@ -2,7 +2,7 @@
 _support = "../../../support"
 
 ; 标量序列与 UTF-8 字节互转；调用方保证标量来自已验证的解码结果。
-scalarCodes|func(text: Utf8Text,) -> (Array<I32>,):
+scalarCodes|func(_text: Utf8Text,) -> (Array<I32>,):
     var codes: Array<I32> = []
     var i = 0
     while i < text.scalarCount():
@@ -11,7 +11,7 @@ scalarCodes|func(text: Utf8Text,) -> (Array<I32>,):
     return codes
 
 ; 按 Unicode 标量编码为 UTF-8；越界与代理区由构建器拒绝。
-encodeScalars|func(codes: Array<I32>,) -> (Array<U8>,):
+encodeScalars|func(_codes: Array<I32>,) -> (Array<U8>,):
     var builder = ByteBuilder()
     var i = 0
     while i < len(codes):
@@ -25,7 +25,7 @@ appendPoolScalars|func(codes: Array<I32>, pool: Array<U8>, start: I32, length: I
     var at = start
     let end = start + length
     while at < end:
-        let unit = stepScalar(pool, at)
+        let unit = stepScalar(bytes = pool, start = at)
         out = out.append(unit.code)
         at = at + unit.length
     return out

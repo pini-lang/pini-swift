@@ -29,32 +29,32 @@ parseToml|func(text: String, path: String,) -> (TomlDocument,):
         if isArrayHeader(line):
             table = trimSpace(line.substring(2, len(line) - 2))
             if len(table) == 0:
-                doc.errors = doc.errors.append(manifestError(errorTomlShape, path, line))
+                doc.errors = doc.errors.append(manifestError(kind = errorTomlShape, path = path, detail = line))
                 continue
-            row = nextRow(doc, table)
+            row = nextRow(doc = doc, table = table)
             doc.tables = doc.tables.append(table)
             continue
         if isTableHeader(line):
             table = trimSpace(line.substring(1, len(line) - 1))
             if len(table) == 0:
-                doc.errors = doc.errors.append(manifestError(errorTomlShape, path, line))
+                doc.errors = doc.errors.append(manifestError(kind = errorTomlShape, path = path, detail = line))
                 continue
             row = -1
             doc.tables = doc.tables.append(table)
             continue
         if len(table) == 0:
-            doc.errors = doc.errors.append(manifestError(errorKeyOutsideTable, path, line))
+            doc.errors = doc.errors.append(manifestError(kind = errorKeyOutsideTable, path = path, detail = line))
             continue
         let eq = line.indexOf("=")
         if eq < 0:
-            doc.errors = doc.errors.append(manifestError(errorTomlShape, path, line))
+            doc.errors = doc.errors.append(manifestError(kind = errorTomlShape, path = path, detail = line))
             continue
         let key = trimSpace(line.substring(0, eq))
         if len(key) == 0:
-            doc.errors = doc.errors.append(manifestError(errorMissingKey, path, line))
+            doc.errors = doc.errors.append(manifestError(kind = errorMissingKey, path = path, detail = line))
             continue
-        if findEntry(doc, table, row, key) >= 0:
-            doc.errors = doc.errors.append(manifestError(errorDuplicateKey, path, table + "." + key))
+        if findEntry(doc = doc, table = table, row = row, key = key) >= 0:
+            doc.errors = doc.errors.append(manifestError(kind = errorDuplicateKey, path = path, detail = table + "." + key))
             continue
         var entry = TomlEntry()
         entry.table = table
@@ -80,7 +80,7 @@ tomlHasTable|func(doc: TomlDocument, name: String,) -> (Bool,):
 
 ; 平表标量；缺失答空串，调用方按必需字段判断。
 tomlValue|func(doc: TomlDocument, table: String, key: String,) -> (String,):
-    let at = findEntry(doc, table, -1, key)
+    let at = findEntry(doc = doc, table = table, row = -1, key = key)
     if at < 0:
         return ""
     return doc.entries[at].value
@@ -88,7 +88,7 @@ tomlValue|func(doc: TomlDocument, table: String, key: String,) -> (String,):
 ; 平表内联数组元素；缺失或不是数组答空数组。
 tomlArray|func(doc: TomlDocument, table: String, key: String,) -> (Array<String>,):
     var empty: Array<String> = []
-    let at = findEntry(doc, table, -1, key)
+    let at = findEntry(doc = doc, table = table, row = -1, key = key)
     if at < 0:
         return empty
     return doc.entries[at].elements
@@ -117,7 +117,7 @@ tomlRowCount|func(doc: TomlDocument, table: String,) -> (I32,):
 
 ; 数组表某一行的标量；缺键答空串。
 tomlRowValue|func(doc: TomlDocument, table: String, row: I32, key: String,) -> (String,):
-    let at = findEntry(doc, table, row, key)
+    let at = findEntry(doc = doc, table = table, row = row, key = key)
     if at < 0:
         return ""
     return doc.entries[at].value
@@ -144,7 +144,7 @@ nextRow|func(doc: TomlDocument, table: String,) -> (I32,):
     return maxRow + 1
 
 ; 行内注释剥离：引号内的 # 是值的一部分，不截断；引号不成对时按未闭合处理。
-stripComment|func(line: String,) -> (String,):
+stripComment|func(_line: String,) -> (String,):
     let chars = line.split("")
     var quoted = false
     var i = 0
@@ -158,7 +158,7 @@ stripComment|func(line: String,) -> (String,):
     return line
 
 ; 去两端空白：只认空格与制表符，与清单书写习惯一致。
-trimSpace|func(s: String,) -> (String,):
+trimSpace|func(_s: String,) -> (String,):
     let chars = s.split("")
     var lo = 0
     while lo < len(chars):
@@ -177,27 +177,27 @@ trimSpace|func(s: String,) -> (String,):
     return s.substring(lo, hi)
 
 ; 去引号：两端都是引号才剥，单边引号原样保留。
-unquote|func(raw: String,) -> (String,):
-    if len(raw) >= 2 && startsWith(raw, "\"") && endsWith(raw, "\""):
+unquote|func(_raw: String,) -> (String,):
+    if len(raw) >= 2 && startsWith(text = raw, prefix = "\"") && endsWith(text = raw, suffix = "\""):
         return raw.substring(1, len(raw) - 1)
     return raw
 
 ; 表头判定：[[...]] 先判，避免被 [ ... ] 抢先。
-isArrayHeader|func(line: String,) -> (Bool,):
-    return len(line) >= 4 && startsWith(line, "[[") && endsWith(line, "]]")
+isArrayHeader|func(_line: String,) -> (Bool,):
+    return len(line) >= 4 && startsWith(text = line, prefix = "[[") && endsWith(text = line, suffix = "]]")
 
 ; 平表头判定：方括号包住整行，且不是数组表。
-isTableHeader|func(line: String,) -> (Bool,):
+isTableHeader|func(_line: String,) -> (Bool,):
     if isArrayHeader(line):
         return false
-    return len(line) >= 2 && startsWith(line, "[") && endsWith(line, "]")
+    return len(line) >= 2 && startsWith(text = line, prefix = "[") && endsWith(text = line, suffix = "]")
 
 ; 内联数组判定：整值被方括号包住。
-isInlineArray|func(raw: String,) -> (Bool,):
-    return len(raw) >= 2 && startsWith(raw, "[") && endsWith(raw, "]")
+isInlineArray|func(_raw: String,) -> (Bool,):
+    return len(raw) >= 2 && startsWith(text = raw, prefix = "[") && endsWith(text = raw, suffix = "]")
 
 ; 内联数组拆元素：逗号分隔，逐项去空白与引号，空项跳过。
-splitElements|func(raw: String,) -> (Array<String>,):
+splitElements|func(_raw: String,) -> (Array<String>,):
     var out: Array<String> = []
     let inner = raw.substring(1, len(raw) - 1)
     let parts = inner.split(",")

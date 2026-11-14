@@ -2,7 +2,7 @@
 _support = "../../support"
 
 ; 测试助手：把文本按 UTF-8 编码后解码，避免每个用例重复取字节。
-解码文本|func(text: String,) -> (Utf8Text,):
+解码文本|func(_text: String,) -> (Utf8Text,):
     return decodeUtf8(tempUtf8Bytes(text))
 
 ; 测试助手：错误类别与起始字节偏移一起核对，两处都不得漂移。
@@ -37,11 +37,11 @@ _support = "../../support"
     let cut: Array<U8> = [65, 228, 184]
     let partial = decodeUtf8(cut)
     assert(partial.scalarCount() == 1, "截断前只有一个标量")
-    断言错误(partial, "截断", 1)
+    断言错误(text = partial, expected = "截断", at = 1)
     let lone: Array<U8> = [228]
     let empty = decodeUtf8(lone)
     assert(empty.scalarCount() == 0, "孤立首字节不产标量")
-    断言错误(empty, "截断", 0)
+    断言错误(text = empty, expected = "截断", at = 0)
     return
 
 ; 游离续字节与 F8..FF 都是首字节非法，后续字节不再消费。
@@ -49,42 +49,42 @@ _support = "../../support"
     let stray: Array<U8> = [65, 128]
     let text = decodeUtf8(stray)
     assert(text.scalarCount() == 1, "游离续字节前有一个标量")
-    断言错误(text, "首字节非法", 1)
+    断言错误(text = text, expected = "首字节非法", at = 1)
     let badLead: Array<U8> = [255]
     let text2 = decodeUtf8(badLead)
     assert(text2.scalarCount() == 0, "FF 不产标量")
-    断言错误(text2, "首字节非法", 0)
+    断言错误(text = text2, expected = "首字节非法", at = 0)
     return
 
 ; 应到续字节的位置读到非续字节，按续字节非法报在序列起点。
 拒绝续字节错位|test() -> ():
     let broken: Array<U8> = [228, 65]
     let text = decodeUtf8(broken)
-    断言错误(text, "续字节非法", 0)
+    断言错误(text = text, expected = "续字节非法", at = 0)
     return
 
 ; 低于该宽度下界的编码是过长编码：C0/C1 与 E0/F0 开头的小值都要拒绝。
 拒绝过长编码|test() -> ():
     let c0: Array<U8> = [192, 128]
-    断言错误(decodeUtf8(c0), "过长编码", 0)
+    断言错误(text = decodeUtf8(c0), expected = "过长编码", at = 0)
     let e0: Array<U8> = [224, 128, 128]
-    断言错误(decodeUtf8(e0), "过长编码", 0)
+    断言错误(text = decodeUtf8(e0), expected = "过长编码", at = 0)
     let f0: Array<U8> = [240, 128, 128, 128]
-    断言错误(decodeUtf8(f0), "过长编码", 0)
+    断言错误(text = decodeUtf8(f0), expected = "过长编码", at = 0)
     return
 
 ; 代理区不得出现在合法 UTF-8 中。
 拒绝代理区|test() -> ():
     let surrogate: Array<U8> = [237, 160, 128]
-    断言错误(decodeUtf8(surrogate), "代理区", 0)
+    断言错误(text = decodeUtf8(surrogate), expected = "代理区", at = 0)
     return
 
 ; 上界之外分两类：F4 的高位序列超出 U+10FFFF，F5..F7 直接判超出上限。
 拒绝超出上限|test() -> ():
     let high: Array<U8> = [244, 144, 128, 128]
-    断言错误(decodeUtf8(high), "超出上限", 0)
+    断言错误(text = decodeUtf8(high), expected = "超出上限", at = 0)
     let lead: Array<U8> = [245, 128, 128, 128]
-    断言错误(decodeUtf8(lead), "超出上限", 0)
+    断言错误(text = decodeUtf8(lead), expected = "超出上限", at = 0)
     return
 
 ; 错误不吞掉前缀：合法标量保留，错误后的字节不再解释。
@@ -93,7 +93,7 @@ _support = "../../support"
     let text = decodeUtf8(bytes)
     assert(text.scalarCount() == 1, "只保留错误前的标量")
     assert(text.scalarAt(0).code == 65, "前缀是 A")
-    断言错误(text, "首字节非法", 1)
+    断言错误(text = text, expected = "首字节非法", at = 1)
     return
 
 ; 编码往返：每个标量重新编码后与原始字节逐字节相同。
@@ -172,17 +172,17 @@ _support = "../../support"
 ; 单步解码只消费该标量自身的字节：长度即消费数，起点之后的内容一律不读。
 单步解码消费字节数|test() -> ():
     let bytes: Array<U8> = [65, 195, 169, 228, 184, 173, 240, 144, 141, 136]
-    let a = decodeScalarAt(bytes, 0)
+    let a = decodeScalarAt(bytes = bytes, offset = 0)
     assert(a.length == 1, "ASCII 消费一字节")
     assert(a.code == 65, "ASCII 码点")
     assert(utf8ErrorName(a.error) == "无", "ASCII 无错误")
-    let e = decodeScalarAt(bytes, 1)
+    let e = decodeScalarAt(bytes = bytes, offset = 1)
     assert(e.length == 2, "é 消费两字节")
     assert(e.code == 233, "é 码点")
-    let z = decodeScalarAt(bytes, 3)
+    let z = decodeScalarAt(bytes = bytes, offset = 3)
     assert(z.length == 3, "中 消费三字节")
     assert(z.code == 20013, "中 码点")
-    let s = decodeScalarAt(bytes, 6)
+    let s = decodeScalarAt(bytes = bytes, offset = 6)
     assert(s.length == 4, "U+10348 消费四字节")
     assert(s.code == 66376, "U+10348 码点")
     return
@@ -190,21 +190,21 @@ _support = "../../support"
 ; 单步失败答长度零，类别与整段解码一致；不改动输入也不越过出错序列起点。
 单步解码失败类别|test() -> ():
     let cut: Array<U8> = [228, 184]
-    let truncated = decodeScalarAt(cut, 0)
+    let truncated = decodeScalarAt(bytes = cut, offset = 0)
     assert(truncated.length == 0, "截断不消费")
     assert(utf8ErrorName(truncated.error) == "截断", "截断类别")
     let stray: Array<U8> = [128]
-    let lead = decodeScalarAt(stray, 0)
+    let lead = decodeScalarAt(bytes = stray, offset = 0)
     assert(lead.length == 0, "游离续字节不消费")
     assert(utf8ErrorName(lead.error) == "首字节非法", "游离续字节类别")
     let overlong: Array<U8> = [192, 128]
-    assert(utf8ErrorName(decodeScalarAt(overlong, 0).error) == "过长编码", "过长编码类别")
+    assert(utf8ErrorName(decodeScalarAt(bytes = overlong, offset = 0).error) == "过长编码", "过长编码类别")
     let surrogate: Array<U8> = [237, 160, 128]
-    assert(utf8ErrorName(decodeScalarAt(surrogate, 0).error) == "代理区", "代理区类别")
+    assert(utf8ErrorName(decodeScalarAt(bytes = surrogate, offset = 0).error) == "代理区", "代理区类别")
     let high: Array<U8> = [244, 144, 128, 128]
-    assert(utf8ErrorName(decodeScalarAt(high, 0).error) == "超出上限", "超出上限类别")
+    assert(utf8ErrorName(decodeScalarAt(bytes = high, offset = 0).error) == "超出上限", "超出上限类别")
     let broken: Array<U8> = [228, 65]
-    assert(utf8ErrorName(decodeScalarAt(broken, 0).error) == "续字节非法", "续字节错位类别")
+    assert(utf8ErrorName(decodeScalarAt(bytes = broken, offset = 0).error) == "续字节非法", "续字节错位类别")
     return
 
 ; 数据版本由生成表固定；BOM、NUL 与非法码点边界都按普通标量解码。

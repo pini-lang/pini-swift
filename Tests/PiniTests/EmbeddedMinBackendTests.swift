@@ -39,7 +39,7 @@ struct EmbeddedMinBackendTests: Sendable, PiniSourceLowering {
             t = a <= b
             t = a > b
             t = a >= b
-            c = add(a, b)
+            c = add(a = a, b = b)
             if t:
                 print(c)
             while t:

@@ -4,12 +4,12 @@ pool: TypePool = TypePool()
 ids: Array<I32> = []
 
 ; 造运算池：按名单逐个驻留标量，池随结果带回。
-造运算池|func(names: Array<String>,) -> (运算池,):
+造运算池|func(_names: Array<String>,) -> (运算池,):
     var pool = TypePool()
     var ids: Array<I32> = []
     var i = 0
     while i < len(names):
-        let inserted = intern(pool, typeClassScalar, names[i], [], -1)
+        let inserted = intern(pool = pool, kind = typeClassScalar, name = names[i], kids = [], ret = -1)
         pool = inserted.pool
         ids = ids.append(inserted.id)
         i = i + 1
@@ -21,40 +21,40 @@ ids: Array<I32> = []
 ; 加法：同型取原类型，窄侧向宽侧提升。
 加法与提升|test() -> ():
     let 池 = 造运算池(["I32", "I8", "F64", "F32"])
-    let 同型 = checkBinary(池.pool, "+", 池.ids[0], 池.ids[0], "", 0)
+    let 同型 = checkBinary(pool = 池.pool, op = "+", left = 池.ids[0], right = 池.ids[0], file = "", offset = 0)
     assert(!同型.failed, "同型加法应通过")
-    assert(typeText(同型.pool, 同型.typeId) == "I32", "实得 " + typeText(同型.pool, 同型.typeId))
-    let 提升 = checkBinary(池.pool, "+", 池.ids[1], 池.ids[0], "", 0)
-    assert(typeText(提升.pool, 提升.typeId) == "I32", "实得 " + typeText(提升.pool, 提升.typeId))
-    let 浮点 = checkBinary(池.pool, "+", 池.ids[3], 池.ids[2], "", 0)
-    assert(typeText(浮点.pool, 浮点.typeId) == "F64", "实得 " + typeText(浮点.pool, 浮点.typeId))
+    assert(typeText(pool = 同型.pool, id = 同型.typeId) == "I32", "实得 " + typeText(pool = 同型.pool, id = 同型.typeId))
+    let 提升 = checkBinary(pool = 池.pool, op = "+", left = 池.ids[1], right = 池.ids[0], file = "", offset = 0)
+    assert(typeText(pool = 提升.pool, id = 提升.typeId) == "I32", "实得 " + typeText(pool = 提升.pool, id = 提升.typeId))
+    let 浮点 = checkBinary(pool = 池.pool, op = "+", left = 池.ids[3], right = 池.ids[2], file = "", offset = 0)
+    assert(typeText(pool = 浮点.pool, id = 浮点.typeId) == "F64", "实得 " + typeText(pool = 浮点.pool, id = 浮点.typeId))
     return
 
 ; 跨族拒绝：整型与浮点之间没有隐式转换，报 E4-004。
 跨族拒绝|test() -> ():
     let 池 = 造运算池(["I32", "F64"])
-    let 加 = checkBinary(池.pool, "+", 池.ids[0], 池.ids[1], "", 0)
+    let 加 = checkBinary(pool = 池.pool, op = "+", left = 池.ids[0], right = 池.ids[1], file = "", offset = 0)
     assert(加.failed, "跨族加法应报错")
     assert(opErrorCode(加.error.kind) == "E4-004", "实得 " + opErrorCode(加.error.kind))
-    let 减 = checkBinary(池.pool, "-", 池.ids[1], 池.ids[0], "", 0)
+    let 减 = checkBinary(pool = 池.pool, op = "-", left = 池.ids[1], right = 池.ids[0], file = "", offset = 0)
     assert(减.failed, "跨族减法应报错")
     return
 
 ; 字符串拼接：两串、串与字符、两字符都得到字符串。
 字符串拼接|test() -> ():
     let 池 = 造运算池(["String", "Char"])
-    let 两串 = checkBinary(池.pool, "+", 池.ids[0], 池.ids[0], "", 0)
-    assert(typeText(两串.pool, 两串.typeId) == "String", "实得 " + typeText(两串.pool, 两串.typeId))
-    let 串字符 = checkBinary(池.pool, "+", 池.ids[0], 池.ids[1], "", 0)
-    assert(typeText(串字符.pool, 串字符.typeId) == "String", "实得 " + typeText(串字符.pool, 串字符.typeId))
-    let 两字符 = checkBinary(池.pool, "+", 池.ids[1], 池.ids[1], "", 0)
-    assert(typeText(两字符.pool, 两字符.typeId) == "String", "实得 " + typeText(两字符.pool, 两字符.typeId))
+    let 两串 = checkBinary(pool = 池.pool, op = "+", left = 池.ids[0], right = 池.ids[0], file = "", offset = 0)
+    assert(typeText(pool = 两串.pool, id = 两串.typeId) == "String", "实得 " + typeText(pool = 两串.pool, id = 两串.typeId))
+    let 串字符 = checkBinary(pool = 池.pool, op = "+", left = 池.ids[0], right = 池.ids[1], file = "", offset = 0)
+    assert(typeText(pool = 串字符.pool, id = 串字符.typeId) == "String", "实得 " + typeText(pool = 串字符.pool, id = 串字符.typeId))
+    let 两字符 = checkBinary(pool = 池.pool, op = "+", left = 池.ids[1], right = 池.ids[1], file = "", offset = 0)
+    assert(typeText(pool = 两字符.pool, id = 两字符.typeId) == "String", "实得 " + typeText(pool = 两字符.pool, id = 两字符.typeId))
     return
 
 ; 字符串相减：拼接只认加号，其余算术仍是数值专用。
 字符串相减|test() -> ():
     let 池 = 造运算池(["String"])
-    let 减 = checkBinary(池.pool, "-", 池.ids[0], 池.ids[0], "", 0)
+    let 减 = checkBinary(pool = 池.pool, op = "-", left = 池.ids[0], right = 池.ids[0], file = "", offset = 0)
     assert(减.failed, "字符串相减应报错")
     assert(opErrorCode(减.error.kind) == "E4-004", "实得 " + opErrorCode(减.error.kind))
     return
@@ -62,22 +62,22 @@ ids: Array<I32> = []
 ; 比较：同族数值、字符串与字符可比，结果布尔。
 比较|test() -> ():
     let 池 = 造运算池(["I32", "I8", "String", "Char"])
-    let 数值 = checkBinary(池.pool, "<", 池.ids[1], 池.ids[0], "", 0)
-    assert(typeText(数值.pool, 数值.typeId) == "Bool", "实得 " + typeText(数值.pool, 数值.typeId))
-    let 字符串 = checkBinary(数值.pool, "<", 池.ids[2], 池.ids[2], "", 0)
-    assert(typeText(字符串.pool, 字符串.typeId) == "Bool", "实得 " + typeText(字符串.pool, 字符串.typeId))
-    let 字符 = checkBinary(字符串.pool, ">=", 池.ids[3], 池.ids[3], "", 0)
-    assert(typeText(字符.pool, 字符.typeId) == "Bool", "实得 " + typeText(字符.pool, 字符.typeId))
+    let 数值 = checkBinary(pool = 池.pool, op = "<", left = 池.ids[1], right = 池.ids[0], file = "", offset = 0)
+    assert(typeText(pool = 数值.pool, id = 数值.typeId) == "Bool", "实得 " + typeText(pool = 数值.pool, id = 数值.typeId))
+    let 字符串 = checkBinary(pool = 数值.pool, op = "<", left = 池.ids[2], right = 池.ids[2], file = "", offset = 0)
+    assert(typeText(pool = 字符串.pool, id = 字符串.typeId) == "Bool", "实得 " + typeText(pool = 字符串.pool, id = 字符串.typeId))
+    let 字符 = checkBinary(pool = 字符串.pool, op = ">=", left = 池.ids[3], right = 池.ids[3], file = "", offset = 0)
+    assert(typeText(pool = 字符.pool, id = 字符.typeId) == "Bool", "实得 " + typeText(pool = 字符.pool, id = 字符.typeId))
     return
 
 ; 相等：同类型与同族数值可比，跨族数值不可比。
 相等|test() -> ():
     let 池 = 造运算池(["I32", "F64", "Bool"])
-    let 布尔 = checkBinary(池.pool, "==", 池.ids[2], 池.ids[2], "", 0)
-    assert(typeText(布尔.pool, 布尔.typeId) == "Bool", "实得 " + typeText(布尔.pool, 布尔.typeId))
-    let 数值 = checkBinary(布尔.pool, "!=", 池.ids[0], 池.ids[0], "", 0)
-    assert(typeText(数值.pool, 数值.typeId) == "Bool", "实得 " + typeText(数值.pool, 数值.typeId))
-    let 跨族 = checkBinary(数值.pool, "==", 池.ids[0], 池.ids[1], "", 0)
+    let 布尔 = checkBinary(pool = 池.pool, op = "==", left = 池.ids[2], right = 池.ids[2], file = "", offset = 0)
+    assert(typeText(pool = 布尔.pool, id = 布尔.typeId) == "Bool", "实得 " + typeText(pool = 布尔.pool, id = 布尔.typeId))
+    let 数值 = checkBinary(pool = 布尔.pool, op = "!=", left = 池.ids[0], right = 池.ids[0], file = "", offset = 0)
+    assert(typeText(pool = 数值.pool, id = 数值.typeId) == "Bool", "实得 " + typeText(pool = 数值.pool, id = 数值.typeId))
+    let 跨族 = checkBinary(pool = 数值.pool, op = "==", left = 池.ids[0], right = 池.ids[1], file = "", offset = 0)
     assert(跨族.failed, "跨族相等应报错")
     assert(opErrorCode(跨族.error.kind) == "E4-004", "实得 " + opErrorCode(跨族.error.kind))
     return
@@ -85,10 +85,10 @@ ids: Array<I32> = []
 ; 逻辑：两侧必须是布尔，不满足报 E4-001。
 逻辑|test() -> ():
     let 池 = 造运算池(["Bool", "I32"])
-    let 与 = checkBinary(池.pool, "&&", 池.ids[0], 池.ids[0], "", 0)
+    let 与 = checkBinary(pool = 池.pool, op = "&&", left = 池.ids[0], right = 池.ids[0], file = "", offset = 0)
     assert(!与.failed, "布尔与布尔应通过")
-    assert(typeText(与.pool, 与.typeId) == "Bool", "实得 " + typeText(与.pool, 与.typeId))
-    let 错 = checkBinary(与.pool, "&&", 池.ids[0], 池.ids[1], "", 0)
+    assert(typeText(pool = 与.pool, id = 与.typeId) == "Bool", "实得 " + typeText(pool = 与.pool, id = 与.typeId))
+    let 错 = checkBinary(pool = 与.pool, op = "&&", left = 池.ids[0], right = 池.ids[1], file = "", offset = 0)
     assert(错.failed, "布尔与整数应报错")
     assert(opErrorCode(错.error.kind) == "E4-001", "实得 " + opErrorCode(错.error.kind))
     return
@@ -96,10 +96,10 @@ ids: Array<I32> = []
 ; 位运算：两侧同族整数才成立，浮点报 E4-004。
 位运算|test() -> ():
     let 池 = 造运算池(["I32", "I8", "F64"])
-    let 与 = checkBinary(池.pool, "&", 池.ids[1], 池.ids[0], "", 0)
+    let 与 = checkBinary(pool = 池.pool, op = "&", left = 池.ids[1], right = 池.ids[0], file = "", offset = 0)
     assert(!与.failed, "整数与整数应通过")
-    assert(typeText(与.pool, 与.typeId) == "I32", "实得 " + typeText(与.pool, 与.typeId))
-    let 浮点 = checkBinary(与.pool, "&", 池.ids[2], 池.ids[0], "", 0)
+    assert(typeText(pool = 与.pool, id = 与.typeId) == "I32", "实得 " + typeText(pool = 与.pool, id = 与.typeId))
+    let 浮点 = checkBinary(pool = 与.pool, op = "&", left = 池.ids[2], right = 池.ids[0], file = "", offset = 0)
     assert(浮点.failed, "浮点位运算应报错")
     assert(opErrorCode(浮点.error.kind) == "E4-004", "实得 " + opErrorCode(浮点.error.kind))
     return
@@ -107,10 +107,10 @@ ids: Array<I32> = []
 ; 移位：左侧定结果类型，计数只要求整数。
 移位|test() -> ():
     let 池 = 造运算池(["U8", "I32", "F64"])
-    let 正例 = checkBinary(池.pool, "<<", 池.ids[0], 池.ids[1], "", 0)
+    let 正例 = checkBinary(pool = 池.pool, op = "<<", left = 池.ids[0], right = 池.ids[1], file = "", offset = 0)
     assert(!正例.failed, "字节左移应通过")
-    assert(typeText(正例.pool, 正例.typeId) == "U8", "实得 " + typeText(正例.pool, 正例.typeId))
-    let 浮点 = checkBinary(正例.pool, ">>", 池.ids[2], 池.ids[1], "", 0)
+    assert(typeText(pool = 正例.pool, id = 正例.typeId) == "U8", "实得 " + typeText(pool = 正例.pool, id = 正例.typeId))
+    let 浮点 = checkBinary(pool = 正例.pool, op = ">>", left = 池.ids[2], right = 池.ids[1], file = "", offset = 0)
     assert(浮点.failed, "浮点移位应报错")
     assert(opErrorCode(浮点.error.kind) == "E4-004", "实得 " + opErrorCode(浮点.error.kind))
     return
@@ -118,12 +118,12 @@ ids: Array<I32> = []
 ; 一元数值：取负与自增只认数值，其余类型报 E4-004。
 一元数值|test() -> ():
     let 池 = 造运算池(["I32", "String"])
-    let 负 = checkUnary(池.pool, "-", 池.ids[0], "", 0)
+    let 负 = checkUnary(pool = 池.pool, op = "-", operand = 池.ids[0], file = "", offset = 0)
     assert(!负.failed, "数值取负应通过")
-    assert(typeText(负.pool, 负.typeId) == "I32", "实得 " + typeText(负.pool, 负.typeId))
-    let 自增 = checkUnary(负.pool, "++", 池.ids[0], "", 0)
+    assert(typeText(pool = 负.pool, id = 负.typeId) == "I32", "实得 " + typeText(pool = 负.pool, id = 负.typeId))
+    let 自增 = checkUnary(pool = 负.pool, op = "++", operand = 池.ids[0], file = "", offset = 0)
     assert(!自增.failed, "数值自增应通过")
-    let 串 = checkUnary(自增.pool, "-", 池.ids[1], "", 0)
+    let 串 = checkUnary(pool = 自增.pool, op = "-", operand = 池.ids[1], file = "", offset = 0)
     assert(串.failed, "字符串取负应报错")
     assert(opErrorCode(串.error.kind) == "E4-004", "实得 " + opErrorCode(串.error.kind))
     return
@@ -131,22 +131,22 @@ ids: Array<I32> = []
 ; 逻辑与位非：取非只认布尔，位非只认整数。
 逻辑与位非|test() -> ():
     let 池 = 造运算池(["Bool", "I32", "F64"])
-    let 非 = checkUnary(池.pool, "!", 池.ids[0], "", 0)
-    assert(typeText(非.pool, 非.typeId) == "Bool", "实得 " + typeText(非.pool, 非.typeId))
-    let 错 = checkUnary(非.pool, "!", 池.ids[1], "", 0)
+    let 非 = checkUnary(pool = 池.pool, op = "!", operand = 池.ids[0], file = "", offset = 0)
+    assert(typeText(pool = 非.pool, id = 非.typeId) == "Bool", "实得 " + typeText(pool = 非.pool, id = 非.typeId))
+    let 错 = checkUnary(pool = 非.pool, op = "!", operand = 池.ids[1], file = "", offset = 0)
     assert(错.failed, "整数取非应报错")
-    let 位非 = checkUnary(池.pool, "~", 池.ids[1], "", 0)
-    assert(typeText(位非.pool, 位非.typeId) == "I32", "实得 " + typeText(位非.pool, 位非.typeId))
-    let 浮点 = checkUnary(位非.pool, "~", 池.ids[2], "", 0)
+    let 位非 = checkUnary(pool = 池.pool, op = "~", operand = 池.ids[1], file = "", offset = 0)
+    assert(typeText(pool = 位非.pool, id = 位非.typeId) == "I32", "实得 " + typeText(pool = 位非.pool, id = 位非.typeId))
+    let 浮点 = checkUnary(pool = 位非.pool, op = "~", operand = 池.ids[2], file = "", offset = 0)
     assert(浮点.failed, "浮点位非应报错")
     return
 
 ; 取址：任意值取址得到同层指针。
 取址|test() -> ():
     let 池 = 造运算池(["I32"])
-    let 址 = checkUnary(池.pool, "&", 池.ids[0], "", 0)
+    let 址 = checkUnary(pool = 池.pool, op = "&", operand = 池.ids[0], file = "", offset = 0)
     assert(!址.failed, "取址应通过")
-    assert(typeText(址.pool, 址.typeId) == "*I32", "实得 " + typeText(址.pool, 址.typeId))
+    assert(typeText(pool = 址.pool, id = 址.typeId) == "*I32", "实得 " + typeText(pool = 址.pool, id = 址.typeId))
     return
 
 ; try 解包：结果类型取成功分支，非结果报 E4-004。
@@ -155,11 +155,11 @@ try解包|test() -> ():
     var kids: Array<I32> = []
     kids = kids.append(池.ids[0])
     kids = kids.append(池.ids[1])
-    let 结果 = intern(池.pool, typeClassResult, "Result", kids, -1)
-    let 解包 = checkUnary(结果.pool, "^", 结果.id, "", 0)
+    let 结果 = intern(pool = 池.pool, kind = typeClassResult, name = "Result", kids = kids, ret = -1)
+    let 解包 = checkUnary(pool = 结果.pool, op = "^", operand = 结果.id, file = "", offset = 0)
     assert(!解包.failed, "结果解包应通过")
-    assert(typeText(解包.pool, 解包.typeId) == "I32", "实得 " + typeText(解包.pool, 解包.typeId))
-    let 错 = checkUnary(解包.pool, "^", 池.ids[0], "", 0)
+    assert(typeText(pool = 解包.pool, id = 解包.typeId) == "I32", "实得 " + typeText(pool = 解包.pool, id = 解包.typeId))
+    let 错 = checkUnary(pool = 解包.pool, op = "^", operand = 池.ids[0], file = "", offset = 0)
     assert(错.failed, "非结果解包应报错")
     assert(opErrorCode(错.error.kind) == "E4-004", "实得 " + opErrorCode(错.error.kind))
     return
@@ -167,10 +167,10 @@ try解包|test() -> ():
 ; 待定：任一侧类型未定时不报错，交给调用方补判。
 待定|test() -> ():
     let 池 = 造运算池(["I32"])
-    let 一元 = checkUnary(池.pool, "-", unsetTypeId(), "", 0)
+    let 一元 = checkUnary(pool = 池.pool, op = "-", operand = unsetTypeId(), file = "", offset = 0)
     assert(!一元.failed, "未定一元不应报错")
     assert(一元.deferred, "应记为待定")
-    let 二元 = checkBinary(池.pool, "+", 池.ids[0], unsetTypeId(), "", 0)
+    let 二元 = checkBinary(pool = 池.pool, op = "+", left = 池.ids[0], right = unsetTypeId(), file = "", offset = 0)
     assert(!二元.failed, "未定二元不应报错")
     assert(二元.deferred, "应记为待定")
     return
@@ -178,8 +178,8 @@ try解包|test() -> ():
 ; 两次一致：同一运算两次判定得到同一类型与错误类别。
 运算两次一致|test() -> ():
     let 池 = 造运算池(["I32"])
-    let first = checkBinary(池.pool, "+", 池.ids[0], 池.ids[0], "", 0)
-    let second = checkBinary(池.pool, "+", 池.ids[0], 池.ids[0], "", 0)
+    let first = checkBinary(pool = 池.pool, op = "+", left = 池.ids[0], right = 池.ids[0], file = "", offset = 0)
+    let second = checkBinary(pool = 池.pool, op = "+", left = 池.ids[0], right = 池.ids[0], file = "", offset = 0)
     assert(first.typeId == second.typeId, "类型下标应相同")
     assert(opErrorName(first.error.kind) == opErrorName(second.error.kind), "错误类别应相同")
     return

@@ -29,9 +29,9 @@ unitCount|self() -> (I32,):
     return len(self.units)
 errorCount|self() -> (I32,):
     return len(self.errors)
-unitAt|self(index: I32,) -> (CompilationUnit,):
+unitAt|self(_index: I32,) -> (CompilationUnit,):
     return self.units[index]
-errorAt|self(index: I32,) -> (LoadError,):
+errorAt|self(_index: I32,) -> (LoadError,):
     return self.errors[index]
 ; 诊断总数：语法诊断与词法问题合并计数，「零诊断」判据读它。
 diagnosticCount|self() -> (I32,):
@@ -48,10 +48,10 @@ loadUnit|func(path: String, text: String,) -> (UnitLoad,):
     let check = checkSourceText(text)
     if !check.passed:
         out.failed = true
-        out.error = makeSourceError(check.kind, path, check.offset)
+        out.error = makeSourceError(kind = check.kind, path = path, offset = check.offset)
         return out
     let normalized = normalizeNewlines(text)
-    let parsed = parseFile(normalized, path)
+    let parsed = parseFile(text = normalized, file = path)
     var unit = CompilationUnit()
     unit.path = path
     unit.text = normalized

@@ -198,6 +198,18 @@ suggestion = "the variadic tail accepts I8 / U8 / I32 / I64 / U64 / F64 / Bool /
 message = "`{type}` exists only on the C face"
 suggestion = "write it in a `[name|foreign]` symbol, or in the signature of a function referenced by a `|c` entry; plain variables, fields and methods do not take handles"
 
+[E4-036]
+message = "call to '{callee}' is missing an argument label: parameter '{param}' requires '{param} = ...'"
+suggestion = "write '{param} = ' before the argument; if this parameter is meant to be positional, declare it as '_{param}: ...'"
+
+[E4-037]
+message = "parameter '{param}' of '{callee}' has left the label surface"
+suggestion = "drop '{param} = ' before the argument; a declaration written as '_{param}' is passed positionally"
+
+[E4-038]
+message = "call to '{callee}' repeats the label for parameter '{param}'"
+suggestion = "give each parameter exactly one argument; remove the duplicate"
+
 [E5-001]
 message = "undefined variable '{name}'"
 suggestion = "Did you mean '{closest}'?"

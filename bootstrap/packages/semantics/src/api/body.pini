@@ -35,7 +35,7 @@ deferred: Bool = false
 failed: Bool = false
 
 ; 错误类别名：诊断、测试与回执共用一份拼写。
-bodyErrorName|func(kind: BodyErrorKind,) -> (String,):
+bodyErrorName|func(_kind: BodyErrorKind,) -> (String,):
     match kind:
         case bodyParamDuplicated:
             return "参数重名"
@@ -54,7 +54,7 @@ isBodyError|func(error: BodyError, kind: BodyErrorKind,) -> (Bool,):
     return bodyErrorName(error.kind) == bodyErrorName(kind)
 
 ; 诊断码：复用宿主已登记的码，不新增码表条目。
-bodyErrorCode|func(kind: BodyErrorKind,) -> (String,):
+bodyErrorCode|func(_kind: BodyErrorKind,) -> (String,):
     match kind:
         case bodyParamDuplicated:
             return "E3-004"
@@ -82,7 +82,7 @@ makeBodyError|func(kind: BodyErrorKind, file: String, offset: I32, name: String,
 ; 追加错误：结果其余字段原样保留，错误不中断后续语句。
 appendBodyError|func(out: BodyCheck, unit: CompilationUnit, offset: I32, kind: BodyErrorKind, name: String, expected: String, got: String,) -> (BodyCheck,):
     var done = out
-    done.errors = done.errors.append(makeBodyError(kind, unit.path, offset, name, expected, got))
+    done.errors = done.errors.append(makeBodyError(kind = kind, file = unit.path, offset = offset, name = name, expected = expected, got = got))
     return done
 
 ; 空返回：无标注与零元元组都算；下标越界按空处理。
@@ -90,7 +90,7 @@ isVoidReturn|func(pool: TypePool, id: I32,) -> (Bool,):
     if id < 0 || id >= len(pool.entries):
         return true
     let entry = pool.entries[id]
-    if !isTypeClass(entry.kind, typeClassTuple):
+    if !isTypeClass(kind = entry.kind, expected = typeClassTuple):
         return false
     return len(entry.kids) == 0
 
@@ -104,7 +104,7 @@ containsDeclKid|func(kids: Array<I32>, id: I32,) -> (Bool,):
     return false
 
 ; 带成员的类型声明：结构、对象、枚举与扩展块四类，方法都挂在它们的 kids 上。
-isOwnerDeclCode|func(code: I32,) -> (Bool,):
+isOwnerDeclCode|func(_code: I32,) -> (Bool,):
     if isStructDeclCode(code) || isObjectDeclCode(code):
         return true
     if isEnumDeclCode(code) || isExtensionDeclCode(code):
@@ -118,36 +118,36 @@ ownerTypeOf|func(world: MemberWorld, unitIndex: I32, declId: I32,) -> (I32,):
     var i = 0
     while i < unit.ast.declCount():
         let decl = unit.ast.decls[i]
-        if isOwnerDeclCode(decl.kind) && containsDeclKid(decl.kids, declId):
-            let owner = decodeRange(bytes, decl.nameStart, decl.nameEnd)
-            return nominalTypeId(world, owner)
+        if isOwnerDeclCode(decl.kind) && containsDeclKid(kids = decl.kids, id = declId):
+            let owner = decodeRange(bytes = bytes, start = decl.nameStart, end = decl.nameEnd)
+            return nominalTypeId(world = world, name = owner)
         i = i + 1
     return -1
 
 ; 值文本：类型未定时答占位，诊断不因未定而空着。
 bodyValueText|func(unit: CompilationUnit, unitIndex: I32, node: I32, types: ExprTypes, pool: TypePool,) -> (String,):
-    let valueType = exprTypeAt(types, unitIndex, node)
+    let valueType = exprTypeAt(table = types, unit = unitIndex, node = node)
     if valueType < 0 || valueType >= len(pool.entries):
         return "<未定>"
-    return typeText(pool, valueType)
+    return typeText(pool = pool, id = valueType)
 
 ; 单条返回：空返回类型不许带值，非空必须带值且可赋值。
 checkReturnValue|func(unit: CompilationUnit, unitIndex: I32, stmtId: I32, types: ExprTypes, out: BodyCheck,) -> (BodyCheck,):
-    let value = unit.ast.stmtChild(stmtId, 0)
+    let value = unit.ast.stmtChild(id = stmtId, index = 0)
     let offset = unit.ast.stmtAt(stmtId).start
-    if isVoidReturn(out.pool, out.returnType):
+    if isVoidReturn(pool = out.pool, id = out.returnType):
         if value >= 0:
-            let got = bodyValueText(unit, unitIndex, value, types, out.pool)
-            return appendBodyError(out, unit, offset, bodyReturnValueForbidden, "", "()", got)
+            let got = bodyValueText(unit = unit, unitIndex = unitIndex, node = value, types = types, pool = out.pool)
+            return appendBodyError(out = out, unit = unit, offset = offset, kind = bodyReturnValueForbidden, name = "", expected = "()", got = got)
         return out
     if value < 0:
-        return appendBodyError(out, unit, offset, bodyReturnValueMissing, "", typeText(out.pool, out.returnType), "()")
-    let valueType = exprTypeAt(types, unitIndex, value)
+        return appendBodyError(out = out, unit = unit, offset = offset, kind = bodyReturnValueMissing, name = "", expected = typeText(pool = out.pool, id = out.returnType), got = "()")
+    let valueType = exprTypeAt(table = types, unit = unitIndex, node = value)
     if valueType < 0 || valueType >= len(out.pool.entries):
         return out
-    if isAssignable(out.pool, valueType, out.returnType):
+    if isAssignable(pool = out.pool, from = valueType, to = out.returnType):
         return out
-    return appendBodyError(out, unit, offset, bodyReturnValueMismatch, "", typeText(out.pool, out.returnType), typeText(out.pool, valueType))
+    return appendBodyError(out = out, unit = unit, offset = offset, kind = bodyReturnValueMismatch, name = "", expected = typeText(pool = out.pool, id = out.returnType), got = typeText(pool = out.pool, id = valueType))
 
 ; 走一条语句：只查 return 的值，不声明局部；控制流节点逐个下钻到块。
 walkBodyStmt|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmtId: I32, scope: ScopeStack, known: Bool, types: ExprTypes, out: BodyCheck,) -> (BodyCheck,):
@@ -158,23 +158,23 @@ walkBodyStmt|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stm
         var done = out
         done.returns = done.returns + 1
         if known:
-            done = checkReturnValue(unit, unitIndex, stmtId, types, done)
+            done = checkReturnValue(unit = unit, unitIndex = unitIndex, stmtId = stmtId, types = types, out = done)
         return done
     if ast.isBlockStmt(stmtId):
-        return walkBodyBlock(world, unit, unitIndex, stmtId, scope, known, types, out)
+        return walkBodyBlock(world = world, unit = unit, unitIndex = unitIndex, blockId = stmtId, scope = scope, known = known, types = types, out = out)
     if ast.isIfStmt(stmtId):
         var done = out
         let kids = ast.stmtAt(stmtId).kids
         let count = len(kids)
         if count > 1:
-            done = walkBodyStmt(world, unit, unitIndex, kids[1], scope, known, types, done)
+            done = walkBodyStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = kids[1], scope = scope, known = known, types = types, out = done)
         var i = 2
         while i < count:
             if i + 1 < count:
-                done = walkBodyStmt(world, unit, unitIndex, kids[i + 1], scope, known, types, done)
+                done = walkBodyStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = kids[i + 1], scope = scope, known = known, types = types, out = done)
                 i = i + 2
             else:
-                done = walkBodyStmt(world, unit, unitIndex, kids[i], scope, known, types, done)
+                done = walkBodyStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = kids[i], scope = scope, known = known, types = types, out = done)
                 i = i + 1
         return done
     if ast.isWhileStmt(stmtId):
@@ -182,7 +182,7 @@ walkBodyStmt|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stm
         let kids = ast.stmtAt(stmtId).kids
         var i = 1
         while i < len(kids):
-            done = walkBodyStmt(world, unit, unitIndex, kids[i], scope, known, types, done)
+            done = walkBodyStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = kids[i], scope = scope, known = known, types = types, out = done)
             i = i + 1
         return done
     if ast.isForStmt(stmtId):
@@ -190,7 +190,7 @@ walkBodyStmt|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stm
         let kids = ast.stmtAt(stmtId).kids
         var i = 2
         while i < len(kids):
-            done = walkBodyStmt(world, unit, unitIndex, kids[i], scope, known, types, done)
+            done = walkBodyStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = kids[i], scope = scope, known = known, types = types, out = done)
             i = i + 1
         return done
     if ast.isMatchStmt(stmtId):
@@ -198,11 +198,11 @@ walkBodyStmt|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stm
         let kids = ast.stmtAt(stmtId).kids
         var i = 2
         while i < len(kids):
-            done = walkBodyStmt(world, unit, unitIndex, kids[i], scope, known, types, done)
+            done = walkBodyStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = kids[i], scope = scope, known = known, types = types, out = done)
             i = i + 2
         return done
     if ast.isDeferStmt(stmtId):
-        return walkBodyStmt(world, unit, unitIndex, ast.stmtChild(stmtId, 0), scope, known, types, out)
+        return walkBodyStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = ast.stmtChild(id = stmtId, index = 0), scope = scope, known = known, types = types, out = out)
     return out
 
 ; 走一块：按源序逐条，错误累积不中断。
@@ -211,13 +211,13 @@ walkBodyBlock|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, bl
     let kids = unit.ast.stmtAt(blockId).kids
     var i = 0
     while i < len(kids):
-        done = walkBodyStmt(world, unit, unitIndex, kids[i], scope, known, types, done)
+        done = walkBodyStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = kids[i], scope = scope, known = known, types = types, out = done)
         i = i + 1
     return done
 
 ; 记覆盖：同名只记一次，条件写清避免半表达式当条件。
 bodyAddName|func(names: Array<String>, name: String,) -> (Array<String>,):
-    if containsName(names, name):
+    if containsName(names = names, name = name):
         return names
     var out = names
     out = out.append(name)
@@ -228,29 +228,29 @@ matchCoversAll|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, s
     let kids = unit.ast.stmtAt(stmtId).kids
     if len(kids) < 1:
         return true
-    let subjectType = typeOfExprNode(unit, unitIndex, kids[0], scope, types, world.types.pool)
+    let subjectType = typeOfExprNode(unit = unit, unitIndex = unitIndex, node = kids[0], scope = scope, types = types, pool = world.types.pool)
     if subjectType < 0:
         return true
     var covered: Array<String> = []
     var hasWildcard = false
     var i = 1
     while i + 1 < len(kids):
-        let info = classifyPattern(unit, kids[i])
-        if isPatternForm(info.form, patternWildcard):
+        let info = classifyPattern(unit = unit, node = kids[i])
+        if isPatternForm(form = info.form, expected = patternWildcard):
             hasWildcard = true
-        elif isPatternForm(info.form, patternEnumCase):
-            covered = bodyAddName(covered, info.name)
-        elif isPatternForm(info.form, patternNil):
-            covered = bodyAddName(covered, "none")
+        elif isPatternForm(form = info.form, expected = patternEnumCase):
+            covered = bodyAddName(names = covered, name = info.name)
+        elif isPatternForm(form = info.form, expected = patternNil):
+            covered = bodyAddName(names = covered, name = "none")
         i = i + 2
     if hasWildcard:
         return true
-    let enumName = enumNameOf(world.types.pool, subjectType)
+    let enumName = enumNameOf(pool = world.types.pool, id = subjectType)
     if len(enumName) > 0:
-        let all = enumVariantNames(world, enumName)
-        return len(missingCases(all, covered)) == 0
-    if isOptionalType(world.types.pool, subjectType):
-        return containsName(covered, "some") && containsName(covered, "none")
+        let all = enumVariantNames(world = world, enumName = enumName)
+        return len(missingCases(all = all, covered = covered)) == 0
+    if isOptionalType(pool = world.types.pool, id = subjectType):
+        return containsName(names = covered, name = "some") && containsName(names = covered, name = "none")
     return false
 
 ; 匹配保证返回：每个臂块都要保证返回，且匹配本身覆盖全部取值。
@@ -260,10 +260,10 @@ matchAlwaysReturns|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I3
         return false
     var i = 2
     while i < len(kids):
-        if !stmtAlwaysReturns(world, unit, unitIndex, kids[i], scope, types):
+        if !stmtAlwaysReturns(world = world, unit = unit, unitIndex = unitIndex, stmtId = kids[i], scope = scope, types = types):
             return false
         i = i + 2
-    return matchCoversAll(world, unit, unitIndex, stmtId, scope, types)
+    return matchCoversAll(world = world, unit = unit, unitIndex = unitIndex, stmtId = stmtId, scope = scope, types = types)
 
 ; 如果保证返回：then 与每个 elif 分支都返回，且有 else。
 ifAlwaysReturns|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmtId: I32, scope: ScopeStack, types: ExprTypes,) -> (Bool,):
@@ -271,17 +271,17 @@ ifAlwaysReturns|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, 
     let count = len(kids)
     if count < 2:
         return false
-    if !stmtAlwaysReturns(world, unit, unitIndex, kids[1], scope, types):
+    if !stmtAlwaysReturns(world = world, unit = unit, unitIndex = unitIndex, stmtId = kids[1], scope = scope, types = types):
         return false
     var hasElse = false
     var i = 2
     while i < count:
         if i + 1 < count:
-            if !stmtAlwaysReturns(world, unit, unitIndex, kids[i + 1], scope, types):
+            if !stmtAlwaysReturns(world = world, unit = unit, unitIndex = unitIndex, stmtId = kids[i + 1], scope = scope, types = types):
                 return false
             i = i + 2
         else:
-            if !stmtAlwaysReturns(world, unit, unitIndex, kids[i], scope, types):
+            if !stmtAlwaysReturns(world = world, unit = unit, unitIndex = unitIndex, stmtId = kids[i], scope = scope, types = types):
                 return false
             hasElse = true
             i = i + 1
@@ -292,7 +292,7 @@ blockAlwaysReturns|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I3
     let kids = unit.ast.stmtAt(blockId).kids
     var i = 0
     while i < len(kids):
-        if stmtAlwaysReturns(world, unit, unitIndex, kids[i], scope, types):
+        if stmtAlwaysReturns(world = world, unit = unit, unitIndex = unitIndex, stmtId = kids[i], scope = scope, types = types):
             return true
         i = i + 1
     return false
@@ -305,11 +305,11 @@ stmtAlwaysReturns|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32
     if ast.isReturnStmt(stmtId):
         return true
     if ast.isBlockStmt(stmtId):
-        return blockAlwaysReturns(world, unit, unitIndex, stmtId, scope, types)
+        return blockAlwaysReturns(world = world, unit = unit, unitIndex = unitIndex, blockId = stmtId, scope = scope, types = types)
     if ast.isIfStmt(stmtId):
-        return ifAlwaysReturns(world, unit, unitIndex, stmtId, scope, types)
+        return ifAlwaysReturns(world = world, unit = unit, unitIndex = unitIndex, stmtId = stmtId, scope = scope, types = types)
     if ast.isMatchStmt(stmtId):
-        return matchAlwaysReturns(world, unit, unitIndex, stmtId, scope, types)
+        return matchAlwaysReturns(world = world, unit = unit, unitIndex = unitIndex, stmtId = stmtId, scope = scope, types = types)
     return false
 
 ; 播种结果：函数帧、返回类型与播种期错误；valid 为假表示不是可检查的函数声明。
@@ -335,40 +335,40 @@ seedFunctionScope|func(world: MemberWorld, unitIndex: I32, declId: I32,) -> (Bod
         return out
     out.valid = true
     let bytes = tempUtf8Bytes(unit.text)
-    var stack = enterScope(ScopeStack(), scopeFunction, unit.path, decl.start)
+    var stack = enterScope(stack = ScopeStack(), kind = scopeFunction, file = unit.path, offset = decl.start)
     if decl.isSelf:
-        let ownerId = ownerTypeOf(world, unitIndex, declId)
+        let ownerId = ownerTypeOf(world = world, unitIndex = unitIndex, declId = declId)
         if ownerId >= 0:
-            let selfDecl = declareSelf(stack, "self", ownerId, unit.path, decl.start)
+            let selfDecl = declareSelf(stack = stack, spelling = "self", typeId = ownerId, file = unit.path, offset = decl.start)
             if selfDecl.failed:
-                out.errors = out.errors.append(makeBodyError(bodyParamDuplicated, unit.path, selfDecl.error.offset, selfDecl.error.spelling, "", ""))
+                out.errors = out.errors.append(makeBodyError(kind = bodyParamDuplicated, file = unit.path, offset = selfDecl.error.offset, name = selfDecl.error.spelling, expected = "", got = ""))
             else:
                 stack = selfDecl.stack
     var i = 0
     while i < len(decl.kids):
         let kid = decl.kids[i]
         if isParamDeclCode(unit.ast.decls[kid].kind):
-            let typeId = world.types.typeOf(unitIndex, kid)
-            let declared = declareParam(stack, unit.ast.decls[kid], kid, typeId, unit.path, bytes)
+            let typeId = world.types.typeOf(unit = unitIndex, decl = kid)
+            let declared = declareParam(stack = stack, decl = unit.ast.decls[kid], declId = kid, typeId = typeId, file = unit.path, bytes = bytes)
             if declared.failed:
-                out.errors = out.errors.append(makeBodyError(bodyParamDuplicated, unit.path, declared.error.offset, declared.error.spelling, "", ""))
+                out.errors = out.errors.append(makeBodyError(kind = bodyParamDuplicated, file = unit.path, offset = declared.error.offset, name = declared.error.spelling, expected = "", got = ""))
             else:
                 stack = declared.stack
         i = i + 1
     out.scope = stack
     if decl.typeId >= 0:
-        out.returnType = world.types.typeOf(unitIndex, declId)
+        out.returnType = world.types.typeOf(unit = unitIndex, decl = declId)
         if out.returnType < 0:
             out.known = false
     else:
-        let empty = intern(out.pool, typeClassTuple, "", [], -1)
+        let empty = intern(pool = out.pool, kind = typeClassTuple, name = "", kids = [], ret = -1)
         out.pool = empty.pool
         out.returnType = empty.id
     return out
 
 ; 检查入口：播种函数帧，走一遍体，最后按返回路径补缺失返回。
 checkFunctionBody|func(world: MemberWorld, unitIndex: I32, declId: I32, types: ExprTypes,) -> (BodyCheck,):
-    let seed = seedFunctionScope(world, unitIndex, declId)
+    let seed = seedFunctionScope(world = world, unitIndex = unitIndex, declId = declId)
     var out = BodyCheck()
     out.pool = seed.pool
     if !seed.valid:
@@ -384,10 +384,10 @@ checkFunctionBody|func(world: MemberWorld, unitIndex: I32, declId: I32, types: E
     if decl.body < 0:
         out.failed = len(out.errors) > 0
         return out
-    out = walkBodyStmt(world, unit, unitIndex, decl.body, seed.scope, known, types, out)
-    out.guarantees = stmtAlwaysReturns(world, unit, unitIndex, decl.body, seed.scope, types)
-    if known && !isVoidReturn(out.pool, out.returnType) && !out.guarantees:
-        let name = decodeRange(tempUtf8Bytes(unit.text), decl.nameStart, decl.nameEnd)
-        out = appendBodyError(out, unit, decl.start, bodyReturnMissing, name, typeText(out.pool, out.returnType), "()")
+    out = walkBodyStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = decl.body, scope = seed.scope, known = known, types = types, out = out)
+    out.guarantees = stmtAlwaysReturns(world = world, unit = unit, unitIndex = unitIndex, stmtId = decl.body, scope = seed.scope, types = types)
+    if known && !isVoidReturn(pool = out.pool, id = out.returnType) && !out.guarantees:
+        let name = decodeRange(bytes = tempUtf8Bytes(unit.text), start = decl.nameStart, end = decl.nameEnd)
+        out = appendBodyError(out = out, unit = unit, offset = decl.start, kind = bodyReturnMissing, name = name, expected = typeText(pool = out.pool, id = out.returnType), got = "()")
     out.failed = len(out.errors) > 0
     return out

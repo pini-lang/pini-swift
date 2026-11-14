@@ -3,10 +3,10 @@
 
 ; 已登记的诊断码数量，供门禁核对表规模。
 diagnosticCodeCount|func() -> (I32,):
-    return 104
+    return 107
 
 ; 码的消息模板；未登记答空串。占位符由调用方按诊断负载填充。
-diagnosticMessage|func(code: String,) -> (String,):
+diagnosticMessage|func(_code: String,) -> (String,):
     if code == "E1-004":
         return "源码含不可见字符 '{label}'"
     if code == "E1-005":
@@ -141,6 +141,12 @@ diagnosticMessage|func(code: String,) -> (String,):
         return "变参的第 {position} 个实参类型 '{type}' 不能传给 C：{reason}"
     if code == "E4-035":
         return "`{type}` 只在 C 面上成立"
+    if code == "E4-036":
+        return "调用 '{callee}' 缺少实参标签：形参 '{param}' 要求写 '{param} = ...'"
+    if code == "E4-037":
+        return "调用 '{callee}' 的形参 '{param}' 已退出标签面"
+    if code == "E4-038":
+        return "调用 '{callee}' 重复写了形参 '{param}' 的标签"
     if code == "E5-001":
         return "未定义变量 '{name}'"
     if code == "E5-002":
@@ -218,7 +224,7 @@ diagnosticMessage|func(code: String,) -> (String,):
     return ""
 
 ; 码的修复建议模板；没有建议答空串。
-diagnosticSuggestion|func(code: String,) -> (String,):
+diagnosticSuggestion|func(_code: String,) -> (String,):
     if code == "E1-004":
         return "删除它；标识符只用字母、数字、下划线与组合附加符号"
     if code == "E1-005":
@@ -259,6 +265,12 @@ diagnosticSuggestion|func(code: String,) -> (String,):
         return "变参尾只收 I8 / U8 / I32 / I64 / U64 / F64 / Bool / *T / String；对象与集合没有 C 布局"
     if code == "E4-035":
         return "写在 `[名称|foreign]` 的符号声明里，或写在带 `|c` 条目的函数签名上；普通变量、字段与方法不收句柄"
+    if code == "E4-036":
+        return "在实参前写 '{param} = '；若这个参数本就该按位置传，把声明改成 '_{param}: ...'"
+    if code == "E4-037":
+        return "删掉实参前的 '{param} = '；声明写成 '_{param}' 就表示按位置传"
+    if code == "E4-038":
+        return "每个形参只给一个实参；去掉重复的那个"
     if code == "E5-001":
         return "你是想说 '{closest}' 吗？"
     if code == "E5-019":

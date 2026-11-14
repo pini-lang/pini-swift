@@ -22,13 +22,13 @@ struct ConcurrencyYieldTests: Sendable, PiniSourceLowering {
     }
 
     private static let 探针未决 = """
-    慢|func(n: I32,) => (I32,):
+    慢|func(_n: I32,) => (I32,):
         print("S-start")
         sleep(250)
         print("S-done")
         return ok(n)
 
-    父|func(n: I32,) => (I32,):
+    父|func(_n: I32,) => (I32,):
         let a = 慢(n)
         let x = try await a else e:
             return err(Error("failed"))
@@ -49,13 +49,13 @@ struct ConcurrencyYieldTests: Sendable, PiniSourceLowering {
     /// 「只数首跑那一趟」与「每一次都数」读数相同 ⇒ 量不出差别。第二次 `await` 的对象是新 spawn 的子任务。
     /// 睡眠刻意远小于池水平线判读的那两份：本判据读让出计数的精确值，只要求 `await` 那刻子任务尚未决。
     private static let 探针两处让出 = """
-    慢|func(n: I32,) => (I32,):
+    慢|func(_n: I32,) => (I32,):
         print("S-start")
         sleep(60)
         print("S-done")
         return ok(n)
 
-    父|func(n: I32,) => (I32,):
+    父|func(_n: I32,) => (I32,):
         let a = 慢(n)
         let x = try await a else e:
             return err(Error("failed"))
@@ -78,13 +78,13 @@ struct ConcurrencyYieldTests: Sendable, PiniSourceLowering {
     /// 「子任务已决」这一前提靠时间差立住：子睡 100ms、父睡 1500ms，余量 1.4 秒。
     /// 余量须远大于并行套件造成的抖动，否则前提不成立，读数会凭空多一次让出。
     private static let 探针已决 = """
-    慢|func(n: I32,) => (I32,):
+    慢|func(_n: I32,) => (I32,):
         print("S-start")
         sleep(100)
         print("S-done")
         return ok(n)
 
-    父|func(n: I32,) => (I32,):
+    父|func(_n: I32,) => (I32,):
         let a = 慢(n)
         sleep(1500)
         let x = try await a else e:
@@ -221,7 +221,7 @@ struct ConcurrencyYieldTests: Sendable, PiniSourceLowering {
 
         """ : ""
         return overrideBlock + """
-        闸|func(毫秒: I32,) => (I32,):
+        闸|func(_毫秒: I32,) => (I32,):
             sleep(毫秒)
             return ok(0)
 

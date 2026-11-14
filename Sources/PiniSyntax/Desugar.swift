@@ -266,7 +266,7 @@ public enum Desugar {
         case .call(let callee, let args, let loc):
             return .call(
                 callee: desugar(callee),
-                arguments: args.map { CallArgument(label: $0.label, expression: desugar($0.expression)) },
+                arguments: args.map { CallArgument(label: $0.label, expression: desugar($0.expression), location: $0.location) },
                 location: loc)
         case .member(let obj, let name, let loc):
             return .member(object: desugar(obj), name: name, location: loc)

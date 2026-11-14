@@ -5,7 +5,7 @@ entryDirectory
 entrySource
 
 ; 分类名：枚举相等比较不可用，按名称比。
-entryKindName|func(kind: EntryKind,) -> (String,):
+entryKindName|func(_kind: EntryKind,) -> (String,):
     match kind:
         case entrySkip:
             return "skip"
@@ -32,7 +32,7 @@ classifyEntry|func(name: String, isDirectory: Bool,) -> (EntryKind,):
     return entrySkip
 
 ; 源文件后缀：只认 .pini 结尾；长度不足或后缀不符都答否。
-isPiniSource|func(name: String,) -> (Bool,):
+isPiniSource|func(_name: String,) -> (Bool,):
     let count = len(name)
     if count < 5:
         return false
@@ -51,7 +51,7 @@ isExcluded|func(packagePath: String, excludes: Array<String>,) -> (Bool,):
     return false
 
 ; 嵌套清单：子目录自带 pini.toml 即属另一个包，父包不收它的源码。
-hasNestedManifest|func(absDir: String,) -> (Bool,):
+hasNestedManifest|func(_absDir: String,) -> (Bool,):
     return exists(absDir + "/pini.toml")
 
 ; 扫描累积：收集到的相对路径与目录枚举中的错误。
@@ -69,15 +69,15 @@ scan|func(absDir: String, rootRel: String, relDir: String, excludes: Array<Strin
     while i < len(names):
         let name = names[i]
         let absPath = absDir + "/" + name
-        let relPath = joinRel(relDir, name)
-        let packagePath = joinRel(rootRel, relPath)
+        let relPath = joinRel(parent = relDir, child = name)
+        let packagePath = joinRel(parent = rootRel, child = relPath)
         let directory = isDir(absPath)
-        let kind = classifyEntry(name, directory)
-        if isEntryKind(kind, entryDirectory):
-            if !isExcluded(packagePath, excludes) && !hasNestedManifest(absPath):
-                out = scan(absPath, rootRel, relPath, excludes, out)
+        let kind = classifyEntry(name = name, isDirectory = directory)
+        if isEntryKind(kind = kind, expected = entryDirectory):
+            if !isExcluded(packagePath = packagePath, excludes = excludes) && !hasNestedManifest(absPath):
+                out = scan(absDir = absPath, rootRel = rootRel, relDir = relPath, excludes = excludes, state = out)
         else:
-            if isEntryKind(kind, entrySource) && !isExcluded(packagePath, excludes):
+            if isEntryKind(kind = kind, expected = entrySource) && !isExcluded(packagePath = packagePath, excludes = excludes):
                 out.files = out.files.append(relPath)
         i = i + 1
     return out

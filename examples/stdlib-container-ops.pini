@@ -1,7 +1,7 @@
 ; 标准库容器操作：谓词判定与计数、末段取放、整份重复、轮转、插位与删位
 ; 运行：pini run examples/stdlib-container-ops.pini
 ; 预期：十组读数依次为 存在 / 全称 / 条件计数 / 首命中 / 末段 / 弃末 / 重复 / 轮转 / 插位 / 删位
-isEven|func(x: I32,) -> (Bool,):
+isEven|func(_x: I32,) -> (Bool,):
     return x % 2 == 0
 
 main|func() -> ():

@@ -6,63 +6,63 @@ _support = "../../support"
     let one = confusableSkeletonBytes(bytesOf([0x31]))
     let lower = confusableSkeletonBytes(bytesOf([0x6C]))
     let upper = confusableSkeletonBytes(bytesOf([0x49]))
-    assert(sameBytes(one, lower), "1 与 l 应同骨架")
-    assert(sameBytes(upper, lower), "I 与 l 应同骨架")
-    assert(sameBytes(one, bytesOf([0x6C])), "骨架应折叠到 l")
+    assert(sameBytes(left = one, right = lower), "1 与 l 应同骨架")
+    assert(sameBytes(left = upper, right = lower), "I 与 l 应同骨架")
+    assert(sameBytes(left = one, right = bytesOf([0x6C])), "骨架应折叠到 l")
     return
 
 ; 西里尔字母折到拉丁同形字母；两者互不相同的字节，但骨架相同。
 骨架跨脚本折叠|test() -> ():
     let cyrillic = confusableSkeletonBytes(bytesOf([0x430]))
     let latin = confusableSkeletonBytes(bytesOf([0x61]))
-    assert(sameBytes(cyrillic, latin), "西里尔 а 与拉丁 a 应同骨架")
+    assert(sameBytes(left = cyrillic, right = latin), "西里尔 а 与拉丁 a 应同骨架")
     return
 
 ; 一条映射可以展开成多个标量：m 的骨架是 rn，与直接写的 rn 相同。
 骨架多标量目标|test() -> ():
     let em = confusableSkeletonBytes(bytesOf([0x6D]))
-    assert(sameBytes(em, bytesOf([0x72, 0x6E])), "m 的骨架应为 rn")
-    assert(sameBytes(em, confusableSkeletonBytes(bytesOf([0x72, 0x6E]))), "m 与 rn 应同骨架")
+    assert(sameBytes(left = em, right = bytesOf([0x72, 0x6E])), "m 的骨架应为 rn")
+    assert(sameBytes(left = em, right = confusableSkeletonBytes(bytesOf([0x72, 0x6E]))), "m 与 rn 应同骨架")
     return
 
 ; 骨架先做 NFD：预组合写法与分解写法在映射前已经同形。
 骨架先分解|test() -> ():
     let composed = confusableSkeletonBytes(bytesOf([0xE9]))
     let decomposed = confusableSkeletonBytes(bytesOf([0x65, 0x301]))
-    assert(sameBytes(composed, decomposed), "两种写法应同骨架")
-    assert(sameBytes(composed, bytesOf([0x65, 0x301])), "é 的骨架应为 e + U+0301")
+    assert(sameBytes(left = composed, right = decomposed), "两种写法应同骨架")
+    assert(sameBytes(left = composed, right = bytesOf([0x65, 0x301])), "é 的骨架应为 e + U+0301")
     return
 
 ; 骨架不做大小写折叠：A 与 a 仍可区分。
 骨架不折叠大小写|test() -> ():
     let upper = confusableSkeletonBytes(bytesOf([0x41]))
     let lower = confusableSkeletonBytes(bytesOf([0x61]))
-    assert(!sameBytes(upper, lower), "A 与 a 不得同骨架")
+    assert(!sameBytes(left = upper, right = lower), "A 与 a 不得同骨架")
     return
 
 ; 数字零折到大写 O：跨类别映射同样生效。
 骨架数字零|test() -> ():
     let zero = confusableSkeletonBytes(bytesOf([0x30]))
-    assert(sameBytes(zero, bytesOf([0x4F])), "0 的骨架应为 O")
+    assert(sameBytes(left = zero, right = bytesOf([0x4F])), "0 的骨架应为 O")
     return
 
 ; 没有映射的字符原样保留，中文不被折掉。
 骨架未映射保持|test() -> ():
     let han = confusableSkeletonBytes(bytesOf([0x4E2D]))
-    assert(sameBytes(han, bytesOf([0x4E2D])), "中 应保持")
+    assert(sameBytes(left = han, right = bytesOf([0x4E2D])), "中 应保持")
     return
 
 ; 骨架自身幂等：再折一次不变，否则同一标识符会得到两个骨架。
 骨架幂等|test() -> ():
     let once = confusableSkeletonBytes(bytesOf([0x31, 0x43A, 0x6D]))
     let twice = confusableSkeletonBytes(once)
-    assert(sameBytes(twice, once), "骨架应幂等")
+    assert(sameBytes(left = twice, right = once), "骨架应幂等")
     return
 
 ; 非法 UTF-8 原样返回：诊断路径不得因坏输入而改写字节。
 骨架非法输入原样|test() -> ():
     let broken: Array<U8> = [228, 65]
-    assert(sameBytes(confusableSkeletonBytes(broken), broken), "应原样返回")
+    assert(sameBytes(left = confusableSkeletonBytes(broken), right = broken), "应原样返回")
     let empty: Array<U8> = []
-    assert(sameBytes(confusableSkeletonBytes(empty), empty), "空输入应原样返回")
+    assert(sameBytes(left = confusableSkeletonBytes(empty), right = empty), "空输入应原样返回")
     return

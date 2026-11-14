@@ -30,15 +30,15 @@ isOK|self() -> (Bool,):
     return len(self.errors) == 0
 errorCount|self() -> (I32,):
     return len(self.errors)
-errorAt|self(index: I32,) -> (ManifestError,):
+errorAt|self(_index: I32,) -> (ManifestError,):
     return self.errors[index]
 packageCount|self() -> (I32,):
     return len(self.packages)
-packageAt|self(index: I32,) -> (PackagePlan,):
+packageAt|self(_index: I32,) -> (PackagePlan,):
     return self.packages[index]
 
 ; 计划文本：包与 target 按拓扑序逐行铺开，错误在前；同一计划两次渲染逐字相同。
-planText|func(plan: BuildPlan,) -> (String,):
+planText|func(_plan: BuildPlan,) -> (String,):
     var text = "root=" + plan.rootPath + " profile=" + plan.profile + "\n"
     var i = 0
     while i < len(plan.errors):
@@ -75,45 +75,45 @@ assemblePlan|func(workspace: WorkspaceParse, parses: Array<PackageParse>,) -> (B
         i = i + 1
         let norm = normalizeMemberPath(raw)
         if !norm.ok:
-            plan.errors = plan.errors.append(manifestError(errorMemberPath, plan.rootPath, raw + "：" + norm.reason))
+            plan.errors = plan.errors.append(manifestError(kind = errorMemberPath, path = plan.rootPath, detail = raw + "：" + norm.reason))
             continue
-        if containsText(members, norm.value):
-            plan.errors = plan.errors.append(manifestError(errorMemberDuplicated, plan.rootPath, norm.value))
+        if containsText(items = members, value = norm.value):
+            plan.errors = plan.errors.append(manifestError(kind = errorMemberDuplicated, path = plan.rootPath, detail = norm.value))
             continue
         members = members.append(norm.value)
-        let at = findParse(parses, norm.value)
+        let at = findParse(parses = parses, rootPath = norm.value)
         if at < 0:
-            plan.errors = plan.errors.append(manifestError(errorManifestMissing, plan.rootPath, norm.value))
+            plan.errors = plan.errors.append(manifestError(kind = errorManifestMissing, path = plan.rootPath, detail = norm.value))
             continue
-        plan.errors = appendErrors(plan.errors, parses[at].errors)
+        plan.errors = appendErrors(errors = plan.errors, extra = parses[at].errors)
         packages = packages.append(parses[at].manifest)
     i = 0
     while i < len(packages):
-        if hasEarlierPackage(packages, i, packages[i].name):
-            plan.errors = plan.errors.append(manifestError(errorDuplicatePackage, plan.rootPath, packages[i].name))
+        if hasEarlierPackage(packages = packages, at = i, name = packages[i].name):
+            plan.errors = plan.errors.append(manifestError(kind = errorDuplicatePackage, path = plan.rootPath, detail = packages[i].name))
         i = i + 1
-    plan.errors = checkExecutableNames(packages, plan.rootPath, plan.errors)
-    let topo = topoOrder(packages, plan.rootPath, plan.errors)
+    plan.errors = checkExecutableNames(packages = packages, rootPath = plan.rootPath, errors = plan.errors)
+    let topo = topoOrder(packages = packages, rootPath = plan.rootPath, errors = plan.errors)
     plan.errors = topo.errors
     if len(plan.errors) > 0:
         return plan
     i = 0
     while i < len(topo.order):
-        let at = findPackage(packages, topo.order[i])
-        plan.packages = plan.packages.append(packagePlan(packages[at], plan.rootPath, plan.profile))
+        let at = findPackage(packages = packages, name = topo.order[i])
+        plan.packages = plan.packages.append(packagePlan(pkg = packages[at], root = plan.rootPath, profile = plan.profile))
         i = i + 1
     return plan
 
 ; 读盘入口：根清单与每个成员的清单各读一次，随后交给纯装配。
 ; 成员路径先规范化再拼路径，越界成员在读盘之前就被挡下。
-planWorkspace|func(root: String,) -> (BuildPlan,):
+planWorkspace|func(_root: String,) -> (BuildPlan,):
     let rootManifest = root + "/pini.toml"
     if !exists(rootManifest):
         var plan = BuildPlan()
         plan.rootPath = root
-        plan.errors = plan.errors.append(manifestError(errorManifestMissing, rootManifest, "pini.toml"))
+        plan.errors = plan.errors.append(manifestError(kind = errorManifestMissing, path = rootManifest, detail = "pini.toml"))
         return plan
-    let workspace = parseWorkspaceManifest(readFile(rootManifest), root, rootManifest)
+    let workspace = parseWorkspaceManifest(text = readFile(rootManifest), rootPath = root, path = rootManifest)
     var parses: Array<PackageParse> = []
     var i = 0
     while i < len(workspace.manifest.members):
@@ -125,11 +125,11 @@ planWorkspace|func(root: String,) -> (BuildPlan,):
         if !exists(memberManifest):
             var missing = PackageParse()
             missing.manifest.rootPath = norm.value
-            missing.errors = missing.errors.append(manifestError(errorManifestMissing, memberManifest, norm.value))
+            missing.errors = missing.errors.append(manifestError(kind = errorManifestMissing, path = memberManifest, detail = norm.value))
             parses = parses.append(missing)
             continue
-        parses = parses.append(parsePackageManifest(readFile(memberManifest), norm.value, memberManifest))
-    return assemblePlan(workspace, parses)
+        parses = parses.append(parsePackageManifest(text = readFile(memberManifest), rootPath = norm.value, path = memberManifest))
+    return assemblePlan(workspace = workspace, parses = parses)
 
 ; 单包计划：产物目录按 profile 定；可执行另给 bin 路径，测试目标不默认构建。
 packagePlan|func(pkg: PackageManifest, root: String, profile: String,) -> (PackagePlan,):
@@ -149,22 +149,22 @@ packagePlan|func(pkg: PackageManifest, root: String, profile: String,) -> (Packa
         plan.sourceRoot = sourceRootOf(target)
         plan.irPath = buildDir + "/" + target.name + ".ll"
         plan.interfacePath = buildDir + "/interface.txt"
-        if isTargetKind(target.kind, targetExecutable):
+        if isTargetKind(kind = target.kind, expected = targetExecutable):
             plan.executablePath = root + "/.build/" + profile + "/bin/" + target.name
-        plan.isBuiltByDefault = !isTargetKind(target.kind, targetTest)
+        plan.isBuiltByDefault = !isTargetKind(kind = target.kind, expected = targetTest)
         out.targets = out.targets.append(plan)
         i = i + 1
     return out
 
 ; 源码根：库与可执行从 src 取生产源码，测试目标从入口目录取；扫描规则归装载面。
-sourceRootOf|func(target: TargetSpec,) -> (String,):
-    if isTargetKind(target.kind, targetTest):
+sourceRootOf|func(_target: TargetSpec,) -> (String,):
+    if isTargetKind(kind = target.kind, expected = targetTest):
         return target.entry
     return "src"
 
 ; 测试目标判定：测试目标不进普通构建产物，装载面据此决定是否并入测试源码。
-isTestTarget|func(target: TargetPlan,) -> (Bool,):
-    return isTargetKind(target.kind, targetTest)
+isTestTarget|func(_target: TargetPlan,) -> (Bool,):
+    return isTargetKind(kind = target.kind, expected = targetTest)
 
 ; 可执行产物名在工作区内唯一：跨包同名会让两份产物落到同一个 bin 路径。
 checkExecutableNames|func(packages: Array<PackageManifest>, rootPath: String, errors: Array<ManifestError>,) -> (Array<ManifestError>,):
@@ -176,9 +176,9 @@ checkExecutableNames|func(packages: Array<PackageManifest>, rootPath: String, er
         var t = 0
         while t < len(pkg.targets):
             let target = pkg.targets[t]
-            if isTargetKind(target.kind, targetExecutable):
-                if containsText(seen, target.name):
-                    out = out.append(manifestError(errorExecutableCollision, rootPath, target.name + " @ " + pkg.name))
+            if isTargetKind(kind = target.kind, expected = targetExecutable):
+                if containsText(items = seen, value = target.name):
+                    out = out.append(manifestError(kind = errorExecutableCollision, path = rootPath, detail = target.name + " @ " + pkg.name))
                 else:
                     seen = seen.append(target.name)
             t = t + 1
@@ -209,15 +209,15 @@ topoOrder|func(packages: Array<PackageManifest>, rootPath: String, errors: Array
     var depth = 0
     var n = 0
     while n < len(names):
-        let start = findPackage(packages, names[n])
+        let start = findPackage(packages = packages, name = names[n])
         n = n + 1
         if state[start] == 2:
             continue
         state[start] = 1
         var frame = TopoFrame()
         frame.name = names[n - 1]
-        frame.deps = sortedRequires(packages, packages[start].requires)
-        frames = pushFrame(frames, depth, frame)
+        frame.deps = sortedRequires(packages = packages, requires = packages[start].requires)
+        frames = pushFrame(frames = frames, depth = depth, frame = frame)
         depth = depth + 1
         while depth > 0:
             let at = depth - 1
@@ -226,22 +226,22 @@ topoOrder|func(packages: Array<PackageManifest>, rootPath: String, errors: Array
                 let dep = top.deps[top.next]
                 top.next = top.next + 1
                 frames[at] = top
-                let found = findPackage(packages, dep)
+                let found = findPackage(packages = packages, name = dep)
                 if found < 0:
                     continue
                 if state[found] == 2:
                     continue
                 if state[found] == 1:
-                    out.errors = out.errors.append(manifestError(errorDependencyCycle, rootPath, cycleChain(frames, depth, dep)))
+                    out.errors = out.errors.append(manifestError(kind = errorDependencyCycle, path = rootPath, detail = cycleChain(frames = frames, depth = depth, dep = dep)))
                     return out
                 state[found] = 1
                 var child = TopoFrame()
                 child.name = dep
-                child.deps = sortedRequires(packages, packages[found].requires)
-                frames = pushFrame(frames, depth, child)
+                child.deps = sortedRequires(packages = packages, requires = packages[found].requires)
+                frames = pushFrame(frames = frames, depth = depth, frame = child)
                 depth = depth + 1
             else:
-                let done = findPackage(packages, top.name)
+                let done = findPackage(packages = packages, name = top.name)
                 state[done] = 2
                 out.order = out.order.append(top.name)
                 depth = depth - 1
@@ -275,13 +275,13 @@ sortedRequires|func(packages: Array<PackageManifest>, requires: Array<String>,) 
     var kept: Array<String> = []
     var i = 0
     while i < len(requires):
-        if findPackage(packages, requires[i]) >= 0 && !containsText(kept, requires[i]):
+        if findPackage(packages = packages, name = requires[i]) >= 0 && !containsText(items = kept, value = requires[i]):
             kept = kept.append(requires[i])
         i = i + 1
     return sortedTexts(kept)
 
 ; 包名升序：深度优先的根顺序由它定，重复执行结果不变。
-sortedPackageNames|func(packages: Array<PackageManifest>,) -> (Array<String>,):
+sortedPackageNames|func(_packages: Array<PackageManifest>,) -> (Array<String>,):
     var names: Array<String> = []
     var i = 0
     while i < len(packages):
@@ -290,13 +290,13 @@ sortedPackageNames|func(packages: Array<PackageManifest>,) -> (Array<String>,):
     return sortedTexts(names)
 
 ; 字符串升序：按 UTF-8 字节比较，与平台 locale 无关。
-sortedTexts|func(items: Array<String>,) -> (Array<String>,):
+sortedTexts|func(_items: Array<String>,) -> (Array<String>,):
     var out = items
     var i = 1
     while i < len(out):
         let value = out[i]
         var j = i - 1
-        while j >= 0 && comparePlanText(out[j], value) > 0:
+        while j >= 0 && comparePlanText(a = out[j], b = value) > 0:
             out[j + 1] = out[j]
             j = j - 1
         out[j + 1] = value

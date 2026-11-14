@@ -54,7 +54,7 @@ lexicalCategory|func() -> (Category,):
     return .categoryLexical
 
 ; 严重度名：与宿主诊断标签的后缀一致。
-severityName|func(severity: Severity,) -> (String,):
+severityName|func(_severity: Severity,) -> (String,):
     match severity:
         case severityError:
             return "错误"
@@ -65,7 +65,7 @@ severityName|func(severity: Severity,) -> (String,):
     return "错误"
 
 ; 严重度次序：错误 0、警告 1、备注 2。
-severityRank|func(severity: Severity,) -> (I32,):
+severityRank|func(_severity: Severity,) -> (I32,):
     match severity:
         case severityError:
             return 0
@@ -76,7 +76,7 @@ severityRank|func(severity: Severity,) -> (I32,):
     return 3
 
 ; 类别名：不带严重度后缀。
-categoryName|func(category: Category,) -> (String,):
+categoryName|func(_category: Category,) -> (String,):
     match category:
         case categoryLexical:
             return "词法"
@@ -172,22 +172,22 @@ locationOf|func(text: SourceText, offset: I32,) -> (Location,):
 
 ; 按固定次序比较：文件、锚点起点、锚点终点、码、消息。次序全序，不依赖登记顺序。
 compareDiagnostics|func(left: Diagnostic, right: Diagnostic,) -> (I32,):
-    let byFile = compareText(left.file, right.file)
+    let byFile = compareText(left = left.file, right = right.file)
     if byFile != 0:
         return byFile
-    let byStart = compareInt(left.anchorStart(), right.anchorStart())
+    let byStart = compareInt(left = left.anchorStart(), right = right.anchorStart())
     if byStart != 0:
         return byStart
-    let byEnd = compareInt(left.anchorEnd(), right.anchorEnd())
+    let byEnd = compareInt(left = left.anchorEnd(), right = right.anchorEnd())
     if byEnd != 0:
         return byEnd
-    let byCode = compareText(left.code, right.code)
+    let byCode = compareText(left = left.code, right = right.code)
     if byCode != 0:
         return byCode
-    return compareText(left.message, right.message)
+    return compareText(left = left.message, right = right.message)
 
 ; 稳定排序：同一批诊断无论登记顺序如何，都得到同一序列。
-sortDiagnostics|func(items: Array<Diagnostic>,) -> (Array<Diagnostic>,):
+sortDiagnostics|func(_items: Array<Diagnostic>,) -> (Array<Diagnostic>,):
     var out: Array<Diagnostic> = []
     var i = 0
     while i < len(items):
@@ -197,11 +197,11 @@ sortDiagnostics|func(items: Array<Diagnostic>,) -> (Array<Diagnostic>,):
             if at == 0:
                 placing = false
             else:
-                if compareDiagnostics(items[i], out[at - 1]) < 0:
+                if compareDiagnostics(left = items[i], right = out[at - 1]) < 0:
                     at = at - 1
                 else:
                     placing = false
-        out = insertDiagnostic(out, at, items[i])
+        out = insertDiagnostic(items = out, index = at, item = items[i])
         i = i + 1
     return out
 
@@ -225,8 +225,8 @@ insertDiagnostic|func(items: Array<Diagnostic>, index: I32, item: Diagnostic,) -
 
 ; 标签行：主/次、跨度、说明；说明为空时不留下行尾空格。
 labelLine|func(label: Label, text: SourceText,) -> (String,):
-    let from = locationOf(text, label.start)
-    let to = locationOf(text, label.end)
+    let from = locationOf(text = text, offset = label.start)
+    let to = locationOf(text = text, offset = label.end)
     var kind = "次标签 "
     if label.primary:
         kind = "主标签 "
@@ -241,11 +241,11 @@ renderDiagnostic|func(d: Diagnostic, text: SourceText,) -> (String,):
     let anchor = d.anchorStart()
     var out = ""
     if anchor >= 0:
-        let at = locationOf(text, anchor)
+        let at = locationOf(text = text, offset = anchor)
         out = d.file + ":" + "\(at.line)" + ":" + "\(at.column)" + ": "
     else:
         out = d.file + ": "
-    out = out + labelOf(d.category, d.severity) + " [" + d.code + "] " + d.message + "\n"
+    out = out + labelOf(category = d.category, severity = d.severity) + " [" + d.code + "] " + d.message + "\n"
     let main = d.primaryIndex()
     var i = 0
     while i < len(d.labels):
@@ -256,7 +256,7 @@ renderDiagnostic|func(d: Diagnostic, text: SourceText,) -> (String,):
             else:
                 if i <= main:
                     pick = i - 1
-        out = out + labelLine(d.labels[pick], text)
+        out = out + labelLine(label = d.labels[pick], text = text)
         i = i + 1
     var n = 0
     while n < len(d.notes):
@@ -265,8 +265,8 @@ renderDiagnostic|func(d: Diagnostic, text: SourceText,) -> (String,):
     return out
 
 ; 没有源文本时只渲染头行与备注：标签要靠源文本才能定位。
-renderHeadless|func(d: Diagnostic,) -> (String,):
-    var out = d.file + ": " + labelOf(d.category, d.severity) + " [" + d.code + "] " + d.message + "\n"
+renderHeadless|func(_d: Diagnostic,) -> (String,):
+    var out = d.file + ": " + labelOf(category = d.category, severity = d.severity) + " [" + d.code + "] " + d.message + "\n"
     var n = 0
     while n < len(d.notes):
         out = out + "  备注 " + d.notes[n] + "\n"
@@ -288,11 +288,11 @@ renderAll|func(items: Array<Diagnostic>, files: Array<String>, texts: Array<Sour
     var out = ""
     var i = 0
     while i < len(ordered):
-        let index = indexOfFile(files, ordered[i].file)
+        let index = indexOfFile(files = files, name = ordered[i].file)
         if index < 0:
             out = out + renderHeadless(ordered[i])
         else:
-            out = out + renderDiagnostic(ordered[i], texts[index])
+            out = out + renderDiagnostic(d = ordered[i], text = texts[index])
         i = i + 1
     return out
 
@@ -320,12 +320,12 @@ issues|self() -> (Array<String>,):
         found = found.append("多标签缺少主标签")
     return found
 ; 追加标签；顺序即渲染顺序（主标签会被提到最前）。
-addLabel|self(label: Label,) -> (Diagnostic,):
+addLabel|self(_label: Label,) -> (Diagnostic,):
     var out = self
     out.labels = out.labels.append(label)
     return out
 ; 追加备注；顺序即渲染顺序。
-addNote|self(note: String,) -> (Diagnostic,):
+addNote|self(_note: String,) -> (Diagnostic,):
     var out = self
     out.notes = out.notes.append(note)
     return out

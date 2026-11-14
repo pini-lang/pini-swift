@@ -266,7 +266,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
             return 甲
 
         main|func() -> ():
-            print(取(5, 6,))
+            print(取(甲 = 5, 乙 = 6,))
             return
         """#
         let declarations = try decls(source)
@@ -287,7 +287,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
             return 甲
 
         main|func() -> ():
-            print(取(5, 6,))
+            print(取(甲 = 5, 乙 = 6,))
             return
         """#
         let module = try lowered(source)
@@ -377,7 +377,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
         [配置|given]
             名称: String = "默认"
 
-        取名|func(using 配: 配置,) -> (String,):
+        取名|func(using _配: 配置,) -> (String,):
             return 配.名称
 
         main|func() -> ():
@@ -400,10 +400,10 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
             print("物化")
             return 1
 
-        甲|func(using 块: 计数块,) -> (I32,):
+        甲|func(using _块: 计数块,) -> (I32,):
             return 块.值
 
-        乙|func(using 块: 计数块,) -> (I32,):
+        乙|func(using _块: 计数块,) -> (I32,):
             return 块.值
 
         main|func() -> ():
@@ -445,7 +445,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
             print("物化")
             return 1
 
-        取块|func(using 块: 计数块,) -> (I32,):
+        取块|func(using _块: 计数块,) -> (I32,):
             return 块.值
 
         main|func() -> ():
@@ -462,7 +462,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
         /// ⇒ `using 甲: I32` 在省略式调用下必须报错，而不是静默给个零值。
         ///  注意  全显式调用同一签名是**合法**的（见本件「取用前缀只标记它自己那一个参数」）。
         let source = #"""
-        取|func(using 甲: I32,) -> (I32,):
+        取|func(using _甲: I32,) -> (I32,):
             return 甲
 
         main|func() -> ():
@@ -489,7 +489,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
         [未用块|given]
             值: I32 = 2
 
-        甲|func(using 块: 计数块,) -> (I32,):
+        甲|func(using _块: 计数块,) -> (I32,):
             return 块.值
 
         main|func() -> ():
@@ -521,7 +521,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
         [甲块|given]
             值: I32 = 取乙()
 
-        取乙|func(using 乙: 计数块,) -> (I32,):
+        取乙|func(using _乙: 计数块,) -> (I32,):
             return 乙.值
 
         (盒)
@@ -548,7 +548,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
         [甲块|given]
             值: I32 = 读甲()
 
-        读甲|func(using 甲: 甲块,) -> (I32,):
+        读甲|func(using _甲: 甲块,) -> (I32,):
             return 甲.值
 
         main|func() -> ():
@@ -567,7 +567,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
         [匣<T>|given]
             计数: I32 = 7
 
-        取匣|func(using 箱: 匣<I32>,) -> (I32,):
+        取匣|func(using _箱: 匣<I32>,) -> (I32,):
             return 箱.计数
 
         main|func() -> ():
@@ -593,7 +593,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
             取名|self() -> (String,):
                 return self.名称
 
-            改名|self(n: String) -> ():
+            改名|self(_n: String) -> ():
                 return
 
         main|func() -> ():
@@ -697,7 +697,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
         [配置|given]
             名称: String = "默认"
 
-        取|func(x: I32,) -> (I32,):
+        取|func(_x: I32,) -> (I32,):
             return x
 
         main|func() -> ():
@@ -723,7 +723,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
         [配置|given]
             名称: String = "默认"
 
-        取名|func(using 配: 配置,) -> (String,):
+        取名|func(using _配: 配置,) -> (String,):
             return 配置.名称
 
         main|func() -> ():
@@ -769,7 +769,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
         [配置|given]
             名称: String = "默认"
 
-        取|func(x: String,) -> (String,):
+        取|func(_x: String,) -> (String,):
             return x
 
         main|func() -> ():
@@ -781,7 +781,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
         [服务|object]
             值: I32 = 5
 
-        取|func(x: I32,) -> (I32,):
+        取|func(_x: I32,) -> (I32,):
             return x
 
         main|func() -> ():
@@ -805,7 +805,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
         [配置|given]
             名称: String = "默认"
 
-        取名|func(using 配: 配置,) -> (String,):
+        取名|func(using _配: 配置,) -> (String,):
             return 配.名称
 
         main|func() -> ():
@@ -820,14 +820,14 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
     @Test("`using` 形参在无体签名上被拒 —— trait 抽象签名的三种书写形态")
     func usingIsRejectedInBodylessTraitSignatures() throws {
         /// 意图：默认实例由编译器在调用点插入 ⇒ 无体签名没有调用点可插，`using` 无从物化。与其静默忽略，
-        /// 不如解析期拒绝。三种书写形态各有落点（裸 `名|self(...)` · 带缩进的裸形态 · 花括号 `{名}(...)`），
+        /// 不如解析期拒绝。三种书写形态各有落点（裸 `名|self(_...)` · 带缩进的裸形态 · 花括号 `{名}(...)`），
         /// 故逐条钉住 —— 只测一种会漏掉另两种。
         let bareWithModifier = #"""
         [配置|given]
             名称: String = "默认"
 
         <可显示>
-        描述|self(using 配: 配置,) -> (String,)
+        描述|self(using _配: 配置,) -> (String,)
         """#
         let barePlain = #"""
         [配置|given]
@@ -850,7 +850,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
             名称: String = "默认"
 
         <可显示>
-        描述|self(using 配: 配置,) -> (String,):
+        描述|self(using _配: 配置,) -> (String,):
             return 配.名称
         """#
 
@@ -872,7 +872,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
         [配置|given]
             名称: String = "默认"
 
-        main|func(using 配: 配置,) -> ():
+        main|func(using _配: 配置,) -> ():
             print("ok")
             return
         """#
@@ -880,7 +880,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
         [配置|given]
             名称: String = "默认"
 
-        注入测试|test(using 配: 配置,) -> ():
+        注入测试|test(using _配: 配置,) -> ():
             print(配.名称)
             return
         """#
@@ -912,7 +912,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
         [配置|given]
             名称: String = "默认"
 
-        取名|func(using 配: 配置,) -> (String,):
+        取名|func(using _配: 配置,) -> (String,):
             return 配.名称
 
         main|func() -> ():
@@ -927,7 +927,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
             值: I32 = 5
 
         [[服务]]
-            取名|self(using 配: 配置,) -> (String,):
+            取名|self(using _配: 配置,) -> (String,):
                 return 配.名称
 
         main|func() -> ():
@@ -1012,7 +1012,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
         [计数块|given]
             值: I32 = 7
 
-        取块|func(using 块: 计数块,) -> (I32,):
+        取块|func(using _块: 计数块,) -> (I32,):
             return 块.值
 
         main|func() -> ():
@@ -1040,7 +1040,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
         [计数块|given]
             值: I32 = 7
 
-        取块|func(using 块: 计数块,) -> (I32,):
+        取块|func(using _块: 计数块,) -> (I32,):
             return 块.值
 
         main|func() -> ():
@@ -1060,7 +1060,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
         [计数块|given]
             值: I32 = 7
 
-        取块|func(using 块: 计数块,) -> (I32,):
+        取块|func(using _块: 计数块,) -> (I32,):
             return 块.值
 
         main|func() -> ():
@@ -1079,7 +1079,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
         [计数块|given]
             值: I32 = 7
 
-        取块|func(using 块: 计数块,) -> (I32,):
+        取块|func(using _块: 计数块,) -> (I32,):
             return 块.值
 
         main|func() -> ():

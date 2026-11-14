@@ -296,7 +296,7 @@ extension UnrollExpander {
         }
 
         private func argument(_ node: CallArgument, map: [String: Expression]?) -> CallArgument {
-            CallArgument(label: node.label, expression: expression(node.expression, map: map))
+            CallArgument(label: node.label, expression: expression(node.expression, map: map), location: node.location)
         }
     }
 }
@@ -519,27 +519,6 @@ extension UnrollExpander.Worker {
             scan(operand, names: names)
             conflict(errorVar, names: names, topLevel: false, handler.location)
             for item in handler.statements { check(item, names: names, topLevel: false) }
-        }
-    }
-}
-
-// MARK: - 表达式的报错位置
-
-extension Expression {
-    /// 表达式起点的源位置。只有报错要用，故不追求覆盖全部语义，按分支取自身位置。
-    var location: SourceLocation {
-        switch self {
-        case .identifier(_, let loc), .integerLiteral(_, let loc), .floatLiteral(_, let loc),
-            .stringLiteral(_, let loc), .boolLiteral(_, let loc),
-            .selfKeyword(let loc), .selfTypeKeyword(let loc), .dotCaseRef(_, let loc),
-            .stringInterpolation(_, let loc), .binary(_, _, _, let loc),
-            .unary(_, _, let loc), .call(_, _, let loc), .member(_, _, let loc),
-            .tupleIndex(_, _, let loc), .tuple(_, _, let loc), .arrayLiteral(_, let loc),
-            .dictionaryLiteral(_, let loc), .setLiteral(_, let loc), .subscript(_, _, let loc),
-            .funcLiteral(_, let loc), .genericConstruct(_, _, _, let loc),
-            .join(_, let loc, _), .tryExpression(_, _, _, let loc), .unsafe(_, let loc),
-            .addressOf(_, let loc):
-            return loc
         }
     }
 }

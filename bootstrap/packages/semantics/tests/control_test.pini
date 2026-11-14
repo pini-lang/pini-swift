@@ -9,14 +9,14 @@ unit: CompilationUnit = CompilationUnit()
 types: ExprTypes = ExprTypes()
 
 ; 造控样例：装载、注册、解析类型、建世界四步，顺序不能反。
-造控样例|func(src: String,) -> (控样例,):
-    let loaded = loadUnit("packages/p/src/api/a.pini", src)
+造控样例|func(_src: String,) -> (控样例,):
+    let loaded = loadUnit(path = "packages/p/src/api/a.pini", text = src)
     assert(!loaded.failed, "样例应可加载")
     let units = [loaded.unit]
     let table = registerPackage(units)
-    let types = resolvePackage(units, table)
+    let types = resolvePackage(units = units, table = table)
     var out = 控样例()
-    out.world = makeMemberWorld(units, table, types)
+    out.world = makeMemberWorld(units = units, table = table, types = types)
     out.unit = loaded.unit
     out.types = makeExprTypes(units)
     return out
@@ -29,19 +29,19 @@ types: ExprTypes = ExprTypes()
     while i < len(ast.items):
         let id = ast.items[i]
         if isFunctionDeclCode(ast.decls[id].kind):
-            if decodeRange(bytes, ast.decls[id].nameStart, ast.decls[id].nameEnd) == name:
+            if decodeRange(bytes = bytes, start = ast.decls[id].nameStart, end = ast.decls[id].nameEnd) == name:
                 return id
         i = i + 1
     return -1
 
 ; 查控：按名字检查整个函数体，返回语句检查结果。
 查控|func(sample: 控样例, name: String,) -> (StoreCheck,):
-    let id = 找控函数(sample, name)
+    let id = 找控函数(sample = sample, name = name)
     assert(id >= 0, "应找到函数 " + name)
-    return checkFunctionStores(sample.world, 0, id, sample.types)
+    return checkFunctionStores(world = sample.world, unitIndex = 0, declId = id, types = sample.types)
 
 ; 首个条件语句：返回第一个 if 语句的下标，没有答 -1。
-首个条件语句|func(ast: Ast,) -> (I32,):
+首个条件语句|func(_ast: Ast,) -> (I32,):
     var i = 0
     while i < ast.stmtCount():
         if ast.isIfStmt(i):
@@ -50,7 +50,7 @@ types: ExprTypes = ExprTypes()
     return -1
 
 ; 首个循环语句：返回第一个 while 语句的下标，没有答 -1。
-首个循环语句|func(ast: Ast,) -> (I32,):
+首个循环语句|func(_ast: Ast,) -> (I32,):
     var i = 0
     while i < ast.stmtCount():
         if ast.isWhileStmt(i):
@@ -70,92 +70,92 @@ types: ExprTypes = ExprTypes()
 ; 条件必须是布尔：`if 1:` 报类型不符，位置指向条件表达式本身。
 条件非布尔|test() -> ():
     let sample = 造控样例("f|func() -> ():\n    if 1:\n        pass\n")
-    let hit = 查控(sample, "f")
+    let hit = 查控(sample = sample, name = "f")
     assert(len(hit.errors) == 1, "应报一条，实得 " + countText(len(hit.errors)))
-    assert(isStoreError(hit.errors[0], storeConditionNotBool), "实得 " + storeErrorName(hit.errors[0].kind))
+    assert(isStoreError(error = hit.errors[0], kind = storeConditionNotBool), "实得 " + storeErrorName(hit.errors[0].kind))
     assert(hit.errors[0].expected == "Bool", "实得 " + hit.errors[0].expected)
     assert(hit.errors[0].got == "I32", "实得 " + hit.errors[0].got)
     let stmt = 首个条件语句(sample.unit.ast)
-    let cond = sample.unit.ast.stmtChild(stmt, 0)
+    let cond = sample.unit.ast.stmtChild(id = stmt, index = 0)
     assert(hit.errors[0].offset == sample.unit.ast.exprAt(cond).start, "位置应指向条件")
     return
 
 ; 布尔条件放行：真值与比较都算布尔。
 条件通过|test() -> ():
     let sample = 造控样例("f|func() -> ():\n    if true:\n        pass\n    if 1 < 2:\n        pass\n")
-    let hit = 查控(sample, "f")
+    let hit = 查控(sample = sample, name = "f")
     assert(!hit.failed, "不应报错")
     return
 
 ; elif 条件：分支条件逐个查，位置指向该分支的条件。
 elif条件|test() -> ():
     let sample = 造控样例("f|func() -> ():\n    if true:\n        pass\n    elif 1:\n        pass\n")
-    let hit = 查控(sample, "f")
+    let hit = 查控(sample = sample, name = "f")
     assert(len(hit.errors) == 1, "应报一条，实得 " + countText(len(hit.errors)))
-    assert(isStoreError(hit.errors[0], storeConditionNotBool), "实得 " + storeErrorName(hit.errors[0].kind))
+    assert(isStoreError(error = hit.errors[0], kind = storeConditionNotBool), "实得 " + storeErrorName(hit.errors[0].kind))
     return
 
 ; 循环条件：`while "x":` 报类型不符。
 条件循环|test() -> ():
     let sample = 造控样例("f|func() -> ():\n    while \"x\":\n        pass\n")
-    let hit = 查控(sample, "f")
+    let hit = 查控(sample = sample, name = "f")
     assert(len(hit.errors) == 1, "应报一条，实得 " + countText(len(hit.errors)))
-    assert(isStoreError(hit.errors[0], storeConditionNotBool), "实得 " + storeErrorName(hit.errors[0].kind))
+    assert(isStoreError(error = hit.errors[0], kind = storeConditionNotBool), "实得 " + storeErrorName(hit.errors[0].kind))
     assert(hit.errors[0].got == "String", "实得 " + hit.errors[0].got)
     let stmt = 首个循环语句(sample.unit.ast)
-    let cond = sample.unit.ast.stmtChild(stmt, 0)
+    let cond = sample.unit.ast.stmtChild(id = stmt, index = 0)
     assert(hit.errors[0].offset == sample.unit.ast.exprAt(cond).start, "位置应指向条件")
     return
 
 ; 条件判不出：未定义名字按未知放过，本层不越界报解析错误。
 未知条件放过|test() -> ():
     let sample = 造控样例("f|func() -> ():\n    if x:\n        pass\n")
-    let hit = 查控(sample, "f")
+    let hit = 查控(sample = sample, name = "f")
     assert(!hit.failed, "未知条件不应报错")
     return
 
 ; 数组遍历：单个元素绑定进循环帧，体内可见且类型取元素类型。
 数组遍历|test() -> ():
     let sample = 造控样例("f|func() -> ():\n    let a: Array<I32> = [1, 2,]\n    for (v,) in a:\n        let s = v\n")
-    let hit = 查控(sample, "f")
+    let hit = 查控(sample = sample, name = "f")
     assert(!hit.failed, "不应报错")
-    let at = 找声明(hit, "v")
+    let at = 找声明(check = hit, name = "v")
     assert(at >= 0, "应声明循环变量 v")
-    assert(isLocalKind(hit.declared[at].kind, localLoopVar), "应判作循环变量")
-    assert(typeText(hit.pool, hit.declared[at].typeId) == "I32", "实得 " + typeText(hit.pool, hit.declared[at].typeId))
-    let body = 找声明(hit, "s")
+    assert(isLocalKind(kind = hit.declared[at].kind, expected = localLoopVar), "应判作循环变量")
+    assert(typeText(pool = hit.pool, id = hit.declared[at].typeId) == "I32", "实得 " + typeText(pool = hit.pool, id = hit.declared[at].typeId))
+    let body = 找声明(check = hit, name = "s")
     assert(body >= 0, "体内应声明 s")
-    assert(typeText(hit.pool, hit.declared[body].typeId) == "I32", "体内应读到循环变量类型")
+    assert(typeText(pool = hit.pool, id = hit.declared[body].typeId) == "I32", "体内应读到循环变量类型")
     return
 
 ; 字典遍历：键与值按序绑到两个字段。
 字典遍历|test() -> ():
     let sample = 造控样例("f|func() -> ():\n    let d: Dictionary<String, I32> = {\"k\" = 1,}\n    for (k, v) in d:\n        pass\n")
-    let hit = 查控(sample, "f")
+    let hit = 查控(sample = sample, name = "f")
     assert(!hit.failed, "不应报错")
-    let key = 找声明(hit, "k")
-    let value = 找声明(hit, "v")
+    let key = 找声明(check = hit, name = "k")
+    let value = 找声明(check = hit, name = "v")
     assert(key >= 0 && value >= 0, "应声明两个循环变量")
-    assert(typeText(hit.pool, hit.declared[key].typeId) == "String", "键实得 " + typeText(hit.pool, hit.declared[key].typeId))
-    assert(typeText(hit.pool, hit.declared[value].typeId) == "I32", "值实得 " + typeText(hit.pool, hit.declared[value].typeId))
+    assert(typeText(pool = hit.pool, id = hit.declared[key].typeId) == "String", "键实得 " + typeText(pool = hit.pool, id = hit.declared[key].typeId))
+    assert(typeText(pool = hit.pool, id = hit.declared[value].typeId) == "I32", "值实得 " + typeText(pool = hit.pool, id = hit.declared[value].typeId))
     return
 
 ; 集合遍历：单个元素绑定。
 集合遍历|test() -> ():
     let sample = 造控样例("f|func() -> ():\n    let s: Set<I32> = {1, 2,}\n    for (x,) in s:\n        pass\n")
-    let hit = 查控(sample, "f")
+    let hit = 查控(sample = sample, name = "f")
     assert(!hit.failed, "不应报错")
-    let at = 找声明(hit, "x")
+    let at = 找声明(check = hit, name = "x")
     assert(at >= 0, "应声明循环变量")
-    assert(typeText(hit.pool, hit.declared[at].typeId) == "I32", "实得 " + typeText(hit.pool, hit.declared[at].typeId))
+    assert(typeText(pool = hit.pool, id = hit.declared[at].typeId) == "I32", "实得 " + typeText(pool = hit.pool, id = hit.declared[at].typeId))
     return
 
 ; 元素个数不符：数组只产一个字段，模式给两个即报个数错。
 元素个数|test() -> ():
     let sample = 造控样例("f|func() -> ():\n    let a: Array<I32> = [1, 2,]\n    for (k, v) in a:\n        pass\n")
-    let hit = 查控(sample, "f")
+    let hit = 查控(sample = sample, name = "f")
     assert(len(hit.errors) == 1, "应报一条，实得 " + countText(len(hit.errors)))
-    assert(isStoreError(hit.errors[0], storeIterableArity), "实得 " + storeErrorName(hit.errors[0].kind))
+    assert(isStoreError(error = hit.errors[0], kind = storeIterableArity), "实得 " + storeErrorName(hit.errors[0].kind))
     assert(hit.errors[0].expected == "1", "实得 " + hit.errors[0].expected)
     assert(hit.errors[0].got == "2", "实得 " + hit.errors[0].got)
     return
@@ -163,69 +163,69 @@ elif条件|test() -> ():
 ; 非集合遍历：标量没有遍历通道。
 非集合遍历|test() -> ():
     let sample = 造控样例("f|func() -> ():\n    for (v,) in 1:\n        pass\n")
-    let hit = 查控(sample, "f")
+    let hit = 查控(sample = sample, name = "f")
     assert(len(hit.errors) == 1, "应报一条，实得 " + countText(len(hit.errors)))
-    assert(isStoreError(hit.errors[0], storeNotIterable), "实得 " + storeErrorName(hit.errors[0].kind))
+    assert(isStoreError(error = hit.errors[0], kind = storeNotIterable), "实得 " + storeErrorName(hit.errors[0].kind))
     assert(hit.errors[0].got == "I32", "实得 " + hit.errors[0].got)
     return
 
 ; 模式不合法：遍历模式的字段只能是名字或占位。
 模式不合法|test() -> ():
     let sample = 造控样例("f|func() -> ():\n    let a: Array<I32> = [1, 2,]\n    for (1,) in a:\n        pass\n")
-    let hit = 查控(sample, "f")
+    let hit = 查控(sample = sample, name = "f")
     assert(len(hit.errors) == 1, "应报一条，实得 " + countText(len(hit.errors)))
-    assert(isStoreError(hit.errors[0], storeBadLoopPattern), "实得 " + storeErrorName(hit.errors[0].kind))
+    assert(isStoreError(error = hit.errors[0], kind = storeBadLoopPattern), "实得 " + storeErrorName(hit.errors[0].kind))
     return
 
 ; 占位：`_` 不占局部，也不报错。
 遍历占位|test() -> ():
     let sample = 造控样例("f|func() -> ():\n    let a: Array<I32> = [1, 2,]\n    for (_,) in a:\n        pass\n")
-    let hit = 查控(sample, "f")
+    let hit = 查控(sample = sample, name = "f")
     assert(!hit.failed, "占位不应报错")
-    assert(找声明(hit, "_") < 0, "占位不产生局部")
+    assert(找声明(check = hit, name = "_") < 0, "占位不产生局部")
     return
 
 ; 步进块：循环变量在 step 块里可见。
 步进可见|test() -> ():
     let sample = 造控样例("f|func() -> ():\n    let a: Array<I32> = [1, 2,]\n    for (v,) in a:\n        pass\n    step:\n        let w = v\n")
-    let hit = 查控(sample, "f")
+    let hit = 查控(sample = sample, name = "f")
     assert(!hit.failed, "不应报错")
-    let at = 找声明(hit, "w")
+    let at = 找声明(check = hit, name = "w")
     assert(at >= 0, "步进块应声明 w")
-    assert(typeText(hit.pool, hit.declared[at].typeId) == "I32", "步进块应读到循环变量类型")
+    assert(typeText(pool = hit.pool, id = hit.declared[at].typeId) == "I32", "步进块应读到循环变量类型")
     return
 
 ; 循环外跳出：函数体里的 break 与 continue 各报一条。
 循环外跳出|test() -> ():
     let sample = 造控样例("f|func() -> ():\n    break\n    continue\n")
-    let hit = 查控(sample, "f")
+    let hit = 查控(sample = sample, name = "f")
     assert(len(hit.errors) == 2, "应报两条，实得 " + countText(len(hit.errors)))
-    assert(isStoreError(hit.errors[0], storeLoopControlOutside), "实得 " + storeErrorName(hit.errors[0].kind))
+    assert(isStoreError(error = hit.errors[0], kind = storeLoopControlOutside), "实得 " + storeErrorName(hit.errors[0].kind))
     assert(hit.errors[0].op == "break", "实得 " + hit.errors[0].op)
-    assert(isStoreError(hit.errors[1], storeLoopControlOutside), "实得 " + storeErrorName(hit.errors[1].kind))
+    assert(isStoreError(error = hit.errors[1], kind = storeLoopControlOutside), "实得 " + storeErrorName(hit.errors[1].kind))
     assert(hit.errors[1].op == "continue", "实得 " + hit.errors[1].op)
     return
 
 ; 循环内跳出：条件块里的 break 与 continue 都算在循环内。
 循环内跳出|test() -> ():
     let sample = 造控样例("f|func() -> ():\n    while true:\n        if true:\n            break\n        continue\n")
-    let hit = 查控(sample, "f")
+    let hit = 查控(sample = sample, name = "f")
     assert(!hit.failed, "循环内跳出不应报错")
     return
 
 ; 嵌套循环：内层 continue 只算内层，退出内层后仍在循环内。
 嵌套循环|test() -> ():
     let sample = 造控样例("f|func() -> ():\n    while true:\n        while true:\n            continue\n        break\n")
-    let hit = 查控(sample, "f")
+    let hit = 查控(sample = sample, name = "f")
     assert(!hit.failed, "嵌套循环不应报错")
     return
 
 ; 循环变量不外泄：循环后按循环变量取类型答未定。
 循环变量不外泄|test() -> ():
     let sample = 造控样例("f|func() -> ():\n    let a: Array<I32> = [1, 2,]\n    for (v,) in a:\n        pass\n    let u = v\n")
-    let hit = 查控(sample, "f")
+    let hit = 查控(sample = sample, name = "f")
     assert(!hit.failed, "不应报错")
-    let at = 找声明(hit, "u")
+    let at = 找声明(check = hit, name = "u")
     assert(at >= 0, "应声明 u")
     assert(hit.declared[at].typeId < 0, "循环变量出循环后不该可见")
     return
@@ -233,8 +233,8 @@ elif条件|test() -> ():
 ; 两次检查一致：同一份源码查两遍，错误条数与类别相同。
 控制两次一致|test() -> ():
     let sample = 造控样例("f|func() -> ():\n    if 1:\n        pass\n    for (v,) in 2:\n        break\n")
-    let first = 查控(sample, "f")
-    let second = 查控(sample, "f")
+    let first = 查控(sample = sample, name = "f")
+    let second = 查控(sample = sample, name = "f")
     assert(len(first.errors) == len(second.errors), "两次条数应相同")
     assert(storeErrorName(first.errors[0].kind) == storeErrorName(second.errors[0].kind), "首条类别应相同")
     assert(storeErrorName(first.errors[1].kind) == storeErrorName(second.errors[1].kind), "次条类别应相同")

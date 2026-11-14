@@ -114,7 +114,7 @@ struct TestBackendParityTests: Sendable {
         Corpus(
             label: "测试体调普通函数",
             source: #"""
-            helper(x: I32,) -> (I32,):
+            helper(_x: I32,) -> (I32,):
                 return x * 2
 
             调助手|test() -> ():
@@ -281,7 +281,7 @@ struct TestBackendParityTests: Sendable {
             清单: Array<项目> = []
             标签: String = ""
 
-            装满|func(n: I32,) -> (箱,):
+            装满|func(_n: I32,) -> (箱,):
                 var out = 箱()
                 var i = 0
                 while i < n:

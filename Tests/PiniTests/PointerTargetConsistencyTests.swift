@@ -50,7 +50,7 @@ struct PointerTargetConsistencyTests: Sendable, PiniSourceLowering {
         (点)
         x: F64 = 0.0
 
-        f|func(p: *\(target),) -> (I32,):
+        f|func(_p: *\(target),) -> (I32,):
             return 0
 
         [calc|export]

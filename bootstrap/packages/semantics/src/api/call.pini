@@ -12,13 +12,14 @@ label: String = ""
 typeId: I32 = -1
 offset: I32 = 0
 
-; 形参：名字、类型下标、是否有默认值、是否取用参数与是否有长度约束。
+; 形参：名字、类型下标、默认值、取用位、长度约束与标签面。
 (CallParam)
 name: String = ""
 typeId: I32 = -1
 hasDefault: Bool = false
 isUsing: Bool = false
 sized: Bool = false
+takesLabel: Bool = true
 
 ; 调用点：符号下标、内建函数下标、函数值类型、实参与诊断位置。
 (CallSite)
@@ -30,12 +31,15 @@ file: String = ""
 offset: I32 = 0
 args: Array<CallArg> = []
 
-; 调用错误：个数、标签、实参类型与不可调用四类。
+; 调用错误：个数、标签、实参类型与不可调用五类。
 [CallErrorKind]
 callArity
 callUnknownLabel
 callArgType
 callNotCallable
+callMissingLabel
+callUnexpectedLabel
+callDuplicateLabel
 
 ; 调用错误：类别、位置、被调方与期望/实得文本。
 (CallError)
@@ -60,7 +64,7 @@ pool: TypePool = TypePool()
 params: Array<CallParam> = []
 
 ; 错误类别名：测试、诊断与回执共用一份拼写。
-callErrorName|func(kind: CallErrorKind,) -> (String,):
+callErrorName|func(_kind: CallErrorKind,) -> (String,):
     match kind:
         case callArity:
             return "实参个数不匹配"
@@ -70,6 +74,12 @@ callErrorName|func(kind: CallErrorKind,) -> (String,):
             return "实参类型不匹配"
         case callNotCallable:
             return "值不可调用"
+        case callMissingLabel:
+            return "缺少实参标签"
+        case callUnexpectedLabel:
+            return "该形参不接标签"
+        case callDuplicateLabel:
+            return "实参标签重复"
     return "调用错误"
 
 ; 同一错误类别判定：枚举相等比较不可用，按名称比。
@@ -77,7 +87,7 @@ isCallError|func(error: CallError, kind: CallErrorKind,) -> (Bool,):
     return callErrorName(error.kind) == callErrorName(kind)
 
 ; 诊断码：复用宿主已登记的码，标签错沿用宿主的 E4-009。
-callErrorCode|func(kind: CallErrorKind,) -> (String,):
+callErrorCode|func(_kind: CallErrorKind,) -> (String,):
     match kind:
         case callArity:
             return "E4-005"
@@ -87,6 +97,12 @@ callErrorCode|func(kind: CallErrorKind,) -> (String,):
             return "E4-001"
         case callNotCallable:
             return "E4-004"
+        case callMissingLabel:
+            return "E4-036"
+        case callUnexpectedLabel:
+            return "E4-037"
+        case callDuplicateLabel:
+            return "E4-038"
     return "E4-005"
 
 ; 造错误：位置取实参或调用点起点，期望与实得文本由调用方给。
@@ -101,12 +117,12 @@ makeCallError|func(kind: CallErrorKind, file: String, offset: I32, callee: Strin
     return out
 
 ; 计数字本：诊断里的个数与实得统一走这一条。
-countText|func(value: I32,) -> (String,):
+countText|func(_value: I32,) -> (String,):
     return "\(value)"
 
 ; 被调方节点：调用节点首位固定是被调表达式；越界答 -1。
 calleeNode|func(unit: CompilationUnit, node: I32,) -> (I32,):
-    return unit.ast.childOf(node, 0)
+    return unit.ast.childOf(id = node, index = 0)
 
 ; 实参提取：跳过被调方，逐个读标签与值节点的类型；标签节点本身不进类型表。
 callArguments|func(unit: CompilationUnit, unitIndex: I32, node: I32, types: ExprTypes,) -> (Array<CallArg>,):
@@ -121,11 +137,11 @@ callArguments|func(unit: CompilationUnit, unitIndex: I32, node: I32, types: Expr
         var arg = CallArg()
         if ast.isLabeledArgument(kid):
             let labelNode = ast.exprAt(kid)
-            arg.label = decodeRange(bytes, labelNode.nameStart, labelNode.nameEnd)
-            arg.typeId = exprTypeAt(types, unitIndex, ast.childOf(kid, 0))
+            arg.label = decodeRange(bytes = bytes, start = labelNode.nameStart, end = labelNode.nameEnd)
+            arg.typeId = exprTypeAt(table = types, unit = unitIndex, node = ast.childOf(id = kid, index = 0))
             arg.offset = labelNode.start
         else:
-            arg.typeId = exprTypeAt(types, unitIndex, kid)
+            arg.typeId = exprTypeAt(table = types, unit = unitIndex, node = kid)
             arg.offset = ast.exprAt(kid).start
         out = out.append(arg)
         i = i + 1
@@ -141,7 +157,7 @@ paramIndexOf|func(params: Array<CallParam>, name: String,) -> (I32,):
     return -1
 
 ; 必填个数：既无默认值也不取用的形参才必须给实参。
-requiredCount|func(params: Array<CallParam>,) -> (I32,):
+requiredCount|func(_params: Array<CallParam>,) -> (I32,):
     var total = 0
     var i = 0
     while i < len(params):
@@ -155,11 +171,11 @@ failCall|func(out: CallResult, site: CallSite, offset: I32, kind: CallErrorKind,
     var done = out
     done.failed = true
     done.typeId = errorTypeId()
-    done.error = makeCallError(kind, site.file, offset, site.name, expected, got)
+    done.error = makeCallError(kind = kind, file = site.file, offset = offset, callee = site.name, expected = expected, got = got)
     return done
 
 ; 待定收尾：被调方或返回尚未定型，不报错也不写错误标记。
-deferCall|func(out: CallResult,) -> (CallResult,):
+deferCall|func(_out: CallResult,) -> (CallResult,):
     var done = out
     done.deferred = true
     done.typeId = unsetTypeId()
@@ -170,16 +186,17 @@ checkArg|func(out: CallResult, site: CallSite, arg: CallArg, param: CallParam,) 
     if arg.typeId < 0:
         return out
     if param.sized:
-        if isSizedType(out.pool, arg.typeId):
+        if isSizedType(pool = out.pool, id = arg.typeId):
             return out
-        return failCall(out, site, arg.offset, callArgType, "数组、字典、集合或字符串", typeText(out.pool, arg.typeId))
+        return failCall(out = out, site = site, offset = arg.offset, kind = callArgType, expected = "数组、字典、集合或字符串", got = typeText(pool = out.pool, id = arg.typeId))
     if param.typeId < 0:
         return out
-    if isAssignable(out.pool, arg.typeId, param.typeId):
+    if isAssignable(pool = out.pool, from = arg.typeId, to = param.typeId):
         return out
-    return failCall(out, site, arg.offset, callArgType, typeText(out.pool, param.typeId), typeText(out.pool, arg.typeId))
+    return failCall(out = out, site = site, offset = arg.offset, kind = callArgType, expected = typeText(pool = out.pool, id = param.typeId), got = typeText(pool = out.pool, id = arg.typeId))
 
 ; 实参匹配：标签按名字、位置按次序；缺失位若有默认值或取用则放过。
+; 要标签的形参只收标签实参，退出标签面的只收位置实参。
 matchCall|func(out: CallResult, site: CallSite, params: Array<CallParam>, variadic: Bool, retId: I32,) -> (CallResult,):
     var filled: Array<Bool> = []
     var i = 0
@@ -191,11 +208,15 @@ matchCall|func(out: CallResult, site: CallSite, params: Array<CallParam>, variad
     while e < len(site.args):
         let arg = site.args[e]
         if len(arg.label) > 0:
-            let at = paramIndexOf(params, arg.label)
-            if at < 0 || filled[at]:
-                return failCall(out, site, arg.offset, callUnknownLabel, "参数名", arg.label)
+            let at = paramIndexOf(params = params, name = arg.label)
+            if at < 0:
+                return failCall(out = out, site = site, offset = arg.offset, kind = callUnknownLabel, expected = "参数名", got = arg.label)
+            if filled[at]:
+                return failCall(out = out, site = site, offset = arg.offset, kind = callDuplicateLabel, expected = "每个形参一个实参", got = "标签 " + arg.label + " 重复")
+            if !params[at].takesLabel:
+                return failCall(out = out, site = site, offset = arg.offset, kind = callUnexpectedLabel, expected = "位置实参", got = "标签 " + arg.label + " = 值")
             filled[at] = true
-            let checked = checkArg(out, site, arg, params[at])
+            let checked = checkArg(out = out, site = site, arg = arg, param = params[at])
             if checked.failed:
                 return checked
             out = checked
@@ -204,10 +225,12 @@ matchCall|func(out: CallResult, site: CallSite, params: Array<CallParam>, variad
                 nextPos = nextPos + 1
             if nextPos >= len(params):
                 if !variadic:
-                    return failCall(out, site, arg.offset, callArity, "至多 " + countText(len(params)), countText(len(site.args)))
+                    return failCall(out = out, site = site, offset = arg.offset, kind = callArity, expected = "至多 " + countText(len(params)), got = countText(len(site.args)))
             else:
+                if params[nextPos].takesLabel:
+                    return failCall(out = out, site = site, offset = arg.offset, kind = callMissingLabel, expected = "标签 " + params[nextPos].name + " = 值", got = "位置实参")
                 filled[nextPos] = true
-                let checked = checkArg(out, site, arg, params[nextPos])
+                let checked = checkArg(out = out, site = site, arg = arg, param = params[nextPos])
                 if checked.failed:
                     return checked
                 out = checked
@@ -217,7 +240,7 @@ matchCall|func(out: CallResult, site: CallSite, params: Array<CallParam>, variad
         var m = 0
         while m < len(params):
             if !filled[m] && !params[m].hasDefault && !params[m].isUsing:
-                return failCall(out, site, site.offset, callArity, "至少 " + countText(requiredCount(params)), countText(len(site.args)))
+                return failCall(out = out, site = site, offset = site.offset, kind = callArity, expected = "至少 " + countText(requiredCount(params)), got = countText(len(site.args)))
             m = m + 1
     var done = out
     done.typeId = retId
@@ -235,10 +258,11 @@ declParams|func(world: MemberWorld, ref: DeclRef,) -> (Array<CallParam>,):
         let node = unit.ast.decls[kid]
         if isParamDeclCode(node.kind):
             var param = CallParam()
-            param.name = decodeRange(bytes, node.nameStart, node.nameEnd)
+            param.name = decodeRange(bytes = bytes, start = node.nameStart, end = node.nameEnd)
             param.hasDefault = len(node.kids) > 0
             param.isUsing = node.isUsing
-            param.typeId = world.types.typeOf(ref.unit, kid)
+            param.takesLabel = node.takesLabel
+            param.typeId = world.types.typeOf(unit = ref.unit, decl = kid)
             out = out.append(param)
         i = i + 1
     return out
@@ -248,14 +272,14 @@ symbolDecl|func(world: MemberWorld, symbol: I32,) -> (DeclRef,):
     if symbol < 0 || symbol >= world.table.symbolCount():
         return DeclRef()
     let entry = world.table.symbolAt(symbol)
-    return lookupDecl(world.decls, entry.file, entry.offset)
+    return lookupDecl(index = world.decls, file = entry.file, offset = entry.offset)
 
 ; 命名调用：形参来自声明，返回类型取绑定；标签与默认值都参与判定。
 checkNamedCall|func(world: MemberWorld, out: CallResult, site: CallSite, ref: DeclRef,) -> (CallResult,):
-    let retId = world.types.typeOf(ref.unit, ref.decl)
+    let retId = world.types.typeOf(unit = ref.unit, decl = ref.decl)
     if retId < 0:
         return deferCall(out)
-    return matchCall(out, site, declParams(world, ref), false, retId)
+    return matchCall(out = out, site = site, params = declParams(world = world, ref = ref), variadic = false, retId = retId)
 
 ; 内建形参：形状逐个定型，Any 答 -1 由比对处跳过。
 builtinParams|func(pool: TypePool, params: Array<BuiltinParam>,) -> (BuiltinArgs,):
@@ -263,12 +287,13 @@ builtinParams|func(pool: TypePool, params: Array<BuiltinParam>,) -> (BuiltinArgs
     out.pool = pool
     var i = 0
     while i < len(params):
-        let inserted = builtinShapeType(out.pool, params[i].shape, [])
+        let inserted = builtinShapeType(pool = out.pool, shape = params[i].shape, kids = [])
         out.pool = inserted.pool
         var param = CallParam()
         param.name = params[i].name
         param.typeId = inserted.id
         param.sized = params[i].sized
+        param.takesLabel = false
         out.params = out.params.append(param)
         i = i + 1
     return out
@@ -278,40 +303,41 @@ checkBuiltinCall|func(world: MemberWorld, out: CallResult, site: CallSite,) -> (
     if site.builtin < 0 || site.builtin >= len(world.functions):
         return deferCall(out)
     let function = world.functions[site.builtin]
-    let typed = builtinParams(out.pool, function.params)
-    let ret = builtinShapeType(typed.pool, function.ret, [])
+    let typed = builtinParams(pool = out.pool, params = function.params)
+    let ret = builtinShapeType(pool = typed.pool, shape = function.ret, kids = [])
     var ready = out
     ready.pool = ret.pool
     if ret.id < 0:
         return deferCall(ready)
-    return matchCall(ready, site, typed.params, function.variadic, ret.id)
+    return matchCall(out = ready, site = site, params = typed.params, variadic = function.variadic, retId = ret.id)
 
 ; 函数值调用：形参只从函数类型读，没有名字与默认值，个数必须相等。
 checkValueCall|func(out: CallResult, site: CallSite,) -> (CallResult,):
     if site.calleeType < 0 || site.calleeType >= len(out.pool.entries):
         return deferCall(out)
     let entry = out.pool.entries[site.calleeType]
-    if !isTypeClass(entry.kind, typeClassFunction):
-        return failCall(out, site, site.offset, callNotCallable, "函数", typeText(out.pool, site.calleeType))
+    if !isTypeClass(kind = entry.kind, expected = typeClassFunction):
+        return failCall(out = out, site = site, offset = site.offset, kind = callNotCallable, expected = "函数", got = typeText(pool = out.pool, id = site.calleeType))
     var params: Array<CallParam> = []
     var i = 0
     while i < len(entry.kids):
         var param = CallParam()
         param.typeId = entry.kids[i]
+        param.takesLabel = false
         params = params.append(param)
         i = i + 1
-    return matchCall(out, site, params, false, entry.ret)
+    return matchCall(out = out, site = site, params = params, variadic = false, retId = entry.ret)
 
 ; 判定入口：符号指向函数声明才走命名路径，其余按内建或函数值分流。
 checkCall|func(world: MemberWorld, site: CallSite,) -> (CallResult,):
     var out = CallResult()
     out.pool = world.types.pool
     if site.symbol >= 0:
-        let ref = symbolDecl(world, site.symbol)
+        let ref = symbolDecl(world = world, symbol = site.symbol)
         if ref.unit >= 0:
             let decl = world.units[ref.unit].ast.decls[ref.decl]
             if isFunctionDeclCode(decl.kind):
-                return checkNamedCall(world, out, site, ref)
+                return checkNamedCall(world = world, out = out, site = site, ref = ref)
     if site.builtin >= 0:
-        return checkBuiltinCall(world, out, site)
-    return checkValueCall(out, site)
+        return checkBuiltinCall(world = world, out = out, site = site)
+    return checkValueCall(out = out, site = site)

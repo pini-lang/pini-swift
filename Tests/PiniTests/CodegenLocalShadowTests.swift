@@ -38,7 +38,7 @@ struct CodegenLocalShadowTests: Sendable {
         (Item)
         name: String = ""
 
-        复制|func(out: Array<Item>,) -> (Array<Item>,):
+        复制|func(_out: Array<Item>,) -> (Array<Item>,):
             var result = out
             return result
 
@@ -49,7 +49,7 @@ struct CodegenLocalShadowTests: Sendable {
             return
         """#
         let 局部份 = #"""
-        取首|func(names: Array<String>,) -> (Array<String>,):
+        取首|func(_names: Array<String>,) -> (Array<String>,):
             var out: Array<String> = []
             out = out.append(names[0])
             return out

@@ -45,7 +45,7 @@ cases: Array<CaseLayout> = []
 entries: Array<LayoutEntry> = []
 
 ; 角色名：诊断、测试与回执共用一份拼写。
-slotRoleName|func(role: SlotRole,) -> (String,):
+slotRoleName|func(_role: SlotRole,) -> (String,):
     match role:
         case slotStrongCount:
             return "强计数"
@@ -97,14 +97,14 @@ makeSlot|func(index: I32, role: SlotRole, name: String, typeId: I32,) -> (Slot,)
 ; 头四格：强计数、弱计数、类型标识、弱引用旁表；三族共用同一串名字。
 headSlots|func() -> (Array<Slot>,):
     var out: Array<Slot> = []
-    out = out.append(makeSlot(0, slotStrongCount, "强计数", -1))
-    out = out.append(makeSlot(1, slotWeakCount, "弱计数", -1))
-    out = out.append(makeSlot(2, slotTypeIdentity, "类型标识", -1))
-    out = out.append(makeSlot(3, slotWeakTable, "弱引用旁表", -1))
+    out = out.append(makeSlot(index = 0, role = slotStrongCount, name = "强计数", typeId = -1))
+    out = out.append(makeSlot(index = 1, role = slotWeakCount, name = "弱计数", typeId = -1))
+    out = out.append(makeSlot(index = 2, role = slotTypeIdentity, name = "类型标识", typeId = -1))
+    out = out.append(makeSlot(index = 3, role = slotWeakTable, name = "弱引用旁表", typeId = -1))
     return out
 
 ; 结构、对象的布局：头四格后按声明序每字段一格，字段类型照抄形态表。
-layoutFields|func(shape: ShapeEntry,) -> (LayoutEntry,):
+layoutFields|func(_shape: ShapeEntry,) -> (LayoutEntry,):
     var out = LayoutEntry()
     out.typeId = shape.typeId
     out.shape = shape.kind
@@ -112,18 +112,18 @@ layoutFields|func(shape: ShapeEntry,) -> (LayoutEntry,):
     var i = 0
     while i < len(shape.fields):
         let field = shape.fields[i]
-        out.slots = out.slots.append(makeSlot(headSlotCount() + i, slotField, field.name, field.typeId))
+        out.slots = out.slots.append(makeSlot(index = headSlotCount() + i, role = slotField, name = field.name, typeId = field.typeId))
         i = i + 1
     out.slotCount = len(out.slots)
     return out
 
 ; 枚举的布局：头四格后是标签槽，载荷窗口按最宽用例占位；逐用例的载荷类型另表。
-layoutEnum|func(shape: ShapeEntry,) -> (LayoutEntry,):
+layoutEnum|func(_shape: ShapeEntry,) -> (LayoutEntry,):
     var out = LayoutEntry()
     out.typeId = shape.typeId
     out.shape = shape.kind
     out.slots = headSlots()
-    out.slots = out.slots.append(makeSlot(headSlotCount(), slotCaseTag, "用例标签", -1))
+    out.slots = out.slots.append(makeSlot(index = headSlotCount(), role = slotCaseTag, name = "用例标签", typeId = -1))
     var width = 0
     var i = 0
     while i < len(shape.cases):
@@ -137,7 +137,7 @@ layoutEnum|func(shape: ShapeEntry,) -> (LayoutEntry,):
         i = i + 1
     var slot = 0
     while slot < width:
-        out.slots = out.slots.append(makeSlot(payloadFirstSlot() + slot, slotPayload, "", -1))
+        out.slots = out.slots.append(makeSlot(index = payloadFirstSlot() + slot, role = slotPayload, name = "", typeId = -1))
         slot = slot + 1
     out.slotCount = len(out.slots)
     return out
@@ -150,8 +150,8 @@ layoutOptional|func(entry: TypeEntry, typeId: I32,) -> (LayoutEntry,):
     var payload = -1
     if len(entry.kids) > 0:
         payload = entry.kids[0]
-    out.slots = out.slots.append(makeSlot(0, slotOptionalTag, "标签", -1))
-    out.slots = out.slots.append(makeSlot(1, slotOptionalPayload, "载荷", payload))
+    out.slots = out.slots.append(makeSlot(index = 0, role = slotOptionalTag, name = "标签", typeId = -1))
+    out.slots = out.slots.append(makeSlot(index = 1, role = slotOptionalPayload, name = "载荷", typeId = payload))
     out.slotCount = len(out.slots)
     return out
 
@@ -163,9 +163,9 @@ layoutResult|func(entry: TypeEntry, typeId: I32,) -> (LayoutEntry,):
     var ok = -1
     if len(entry.kids) > 0:
         ok = entry.kids[0]
-    out.slots = out.slots.append(makeSlot(0, slotResultTag, "标签", -1))
-    out.slots = out.slots.append(makeSlot(1, slotResultOk, "ok 载荷", ok))
-    out.slots = out.slots.append(makeSlot(2, slotResultError, "错误字", -1))
+    out.slots = out.slots.append(makeSlot(index = 0, role = slotResultTag, name = "标签", typeId = -1))
+    out.slots = out.slots.append(makeSlot(index = 1, role = slotResultOk, name = "ok 载荷", typeId = ok))
+    out.slots = out.slots.append(makeSlot(index = 2, role = slotResultError, name = "错误字", typeId = -1))
     out.slotCount = len(out.slots)
     return out
 
@@ -175,17 +175,17 @@ layoutOf|func(shapes: ShapeTable, pool: TypePool, typeId: I32,) -> (LayoutEntry,
     out.typeId = typeId
     if typeId < 0 || typeId >= len(pool.entries):
         return out
-    let at = findShape(shapes, typeId)
+    let at = findShape(table = shapes, typeId = typeId)
     if at >= 0:
         let shape = shapes.entries[at]
-        if isShapeKind(shape.kind, shapeEnum):
+        if isShapeKind(kind = shape.kind, expected = shapeEnum):
             return layoutEnum(shape)
         return layoutFields(shape)
     let entry = pool.entries[typeId]
-    if isTypeClass(entry.kind, typeClassOptional):
-        return layoutOptional(entry, typeId)
-    if isTypeClass(entry.kind, typeClassResult):
-        return layoutResult(entry, typeId)
+    if isTypeClass(kind = entry.kind, expected = typeClassOptional):
+        return layoutOptional(entry = entry, typeId = typeId)
+    if isTypeClass(kind = entry.kind, expected = typeClassResult):
+        return layoutResult(entry = entry, typeId = typeId)
     return out
 
 ; 全表：按池序逐类型布局，未约定槽数的类别不进表；同一输入两次布局逐项相同。
@@ -193,7 +193,7 @@ layoutAll|func(shapes: ShapeTable, pool: TypePool,) -> (LayoutTable,):
     var out = LayoutTable()
     var i = 0
     while i < len(pool.entries):
-        let entry = layoutOf(shapes, pool, i)
+        let entry = layoutOf(shapes = shapes, pool = pool, typeId = i)
         if entry.slotCount >= 0:
             out.entries = out.entries.append(entry)
         i = i + 1
@@ -204,7 +204,7 @@ layoutAll|func(shapes: ShapeTable, pool: TypePool,) -> (LayoutTable,):
 count|self() -> (I32,):
     return len(self.entries)
 ; 条目读：下标越界是运行时陷阱，调用方先经 findLayout 取下标。
-entryAt|self(index: I32,) -> (LayoutEntry,):
+entryAt|self(_index: I32,) -> (LayoutEntry,):
     return self.entries[index]
 
 ; 按类型下标查条目：升序表线性扫，未命中答 -1。
@@ -218,7 +218,7 @@ findLayout|func(table: LayoutTable, typeId: I32,) -> (I32,):
 
 ; 取条目：未命中答空条目（槽数 -1），调用方不必先判下标。
 layoutAt|func(table: LayoutTable, typeId: I32,) -> (LayoutEntry,):
-    let at = findLayout(table, typeId)
+    let at = findLayout(table = table, typeId = typeId)
     if at < 0:
         return LayoutEntry()
     return table.entries[at]

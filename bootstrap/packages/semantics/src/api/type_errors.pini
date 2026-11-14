@@ -16,7 +16,7 @@ name: String = ""
 detail: String = ""
 
 ; 类别名：诊断、测试与交付回执共用一份拼写。
-typeErrorName|func(kind: TypeErrorKind,) -> (String,):
+typeErrorName|func(_kind: TypeErrorKind,) -> (String,):
     match kind:
         case typeErrorUnknownName:
             return "类型未声明"

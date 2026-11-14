@@ -266,7 +266,7 @@ struct ContractReferenceTests: Sendable {
     /// `S1` 的语料：让出一次、结果丢弃，函数随后正常返回 `ok(7)`。三份语料一律 ok 分支 `print`
     /// 整数、err 分支 `print` 字符串：直接打印 `Result` 会撞上另一处上游门禁，让读数指向错的地方。
     private static let bareAwaitProgram = """
-        f|func(n: I32,) => (I32,):
+        f|func(_n: I32,) => (I32,):
             sleep(1)
             return ok(n)
 
@@ -286,7 +286,7 @@ struct ContractReferenceTests: Sendable {
 
     /// `S3` 的语料（ok 路径）：判别式是 `await f(3)`，分派读出 `ok` 分支的载荷。
     private static let matchSubjectAwaitProgram = """
-        f|func(n: I32,) => (I32,):
+        f|func(_n: I32,) => (I32,):
             sleep(1)
             return ok(n)
 
@@ -309,7 +309,7 @@ struct ContractReferenceTests: Sendable {
 
     /// `S4` 的语料（ok 路径）：`try` 位求值成功 ⇒ 跳过 `else` 块、走到紧随其后的语句。
     private static let tryOperandAwaitProgram = """
-        f|func(n: I32,) => (I32,):
+        f|func(_n: I32,) => (I32,):
             sleep(1)
             return ok(n)
 
@@ -436,7 +436,7 @@ struct ContractReferenceTests: Sendable {
     /// 含给定块取用的程序」，带 `await` 的语料会先撞上上游降载门禁，把读数带偏。
     /// 期望值手写：收下一笔后队列长度 `1`，取走队首后 `0`。
     private static let givenInstanceProgram = """
-        探|func(using s: 调度器,) -> (I32,):
+        探|func(using _s: 调度器,) -> (I32,):
             s.收下(空句柄)
             print(len(s.元素))
             s.选择下一个任务()
@@ -546,7 +546,7 @@ struct ContractReferenceTests: Sendable {
 
         """ : ""
         return overrideBlock + """
-        闸|func(毫秒: I32,) => (I32,):
+        闸|func(_毫秒: I32,) => (I32,):
             sleep(毫秒)
             return ok(0)
 

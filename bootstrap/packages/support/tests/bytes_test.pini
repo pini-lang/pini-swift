@@ -15,7 +15,7 @@
 ; 切片与缓冲共享存储：后续追加不改切片内容，原缓冲也不被写动。
 切片共享存储|test() -> ():
     var buf = makeByteBuffer("Aé中")
-    let part = buf.slice(1, 3)
+    let part = buf.slice(start = 1, end = 3)
     assert(part.byteLength() == 2, "é 两字节")
     let e1: U8 = 195
     assert(part.byteAt(0) == e1, "切片首字节")

@@ -9,9 +9,9 @@
 
 ; 混写判定：两个不同高风险脚本相撞才算；与其它脚本同现不算。
 混写判定|test() -> ():
-    assert(scriptsConflict(1, 2), "拉丁与西里尔算混写")
-    assert(scriptsConflict(1, 3), "拉丁与希腊算混写")
-    assert(scriptsConflict(2, 3), "西里尔与希腊算混写")
-    assert(!scriptsConflict(1, 0), "中文与拉丁不算混写")
-    assert(!scriptsConflict(1, 1), "同一脚本不算混写")
+    assert(scriptsConflict(first = 1, second = 2), "拉丁与西里尔算混写")
+    assert(scriptsConflict(first = 1, second = 3), "拉丁与希腊算混写")
+    assert(scriptsConflict(first = 2, second = 3), "西里尔与希腊算混写")
+    assert(!scriptsConflict(first = 1, second = 0), "中文与拉丁不算混写")
+    assert(!scriptsConflict(first = 1, second = 1), "同一脚本不算混写")
     return

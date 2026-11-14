@@ -39,7 +39,7 @@ covered: I32 = 0
 firstMissing: I32 = -1
 
 ; 解析形态名：诊断、测试与回执共用一份拼写。
-resolveFormName|func(form: ResolveForm,) -> (String,):
+resolveFormName|func(_form: ResolveForm,) -> (String,):
     match form:
         case resolveNone:
             return "未解析"
@@ -68,11 +68,11 @@ isResolveForm|func(form: ResolveForm, expected: ResolveForm,) -> (Bool,):
     return resolveFormName(form) == resolveFormName(expected)
 
 ; 已解析：空形态之外都算已写。
-isResolved|func(entry: ResolveEntry,) -> (Bool,):
-    return !isResolveForm(entry.form, resolveNone)
+isResolved|func(_entry: ResolveEntry,) -> (Bool,):
+    return !isResolveForm(form = entry.form, expected = resolveNone)
 
 ; 建表：逐单元按表达式池长度铺空条目；调用方先 sortedUnits，类型面与解析表共用同一序。
-makeResolveTable|func(units: Array<CompilationUnit>,) -> (ResolveTable,):
+makeResolveTable|func(_units: Array<CompilationUnit>,) -> (ResolveTable,):
     var out = ResolveTable()
     var u = 0
     while u < len(units):
@@ -129,7 +129,7 @@ resolveCoverage|func(table: ResolveTable, unit: CompilationUnit, unitIndex: I32,
     while i < unit.ast.exprCount():
         if unit.ast.isIdentifierExpr(i) || unit.ast.isMemberExpr(i) || unit.ast.isCallExpr(i):
             out.required = out.required + 1
-            if isResolved(resolveAt(table, unitIndex, i)):
+            if isResolved(resolveAt(table = table, unit = unitIndex, node = i)):
                 out.covered = out.covered + 1
             elif out.firstMissing < 0:
                 out.firstMissing = i

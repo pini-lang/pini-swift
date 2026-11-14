@@ -38,14 +38,14 @@ noExpectation|func() -> (Expectation,):
     return Expectation()
 
 ; 有期望：调用方给出类型池下标。
-expectType|func(typeId: I32,) -> (Expectation,):
+expectType|func(_typeId: I32,) -> (Expectation,):
     var out = Expectation()
     out.hasExpected = true
     out.typeId = typeId
     return out
 
 ; 错误类别名：测试与诊断共用一份拼写。
-literalErrorName|func(kind: LiteralErrorKind,) -> (String,):
+literalErrorName|func(_kind: LiteralErrorKind,) -> (String,):
     match kind:
         case literalExpectedMismatch:
             return "字面量类型不匹配"
@@ -60,7 +60,7 @@ isLiteralError|func(error: LiteralError, kind: LiteralErrorKind,) -> (Bool,):
     return literalErrorName(error.kind) == literalErrorName(kind)
 
 ; 诊断码：复用宿主已登记的码，不新增码表条目。
-literalErrorCode|func(kind: LiteralErrorKind,) -> (String,):
+literalErrorCode|func(_kind: LiteralErrorKind,) -> (String,):
     match kind:
         case literalExpectedMismatch:
             return "E4-001"
@@ -82,18 +82,18 @@ makeLiteralError|func(kind: LiteralErrorKind, file: String, offset: I32, expecte
 
 ; 驻留并落表：缺省类型由本函数造，随后写进表达式类型表。
 finishInterned|func(out: LiteralResult, unitIndex: I32, node: I32, name: String,) -> (LiteralResult,):
-    let inserted = intern(out.pool, typeClassScalar, name, [], -1)
+    let inserted = intern(pool = out.pool, kind = typeClassScalar, name = name, kids = [], ret = -1)
     var done = out
     done.pool = inserted.pool
     done.typeId = inserted.id
-    done.types = writeExprType(out.types, unitIndex, node, inserted.id)
+    done.types = writeExprType(table = out.types, unit = unitIndex, node = node, typeId = inserted.id)
     return done
 
 ; 采用期望类型：类型已在池里，只落表。
 finishExpected|func(out: LiteralResult, unitIndex: I32, node: I32, typeId: I32,) -> (LiteralResult,):
     var done = out
     done.typeId = typeId
-    done.types = writeExprType(out.types, unitIndex, node, typeId)
+    done.types = writeExprType(table = out.types, unit = unitIndex, node = node, typeId = typeId)
     return done
 
 ; 失败收尾：写错误标记并记下期望/实得文本。
@@ -101,11 +101,11 @@ failLiteral|func(out: LiteralResult, unit: CompilationUnit, unitIndex: I32, node
     var done = out
     done.failed = true
     done.typeId = errorTypeId()
-    done.types = writeExprType(out.types, unitIndex, node, errorTypeId())
+    done.types = writeExprType(table = out.types, unit = unitIndex, node = node, typeId = errorTypeId())
     var offset = 0
     if node >= 0 && node < unit.ast.exprCount():
         offset = unit.ast.exprAt(node).start
-    done.error = makeLiteralError(kind, unit.path, offset, expected, got)
+    done.error = makeLiteralError(kind = kind, file = unit.path, offset = offset, expected = expected, got = got)
     return done
 
 ; 判定一个节点：按类别分流，期望类型只在同族内接受。
@@ -114,36 +114,36 @@ checkLiteral|func(unit: CompilationUnit, unitIndex: I32, node: I32, expectation:
     out.pool = pool
     out.types = types
     if node < 0 || node >= unit.ast.exprCount():
-        return failLiteral(out, unit, unitIndex, node, literalNotLiteral, "字面量", "越界节点")
+        return failLiteral(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = literalNotLiteral, expected = "字面量", got = "越界节点")
     let ast = unit.ast
     if ast.isIntegerExpr(node):
         if expectation.hasExpected:
-            if isNumericType(pool, expectation.typeId):
-                return finishExpected(out, unitIndex, node, expectation.typeId)
-            return failLiteral(out, unit, unitIndex, node, literalExpectedMismatch, typeText(pool, expectation.typeId), "I32")
-        return finishInterned(out, unitIndex, node, "I32")
+            if isNumericType(pool = pool, id = expectation.typeId):
+                return finishExpected(out = out, unitIndex = unitIndex, node = node, typeId = expectation.typeId)
+            return failLiteral(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = literalExpectedMismatch, expected = typeText(pool = pool, id = expectation.typeId), got = "I32")
+        return finishInterned(out = out, unitIndex = unitIndex, node = node, name = "I32")
     if ast.isFloatExpr(node):
         if expectation.hasExpected:
-            if isFloatType(pool, expectation.typeId):
-                return finishExpected(out, unitIndex, node, expectation.typeId)
-            return failLiteral(out, unit, unitIndex, node, literalExpectedMismatch, typeText(pool, expectation.typeId), "F64")
-        return finishInterned(out, unitIndex, node, "F64")
+            if isFloatType(pool = pool, id = expectation.typeId):
+                return finishExpected(out = out, unitIndex = unitIndex, node = node, typeId = expectation.typeId)
+            return failLiteral(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = literalExpectedMismatch, expected = typeText(pool = pool, id = expectation.typeId), got = "F64")
+        return finishInterned(out = out, unitIndex = unitIndex, node = node, name = "F64")
     if ast.isStringExpr(node) || ast.isInterpolatedExpr(node):
         if expectation.hasExpected:
-            if isStringType(pool, expectation.typeId):
-                return finishExpected(out, unitIndex, node, expectation.typeId)
-            return failLiteral(out, unit, unitIndex, node, literalExpectedMismatch, typeText(pool, expectation.typeId), "String")
-        return finishInterned(out, unitIndex, node, "String")
+            if isStringType(pool = pool, id = expectation.typeId):
+                return finishExpected(out = out, unitIndex = unitIndex, node = node, typeId = expectation.typeId)
+            return failLiteral(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = literalExpectedMismatch, expected = typeText(pool = pool, id = expectation.typeId), got = "String")
+        return finishInterned(out = out, unitIndex = unitIndex, node = node, name = "String")
     if ast.isBoolExpr(node):
         if expectation.hasExpected:
-            if isBoolType(pool, expectation.typeId):
-                return finishExpected(out, unitIndex, node, expectation.typeId)
-            return failLiteral(out, unit, unitIndex, node, literalExpectedMismatch, typeText(pool, expectation.typeId), "Bool")
-        return finishInterned(out, unitIndex, node, "Bool")
+            if isBoolType(pool = pool, id = expectation.typeId):
+                return finishExpected(out = out, unitIndex = unitIndex, node = node, typeId = expectation.typeId)
+            return failLiteral(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = literalExpectedMismatch, expected = typeText(pool = pool, id = expectation.typeId), got = "Bool")
+        return finishInterned(out = out, unitIndex = unitIndex, node = node, name = "Bool")
     if ast.isNilExpr(node):
         if !expectation.hasExpected:
-            return failLiteral(out, unit, unitIndex, node, literalNeedsExpectation, "", "nil")
-        if isNullableType(pool, expectation.typeId):
-            return finishExpected(out, unitIndex, node, expectation.typeId)
-        return failLiteral(out, unit, unitIndex, node, literalExpectedMismatch, typeText(pool, expectation.typeId), "nil")
-    return failLiteral(out, unit, unitIndex, node, literalNotLiteral, "字面量", "非字面量表达式")
+            return failLiteral(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = literalNeedsExpectation, expected = "", got = "nil")
+        if isNullableType(pool = pool, id = expectation.typeId):
+            return finishExpected(out = out, unitIndex = unitIndex, node = node, typeId = expectation.typeId)
+        return failLiteral(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = literalExpectedMismatch, expected = typeText(pool = pool, id = expectation.typeId), got = "nil")
+    return failLiteral(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = literalNotLiteral, expected = "字面量", got = "非字面量表达式")

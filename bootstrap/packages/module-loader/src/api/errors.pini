@@ -16,7 +16,7 @@ detail: String = ""
 offset: I32 = -1
 
 ; 类别名：与宿主诊断表的消息组同名，回执、测试与诊断共用一份拼写。
-loadErrorName|func(kind: LoadErrorKind,) -> (String,):
+loadErrorName|func(_kind: LoadErrorKind,) -> (String,):
     match kind:
         case errorRootMissing:
             return "源码根不存在"
@@ -44,7 +44,7 @@ makeLoadError|func(kind: LoadErrorKind, path: String, detail: String,) -> (LoadE
 
 ; 造带偏移的源文本错误：偏移指向首个出问题的字节。
 makeSourceError|func(kind: LoadErrorKind, path: String, offset: I32,) -> (LoadError,):
-    var out = makeLoadError(kind, path, "")
+    var out = makeLoadError(kind = kind, path = path, detail = "")
     out.offset = offset
     return out
 
@@ -54,4 +54,4 @@ isLoadErrorKind|func(kind: LoadErrorKind, expected: LoadErrorKind,) -> (Bool,):
 
 ; 错误对象的类别判定：调用方手里是整条错误时走这个。
 isLoadError|func(error: LoadError, kind: LoadErrorKind,) -> (Bool,):
-    return isLoadErrorKind(error.kind, kind)
+    return isLoadErrorKind(kind = error.kind, expected = kind)

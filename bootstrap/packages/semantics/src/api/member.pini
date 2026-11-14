@@ -66,7 +66,7 @@ functions: Array<BuiltinFunction> = []
 labels: Array<TypeLabels> = []
 
 ; 成员类别名：诊断、测试与回执共用一份拼写。
-memberKindName|func(kind: MemberKind,) -> (String,):
+memberKindName|func(_kind: MemberKind,) -> (String,):
     match kind:
         case memberField:
             return "字段"
@@ -89,7 +89,7 @@ isMemberKind|func(kind: MemberKind, expected: MemberKind,) -> (Bool,):
     return memberKindName(kind) == memberKindName(expected)
 
 ; 错误类别名：与诊断码一一对应。
-memberErrorName|func(kind: MemberErrorKind,) -> (String,):
+memberErrorName|func(_kind: MemberErrorKind,) -> (String,):
     match kind:
         case memberUnknown:
             return "未知成员"
@@ -104,7 +104,7 @@ isMemberError|func(error: MemberError, kind: MemberErrorKind,) -> (Bool,):
     return memberErrorName(error.kind) == memberErrorName(kind)
 
 ; 诊断码：复用宿主已登记的码，不新增码表条目。
-memberErrorCode|func(kind: MemberErrorKind,) -> (String,):
+memberErrorCode|func(_kind: MemberErrorKind,) -> (String,):
     match kind:
         case memberUnknown:
             return "E4-009"
@@ -137,7 +137,7 @@ memberAccess|func(receiver: I32, name: String, isTypeName: Bool, owner: String, 
     return out
 
 ; 名义类别：结构、对象与枚举三类，其余答无效。
-nominalClassOf|func(code: I32,) -> (TypeClass,):
+nominalClassOf|func(_code: I32,) -> (TypeClass,):
     if isStructDeclCode(code):
         return typeClassStruct
     if isObjectDeclCode(code):
@@ -147,12 +147,12 @@ nominalClassOf|func(code: I32,) -> (TypeClass,):
     return typeClassInvalid
 
 ; 名义判定：三类共用一条，指针、可选与函数都不算。
-isNominalClass|func(kind: TypeClass,) -> (Bool,):
-    if isTypeClass(kind, typeClassStruct):
+isNominalClass|func(_kind: TypeClass,) -> (Bool,):
+    if isTypeClass(kind = kind, expected = typeClassStruct):
         return true
-    if isTypeClass(kind, typeClassObject):
+    if isTypeClass(kind = kind, expected = typeClassObject):
         return true
-    return isTypeClass(kind, typeClassEnum)
+    return isTypeClass(kind = kind, expected = typeClassEnum)
 
 ; 名义类型驻留：顶层类型声明逐个进池，未被引用的类型也有下标可查。
 internNominalTypes|func(units: Array<CompilationUnit>, pool: TypePool,) -> (TypePool,):
@@ -165,9 +165,9 @@ internNominalTypes|func(units: Array<CompilationUnit>, pool: TypePool,) -> (Type
         while i < len(unit.ast.items):
             let decl = unit.ast.decls[unit.ast.items[i]]
             let kind = nominalClassOf(decl.kind)
-            if !isTypeClass(kind, typeClassInvalid):
-                let name = decodeRange(bytes, decl.nameStart, decl.nameEnd)
-                working = intern(working, kind, name, [], -1).pool
+            if !isTypeClass(kind = kind, expected = typeClassInvalid):
+                let name = decodeRange(bytes = bytes, start = decl.nameStart, end = decl.nameEnd)
+                working = intern(pool = working, kind = kind, name = name, kids = [], ret = -1).pool
             i = i + 1
         u = u + 1
     return working
@@ -182,7 +182,7 @@ makeMemberWorld|func(units: Array<CompilationUnit>, table: SymbolTable, types: T
     out.decls = makeDeclIndex(units)
     out.builtins = builtinMemberTable()
     out.functions = builtinFunctionTable()
-    out.types.pool = internNominalTypes(units, types.pool)
+    out.types.pool = internNominalTypes(units = units, pool = types.pool)
     return out
 
 ; 挂标签：同一类型重复挂时后挂的整串替换，位置即分量序号。
@@ -211,14 +211,14 @@ tupleLabelIndex|func(world: MemberWorld, typeId: I32, key: Array<U8>,) -> (I32,)
         if world.labels[r].typeId == typeId:
             var i = 0
             while i < len(world.labels[r].labels):
-                if sameKey(keyOfText(world.labels[r].labels[i]), key):
+                if sameKey(first = keyOfText(world.labels[r].labels[i]), second = key):
                     return i
                 i = i + 1
         r = r + 1
     return -1
 
 ; 数字序号：整串十进制数字才成立，否则答 -1；四位以上直接否决，避免回绕。
-digitIndex|func(text: String,) -> (I32,):
+digitIndex|func(_text: String,) -> (I32,):
     if len(text) == 0:
         return -1
     var value = 0
@@ -238,7 +238,7 @@ failMember|func(out: MemberResult, access: MemberAccess, kind: MemberErrorKind, 
     var done = out
     done.failed = true
     done.typeId = errorTypeId()
-    done.error = makeMemberError(kind, access.file, access.offset, typeName, access.spelling)
+    done.error = makeMemberError(kind = kind, file = access.file, offset = access.offset, typeName = typeName, memberName = access.spelling)
     return done
 
 ; 待定收尾：接收者未定型或成员类型缺项，不报错也不写错误标记。
@@ -260,15 +260,15 @@ methodType|func(world: MemberWorld, ref: DeclRef,) -> (TypeInsert,):
     while i < len(decl.kids):
         let kid = decl.kids[i]
         if isParamDeclCode(unit.ast.decls[kid].kind):
-            let paramType = world.types.typeOf(ref.unit, kid)
+            let paramType = world.types.typeOf(unit = ref.unit, decl = kid)
             if paramType < 0:
-                return hitType(world.types.pool, -1)
+                return hitType(pool = world.types.pool, id = -1)
             params = params.append(paramType)
         i = i + 1
-    let ret = world.types.typeOf(ref.unit, ref.decl)
+    let ret = world.types.typeOf(unit = ref.unit, decl = ref.decl)
     if ret < 0:
-        return hitType(world.types.pool, -1)
-    return intern(world.types.pool, typeClassFunction, "", params, ret)
+        return hitType(pool = world.types.pool, id = -1)
+    return intern(pool = world.types.pool, kind = typeClassFunction, name = "", kids = params, ret = ret)
 
 ; 枚举项类型：无载荷给枚举自身，带载荷给构造签名，返回固定是枚举。
 variantType|func(world: MemberWorld, ref: DeclRef, enumId: I32,) -> (TypeInsert,):
@@ -279,29 +279,29 @@ variantType|func(world: MemberWorld, ref: DeclRef, enumId: I32,) -> (TypeInsert,
     while i < len(decl.kids):
         let kid = decl.kids[i]
         if isParamDeclCode(unit.ast.decls[kid].kind):
-            let paramType = world.types.typeOf(ref.unit, kid)
+            let paramType = world.types.typeOf(unit = ref.unit, decl = kid)
             if paramType < 0:
-                return hitType(world.types.pool, -1)
+                return hitType(pool = world.types.pool, id = -1)
             params = params.append(paramType)
         i = i + 1
     if len(params) == 0:
-        return hitType(world.types.pool, enumId)
-    return intern(world.types.pool, typeClassFunction, "", params, enumId)
+        return hitType(pool = world.types.pool, id = enumId)
+    return intern(pool = world.types.pool, kind = typeClassFunction, name = "", kids = params, ret = enumId)
 
 ; 元组成员：数字名字按位置取分量，其余名字走标签表。
 checkTupleMember|func(world: MemberWorld, out: MemberResult, entry: TypeEntry, access: MemberAccess,) -> (MemberResult,):
-    let typeName = typeText(out.pool, access.receiver)
+    let typeName = typeText(pool = out.pool, id = access.receiver)
     let index = digitIndex(access.spelling)
     if index >= 0:
         if index >= len(entry.kids):
-            return failMember(out, access, memberUnknown, typeName)
+            return failMember(out = out, access = access, kind = memberUnknown, typeName = typeName)
         var done = out
         done.kind = memberTupleIndex
         done.typeId = entry.kids[index]
         return done
-    let label = tupleLabelIndex(world, access.receiver, access.key)
+    let label = tupleLabelIndex(world = world, typeId = access.receiver, key = access.key)
     if label < 0 || label >= len(entry.kids):
-        return failMember(out, access, memberUnknown, typeName)
+        return failMember(out = out, access = access, kind = memberUnknown, typeName = typeName)
     var done = out
     done.kind = memberTupleLabel
     done.typeId = entry.kids[label]
@@ -309,12 +309,12 @@ checkTupleMember|func(world: MemberWorld, out: MemberResult, entry: TypeEntry, a
 
 ; 内建成员：按所有者与名字查表，成员值按接收者实参定成函数类型；无形参就是零参函数。
 checkBuiltinMember|func(world: MemberWorld, out: MemberResult, owner: String, kids: Array<I32>, access: MemberAccess,) -> (MemberResult,):
-    let at = findBuiltin(world.builtins, owner, access.spelling)
+    let at = findBuiltin(members = world.builtins, owner = owner, name = access.spelling)
     if at < 0:
-        return failMember(out, access, memberUnknown, typeText(out.pool, access.receiver))
-    let typed = builtinMemberSignature(out.pool, world.builtins[at], kids)
+        return failMember(out = out, access = access, kind = memberUnknown, typeName = typeText(pool = out.pool, id = access.receiver))
+    let typed = builtinMemberSignature(pool = out.pool, member = world.builtins[at], kids = kids)
     if typed.id < 0:
-        return deferMember(out, access.receiver)
+        return deferMember(out = out, receiver = access.receiver)
     var done = out
     done.pool = typed.pool
     done.kind = memberBuiltin
@@ -324,35 +324,35 @@ checkBuiltinMember|func(world: MemberWorld, out: MemberResult, owner: String, ki
 ; 名义成员：先查符号，再判可见性，最后按声明类别给类型与成员类别。
 checkNominalMember|func(world: MemberWorld, out: MemberResult, entry: TypeEntry, access: MemberAccess,) -> (MemberResult,):
     let owner = entry.name
-    let at = lookupMember(world.symbols, owner, access.key)
+    let at = lookupMember(index = world.symbols, owner = owner, key = access.key)
     if at < 0:
-        return failMember(out, access, memberUnknown, owner)
+        return failMember(out = out, access = access, kind = memberUnknown, typeName = owner)
     let symbol = world.table.symbolAt(at)
-    let ref = lookupDecl(world.decls, symbol.file, symbol.offset)
+    let ref = lookupDecl(index = world.decls, file = symbol.file, offset = symbol.offset)
     if ref.unit < 0:
-        return deferMember(out, access.receiver)
+        return deferMember(out = out, receiver = access.receiver)
     let decl = world.units[ref.unit].ast.decls[ref.decl]
-    if isVisibility(symbol.visibility, visibilityPrivate) && access.owner != symbol.owner:
+    if isVisibility(level = symbol.visibility, expected = visibilityPrivate) && access.owner != symbol.owner:
         if isFieldDeclCode(decl.kind):
-            return failMember(out, access, memberPrivate, owner)
-        return failMember(out, access, memberInaccessible, owner)
-    if isVisibility(symbol.visibility, visibilityInternal) && access.file != symbol.file:
-        return failMember(out, access, memberInaccessible, owner)
+            return failMember(out = out, access = access, kind = memberPrivate, typeName = owner)
+        return failMember(out = out, access = access, kind = memberInaccessible, typeName = owner)
+    if isVisibility(level = symbol.visibility, expected = visibilityInternal) && access.file != symbol.file:
+        return failMember(out = out, access = access, kind = memberInaccessible, typeName = owner)
     if isFieldDeclCode(decl.kind):
-        return checkFieldMember(world, out, owner, ref, at, access)
+        return checkFieldMember(world = world, out = out, owner = owner, ref = ref, symbol = at, access = access)
     if isFunctionDeclCode(decl.kind):
-        return checkMethodMember(world, out, owner, ref, at, decl, access)
+        return checkMethodMember(world = world, out = out, owner = owner, ref = ref, symbol = at, decl = decl, access = access)
     if isVariantDeclCode(decl.kind):
-        return checkVariantMember(world, out, owner, ref, at, access)
-    return failMember(out, access, memberUnknown, owner)
+        return checkVariantMember(world = world, out = out, owner = owner, ref = ref, symbol = at, access = access)
+    return failMember(out = out, access = access, kind = memberUnknown, typeName = owner)
 
 ; 字段成员：类型名位不暴露字段，值位按声明标注回表。
 checkFieldMember|func(world: MemberWorld, out: MemberResult, owner: String, ref: DeclRef, symbol: I32, access: MemberAccess,) -> (MemberResult,):
     if access.isTypeName:
-        return failMember(out, access, memberUnknown, owner)
-    let typeId = world.types.typeOf(ref.unit, ref.decl)
+        return failMember(out = out, access = access, kind = memberUnknown, typeName = owner)
+    let typeId = world.types.typeOf(unit = ref.unit, decl = ref.decl)
     if typeId < 0:
-        return deferMember(out, access.receiver)
+        return deferMember(out = out, receiver = access.receiver)
     var done = out
     done.kind = memberField
     done.typeId = typeId
@@ -362,10 +362,10 @@ checkFieldMember|func(world: MemberWorld, out: MemberResult, owner: String, ref:
 ; 方法成员：类型名位只认本型方法，值位两种都认。
 checkMethodMember|func(world: MemberWorld, out: MemberResult, owner: String, ref: DeclRef, symbol: I32, decl: DeclNode, access: MemberAccess,) -> (MemberResult,):
     if access.isTypeName && !decl.isOwn:
-        return failMember(out, access, memberUnknown, owner)
-    let typed = methodType(world, ref)
+        return failMember(out = out, access = access, kind = memberUnknown, typeName = owner)
+    let typed = methodType(world = world, ref = ref)
     if typed.id < 0:
-        return deferMember(out, access.receiver)
+        return deferMember(out = out, receiver = access.receiver)
     var done = out
     done.pool = typed.pool
     if decl.isOwn:
@@ -379,10 +379,10 @@ checkMethodMember|func(world: MemberWorld, out: MemberResult, owner: String, ref
 ; 枚举项成员：只在类型名位可见，返回构造签名或枚举自身。
 checkVariantMember|func(world: MemberWorld, out: MemberResult, owner: String, ref: DeclRef, symbol: I32, access: MemberAccess,) -> (MemberResult,):
     if !access.isTypeName:
-        return failMember(out, access, memberUnknown, owner)
-    let typed = variantType(world, ref, access.receiver)
+        return failMember(out = out, access = access, kind = memberUnknown, typeName = owner)
+    let typed = variantType(world = world, ref = ref, enumId = access.receiver)
     if typed.id < 0:
-        return deferMember(out, access.receiver)
+        return deferMember(out = out, receiver = access.receiver)
     var done = out
     done.pool = typed.pool
     done.kind = memberEnumCase
@@ -395,14 +395,14 @@ checkMember|func(world: MemberWorld, access: MemberAccess,) -> (MemberResult,):
     var out = MemberResult()
     out.pool = world.types.pool
     if access.receiver < 0 || access.receiver >= len(out.pool.entries):
-        return deferMember(out, access.receiver)
+        return deferMember(out = out, receiver = access.receiver)
     let entry = out.pool.entries[access.receiver]
-    if isTypeClass(entry.kind, typeClassTuple):
-        return checkTupleMember(world, out, entry, access)
-    if isTypeClass(entry.kind, typeClassScalar) && entry.name == "String":
-        return checkBuiltinMember(world, out, entry.name, [], access)
-    if isTypeClass(entry.kind, typeClassCollection):
-        return checkBuiltinMember(world, out, entry.name, entry.kids, access)
+    if isTypeClass(kind = entry.kind, expected = typeClassTuple):
+        return checkTupleMember(world = world, out = out, entry = entry, access = access)
+    if isTypeClass(kind = entry.kind, expected = typeClassScalar) && entry.name == "String":
+        return checkBuiltinMember(world = world, out = out, owner = entry.name, kids = [], access = access)
+    if isTypeClass(kind = entry.kind, expected = typeClassCollection):
+        return checkBuiltinMember(world = world, out = out, owner = entry.name, kids = entry.kids, access = access)
     if isNominalClass(entry.kind):
-        return checkNominalMember(world, out, entry, access)
-    return failMember(out, access, memberUnknown, typeText(out.pool, access.receiver))
+        return checkNominalMember(world = world, out = out, entry = entry, access = access)
+    return failMember(out = out, access = access, kind = memberUnknown, typeName = typeText(pool = out.pool, id = access.receiver))

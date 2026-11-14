@@ -65,7 +65,7 @@ struct SchedulerDefaultInstanceTests: Sendable {
     /// 一份取默认实例并读它可观测面的语料。
     private static func corpus(field: String) -> String {
         """
-        取默认|func(using s: 调度器,) -> (String,):
+        取默认|func(using _s: 调度器,) -> (String,):
             return s.\(field)
 
         main|func() -> ():
@@ -101,7 +101,7 @@ struct SchedulerDefaultInstanceTests: Sendable {
         /// 意图：正向那条在「登记生效」与「登记根本没查」两种实现下**都会绿**
         /// ⇒ 必须有一条能红的对照。若某一版把取用位放宽成「任何名字都放行」，本条会红。
         let source = """
-        取默认|func(using s: 没有这个类型,) -> (String,):
+        取默认|func(using _s: 没有这个类型,) -> (String,):
             return "x"
 
         main|func() -> ():
@@ -120,7 +120,7 @@ struct SchedulerDefaultInstanceTests: Sendable {
         /// 而不问本程序自己声明了什么，会让这处调用被解析成「该类型的构造」⇒ 既有程序静默换义。
         /// 本条钉的是那条让位规则（用户声明优先）。
         let source = """
-        调度器|func(x: I32,) -> (I32,):
+        调度器|func(_x: I32,) -> (I32,):
             return x
 
         main|func() -> ():
@@ -141,7 +141,7 @@ struct SchedulerDefaultInstanceTests: Sendable {
         [调度器|given]
             名称: String = "我自己写的"
 
-        取默认|func(using s: 调度器,) -> (String,):
+        取默认|func(using _s: 调度器,) -> (String,):
             return s.名称
 
         main|func() -> ():
@@ -164,7 +164,7 @@ struct SchedulerDefaultInstanceTests: Sendable {
             问好|self() -> (String,):
                 return "你好"
 
-        取默认|func(using s: 调度器,) -> (String,):
+        取默认|func(using _s: 调度器,) -> (String,):
             return s.问好()
 
         main|func() -> ():
@@ -183,7 +183,7 @@ struct SchedulerDefaultInstanceTests: Sendable {
         /// 语言预置的那份不该落到「未定义的变量」—— 一条旧式诊断，读起来像拼错了名字，而名字确实存在。
         /// 判据钉判定码而非「报了错就行」：新旧都报错，断「有错误」两种实现都通过。它与让位规则互为两半。
         let source = """
-        取|func(x: String,) -> (String,):
+        取|func(_x: String,) -> (String,):
             return x
 
         main|func() -> ():
@@ -202,7 +202,7 @@ struct SchedulerDefaultInstanceTests: Sendable {
         /// 两处都要做，只做一处会伪装成已修好：另一条路上那个名字仍被判「未定义变量」。
         /// 断言的是「不报未定义变量」而不是「没有错误」：收集模式只跑语义层，值位那条诊断生在类型层。
         let source = """
-        取|func(x: String,) -> (String,):
+        取|func(_x: String,) -> (String,):
             return x
 
         main|func() -> ():
@@ -223,7 +223,7 @@ struct SchedulerDefaultInstanceTests: Sendable {
         /// 调用点以「该类型没有这个方法」告终，而那是**跑起来才知道**的形态。
         /// 断言落在运行输出上，故静态与运行两步都被覆盖。
         let source = """
-        探|func(using s: 调度器,) -> (I32,):
+        探|func(using _s: 调度器,) -> (I32,):
             s.收下(空句柄)
             print(s.选择下一个任务())
             return 1
@@ -244,7 +244,7 @@ struct SchedulerDefaultInstanceTests: Sendable {
         /// 「空队列这一格有答案」。「非空队列返回队首」验不了：语言里只构造得出一个句柄值（空句柄本身），
         /// 两个不同句柄无从区分。
         let source = """
-        空|func(using s: 调度器,) -> (I32,):
+        空|func(using _s: 调度器,) -> (I32,):
             print(s.选择下一个任务())
             return 1
 
@@ -264,12 +264,12 @@ struct SchedulerDefaultInstanceTests: Sendable {
     private static func queueLengthCorpus(overriding: Bool) -> String {
         let overrideBlock = overriding ? """
         [[调度器]]
-            收下|self(任务: *U8,) -> ():
+            收下|self(_任务: *U8,) -> ():
                 return
 
         """ : ""
         return """
-        \(overrideBlock)数|func(using s: 调度器,) -> (I32,):
+        \(overrideBlock)数|func(using _s: 调度器,) -> (I32,):
             s.收下(空句柄)
             return len(s.元素)
 
@@ -303,7 +303,7 @@ struct SchedulerDefaultInstanceTests: Sendable {
         /// 取到队首与取到空句柄读数相同），能验的是队列长度的变化。而「取走不移」正是最容易漏的一步 ——
         /// 队列字段是函数式更新（`slice` 返回新数组），漏了写回，下一次还会拿到同一个任务，读数退回 1。
         let source = """
-        取|func(using s: 调度器,) -> (I32,):
+        取|func(using _s: 调度器,) -> (I32,):
             s.收下(空句柄)
             print(len(s.元素))
             s.选择下一个任务()

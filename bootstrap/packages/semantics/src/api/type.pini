@@ -32,7 +32,7 @@ pool: TypePool = TypePool()
 id: I32 = -1
 
 ; 类别名：诊断与测试共用一份拼写。
-typeClassName|func(kind: TypeClass,) -> (String,):
+typeClassName|func(_kind: TypeClass,) -> (String,):
     match kind:
         case typeClassInvalid:
             return "无效类型"
@@ -71,7 +71,7 @@ count|self() -> (I32,):
 ; 错误数：非零即池不可用于下游。
 errorCount|self() -> (I32,):
     return len(self.errors)
-errorAt|self(index: I32,) -> (TypeError,):
+errorAt|self(_index: I32,) -> (TypeError,):
     return self.errors[index]
 ; 可用：没有任何类型错误。
 isOK|self() -> (Bool,):
@@ -100,7 +100,7 @@ findTypeEntry|func(pool: TypePool, kind: TypeClass, key: Array<U8>, kids: Array<
     while i < len(pool.entries):
         let entry = pool.entries[i]
         if typeClassName(entry.kind) == typeClassName(kind):
-            if sameKey(entry.key, key) && sameTypeIds(entry.kids, kids) && entry.ret == ret:
+            if sameKey(first = entry.key, second = key) && sameTypeIds(first = entry.kids, second = kids) && entry.ret == ret:
                 return i
         i = i + 1
     return -1
@@ -109,7 +109,7 @@ findTypeEntry|func(pool: TypePool, kind: TypeClass, key: Array<U8>, kids: Array<
 intern|func(pool: TypePool, kind: TypeClass, name: String, kids: Array<I32>, ret: I32,) -> (TypeInsert,):
     let key = keyOfText(name)
     var out = TypeInsert()
-    let at = findTypeEntry(pool, kind, key, kids, ret)
+    let at = findTypeEntry(pool = pool, kind = kind, key = key, kids = kids, ret = ret)
     if at >= 0:
         out.pool = pool
         out.id = at
@@ -133,7 +133,7 @@ joinTypes|func(pool: TypePool, ids: Array<I32>,) -> (String,):
     while i < len(ids):
         if i > 0:
             out = out + ", "
-        out = out + typeText(pool, ids[i])
+        out = out + typeText(pool = pool, id = ids[i])
         i = i + 1
     return out
 
@@ -141,50 +141,50 @@ joinTypes|func(pool: TypePool, ids: Array<I32>,) -> (String,):
 needsParens|func(pool: TypePool, id: I32,) -> (Bool,):
     if id < 0 || id >= len(pool.entries):
         return false
-    return isTypeClass(pool.entries[id].kind, typeClassFunction)
+    return isTypeClass(kind = pool.entries[id].kind, expected = typeClassFunction)
 
 ; 规范化文本：接口产物与诊断共用一份拼写，同一类型在任何遍历顺序下都得到同一串。
 typeText|func(pool: TypePool, id: I32,) -> (String,):
     if id < 0 || id >= len(pool.entries):
         return "<无效>"
     let entry = pool.entries[id]
-    if isTypeClass(entry.kind, typeClassScalar):
+    if isTypeClass(kind = entry.kind, expected = typeClassScalar):
         return entry.name
-    if isTypeClass(entry.kind, typeClassStruct) || isTypeClass(entry.kind, typeClassObject):
+    if isTypeClass(kind = entry.kind, expected = typeClassStruct) || isTypeClass(kind = entry.kind, expected = typeClassObject):
         return entry.name
-    if isTypeClass(entry.kind, typeClassEnum):
+    if isTypeClass(kind = entry.kind, expected = typeClassEnum):
         return entry.name
-    if isTypeClass(entry.kind, typeClassGeneric):
+    if isTypeClass(kind = entry.kind, expected = typeClassGeneric):
         if len(entry.kids) == 0:
             return entry.name
-        return entry.name + "<" + joinTypes(pool, entry.kids) + ">"
-    if isTypeClass(entry.kind, typeClassCollection):
-        return entry.name + "<" + joinTypes(pool, entry.kids) + ">"
-    if isTypeClass(entry.kind, typeClassPointer):
+        return entry.name + "<" + joinTypes(pool = pool, ids = entry.kids) + ">"
+    if isTypeClass(kind = entry.kind, expected = typeClassCollection):
+        return entry.name + "<" + joinTypes(pool = pool, ids = entry.kids) + ">"
+    if isTypeClass(kind = entry.kind, expected = typeClassPointer):
         if len(entry.kids) == 0:
             return "<无效>"
-        let inner = typeText(pool, entry.kids[0])
-        if needsParens(pool, entry.kids[0]):
+        let inner = typeText(pool = pool, id = entry.kids[0])
+        if needsParens(pool = pool, id = entry.kids[0]):
             return "*(" + inner + ")"
         return "*" + inner
-    if isTypeClass(entry.kind, typeClassOptional):
+    if isTypeClass(kind = entry.kind, expected = typeClassOptional):
         if len(entry.kids) == 0:
             return "<无效>"
-        let inner = typeText(pool, entry.kids[0])
-        if needsParens(pool, entry.kids[0]):
+        let inner = typeText(pool = pool, id = entry.kids[0])
+        if needsParens(pool = pool, id = entry.kids[0]):
             return "(" + inner + ")?"
         return inner + "?"
-    if isTypeClass(entry.kind, typeClassTuple):
+    if isTypeClass(kind = entry.kind, expected = typeClassTuple):
         if len(entry.kids) == 0:
             return "()"
-        return "(" + joinTypes(pool, entry.kids) + ",)"
-    if isTypeClass(entry.kind, typeClassResult):
-        return resultText(pool, entry)
-    if isTypeClass(entry.kind, typeClassFunction):
-        var params = "(" + joinTypes(pool, entry.kids) + ",)"
+        return "(" + joinTypes(pool = pool, ids = entry.kids) + ",)"
+    if isTypeClass(kind = entry.kind, expected = typeClassResult):
+        return resultText(pool = pool, entry = entry)
+    if isTypeClass(kind = entry.kind, expected = typeClassFunction):
+        var params = "(" + joinTypes(pool = pool, ids = entry.kids) + ",)"
         if len(entry.kids) == 0:
             params = "()"
-        return params + " -> " + typeText(pool, entry.ret)
+        return params + " -> " + typeText(pool = pool, id = entry.ret)
     return "<无效>"
 
 ; 结果文本：`^T` 是 `Result<T, Error>` 的糖；错误实参非内建 Error 时退回全写。
@@ -192,10 +192,10 @@ resultText|func(pool: TypePool, entry: TypeEntry,) -> (String,):
     if len(entry.kids) == 0:
         return "^<无效>"
     if len(entry.kids) == 1:
-        return "^" + typeText(pool, entry.kids[0])
+        return "^" + typeText(pool = pool, id = entry.kids[0])
     var second = ""
     if entry.kids[1] >= 0 && entry.kids[1] < len(pool.entries):
         second = pool.entries[entry.kids[1]].name
     if second == "Error":
-        return "^" + typeText(pool, entry.kids[0])
-    return "Result<" + joinTypes(pool, entry.kids) + ">"
+        return "^" + typeText(pool = pool, id = entry.kids[0])
+    return "Result<" + joinTypes(pool = pool, ids = entry.kids) + ">"

@@ -4,8 +4,8 @@ _module_loader = "../../../module-loader"
 package = "../../../package"
 
 ; 注册一个包：文件先按路径排序，结果与文件系统给出的顺序无关。
-registerPackage|func(units: Array<CompilationUnit>,) -> (SymbolTable,):
-    return registerInto(SymbolTable(), units)
+registerPackage|func(_units: Array<CompilationUnit>,) -> (SymbolTable,):
+    return registerInto(table = SymbolTable(), units = units)
 
 ; 在已有表上追加一个包的单元：跨包注册靠它累积，顶层同名照样判重。
 registerInto|func(table: SymbolTable, units: Array<CompilationUnit>,) -> (SymbolTable,):
@@ -13,7 +13,7 @@ registerInto|func(table: SymbolTable, units: Array<CompilationUnit>,) -> (Symbol
     let ordered = sortedUnits(units)
     var i = 0
     while i < len(ordered):
-        out = registerFile(out, ordered[i])
+        out = registerFile(table = out, unit = ordered[i])
         i = i + 1
     return out
 
@@ -25,21 +25,21 @@ registerWorkspace|func(plan: BuildPlan, root: String,) -> (SymbolTable,):
     var i = 0
     while i < len(plan.packages):
         let pkg: PackagePlan = plan.packages[i]
-        let loaded = loadPackage(root + "/" + pkg.rootPath, pkg)
+        let loaded = loadPackage(packageAbs = root + "/" + pkg.rootPath, plan = pkg)
         var e = 0
         while e < len(loaded.errors):
-            out.errors = out.errors.append(makeSymbolError(symbolExtensionUnknown, plan.packages[i].rootPath, 0, "装载失败"))
+            out.errors = out.errors.append(makeSymbolError(kind = symbolExtensionUnknown, file = plan.packages[i].rootPath, offset = 0, name = "装载失败"))
             e = e + 1
-        out = registerInto(out, loaded.units)
+        out = registerInto(table = out, units = loaded.units)
         i = i + 1
     return out
 
 ; 文件排序：按工作区相对路径的字节序，与装载层同一口径。
-sortedUnits|func(units: Array<CompilationUnit>,) -> (Array<CompilationUnit>,):
+sortedUnits|func(_units: Array<CompilationUnit>,) -> (Array<CompilationUnit>,):
     var out: Array<CompilationUnit> = []
     var i = 0
     while i < len(units):
-        out = insertUnit(out, units[i])
+        out = insertUnit(units = out, value = units[i])
         i = i + 1
     return out
 
@@ -48,7 +48,7 @@ insertUnit|func(units: Array<CompilationUnit>, value: CompilationUnit,) -> (Arra
     var placed = false
     var i = 0
     while i < len(units):
-        if !placed && compareSourcePaths(value.path, units[i].path) < 0:
+        if !placed && compareSourcePaths(first = value.path, second = units[i].path) < 0:
             out = out.append(value)
             placed = true
         out = out.append(units[i])
@@ -61,7 +61,7 @@ insertUnit|func(units: Array<CompilationUnit>, value: CompilationUnit,) -> (Arra
 containsKey|func(seen: Array<Symbol>, key: Array<U8>,) -> (Bool,):
     var i = 0
     while i < len(seen):
-        if sameKey(seen[i].key, key):
+        if sameKey(first = seen[i].key, second = key):
             return true
         i = i + 1
     return false
@@ -69,10 +69,10 @@ containsKey|func(seen: Array<Symbol>, key: Array<U8>,) -> (Bool,):
 ; 造符号：键取 NFC，拼写取原文，可见性按符号名与文件路径推出，位置取声明头。
 makeSymbol|func(unit: CompilationUnit, bytes: Array<U8>, decl: DeclNode, kind: SymbolKind,) -> (Symbol,):
     var out = Symbol()
-    out.key = keyOf(bytes, decl.nameStart, decl.nameEnd)
-    out.spelling = decodeRange(bytes, decl.nameStart, decl.nameEnd)
+    out.key = keyOf(bytes = bytes, start = decl.nameStart, end = decl.nameEnd)
+    out.spelling = decodeRange(bytes = bytes, start = decl.nameStart, end = decl.nameEnd)
     out.kind = kind
-    out.visibility = visibilityOf(out.spelling, unit.path)
+    out.visibility = visibilityOf(spelling = out.spelling, path = unit.path)
     out.file = unit.path
     out.offset = decl.start
     return out
@@ -85,18 +85,18 @@ registerFile|func(table: SymbolTable, unit: CompilationUnit,) -> (SymbolTable,):
     while i < len(unit.ast.items):
         let decl = unit.ast.decls[unit.ast.items[i]]
         if !isImportBlockCode(decl.kind):
-            out = registerTopDecl(out, unit, bytes, decl)
+            out = registerTopDecl(table = out, unit = unit, bytes = bytes, decl = decl)
         i = i + 1
     var j = 0
     while j < len(unit.ast.items):
         let decl = unit.ast.decls[unit.ast.items[j]]
         if isImportBlockCode(decl.kind):
-            out = registerImportBlock(out, unit, bytes, decl)
+            out = registerImportBlock(table = out, unit = unit, bytes = bytes, decl = decl)
         j = j + 1
     return out
 
 ; 类型声明：结构、对象与枚举同属「带成员的顶层声明」。
-isTypeDecl|func(decl: DeclNode,) -> (Bool,):
+isTypeDecl|func(_decl: DeclNode,) -> (Bool,):
     if isStructDeclCode(decl.kind):
         return true
     if isObjectDeclCode(decl.kind):
@@ -107,20 +107,20 @@ isTypeDecl|func(decl: DeclNode,) -> (Bool,):
 registerTopDecl|func(table: SymbolTable, unit: CompilationUnit, bytes: Array<U8>, decl: DeclNode,) -> (SymbolTable,):
     var out = table
     if isTypeDecl(decl):
-        let symbol = makeSymbol(unit, bytes, decl, symbolType)
-        out = defineTop(out, symbol)
-        out = registerTypeMembers(out, unit, bytes, decl, symbol.spelling)
+        let symbol = makeSymbol(unit = unit, bytes = bytes, decl = decl, kind = symbolType)
+        out = defineTop(table = out, symbol = symbol)
+        out = registerTypeMembers(table = out, unit = unit, bytes = bytes, decl = decl, owner = symbol.spelling)
         return out
     if isFunctionDeclCode(decl.kind):
-        let symbol = makeSymbol(unit, bytes, decl, symbolFunction)
-        out = defineTop(out, symbol)
-        out = registerParams(out, unit, bytes, decl, symbol.spelling)
+        let symbol = makeSymbol(unit = unit, bytes = bytes, decl = decl, kind = symbolFunction)
+        out = defineTop(table = out, symbol = symbol)
+        out = registerParams(table = out, unit = unit, bytes = bytes, decl = decl, owner = symbol.spelling)
         return out
     if isVariableDeclCode(decl.kind):
-        out = defineTop(out, makeSymbol(unit, bytes, decl, symbolVariable))
+        out = defineTop(table = out, symbol = makeSymbol(unit = unit, bytes = bytes, decl = decl, kind = symbolVariable))
         return out
     if isExtensionDeclCode(decl.kind):
-        out = registerExtension(out, unit, bytes, decl)
+        out = registerExtension(table = out, unit = unit, bytes = bytes, decl = decl)
         return out
     return out
 
@@ -131,19 +131,19 @@ registerTypeMembers|func(table: SymbolTable, unit: CompilationUnit, bytes: Array
     while i < len(decl.kids):
         let member = unit.ast.decls[decl.kids[i]]
         if isFieldDeclCode(member.kind):
-            var symbol = makeSymbol(unit, bytes, member, symbolField)
+            var symbol = makeSymbol(unit = unit, bytes = bytes, decl = member, kind = symbolField)
             symbol.owner = owner
-            out = defineMember(out, symbol)
+            out = defineMember(table = out, symbol = symbol)
         if isFunctionDeclCode(member.kind):
-            var method = makeSymbol(unit, bytes, member, symbolFunction)
+            var method = makeSymbol(unit = unit, bytes = bytes, decl = member, kind = symbolFunction)
             method.owner = owner
-            out = defineMember(out, method)
-            out = registerParams(out, unit, bytes, member, owner + "." + method.spelling)
+            out = defineMember(table = out, symbol = method)
+            out = registerParams(table = out, unit = unit, bytes = bytes, decl = member, owner = owner + "." + method.spelling)
         if isVariantDeclCode(member.kind):
-            var variant = makeSymbol(unit, bytes, member, symbolVariant)
+            var variant = makeSymbol(unit = unit, bytes = bytes, decl = member, kind = symbolVariant)
             variant.owner = owner
-            out = defineMember(out, variant)
-            out = registerParams(out, unit, bytes, member, owner + "." + variant.spelling)
+            out = defineMember(table = out, symbol = variant)
+            out = registerParams(table = out, unit = unit, bytes = bytes, decl = member, owner = owner + "." + variant.spelling)
         i = i + 1
     return out
 
@@ -154,29 +154,29 @@ registerParams|func(table: SymbolTable, unit: CompilationUnit, bytes: Array<U8>,
     while i < len(decl.kids):
         let param = unit.ast.decls[decl.kids[i]]
         if isParamDeclCode(param.kind):
-            var symbol = makeSymbol(unit, bytes, param, symbolParam)
+            var symbol = makeSymbol(unit = unit, bytes = bytes, decl = param, kind = symbolParam)
             symbol.owner = owner
-            out = defineMember(out, symbol)
+            out = defineMember(table = out, symbol = symbol)
         i = i + 1
     return out
 
 ; 扩展块：成员挂到目标类型名下；块内同名报错，跨块同名按「后声明者覆盖」替换原位。
 registerExtension|func(table: SymbolTable, unit: CompilationUnit, bytes: Array<U8>, decl: DeclNode,) -> (SymbolTable,):
-    let target = decodeRange(bytes, decl.nameStart, decl.nameEnd)
+    let target = decodeRange(bytes = bytes, start = decl.nameStart, end = decl.nameEnd)
     var out = table
     var seen: Array<Symbol> = []
     var i = 0
     while i < len(decl.kids):
         let member = unit.ast.decls[decl.kids[i]]
         if isFunctionDeclCode(member.kind):
-            var symbol = makeSymbol(unit, bytes, member, symbolFunction)
+            var symbol = makeSymbol(unit = unit, bytes = bytes, decl = member, kind = symbolFunction)
             symbol.owner = target
-            if containsKey(seen, symbol.key):
-                out = addError(out, makeSymbolError(symbolMemberDuplicated, symbol.file, symbol.offset, symbol.spelling))
+            if containsKey(seen = seen, key = symbol.key):
+                out = addError(table = out, error = makeSymbolError(kind = symbolMemberDuplicated, file = symbol.file, offset = symbol.offset, name = symbol.spelling))
             else:
                 seen = seen.append(symbol)
-                out = redefineMember(out, symbol)
-            out = registerParams(out, unit, bytes, member, target + "." + symbol.spelling)
+                out = redefineMember(table = out, symbol = symbol)
+            out = registerParams(table = out, unit = unit, bytes = bytes, decl = member, owner = target + "." + symbol.spelling)
         i = i + 1
     return out
 
@@ -187,7 +187,7 @@ registerImportBlock|func(table: SymbolTable, unit: CompilationUnit, bytes: Array
     while i < len(decl.kids):
         let entry = unit.ast.decls[decl.kids[i]]
         if isImportEntryCode(entry.kind):
-            var symbol = makeSymbol(unit, bytes, entry, symbolImport)
-            out = defineImport(out, symbol)
+            var symbol = makeSymbol(unit = unit, bytes = bytes, decl = entry, kind = symbolImport)
+            out = defineImport(table = out, symbol = symbol)
         i = i + 1
     return out

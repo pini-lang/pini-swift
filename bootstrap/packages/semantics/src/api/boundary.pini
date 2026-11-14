@@ -26,7 +26,7 @@ errors: Array<BoundaryError> = []
 failed: Bool = false
 
 ; 类别名：诊断、测试与回执共用一份拼写。
-boundaryKindName|func(kind: BoundaryKind,) -> (String,):
+boundaryKindName|func(_kind: BoundaryKind,) -> (String,):
     match kind:
         case boundaryUnknownTarget:
             return "导入目标不是工作区成员"
@@ -41,7 +41,7 @@ isBoundaryError|func(error: BoundaryError, kind: BoundaryKind,) -> (Bool,):
     return boundaryKindName(error.kind) == boundaryKindName(kind)
 
 ; 诊断码：复用宿主已登记码，不新增码表条目；类别靠边界错误自身区分。
-boundaryErrorCode|func(kind: BoundaryKind,) -> (String,):
+boundaryErrorCode|func(_kind: BoundaryKind,) -> (String,):
     return "E3-005"
 
 ; 造错误：位置取导入条目的起点，别名与目标由调用方给。
@@ -57,11 +57,11 @@ makeBoundaryError|func(kind: BoundaryKind, file: String, offset: I32, alias: Str
 ; 追加错误：其余字段原样保留。
 appendBoundaryError|func(out: BoundaryCheck, unit: CompilationUnit, offset: I32, kind: BoundaryKind, alias: String, target: String,) -> (BoundaryCheck,):
     var done = out
-    done.errors = done.errors.append(makeBoundaryError(kind, unit.path, offset, alias, target))
+    done.errors = done.errors.append(makeBoundaryError(kind = kind, file = unit.path, offset = offset, alias = alias, target = target))
     return done
 
 ; 最后一个斜杠：无斜杠答 -1；路径是 ASCII，按字符下标扫即可。
-lastSlash|func(path: String,) -> (I32,):
+lastSlash|func(_path: String,) -> (I32,):
     var at = -1
     var i = 0
     while i < len(path):
@@ -71,14 +71,14 @@ lastSlash|func(path: String,) -> (I32,):
     return at
 
 ; 目录：最后一个斜杠之前的部分；无斜杠答空串。
-dirOf|func(path: String,) -> (String,):
+dirOf|func(_path: String,) -> (String,):
     let at = lastSlash(path)
     if at < 0:
         return ""
     return path.substring(0, at)
 
 ; 折叠路径：丢掉空段与 `.`，遇到 `..` 弹回上一段。
-collapseParts|func(parts: Array<String>,) -> (Array<String>,):
+collapseParts|func(_parts: Array<String>,) -> (Array<String>,):
     var out: Array<String> = []
     var i = 0
     while i < len(parts):
@@ -92,7 +92,7 @@ collapseParts|func(parts: Array<String>,) -> (Array<String>,):
     return out
 
 ; 丢末段：空表原样返回。
-dropLastPart|func(parts: Array<String>,) -> (Array<String>,):
+dropLastPart|func(_parts: Array<String>,) -> (Array<String>,):
     var out: Array<String> = []
     if len(parts) == 0:
         return out
@@ -103,7 +103,7 @@ dropLastPart|func(parts: Array<String>,) -> (Array<String>,):
     return out
 
 ; 拼路径：斜杠连接分段，空表答空串。
-joinParts|func(parts: Array<String>,) -> (String,):
+joinParts|func(_parts: Array<String>,) -> (String,):
     var out = ""
     var i = 0
     while i < len(parts):
@@ -125,7 +125,7 @@ packageIndexAt|func(ws: WorkspaceUnits, target: String,) -> (I32,):
     var i = 0
     while i < len(ws.packages):
         let root = ws.packages[i].rootPath.split("/")
-        if partsStartWith(parts, root) && len(root) > bestLen:
+        if partsStartWith(parts = parts, prefix = root) && len(root) > bestLen:
             best = i
             bestLen = len(root)
         i = i + 1
@@ -159,17 +159,17 @@ checkImportBlock|func(ws: WorkspaceUnits, group: PackageUnits, unit: Compilation
         let entry = unit.ast.decls[decl.kids[i]]
         if isImportEntryCode(entry.kind) && len(entry.kids) > 0:
             let path = unit.ast.exprAt(entry.kids[0])
-            let raw = decodeRange(bytes, path.start + 1, path.end - 1)
-            let target = normalizeImport(unit.path, raw)
-            let alias = decodeRange(bytes, entry.nameStart, entry.nameEnd)
-            let at = packageIndexAt(ws, target)
+            let raw = decodeRange(bytes = bytes, start = path.start + 1, end = path.end - 1)
+            let target = normalizeImport(unitPath = unit.path, target = raw)
+            let alias = decodeRange(bytes = bytes, start = entry.nameStart, end = entry.nameEnd)
+            let at = packageIndexAt(ws = ws, target = target)
             if at < 0:
-                working = appendBoundaryError(working, unit, entry.start, boundaryUnknownTarget, alias, target)
+                working = appendBoundaryError(out = working, unit = unit, offset = entry.start, kind = boundaryUnknownTarget, alias = alias, target = target)
             elif ws.packages[at].name != group.name:
-                if internalWithin(ws.packages[at].rootPath, target):
-                    working = appendBoundaryError(working, unit, entry.start, boundaryInternal, alias, target)
-                elif !hasRequirement(group.requires, ws.packages[at].name):
-                    working = appendBoundaryError(working, unit, entry.start, boundaryUndeclared, alias, target)
+                if internalWithin(rootPath = ws.packages[at].rootPath, target = target):
+                    working = appendBoundaryError(out = working, unit = unit, offset = entry.start, kind = boundaryInternal, alias = alias, target = target)
+                elif !hasRequirement(requires = group.requires, name = ws.packages[at].name):
+                    working = appendBoundaryError(out = working, unit = unit, offset = entry.start, kind = boundaryUndeclared, alias = alias, target = target)
         i = i + 1
     return working
 
@@ -181,20 +181,20 @@ checkUnitImports|func(ws: WorkspaceUnits, group: PackageUnits, unit: Compilation
     while i < len(unit.ast.items):
         let decl = unit.ast.decls[unit.ast.items[i]]
         if isImportBlockCode(decl.kind):
-            working = checkImportBlock(ws, group, unit, bytes, decl, working)
+            working = checkImportBlock(ws = ws, group = group, unit = unit, bytes = bytes, decl = decl, out = working)
         i = i + 1
     return working
 
 ; 错误次序：先按文件字节序，再按偏移升序；同位置再按类别名定序。
 compareBoundaryErrors|func(first: BoundaryError, second: BoundaryError,) -> (I32,):
-    let order = compareSourcePaths(first.file, second.file)
+    let order = compareSourcePaths(first = first.file, second = second.file)
     if order != 0:
         return order
     if first.offset < second.offset:
         return -1
     if first.offset > second.offset:
         return 1
-    return compareSourcePaths(boundaryKindName(first.kind), boundaryKindName(second.kind))
+    return compareSourcePaths(first = boundaryKindName(first.kind), second = boundaryKindName(second.kind))
 
 ; 取前段：左闭右开。
 takeBoundaryErrors|func(values: Array<BoundaryError>, from: I32, to: I32,) -> (Array<BoundaryError>,):
@@ -211,7 +211,7 @@ mergeBoundaryErrors|func(left: Array<BoundaryError>, right: Array<BoundaryError>
     var i = 0
     var j = 0
     while i < len(left) && j < len(right):
-        if compareBoundaryErrors(left[i], right[j]) <= 0:
+        if compareBoundaryErrors(first = left[i], second = right[j]) <= 0:
             out = out.append(left[i])
             i = i + 1
         else:
@@ -226,23 +226,23 @@ mergeBoundaryErrors|func(left: Array<BoundaryError>, right: Array<BoundaryError>
     return out
 
 ; 排序：稳定归并，同一输入两次得同一序列。
-sortBoundaryErrors|func(values: Array<BoundaryError>,) -> (Array<BoundaryError>,):
+sortBoundaryErrors|func(_values: Array<BoundaryError>,) -> (Array<BoundaryError>,):
     if len(values) <= 1:
         return values
     let mid = len(values) / 2
-    let left = sortBoundaryErrors(takeBoundaryErrors(values, 0, mid))
-    let right = sortBoundaryErrors(takeBoundaryErrors(values, mid, len(values)))
-    return mergeBoundaryErrors(left, right)
+    let left = sortBoundaryErrors(takeBoundaryErrors(values = values, from = 0, to = mid))
+    let right = sortBoundaryErrors(takeBoundaryErrors(values = values, from = mid, to = len(values)))
+    return mergeBoundaryErrors(left = left, right = right)
 
 ; 对账入口：按包序走全部单元，收齐错误后统一排序。
-checkWorkspaceImports|func(ws: WorkspaceUnits,) -> (BoundaryCheck,):
+checkWorkspaceImports|func(_ws: WorkspaceUnits,) -> (BoundaryCheck,):
     var out = BoundaryCheck()
     var p = 0
     while p < len(ws.packages):
         let group = ws.packages[p]
         var u = 0
         while u < len(group.units):
-            out = checkUnitImports(ws, group, group.units[u], out)
+            out = checkUnitImports(ws = ws, group = group, unit = group.units[u], out = out)
             u = u + 1
         p = p + 1
     out.errors = sortBoundaryErrors(out.errors)

@@ -61,4 +61,13 @@ public enum TypeError: Error, Equatable {
     /// `StringHandle` 出现在 C 面之外：它不是 Pini 的通用类型，只在 `[..|foreign]` 的符号与
     /// 被 `|c` 引用的函数签名里成立。普通变量 / 字段 / 方法收下它，就等于开出第四条字符串路径。
     case stringHandleOutsideCFace(type: String, location: SourceLocation)
+    /// 调用点缺标签：形参没写 `_`，实参却按位置给。`callee` 与 `param` 进诊断文案；
+    /// `paramIndex` 与声明位置供迁移工具按声明聚合，不进模板。
+    case missingArgumentLabel(
+        callee: String, param: String, paramIndex: Int,
+        declFile: String, declLine: Int, location: SourceLocation)
+    /// 调用点写了标签，但该形参已声明为 `_名`：退出标签面的参数只能按位置传。
+    case unexpectedArgumentLabel(callee: String, param: String, location: SourceLocation)
+    /// 同一个形参收到两个标签实参：标签按名对位，重复即为调用点写错。
+    case duplicateArgumentLabel(callee: String, param: String, location: SourceLocation)
 }

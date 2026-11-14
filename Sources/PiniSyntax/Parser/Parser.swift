@@ -2951,8 +2951,9 @@ public class Parser {
                         label = possibleLabel
                     }
                 }
+                let argLocation = currentLocation
                 let expr = try parseExpression()
-                arguments.append(CallArgument(label: label, expression: expr))
+                arguments.append(CallArgument(label: label, expression: expr, location: argLocation))
                 if case .comma(_) = currentToken {
                     advance()
                 } else {
@@ -3155,8 +3156,9 @@ public class Parser {
                             label = possibleLabel
                         }
                     }
+                    let argLocation = currentLocation
                     let expr = try parseExpression()
-                    arguments.append(CallArgument(label: label, expression: expr))
+                    arguments.append(CallArgument(label: label, expression: expr, location: argLocation))
                     if case .comma(_) = currentToken {
                         advance()
                     } else {
@@ -3525,7 +3527,14 @@ public class Parser {
         }
 
         // 参数名
-        let name = try parseIdentifier()
+        let written = try parseIdentifier()
+        // 前导 `_` 是调用面标记，不是名字的一部分：摘掉后体内用 `名`，标记落到 takesLabel。
+        var name = written
+        var takesLabel = true
+        if written.count > 1, written.hasPrefix("_") {
+            name = String(written.dropFirst())
+            takesLabel = false
+        }
 
         // 类型标注（可选）
         var typeAnnotation: TypeAnnotation? = nil
@@ -3538,7 +3547,7 @@ public class Parser {
         // 注意：参数默认值在参数元组中使用 = 表达式 形式
         // 但这里暂时不处理
 
-        return Parameter(name: name, typeAnnotation: typeAnnotation, isUsing: isUsing)
+        return Parameter(name: name, typeAnnotation: typeAnnotation, isUsing: isUsing, takesLabel: takesLabel)
     }
 
     // MARK: - 辅助

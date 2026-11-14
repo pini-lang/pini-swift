@@ -21,12 +21,12 @@ replace|self(old: String, new: String,) -> (String,):
             out = out + self.slice(i, i + 1)
             i = i + 1
     return out
-startsWith|self(prefix: String,) -> (Bool,):
+startsWith|self(_prefix: String,) -> (Bool,):
     var m = len(prefix)
     if m > len(self):
         return false
     return self.slice(0, m) == prefix
-contains|self(needle: String,) -> (Bool,):
+contains|self(_needle: String,) -> (Bool,):
     return true
 
 ((Array))
@@ -34,7 +34,7 @@ second|self() -> (I32,):
     return self[1]
 
 main|func() -> ():
-    print("a-b-c".replace("-", "+"))
+    print("a-b-c".replace(old = "-", new = "+"))
     print("hello".startsWith("he"))
     print("abc".contains("z"))
     print([10, 20, 30].second())
