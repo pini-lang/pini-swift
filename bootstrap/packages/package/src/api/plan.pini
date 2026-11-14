@@ -9,10 +9,11 @@ interfacePath: String = ""
 executablePath: String = ""
 isBuiltByDefault: Bool = true
 
-; 包计划：包名、包根相对路径、构建排除项与按清单顺序排好的 target。
+; 包计划：包名、包根相对路径、声明依赖、构建排除项与按清单顺序排好的 target。
 (PackagePlan)
 name: String = ""
 rootPath: String = ""
+requires: Array<String> = []
 targets: Array<TargetPlan> = []
 excludes: Array<String> = []
 
@@ -135,6 +136,7 @@ packagePlan|func(pkg: PackageManifest, root: String, profile: String,) -> (Packa
     var out = PackagePlan()
     out.name = pkg.name
     out.rootPath = pkg.rootPath
+    out.requires = pkg.requires
     out.excludes = pkg.excludes
     let buildDir = root + "/.build/" + profile + "/packages/" + pkg.name
     var i = 0

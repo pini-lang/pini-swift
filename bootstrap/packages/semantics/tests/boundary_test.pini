@@ -1,0 +1,128 @@
+[boundary_test|import]
+_syntax = "../../syntax"
+_module_loader = "../../module-loader"
+
+; 包边界的检查：工作区按包分组后逐条核导入，不读文件系统。
+; 期望值手写：错误类别、归一后的目标路径与排序后的序列。
+
+; 造单元：只走装载，不注册；导入块的路径文本由样例自己给。
+造边界单元|func(path: String, src: String,) -> (CompilationUnit,):
+    let loaded = loadUnit(path, src)
+    assert(!loaded.failed, "样例应可加载")
+    return loaded.unit
+
+; 组包：包名、包根、声明依赖与单元；分组即单元到包的映射。
+组包|func(name: String, root: String, requires: Array<String>, units: Array<CompilationUnit>,) -> (PackageUnits,):
+    var out = PackageUnits()
+    out.name = name
+    out.rootPath = root
+    out.requires = requires
+    out.units = units
+    return out
+
+; 工作区：按给定次序装包；判据不依赖这个次序。
+工作区|func(groups: Array<PackageUnits>,) -> (WorkspaceUnits,):
+    var out = WorkspaceUnits()
+    out.packages = groups
+    return out
+
+; 错误串：类别与目标拼成一行，用于整串比对。
+边界错误串|func(check: BoundaryCheck,) -> (String,):
+    var out = ""
+    var i = 0
+    while i < len(check.errors):
+        if i > 0:
+            out = out + ";"
+        out = out + boundaryKindName(check.errors[i].kind) + ":" + check.errors[i].target
+        i = i + 1
+    return out
+
+; 声明依赖：目标包写在 requires 里即放行。
+声明依赖放行|test() -> ():
+    let app = 造边界单元("packages/app/src/api/app.pini", "[app|import]\nbase = \"../../../base\"\n\nf|func() -> ():\n    pass\n")
+    let base = 造边界单元("packages/base/src/api/base.pini", "(点)\nx: I32 = 0\n")
+    let ws = 工作区([组包("app", "packages/app", ["base"], [app]), 组包("base", "packages/base", [], [base])])
+    let check = checkWorkspaceImports(ws)
+    assert(!check.failed, "不应报错，实得 " + 边界错误串(check))
+    return
+
+; 未声明依赖：目标包不在 requires 里即报一条。
+未声明依赖|test() -> ():
+    let app = 造边界单元("packages/app/src/api/app.pini", "[app|import]\nbase = \"../../../base\"\n\nf|func() -> ():\n    pass\n")
+    let base = 造边界单元("packages/base/src/api/base.pini", "(点)\nx: I32 = 0\n")
+    let ws = 工作区([组包("app", "packages/app", [], [app]), 组包("base", "packages/base", [], [base])])
+    let check = checkWorkspaceImports(ws)
+    assert(len(check.errors) == 1, "应报一条，实得 " + countText(len(check.errors)))
+    assert(isBoundaryError(check.errors[0], boundaryUndeclared), "实得 " + boundaryKindName(check.errors[0].kind))
+    assert(check.errors[0].target == "packages/base", "实得 " + check.errors[0].target)
+    assert(check.errors[0].alias == "base", "实得 " + check.errors[0].alias)
+    return
+
+; 内部实现：伸进对方的 _internal 目录即报，不看依赖是否声明。
+内部实现|test() -> ():
+    let app = 造边界单元("packages/app/src/api/app.pini", "[app|import]\n表 = \"../../../base/src/_internal/tables\"\n\nf|func() -> ():\n    pass\n")
+    let base = 造边界单元("packages/base/src/api/base.pini", "(点)\nx: I32 = 0\n")
+    let ws = 工作区([组包("app", "packages/app", ["base"], [app]), 组包("base", "packages/base", [], [base])])
+    let check = checkWorkspaceImports(ws)
+    assert(len(check.errors) == 1, "应报一条，实得 " + countText(len(check.errors)))
+    assert(isBoundaryError(check.errors[0], boundaryInternal), "实得 " + boundaryKindName(check.errors[0].kind))
+    assert(check.errors[0].target == "packages/base/src/_internal/tables", "实得 " + check.errors[0].target)
+    return
+
+; 目标非成员：归一后没有包根命中即报。
+目标非成员|test() -> ():
+    let app = 造边界单元("packages/app/src/api/app.pini", "[app|import]\n别处 = \"../../../nope\"\n\nf|func() -> ():\n    pass\n")
+    let ws = 工作区([组包("app", "packages/app", [], [app])])
+    let check = checkWorkspaceImports(ws)
+    assert(len(check.errors) == 1, "应报一条，实得 " + countText(len(check.errors)))
+    assert(isBoundaryError(check.errors[0], boundaryUnknownTarget), "实得 " + boundaryKindName(check.errors[0].kind))
+    assert(check.errors[0].target == "packages/nope", "实得 " + check.errors[0].target)
+    return
+
+; 自导入放行：目标是自己所在的包，不构成跨包依赖。
+自导入放行|test() -> ():
+    let app = 造边界单元("packages/app/src/api/app.pini", "[app|import]\n自己 = \"../api\"\n\nf|func() -> ():\n    pass\n")
+    let ws = 工作区([组包("app", "packages/app", [], [app])])
+    let check = checkWorkspaceImports(ws)
+    assert(!check.failed, "不应报错，实得 " + 边界错误串(check))
+    return
+
+; 归一折叠：带 `.` 的路径折掉空段，仍落在同一个包根上。
+归一折叠|test() -> ():
+    let app = 造边界单元("packages/app/src/api/app.pini", "[app|import]\nbase = \"../../../base/./src\"\n\nf|func() -> ():\n    pass\n")
+    let base = 造边界单元("packages/base/src/api/base.pini", "(点)\nx: I32 = 0\n")
+    let ws = 工作区([组包("app", "packages/app", ["base"], [app]), 组包("base", "packages/base", [], [base])])
+    let check = checkWorkspaceImports(ws)
+    assert(!check.failed, "不应报错，实得 " + 边界错误串(check))
+    return
+
+; 包序无关：两个包次序颠倒，诊断序列逐字相同。
+包序无关|test() -> ():
+    let app = 造边界单元("packages/app/src/api/app.pini", "[app|import]\nbase = \"../../../base\"\n\nf|func() -> ():\n    pass\n")
+    let base = 造边界单元("packages/base/src/api/base.pini", "(点)\nx: I32 = 0\n")
+    let one = 工作区([组包("app", "packages/app", [], [app]), 组包("base", "packages/base", [], [base])])
+    let two = 工作区([组包("base", "packages/base", [], [base]), 组包("app", "packages/app", [], [app])])
+    let first = checkWorkspaceImports(one)
+    let second = checkWorkspaceImports(two)
+    assert(边界错误串(first) == 边界错误串(second), "实得 " + 边界错误串(first) + " / " + 边界错误串(second))
+    return
+
+; 单元归属：分段前缀命中包根；相邻名字不误伤。
+单元归属|test() -> ():
+    let app = 造边界单元("packages/app/src/api/app.pini", "f|func() -> ():\n    pass\n")
+    let ws = 工作区([组包("app", "packages/app", [], [app])])
+    assert(ws.packageOf("packages/app/src/api/app.pini") == "app", "应归到 app")
+    assert(ws.packageOf("packages/application/src/api/a.pini") == "", "相邻名字不应误伤")
+    assert(ws.packageOf("packages/apple/x.pini") == "", "前缀相同但分段不同不算")
+    return
+
+; 两次一致：同一工作区查两遍，错误条数与串相同。
+边界两次一致|test() -> ():
+    let app = 造边界单元("packages/app/src/api/app.pini", "[app|import]\nbase = \"../../../base\"\n表 = \"../../../base/src/_internal/x\"\n\nf|func() -> ():\n    pass\n")
+    let base = 造边界单元("packages/base/src/api/base.pini", "(点)\nx: I32 = 0\n")
+    let ws = 工作区([组包("app", "packages/app", [], [app]), 组包("base", "packages/base", [], [base])])
+    let first = checkWorkspaceImports(ws)
+    let second = checkWorkspaceImports(ws)
+    assert(len(first.errors) == len(second.errors), "两次条数应相同")
+    assert(边界错误串(first) == 边界错误串(second), "两次串应相同")
+    return

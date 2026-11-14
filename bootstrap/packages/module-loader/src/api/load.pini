@@ -189,3 +189,73 @@ loadWorkspace|func(plan: BuildPlan,) -> (LoadResult,):
 ; 路径字节序比较：装载层与注册层共用一份次序定义，避免两处各写一套。
 compareSourcePaths|func(first: String, second: String,) -> (I32,):
     return comparePaths(first, second)
+
+; 包单元：包名、包根、声明依赖与它装载出的单元；包边界由此确定，不靠路径前缀猜。
+(PackageUnits)
+name: String = ""
+rootPath: String = ""
+requires: Array<String> = []
+units: Array<CompilationUnit> = []
+
+; 工作区单元：按计划拓扑序分组，装载错误单列；判据读这里，不再回头猜路径。
+(WorkspaceUnits)
+packages: Array<PackageUnits> = []
+errors: Array<LoadError> = []
+
+; 装载整个工作区并保留包分组：单元归属与声明依赖随分组一起交出去。
+loadWorkspaceGrouped|func(plan: BuildPlan,) -> (WorkspaceUnits,):
+    var out = WorkspaceUnits()
+    if !plan.isOK():
+        return out
+    var i = 0
+    while i < len(plan.packages):
+        let planned: PackagePlan = plan.packages[i]
+        let loaded = loadPackage(plan.rootPath + "/" + planned.rootPath, planned)
+        var group = PackageUnits()
+        group.name = planned.name
+        group.rootPath = planned.rootPath
+        group.requires = planned.requires
+        group.units = loaded.units
+        var e = 0
+        while e < len(loaded.errors):
+            out.errors = out.errors.append(loaded.errors[e])
+            e = e + 1
+        out.packages = out.packages.append(group)
+        i = i + 1
+    return out
+
+((WorkspaceUnits))
+; 包数：下标合法区间是 0 到 count() - 1。
+count|self() -> (I32,):
+    return len(self.packages)
+; 包读：下标越界是运行时陷阱，调用方先经 packageOf 定位。
+packageAt|self(index: I32,) -> (PackageUnits,):
+    return self.packages[index]
+; 单元归属：按路径分段前缀命中唯一包根，未命中答空串。
+packageOf|self(unitPath: String,) -> (String,):
+    let parts = unitPath.split("/")
+    var i = 0
+    while i < len(self.packages):
+        if partsStartWith(parts, self.packages[i].rootPath.split("/")):
+            return self.packages[i].name
+        i = i + 1
+    return ""
+; 根路径归属：导入路径归一后按包根精确匹配，未命中答空串。
+nameAtRoot|self(rootPath: String,) -> (String,):
+    var i = 0
+    while i < len(self.packages):
+        if self.packages[i].rootPath == rootPath:
+            return self.packages[i].name
+        i = i + 1
+    return ""
+
+; 分段前缀：逐段比，前缀比目标长即为假。
+partsStartWith|func(parts: Array<String>, prefix: Array<String>,) -> (Bool,):
+    if len(prefix) > len(parts):
+        return false
+    var i = 0
+    while i < len(prefix):
+        if parts[i] != prefix[i]:
+            return false
+        i = i + 1
+    return true
