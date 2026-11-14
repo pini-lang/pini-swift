@@ -155,3 +155,25 @@ isNullableType|func(pool: TypePool, id: I32,) -> (Bool,):
     if isTypeClass(entry.kind, typeClassOptional):
         return true
     return isTypeClass(entry.kind, typeClassPointer)
+
+; 字符：只有内建 Char 标量。
+isCharType|func(pool: TypePool, id: I32,) -> (Bool,):
+    return scalarNameOf(pool, id) == "Char"
+
+; 文本：字符串与字符合起来，加法与比较都按这一组放行。
+isTextType|func(pool: TypePool, id: I32,) -> (Bool,):
+    return isStringType(pool, id) || isCharType(pool, id)
+
+; 数值提升：同族内取更宽的一侧；跨族（整型与浮点、有符号与无符号）不提升，答 -1。
+promoteNumeric|func(pool: TypePool, left: I32, right: I32,) -> (I32,):
+    if !isNumericType(pool, left) || !isNumericType(pool, right):
+        return -1
+    if sameType(pool, left, right):
+        return left
+    let leftName = scalarNameOf(pool, left)
+    let rightName = scalarNameOf(pool, right)
+    if widensScalar(leftName, rightName):
+        return right
+    if widensScalar(rightName, leftName):
+        return left
+    return -1
