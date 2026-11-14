@@ -24,20 +24,14 @@ public struct Parameter: Equatable, Sendable {
     /// 只记「这个参数由取用位引入」这一事实；谁来提供实参（默认实例物化）与值位的强制规则都不在此层。
     /// 缺省 `false`，故非取用参数的构造点与结构不受影响。
     public let isUsing: Bool
-    /// 调用点是否必须写标签。声明写 `_名` 时为假：该参数退出默认标签面，按位置传。
-    /// `name` 不含前导 `_`，体内与绑定一律用 `name`；前导 `_` 只在打印时回写。
-    public let takesLabel: Bool
+    /// 调用点是否必须写标签。`_` 是名字的首字符而不是标记：`_名` 这个名字同时退出标签面。
+    /// 由名字推出而非另存字段，故「名字」与「标签面」不会各记一份而彼此不符。
+    public var takesLabel: Bool { !name.hasPrefix("_") }
 
-    public init(name: String, typeAnnotation: TypeAnnotation? = nil, isUsing: Bool = false, takesLabel: Bool = true) {
+    public init(name: String, typeAnnotation: TypeAnnotation? = nil, isUsing: Bool = false) {
         self.name = name
         self.typeAnnotation = typeAnnotation
         self.isUsing = isUsing
-        self.takesLabel = takesLabel
-    }
-
-    /// 源码写法：退出标签面的参数回写前导 `_`，其余原样。
-    public var writtenName: String {
-        takesLabel ? name : "_" + name
     }
 }
 

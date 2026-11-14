@@ -6,7 +6,7 @@ entrySource
 
 ; 分类名：枚举相等比较不可用，按名称比。
 entryKindName|func(_kind: EntryKind,) -> (String,):
-    match kind:
+    match _kind:
         case entrySkip:
             return "skip"
         case entryDirectory:
@@ -33,10 +33,10 @@ classifyEntry|func(name: String, isDirectory: Bool,) -> (EntryKind,):
 
 ; 源文件后缀：只认 .pini 结尾；长度不足或后缀不符都答否。
 isPiniSource|func(_name: String,) -> (Bool,):
-    let count = len(name)
+    let count = len(_name)
     if count < 5:
         return false
-    return name.substring(count - 5, count) == ".pini"
+    return _name.substring(count - 5, count) == ".pini"
 
 ; 排除项判定：等于声明项，或以「声明项 + 斜杠」开头；声明项相对包根。
 isExcluded|func(packagePath: String, excludes: Array<String>,) -> (Bool,):
@@ -52,7 +52,7 @@ isExcluded|func(packagePath: String, excludes: Array<String>,) -> (Bool,):
 
 ; 嵌套清单：子目录自带 pini.toml 即属另一个包，父包不收它的源码。
 hasNestedManifest|func(_absDir: String,) -> (Bool,):
-    return exists(absDir + "/pini.toml")
+    return exists(_absDir + "/pini.toml")
 
 ; 扫描累积：收集到的相对路径与目录枚举中的错误。
 (ScanState)

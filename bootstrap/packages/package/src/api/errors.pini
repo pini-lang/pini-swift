@@ -35,7 +35,7 @@ manifestError|func(kind: ManifestErrorKind, path: String, detail: String,) -> (M
 
 ; 类别名：诊断消息与测试断言共用一份拼写。
 manifestErrorKindName|func(_kind: ManifestErrorKind,) -> (String,):
-    match kind:
+    match _kind:
         case errorTomlShape:
             return "行不是表头也不是键值对"
         case errorKeyOutsideTable:
@@ -80,6 +80,6 @@ isErrorKind|func(e: ManifestError, kind: ManifestErrorKind,) -> (Bool,):
 
 ; 错误文本：路径 + 类别名 + 细节；细节为空时不印空括号。
 manifestErrorText|func(_e: ManifestError,) -> (String,):
-    if len(e.detail) == 0:
-        return e.path + "：" + manifestErrorKindName(e.kind)
-    return e.path + "：" + manifestErrorKindName(e.kind) + "（" + e.detail + "）"
+    if len(_e.detail) == 0:
+        return _e.path + "：" + manifestErrorKindName(_e.kind)
+    return _e.path + "：" + manifestErrorKindName(_e.kind) + "（" + _e.detail + "）"

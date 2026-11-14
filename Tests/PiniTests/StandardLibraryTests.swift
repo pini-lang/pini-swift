@@ -89,13 +89,13 @@ struct StandardLibraryTests: Sendable {
     /// 容器算法语料：I32 与 String 两种元素 · 空数组 · 零与越界的取放 · 跨类型归约。
     private static let containerCorpus = #"""
     double|func(_x: I32,) -> (I32,):
-        return x * 2
+        return _x * 2
 
     upper|func(_s: String,) -> (String,):
-        return s.upper()
+        return _s.upper()
 
     isEven|func(_x: I32,) -> (Bool,):
-        return x % 2 == 0
+        return _x % 2 == 0
 
     add|func(acc: I32, x: I32,) -> (I32,):
         return acc + x
@@ -104,7 +104,7 @@ struct StandardLibraryTests: Sendable {
         return acc + "!"
 
     show|func(_x: I32,) -> ():
-        print(x)
+        print(_x)
         return
 
     main|func() -> ():
@@ -200,10 +200,10 @@ struct StandardLibraryTests: Sendable {
     /// 容器操作边界：空数组 · 非正与越界下标 · 负轮转 · String 元素 · 首尾插删。
     private static let containerOpsCorpus = #"""
     isEven|func(_x: I32,) -> (Bool,):
-        return x % 2 == 0
+        return _x % 2 == 0
 
     isA|func(_s: String,) -> (Bool,):
-        return s == "a"
+        return _s == "a"
 
     main|func() -> ():
         print(any<I32>([], isEven))
@@ -387,7 +387,7 @@ struct StandardLibraryTests: Sendable {
     func userFunctionOverridesPrelude() throws {
         let source = #"""
         map|func(_x: I32,) -> (I32,):
-            return x + 100
+            return _x + 100
 
         main|func() -> ():
             print(map(5))

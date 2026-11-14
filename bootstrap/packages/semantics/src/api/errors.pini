@@ -15,7 +15,7 @@ detail: String = ""
 
 ; 类别名：诊断、测试与回执共用一份拼写。
 symbolErrorName|func(_kind: SymbolErrorKind,) -> (String,):
-    match kind:
+    match _kind:
         case symbolRedeclared:
             return "顶层名字重复"
         case symbolMemberDuplicated:

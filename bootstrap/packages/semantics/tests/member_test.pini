@@ -33,8 +33,8 @@ world: MemberWorld = MemberWorld()
 id: I32 = -1
 
 造元组样例|func(_world: MemberWorld,) -> (元组样例,):
-    let first = intern(pool = world.types.pool, kind = typeClassScalar, name = "I32", kids = [], ret = -1)
-    var grown = world
+    let first = intern(pool = _world.types.pool, kind = typeClassScalar, name = "I32", kids = [], ret = -1)
+    var grown = _world
     grown.types.pool = first.pool
     let second = intern(pool = grown.types.pool, kind = typeClassScalar, name = "Bool", kids = [], ret = -1)
     grown.types.pool = second.pool

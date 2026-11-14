@@ -38,7 +38,7 @@ entries: Array<ShapeEntry> = []
 
 ; 类别名：诊断、测试与回执共用一份拼写。
 shapeKindName|func(_kind: ShapeKind,) -> (String,):
-    match kind:
+    match _kind:
         case shapeStruct:
             return "结构"
         case shapeObject:
@@ -59,9 +59,9 @@ isShapeKind|func(kind: ShapeKind, expected: ShapeKind,) -> (Bool,):
 
 ; 名义声明：结构、对象与枚举三类，其余不算。
 isNominalDeclCode|func(_code: I32,) -> (Bool,):
-    if isStructDeclCode(code) || isObjectDeclCode(code):
+    if isStructDeclCode(_code) || isObjectDeclCode(_code):
         return true
-    return isEnumDeclCode(code)
+    return isEnumDeclCode(_code)
 
 ; 名义声明查找：按名字在全部单元里找顶层声明；未命中答空引用。
 findNominalDecl|func(world: MemberWorld, name: String,) -> (DeclRef,):
@@ -127,12 +127,12 @@ shapeOfDecl|func(world: MemberWorld, ref: DeclRef, typeId: I32,) -> (ShapeEntry,
 makeShapeTable|func(_world: MemberWorld,) -> (ShapeTable,):
     var out = ShapeTable()
     var i = 0
-    while i < len(world.types.pool.entries):
-        let entry = world.types.pool.entries[i]
+    while i < len(_world.types.pool.entries):
+        let entry = _world.types.pool.entries[i]
         if isNominalClass(entry.kind):
-            let ref = findNominalDecl(world = world, name = entry.name)
+            let ref = findNominalDecl(world = _world, name = entry.name)
             if ref.unit >= 0:
-                out.entries = out.entries.append(shapeOfDecl(world = world, ref = ref, typeId = i))
+                out.entries = out.entries.append(shapeOfDecl(world = _world, ref = ref, typeId = i))
         i = i + 1
     return out
 
@@ -142,7 +142,7 @@ count|self() -> (I32,):
     return len(self.entries)
 ; 条目读：下标越界是运行时陷阱，调用方先经 findShape 取下标。
 entryAt|self(_index: I32,) -> (ShapeEntry,):
-    return self.entries[index]
+    return self.entries[_index]
 
 ; 按类型下标查条目：升序表线性扫，未命中答 -1。
 findShape|func(table: ShapeTable, typeId: I32,) -> (I32,):

@@ -7,7 +7,7 @@
 三角形(F64, F64,)
 
 计算面积|func(_s: 形状,) -> (F64,):
-    match s:
+    match _s:
         case 圆(r,):
             return 3.14159 * r * r
         case 矩形(w, h,):

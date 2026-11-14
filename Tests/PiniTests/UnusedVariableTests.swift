@@ -28,7 +28,7 @@ struct UnusedVariableTests: Sendable {
 
             取|func(_t: I32,) -> (盒,):
                 var b = 盒()
-                b.值 = t
+                b.值 = _t
                 return b
 
             main|func() -> ():

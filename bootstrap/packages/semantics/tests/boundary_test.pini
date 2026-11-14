@@ -23,17 +23,17 @@ _module_loader = "../../module-loader"
 ; 工作区：按给定次序装包；判据不依赖这个次序。
 工作区|func(_groups: Array<PackageUnits>,) -> (WorkspaceUnits,):
     var out = WorkspaceUnits()
-    out.packages = groups
+    out.packages = _groups
     return out
 
 ; 错误串：类别与目标拼成一行，用于整串比对。
 边界错误串|func(_check: BoundaryCheck,) -> (String,):
     var out = ""
     var i = 0
-    while i < len(check.errors):
+    while i < len(_check.errors):
         if i > 0:
             out = out + ";"
-        out = out + boundaryKindName(check.errors[i].kind) + ":" + check.errors[i].target
+        out = out + boundaryKindName(_check.errors[i].kind) + ":" + _check.errors[i].target
         i = i + 1
     return out
 

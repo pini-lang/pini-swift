@@ -36,7 +36,7 @@ insertPath|func(items: Array<String>, value: String,) -> (Array<String>,):
 sortPaths|func(_items: Array<String>,) -> (Array<String>,):
     var out: Array<String> = []
     var i = 0
-    while i < len(items):
-        out = insertPath(items = out, value = items[i])
+    while i < len(_items):
+        out = insertPath(items = out, value = _items[i])
         i = i + 1
     return out

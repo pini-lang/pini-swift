@@ -4,476 +4,476 @@
 
 ; 码点脚本号：只区分三个高风险脚本，其余一律 0；越界码点按 0。
 scriptClassOf|func(_code: I32,) -> (I32,):
-    if code < 0:
+    if _code < 0:
         return 0
-    if code > 0x10FFFF:
+    if _code > 0x10FFFF:
         return 0
-    if code < 0x1FC5:
-        if code < 0x485:
-            if code < 0x375:
-                if code < 0xC0:
-                    if code < 0x7B:
-                        if code < 0x5B:
-                            if code < 0x41:
+    if _code < 0x1FC5:
+        if _code < 0x485:
+            if _code < 0x375:
+                if _code < 0xC0:
+                    if _code < 0x7B:
+                        if _code < 0x5B:
+                            if _code < 0x41:
                                 return 0
                             else:
                                 return 1
                         else:
-                            if code < 0x61:
+                            if _code < 0x61:
                                 return 0
                             else:
                                 return 1
                     else:
-                        if code < 0xAB:
-                            if code < 0xAA:
+                        if _code < 0xAB:
+                            if _code < 0xAA:
                                 return 0
                             else:
                                 return 1
                         else:
-                            if code < 0xBA:
+                            if _code < 0xBA:
                                 return 0
                             else:
-                                if code < 0xBB:
+                                if _code < 0xBB:
                                     return 1
                                 else:
                                     return 0
                 else:
-                    if code < 0x2B9:
-                        if code < 0xD8:
-                            if code < 0xD7:
+                    if _code < 0x2B9:
+                        if _code < 0xD8:
+                            if _code < 0xD7:
                                 return 1
                             else:
                                 return 0
                         else:
-                            if code < 0xF7:
+                            if _code < 0xF7:
                                 return 1
                             else:
-                                if code < 0xF8:
+                                if _code < 0xF8:
                                     return 0
                                 else:
                                     return 1
                     else:
-                        if code < 0x2E5:
-                            if code < 0x2E0:
+                        if _code < 0x2E5:
+                            if _code < 0x2E0:
                                 return 0
                             else:
                                 return 1
                         else:
-                            if code < 0x370:
+                            if _code < 0x370:
                                 return 0
                             else:
-                                if code < 0x374:
+                                if _code < 0x374:
                                     return 3
                                 else:
                                     return 0
             else:
-                if code < 0x388:
-                    if code < 0x380:
-                        if code < 0x37A:
-                            if code < 0x378:
+                if _code < 0x388:
+                    if _code < 0x380:
+                        if _code < 0x37A:
+                            if _code < 0x378:
                                 return 3
                             else:
                                 return 0
                         else:
-                            if code < 0x37E:
+                            if _code < 0x37E:
                                 return 3
                             else:
-                                if code < 0x37F:
+                                if _code < 0x37F:
                                     return 0
                                 else:
                                     return 3
                     else:
-                        if code < 0x385:
-                            if code < 0x384:
+                        if _code < 0x385:
+                            if _code < 0x384:
                                 return 0
                             else:
                                 return 3
                         else:
-                            if code < 0x386:
+                            if _code < 0x386:
                                 return 0
                             else:
-                                if code < 0x387:
+                                if _code < 0x387:
                                     return 3
                                 else:
                                     return 0
                 else:
-                    if code < 0x3A2:
-                        if code < 0x38C:
-                            if code < 0x38B:
+                    if _code < 0x3A2:
+                        if _code < 0x38C:
+                            if _code < 0x38B:
                                 return 3
                             else:
                                 return 0
                         else:
-                            if code < 0x38D:
+                            if _code < 0x38D:
                                 return 3
                             else:
-                                if code < 0x38E:
+                                if _code < 0x38E:
                                     return 0
                                 else:
                                     return 3
                     else:
-                        if code < 0x3E2:
-                            if code < 0x3A3:
+                        if _code < 0x3E2:
+                            if _code < 0x3A3:
                                 return 0
                             else:
                                 return 3
                         else:
-                            if code < 0x3F0:
+                            if _code < 0x3F0:
                                 return 0
                             else:
-                                if code < 0x400:
+                                if _code < 0x400:
                                     return 3
                                 else:
                                     return 2
         else:
-            if code < 0x1F16:
-                if code < 0x1D5D:
-                    if code < 0x1C89:
-                        if code < 0x530:
-                            if code < 0x487:
+            if _code < 0x1F16:
+                if _code < 0x1D5D:
+                    if _code < 0x1C89:
+                        if _code < 0x530:
+                            if _code < 0x487:
                                 return 0
                             else:
                                 return 2
                         else:
-                            if code < 0x1C80:
+                            if _code < 0x1C80:
                                 return 0
                             else:
                                 return 2
                     else:
-                        if code < 0x1D26:
-                            if code < 0x1D00:
+                        if _code < 0x1D26:
+                            if _code < 0x1D00:
                                 return 0
                             else:
                                 return 1
                         else:
-                            if code < 0x1D2B:
+                            if _code < 0x1D2B:
                                 return 3
                             else:
-                                if code < 0x1D2C:
+                                if _code < 0x1D2C:
                                     return 2
                                 else:
                                     return 1
                 else:
-                    if code < 0x1D79:
-                        if code < 0x1D66:
-                            if code < 0x1D62:
+                    if _code < 0x1D79:
+                        if _code < 0x1D66:
+                            if _code < 0x1D62:
                                 return 3
                             else:
                                 return 1
                         else:
-                            if code < 0x1D6B:
+                            if _code < 0x1D6B:
                                 return 3
                             else:
-                                if code < 0x1D78:
+                                if _code < 0x1D78:
                                     return 1
                                 else:
                                     return 2
                     else:
-                        if code < 0x1DC0:
-                            if code < 0x1DBF:
+                        if _code < 0x1DC0:
+                            if _code < 0x1DBF:
                                 return 1
                             else:
                                 return 3
                         else:
-                            if code < 0x1E00:
+                            if _code < 0x1E00:
                                 return 0
                             else:
-                                if code < 0x1F00:
+                                if _code < 0x1F00:
                                     return 1
                                 else:
                                     return 3
             else:
-                if code < 0x1F5A:
-                    if code < 0x1F48:
-                        if code < 0x1F1E:
-                            if code < 0x1F18:
+                if _code < 0x1F5A:
+                    if _code < 0x1F48:
+                        if _code < 0x1F1E:
+                            if _code < 0x1F18:
                                 return 0
                             else:
                                 return 3
                         else:
-                            if code < 0x1F20:
+                            if _code < 0x1F20:
                                 return 0
                             else:
-                                if code < 0x1F46:
+                                if _code < 0x1F46:
                                     return 3
                                 else:
                                     return 0
                     else:
-                        if code < 0x1F50:
-                            if code < 0x1F4E:
+                        if _code < 0x1F50:
+                            if _code < 0x1F4E:
                                 return 3
                             else:
                                 return 0
                         else:
-                            if code < 0x1F58:
+                            if _code < 0x1F58:
                                 return 3
                             else:
-                                if code < 0x1F59:
+                                if _code < 0x1F59:
                                     return 0
                                 else:
                                     return 3
                 else:
-                    if code < 0x1F5F:
-                        if code < 0x1F5C:
-                            if code < 0x1F5B:
+                    if _code < 0x1F5F:
+                        if _code < 0x1F5C:
+                            if _code < 0x1F5B:
                                 return 0
                             else:
                                 return 3
                         else:
-                            if code < 0x1F5D:
+                            if _code < 0x1F5D:
                                 return 0
                             else:
-                                if code < 0x1F5E:
+                                if _code < 0x1F5E:
                                     return 3
                                 else:
                                     return 0
                     else:
-                        if code < 0x1F80:
-                            if code < 0x1F7E:
+                        if _code < 0x1F80:
+                            if _code < 0x1F7E:
                                 return 3
                             else:
                                 return 0
                         else:
-                            if code < 0x1FB5:
+                            if _code < 0x1FB5:
                                 return 3
                             else:
-                                if code < 0x1FB6:
+                                if _code < 0x1FB6:
                                     return 0
                                 else:
                                     return 3
     else:
-        if code < 0xA7D3:
-            if code < 0x212A:
-                if code < 0x1FF6:
-                    if code < 0x1FDC:
-                        if code < 0x1FD4:
-                            if code < 0x1FC6:
+        if _code < 0xA7D3:
+            if _code < 0x212A:
+                if _code < 0x1FF6:
+                    if _code < 0x1FDC:
+                        if _code < 0x1FD4:
+                            if _code < 0x1FC6:
                                 return 0
                             else:
                                 return 3
                         else:
-                            if code < 0x1FD6:
+                            if _code < 0x1FD6:
                                 return 0
                             else:
                                 return 3
                     else:
-                        if code < 0x1FF0:
-                            if code < 0x1FDD:
+                        if _code < 0x1FF0:
+                            if _code < 0x1FDD:
                                 return 0
                             else:
                                 return 3
                         else:
-                            if code < 0x1FF2:
+                            if _code < 0x1FF2:
                                 return 0
                             else:
-                                if code < 0x1FF5:
+                                if _code < 0x1FF5:
                                     return 3
                                 else:
                                     return 0
                 else:
-                    if code < 0x2080:
-                        if code < 0x2071:
-                            if code < 0x1FFF:
+                    if _code < 0x2080:
+                        if _code < 0x2071:
+                            if _code < 0x1FFF:
                                 return 3
                             else:
                                 return 0
                         else:
-                            if code < 0x2072:
+                            if _code < 0x2072:
                                 return 1
                             else:
-                                if code < 0x207F:
+                                if _code < 0x207F:
                                     return 0
                                 else:
                                     return 1
                     else:
-                        if code < 0x209D:
-                            if code < 0x2090:
+                        if _code < 0x209D:
+                            if _code < 0x2090:
                                 return 0
                             else:
                                 return 1
                         else:
-                            if code < 0x2126:
+                            if _code < 0x2126:
                                 return 0
                             else:
-                                if code < 0x2127:
+                                if _code < 0x2127:
                                     return 3
                                 else:
                                     return 0
             else:
-                if code < 0x2DE0:
-                    if code < 0x214F:
-                        if code < 0x2132:
-                            if code < 0x212C:
+                if _code < 0x2DE0:
+                    if _code < 0x214F:
+                        if _code < 0x2132:
+                            if _code < 0x212C:
                                 return 1
                             else:
                                 return 0
                         else:
-                            if code < 0x2133:
+                            if _code < 0x2133:
                                 return 1
                             else:
-                                if code < 0x214E:
+                                if _code < 0x214E:
                                     return 0
                                 else:
                                     return 1
                     else:
-                        if code < 0x2189:
-                            if code < 0x2160:
+                        if _code < 0x2189:
+                            if _code < 0x2160:
                                 return 0
                             else:
                                 return 1
                         else:
-                            if code < 0x2C60:
+                            if _code < 0x2C60:
                                 return 0
                             else:
-                                if code < 0x2C80:
+                                if _code < 0x2C80:
                                     return 1
                                 else:
                                     return 0
                 else:
-                    if code < 0xA788:
-                        if code < 0xA640:
-                            if code < 0x2E00:
+                    if _code < 0xA788:
+                        if _code < 0xA640:
+                            if _code < 0x2E00:
                                 return 2
                             else:
                                 return 0
                         else:
-                            if code < 0xA6A0:
+                            if _code < 0xA6A0:
                                 return 2
                             else:
-                                if code < 0xA722:
+                                if _code < 0xA722:
                                     return 0
                                 else:
                                     return 1
                     else:
-                        if code < 0xA7CB:
-                            if code < 0xA78B:
+                        if _code < 0xA7CB:
+                            if _code < 0xA78B:
                                 return 0
                             else:
                                 return 1
                         else:
-                            if code < 0xA7D0:
+                            if _code < 0xA7D0:
                                 return 0
                             else:
-                                if code < 0xA7D2:
+                                if _code < 0xA7D2:
                                     return 1
                                 else:
                                     return 0
         else:
-            if code < 0x10140:
-                if code < 0xAB66:
-                    if code < 0xA800:
-                        if code < 0xA7D5:
-                            if code < 0xA7D4:
+            if _code < 0x10140:
+                if _code < 0xAB66:
+                    if _code < 0xA800:
+                        if _code < 0xA7D5:
+                            if _code < 0xA7D4:
                                 return 1
                             else:
                                 return 0
                         else:
-                            if code < 0xA7DA:
+                            if _code < 0xA7DA:
                                 return 1
                             else:
-                                if code < 0xA7F2:
+                                if _code < 0xA7F2:
                                     return 0
                                 else:
                                     return 1
                     else:
-                        if code < 0xAB5B:
-                            if code < 0xAB30:
+                        if _code < 0xAB5B:
+                            if _code < 0xAB30:
                                 return 0
                             else:
                                 return 1
                         else:
-                            if code < 0xAB5C:
+                            if _code < 0xAB5C:
                                 return 0
                             else:
-                                if code < 0xAB65:
+                                if _code < 0xAB65:
                                     return 1
                                 else:
                                     return 3
                 else:
-                    if code < 0xFE30:
-                        if code < 0xFB00:
-                            if code < 0xAB6A:
+                    if _code < 0xFE30:
+                        if _code < 0xFB00:
+                            if _code < 0xAB6A:
                                 return 1
                             else:
                                 return 0
                         else:
-                            if code < 0xFB07:
+                            if _code < 0xFB07:
                                 return 1
                             else:
-                                if code < 0xFE2E:
+                                if _code < 0xFE2E:
                                     return 0
                                 else:
                                     return 2
                     else:
-                        if code < 0xFF3B:
-                            if code < 0xFF21:
+                        if _code < 0xFF3B:
+                            if _code < 0xFF21:
                                 return 0
                             else:
                                 return 1
                         else:
-                            if code < 0xFF41:
+                            if _code < 0xFF41:
                                 return 0
                             else:
-                                if code < 0xFF5B:
+                                if _code < 0xFF5B:
                                     return 1
                                 else:
                                     return 0
             else:
-                if code < 0x1D200:
-                    if code < 0x10786:
-                        if code < 0x101A0:
-                            if code < 0x1018F:
+                if _code < 0x1D200:
+                    if _code < 0x10786:
+                        if _code < 0x101A0:
+                            if _code < 0x1018F:
                                 return 3
                             else:
                                 return 0
                         else:
-                            if code < 0x101A1:
+                            if _code < 0x101A1:
                                 return 3
                             else:
-                                if code < 0x10780:
+                                if _code < 0x10780:
                                     return 0
                                 else:
                                     return 1
                     else:
-                        if code < 0x107B1:
-                            if code < 0x10787:
+                        if _code < 0x107B1:
+                            if _code < 0x10787:
                                 return 0
                             else:
                                 return 1
                         else:
-                            if code < 0x107B2:
+                            if _code < 0x107B2:
                                 return 0
                             else:
-                                if code < 0x107BB:
+                                if _code < 0x107BB:
                                     return 1
                                 else:
                                     return 0
                 else:
-                    if code < 0x1DF2B:
-                        if code < 0x1DF00:
-                            if code < 0x1D246:
+                    if _code < 0x1DF2B:
+                        if _code < 0x1DF00:
+                            if _code < 0x1D246:
                                 return 3
                             else:
                                 return 0
                         else:
-                            if code < 0x1DF1F:
+                            if _code < 0x1DF1F:
                                 return 1
                             else:
-                                if code < 0x1DF25:
+                                if _code < 0x1DF25:
                                     return 0
                                 else:
                                     return 1
                     else:
-                        if code < 0x1E06E:
-                            if code < 0x1E030:
+                        if _code < 0x1E06E:
+                            if _code < 0x1E030:
                                 return 0
                             else:
                                 return 2
                         else:
-                            if code < 0x1E08F:
+                            if _code < 0x1E08F:
                                 return 0
                             else:
-                                if code < 0x1E090:
+                                if _code < 0x1E090:
                                     return 2
                                 else:
                                     return 0

@@ -40,7 +40,7 @@ firstMissing: I32 = -1
 
 ; 解析形态名：诊断、测试与回执共用一份拼写。
 resolveFormName|func(_form: ResolveForm,) -> (String,):
-    match form:
+    match _form:
         case resolveNone:
             return "未解析"
         case resolveLocal:
@@ -69,16 +69,16 @@ isResolveForm|func(form: ResolveForm, expected: ResolveForm,) -> (Bool,):
 
 ; 已解析：空形态之外都算已写。
 isResolved|func(_entry: ResolveEntry,) -> (Bool,):
-    return !isResolveForm(form = entry.form, expected = resolveNone)
+    return !isResolveForm(form = _entry.form, expected = resolveNone)
 
 ; 建表：逐单元按表达式池长度铺空条目；调用方先 sortedUnits，类型面与解析表共用同一序。
 makeResolveTable|func(_units: Array<CompilationUnit>,) -> (ResolveTable,):
     var out = ResolveTable()
     var u = 0
-    while u < len(units):
+    while u < len(_units):
         var unitTable = UnitResolve()
         var i = 0
-        let count = units[u].ast.exprCount()
+        let count = _units[u].ast.exprCount()
         while i < count:
             unitTable.entries = unitTable.entries.append(ResolveEntry())
             i = i + 1

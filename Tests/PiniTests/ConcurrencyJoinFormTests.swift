@@ -26,18 +26,18 @@ struct ConcurrencyJoinFormTests: Sendable, PiniSourceLowering {
     /// `await` 只在异步体内、`wait` 只在同步体内，故语料按此分工；判据的意图是两种形态都得给出正确结果。
     private static let bothForms = #"""
     取|func(_n: I32,) => (I32,):
-        return ok(n)
+        return ok(_n)
 
     ; 同步体：只能写 wait
     经等待|func(_n: I32,) -> (I32,):
-        let a = 取(n)
+        let a = 取(_n)
         let x = try wait a else e:
             return 0
         return x
 
     ; 异步体：只能写 await
     经让出|func(_n: I32,) => (I32,):
-        let a = 取(n)
+        let a = 取(_n)
         let x = try await a else e:
             return ok(0)
         return ok(x)

@@ -56,7 +56,7 @@ boundCount: I32 = 0
 
 ; 形态名：诊断、测试与回执共用一份拼写。
 patternFormName|func(_form: PatternForm,) -> (String,):
-    match form:
+    match _form:
         case patternWildcard:
             return "通配"
         case patternEnumCase:
@@ -75,7 +75,7 @@ isPatternForm|func(form: PatternForm, expected: PatternForm,) -> (Bool,):
 
 ; 错误类别名：诊断与测试共用一份拼写。
 matchErrorName|func(_kind: MatchErrorKind,) -> (String,):
-    match kind:
+    match _kind:
         case matchUnknownCase:
             return "未知用例"
         case matchNotExhaustive:
@@ -98,7 +98,7 @@ isMatchError|func(error: MatchError, kind: MatchErrorKind,) -> (Bool,):
 
 ; 诊断码：复用宿主已登记的码，不新增码表条目。
 matchErrorCode|func(_kind: MatchErrorKind,) -> (String,):
-    match kind:
+    match _kind:
         case matchUnknownCase:
             return "E3-006"
         case matchNotExhaustive:
@@ -320,12 +320,12 @@ classifyPattern|func(unit: CompilationUnit, node: I32,) -> (PatternInfo,):
 ; 重名绑定：跳过 `_` 与空位，返回首个重复的名字；没有答空串。
 duplicateBinding|func(_info: PatternInfo,) -> (String,):
     var i = 0
-    while i < len(info.bindings):
-        let name = info.bindings[i]
+    while i < len(_info.bindings):
+        let name = _info.bindings[i]
         if len(name) > 0 && name != "_":
             var j = i + 1
-            while j < len(info.bindings):
-                if info.bindings[j] == name:
+            while j < len(_info.bindings):
+                if _info.bindings[j] == name:
                     return name
                 j = j + 1
         i = i + 1

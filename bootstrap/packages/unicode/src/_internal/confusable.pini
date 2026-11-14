@@ -1,7 +1,7 @@
 ; 混淆骨架（UTS39）：先 NFD，再逐标量换成代表字符，最后对结果再做一次 NFD。
 ; 映射目标是多标量序列时按字节展开；池由生成器保证合法 UTF-8。
 confusableSkeletonCodes|func(_codes: Array<I32>,) -> (Array<I32>,):
-    let decomposed = nfdOfCodes(codes)
+    let decomposed = nfdOfCodes(_codes)
     let pool = tempUtf8Bytes(confusablePool())
     var mapped: Array<I32> = []
     var i = 0

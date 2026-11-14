@@ -7,8 +7,6 @@ end: I32 = 0
 nameStart: I32 = 0
 nameEnd: I32 = 0
 segments: Array<Segment> = []
-; 标识符词面以下划线起头（参数位的调用面标记）；解析参数表时据此摘掉前导 `_`。
-leadingUnderscore: Bool = false
 
 ; 字符串段：字面段的范围含转义原文，插值段的范围是括号内的表达式，都不含两侧定界。
 (Segment)
@@ -122,7 +120,7 @@ eof
 ; 类别码：区间边界即类别边界，字面量 0..7、关键字 8..41、运算符 42..74、定界符 75..87、布局 88..91。
 ; 分支按解析期的命中频率排序，返回值仍按区间分配；顺序只影响匹配快慢，不参与语义。
 kindTag|func(_kind: TokenKind,) -> (I32,):
-    match kind:
+    match _kind:
         case identifier:
             return 1
         case newline:
@@ -311,7 +309,7 @@ kindTag|func(_kind: TokenKind,) -> (I32,):
 
 ; 类别名：诊断与测试用的可读拼写，取该类别的默认语言写法。
 kindName|func(_kind: TokenKind,) -> (String,):
-    match kind:
+    match _kind:
         case unknown:
             return "unknown"
         case identifier:
@@ -500,7 +498,7 @@ kindName|func(_kind: TokenKind,) -> (String,):
 
 ; 类别码反查：关键字词表靠区间起点与下标合成类别，不做第二份顺序表。
 kindFromTag|func(_tag: I32,) -> (TokenKind,):
-    match tag:
+    match _tag:
         case 0:
             return .unknown
         case 1:
@@ -693,24 +691,24 @@ isKind|func(token: Token, kind: TokenKind,) -> (Bool,):
 
 ; 字面量区间不含 `unknown`：未识别字节不算字面量。
 isLiteralKind|func(_kind: TokenKind,) -> (Bool,):
-    let tag = kindTag(kind)
+    let tag = kindTag(_kind)
     return tag >= 1 && tag <= 7
 
 isKeywordKind|func(_kind: TokenKind,) -> (Bool,):
-    let tag = kindTag(kind)
+    let tag = kindTag(_kind)
     return tag >= 8 && tag <= 41
 
 isOperatorKind|func(_kind: TokenKind,) -> (Bool,):
-    let tag = kindTag(kind)
+    let tag = kindTag(_kind)
     return tag >= 42 && tag <= 74
 
 isDelimiterKind|func(_kind: TokenKind,) -> (Bool,):
-    let tag = kindTag(kind)
+    let tag = kindTag(_kind)
     return tag >= 75 && tag <= 87
 
 ; 布局记号：解析器靠它切分块边界，普通表达式扫描里一律跳过。
 isLayoutKind|func(_kind: TokenKind,) -> (Bool,):
-    return kindTag(kind) >= 88
+    return kindTag(_kind) >= 88
 
 ((Token))
 ; 扫描消费的字节数：区间长度，布局记号可为零。
@@ -722,98 +720,98 @@ hasName|self() -> (Bool,):
 segmentCount|self() -> (I32,):
     return len(self.segments)
 segmentAt|self(_index: I32,) -> (Segment,):
-    return self.segments[index]
+    return self.segments[_index]
 
 ; 运算符拼写：按类别码回符号本身，非运算符答空串；诊断与语义判定共用这一条。
 opSymbol|func(_tag: I32,) -> (String,):
-    if tag == kindTag(opAdd):
+    if _tag == kindTag(opAdd):
         return "+"
-    if tag == kindTag(opSub):
+    if _tag == kindTag(opSub):
         return "-"
-    if tag == kindTag(opMul):
+    if _tag == kindTag(opMul):
         return "*"
-    if tag == kindTag(opDiv):
+    if _tag == kindTag(opDiv):
         return "/"
-    if tag == kindTag(opMod):
+    if _tag == kindTag(opMod):
         return "%"
-    if tag == kindTag(opInc):
+    if _tag == kindTag(opInc):
         return "++"
-    if tag == kindTag(opDec):
+    if _tag == kindTag(opDec):
         return "--"
-    if tag == kindTag(opAnd):
+    if _tag == kindTag(opAnd):
         return "&&"
-    if tag == kindTag(opOr):
+    if _tag == kindTag(opOr):
         return "||"
-    if tag == kindTag(opNot):
+    if _tag == kindTag(opNot):
         return "!"
-    if tag == kindTag(opEq):
+    if _tag == kindTag(opEq):
         return "=="
-    if tag == kindTag(opNe):
+    if _tag == kindTag(opNe):
         return "!="
-    if tag == kindTag(opLe):
+    if _tag == kindTag(opLe):
         return "<="
-    if tag == kindTag(opGe):
+    if _tag == kindTag(opGe):
         return ">="
-    if tag == kindTag(opLt):
+    if _tag == kindTag(opLt):
         return "<"
-    if tag == kindTag(opGt):
+    if _tag == kindTag(opGt):
         return ">"
-    if tag == kindTag(opBitAnd):
+    if _tag == kindTag(opBitAnd):
         return "&"
-    if tag == kindTag(opBitOr):
+    if _tag == kindTag(opBitOr):
         return "|"
-    if tag == kindTag(opBitXor):
+    if _tag == kindTag(opBitXor):
         return "^"
-    if tag == kindTag(opBitNot):
+    if _tag == kindTag(opBitNot):
         return "~"
-    if tag == kindTag(opShl):
+    if _tag == kindTag(opShl):
         return "<<"
-    if tag == kindTag(opShr):
+    if _tag == kindTag(opShr):
         return ">>"
-    if tag == kindTag(opAssign):
+    if _tag == kindTag(opAssign):
         return "="
-    if tag == kindTag(opAssignAdd):
+    if _tag == kindTag(opAssignAdd):
         return "+="
-    if tag == kindTag(opAssignSub):
+    if _tag == kindTag(opAssignSub):
         return "-="
-    if tag == kindTag(opAssignMul):
+    if _tag == kindTag(opAssignMul):
         return "*="
-    if tag == kindTag(opAssignDiv):
+    if _tag == kindTag(opAssignDiv):
         return "/="
-    if tag == kindTag(opAssignMod):
+    if _tag == kindTag(opAssignMod):
         return "%="
-    if tag == kindTag(opAssignBitAnd):
+    if _tag == kindTag(opAssignBitAnd):
         return "&="
-    if tag == kindTag(opAssignBitOr):
+    if _tag == kindTag(opAssignBitOr):
         return "|="
-    if tag == kindTag(opAssignBitXor):
+    if _tag == kindTag(opAssignBitXor):
         return "^="
-    if tag == kindTag(opAssignShl):
+    if _tag == kindTag(opAssignShl):
         return "<<="
-    if tag == kindTag(opAssignShr):
+    if _tag == kindTag(opAssignShr):
         return ">>="
     return ""
 
 ; 复合赋值对应的二元运算：`+=` 到 `>>=` 逐个映射；普通赋值与非赋值答 0。
 compoundBinaryTag|func(_tag: I32,) -> (I32,):
-    if tag == kindTag(opAssignAdd):
+    if _tag == kindTag(opAssignAdd):
         return kindTag(opAdd)
-    if tag == kindTag(opAssignSub):
+    if _tag == kindTag(opAssignSub):
         return kindTag(opSub)
-    if tag == kindTag(opAssignMul):
+    if _tag == kindTag(opAssignMul):
         return kindTag(opMul)
-    if tag == kindTag(opAssignDiv):
+    if _tag == kindTag(opAssignDiv):
         return kindTag(opDiv)
-    if tag == kindTag(opAssignMod):
+    if _tag == kindTag(opAssignMod):
         return kindTag(opMod)
-    if tag == kindTag(opAssignBitAnd):
+    if _tag == kindTag(opAssignBitAnd):
         return kindTag(opBitAnd)
-    if tag == kindTag(opAssignBitOr):
+    if _tag == kindTag(opAssignBitOr):
         return kindTag(opBitOr)
-    if tag == kindTag(opAssignBitXor):
+    if _tag == kindTag(opAssignBitXor):
         return kindTag(opBitXor)
-    if tag == kindTag(opAssignShl):
+    if _tag == kindTag(opAssignShl):
         return kindTag(opShl)
-    if tag == kindTag(opAssignShr):
+    if _tag == kindTag(opAssignShr):
         return kindTag(opShr)
     return 0

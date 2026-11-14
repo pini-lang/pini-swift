@@ -5,7 +5,7 @@ package = "../../../package"
 
 ; 注册一个包：文件先按路径排序，结果与文件系统给出的顺序无关。
 registerPackage|func(_units: Array<CompilationUnit>,) -> (SymbolTable,):
-    return registerInto(table = SymbolTable(), units = units)
+    return registerInto(table = SymbolTable(), units = _units)
 
 ; 在已有表上追加一个包的单元：跨包注册靠它累积，顶层同名照样判重。
 registerInto|func(table: SymbolTable, units: Array<CompilationUnit>,) -> (SymbolTable,):
@@ -38,8 +38,8 @@ registerWorkspace|func(plan: BuildPlan, root: String,) -> (SymbolTable,):
 sortedUnits|func(_units: Array<CompilationUnit>,) -> (Array<CompilationUnit>,):
     var out: Array<CompilationUnit> = []
     var i = 0
-    while i < len(units):
-        out = insertUnit(units = out, value = units[i])
+    while i < len(_units):
+        out = insertUnit(units = out, value = _units[i])
         i = i + 1
     return out
 
@@ -97,11 +97,11 @@ registerFile|func(table: SymbolTable, unit: CompilationUnit,) -> (SymbolTable,):
 
 ; 类型声明：结构、对象与枚举同属「带成员的顶层声明」。
 isTypeDecl|func(_decl: DeclNode,) -> (Bool,):
-    if isStructDeclCode(decl.kind):
+    if isStructDeclCode(_decl.kind):
         return true
-    if isObjectDeclCode(decl.kind):
+    if isObjectDeclCode(_decl.kind):
         return true
-    return isEnumDeclCode(decl.kind)
+    return isEnumDeclCode(_decl.kind)
 
 ; 顶层声明按类别分派：类型连带成员，函数连带参数，扩展挂到目标类型名下。
 registerTopDecl|func(table: SymbolTable, unit: CompilationUnit, bytes: Array<U8>, decl: DeclNode,) -> (SymbolTable,):

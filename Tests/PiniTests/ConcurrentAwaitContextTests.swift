@@ -34,7 +34,7 @@ struct ConcurrentAwaitContextTests: Sendable {
 
     private static let 子任务 = """
     慢|func(_n: I32,) => (I32,):
-        return ok(n)
+        return ok(_n)
 
     """
 
@@ -131,9 +131,9 @@ struct ConcurrentAwaitContextTests: Sendable {
         let source = Self.子任务 + """
         父|func(_c: Bool) => (I32,):
             let t = 慢(1)
-            if c:
+            if _c:
                 var r = await t
-            while c:
+            while _c:
                 await t
                 break
             return ok(0)

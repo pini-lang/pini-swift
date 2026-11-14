@@ -37,22 +37,22 @@ struct StdlibExtensionTests: Sendable {
         return out
 
     startsWith|self(_prefix: String,) -> (Bool,):
-        var m = len(prefix)
+        var m = len(_prefix)
         if m > len(self):
             return false
-        return self.slice(0, m) == prefix
+        return self.slice(0, m) == _prefix
 
     endsWith|self(_suffix: String,) -> (Bool,):
         var n = len(self)
-        var m = len(suffix)
+        var m = len(_suffix)
         if m > n:
             return false
-        return self.slice(n - m, n) == suffix
+        return self.slice(n - m, n) == _suffix
 
     repeat|self(_times: I32,) -> (String,):
         var out = ""
         var i = 0
-        while i < times:
+        while i < _times:
             out = out + self
             i = i + 1
         return out

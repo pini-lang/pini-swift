@@ -30,9 +30,9 @@ unitCount|self() -> (I32,):
 errorCount|self() -> (I32,):
     return len(self.errors)
 unitAt|self(_index: I32,) -> (CompilationUnit,):
-    return self.units[index]
+    return self.units[_index]
 errorAt|self(_index: I32,) -> (LoadError,):
-    return self.errors[index]
+    return self.errors[_index]
 ; 诊断总数：语法诊断与词法问题合并计数，「零诊断」判据读它。
 diagnosticCount|self() -> (I32,):
     var total = 0

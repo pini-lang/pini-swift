@@ -8,4 +8,4 @@ add|func(a: I32, b: I32,) -> (I32,):
     return a + b
 
 square|func(_n: I32,) -> (I32,):
-    return n * n
+    return _n * _n

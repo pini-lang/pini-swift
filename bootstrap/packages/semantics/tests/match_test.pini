@@ -10,7 +10,7 @@ types: ExprTypes = ExprTypes()
 
 ; 造匹配样例：装载、注册、解析类型、建世界四步，顺序不能反。
 造匹配样例|func(_src: String,) -> (匹配样例,):
-    let loaded = loadUnit(path = "packages/p/src/api/a.pini", text = src)
+    let loaded = loadUnit(path = "packages/p/src/api/a.pini", text = _src)
     assert(!loaded.failed, "样例应可加载")
     let units = [loaded.unit]
     let table = registerPackage(units)
@@ -24,8 +24,8 @@ types: ExprTypes = ExprTypes()
 ; 首个匹配语句：返回第一个 match 语句的下标，没有答 -1。
 首个匹配语句|func(_ast: Ast,) -> (I32,):
     var i = 0
-    while i < ast.stmtCount():
-        if ast.isMatchStmt(i):
+    while i < _ast.stmtCount():
+        if _ast.isMatchStmt(i):
             return i
         i = i + 1
     return -1
@@ -41,8 +41,8 @@ types: ExprTypes = ExprTypes()
 
 ; 查匹配：主体类型已写好后跑一遍检查。
 查匹配|func(_sample: 匹配样例,) -> (MatchResult,):
-    let stmt = 首个匹配语句(sample.unit.ast)
-    return checkMatch(world = sample.world, unit = sample.unit, unitIndex = 0, stmt = stmt, types = sample.types)
+    let stmt = 首个匹配语句(_sample.unit.ast)
+    return checkMatch(world = _sample.world, unit = _sample.unit, unitIndex = 0, stmt = stmt, types = _sample.types)
 
 ; 全覆盖：枚举两个变体都覆盖，缺项为空。
 全覆盖|test() -> ():

@@ -10,7 +10,7 @@ byteLength|self() -> (I32,):
     return self.end - self.start
 ; 按切片内下标读字节；越界落到数组下标的运行时陷阱。
 byteAt|self(_index: I32,) -> (U8,):
-    return self.bytes[self.start + index]
+    return self.bytes[self.start + _index]
 ; 子切片相对本切片取界，夹紧到 [0, 本长]；仍共享存储。
 slice|self(start: I32, end: I32,) -> (ByteSlice,):
     var lo = start
@@ -33,11 +33,11 @@ slice|self(start: I32, end: I32,) -> (ByteSlice,):
     return out
 ; 逐字节相等；长度不同直接假。
 equal|self(_other: ByteSlice,) -> (Bool,):
-    if self.byteLength() != other.byteLength():
+    if self.byteLength() != _other.byteLength():
         return false
     var i = 0
     while i < self.byteLength():
-        if self.byteAt(i) != other.byteAt(i):
+        if self.byteAt(i) != _other.byteAt(i):
             return false
         i = i + 1
     return true
@@ -49,14 +49,14 @@ bytes: Array<U8> = []
 ; 从文本取字节：一次 UTF-8 复制，之后扫描不再按字素切分。
 makeByteBuffer|func(_text: String,) -> (ByteBuffer,):
     var out = ByteBuffer()
-    out.bytes = tempUtf8Bytes(text)
+    out.bytes = tempUtf8Bytes(_text)
     return out
 
 ((ByteBuffer))
 byteLength|self() -> (I32,):
     return len(self.bytes)
 byteAt|self(_index: I32,) -> (U8,):
-    return self.bytes[index]
+    return self.bytes[_index]
 ; 切片共享存储：只记录区间，不复制字节；两界夹紧，空区间合法。
 slice|self(start: I32, end: I32,) -> (ByteSlice,):
     var lo = start
@@ -80,14 +80,14 @@ slice|self(start: I32, end: I32,) -> (ByteSlice,):
 ; 追加一个字节，返回新缓冲；原缓冲不动，写时分裂由数组承担。
 append|self(_value: U8,) -> (ByteBuffer,):
     var out = ByteBuffer()
-    out.bytes = self.bytes.append(value)
+    out.bytes = self.bytes.append(_value)
     return out
 ; 追加一段切片，按字节逐个写入；返回值须替换原缓冲。
 appendSlice|self(_part: ByteSlice,) -> (ByteBuffer,):
     var out = self
     var i = 0
-    while i < part.byteLength():
-        out = out.append(part.byteAt(i))
+    while i < _part.byteLength():
+        out = out.append(_part.byteAt(i))
         i = i + 1
     return out
 
@@ -100,12 +100,12 @@ byteLength|self() -> (I32,):
     return len(self.bytes)
 appendByte|self(_value: U8,) -> (ByteBuilder,):
     var out = ByteBuilder()
-    out.bytes = self.bytes.append(value)
+    out.bytes = self.bytes.append(_value)
     return out
 ; 只接 ASCII：非 ASCII 走 appendScalar，避免把多标量字素压成一个字节。
 appendAscii|self(_text: String,) -> (ByteBuilder,):
     var out = self
-    let pieces = chars(text)
+    let pieces = chars(_text)
     var i = 0
     while i < len(pieces):
         let code = ord(pieces[i])
@@ -115,26 +115,26 @@ appendAscii|self(_text: String,) -> (ByteBuilder,):
     return out
 ; 按 Unicode 标量写 UTF-8；负值、超出 U+10FFFF 与代理区直接拒绝。
 appendScalar|self(_code: I32,) -> (ByteBuilder,):
-    assert(code >= 0, "码点不得为负")
-    assert(code <= 1114111, "码点超出 U+10FFFF")
-    assert(code < 55296 || code > 57343, "代理区不得编码")
+    assert(_code >= 0, "码点不得为负")
+    assert(_code <= 1114111, "码点超出 U+10FFFF")
+    assert(_code < 55296 || _code > 57343, "代理区不得编码")
     var out = self
-    if code < 128:
-        out = out.appendByte(tempIntToByte(code))
+    if _code < 128:
+        out = out.appendByte(tempIntToByte(_code))
     else:
-        if code < 2048:
-            out = out.appendByte(tempIntToByte(192 + (code >> 6)))
-            out = out.appendByte(tempIntToByte(128 + (code & 63)))
+        if _code < 2048:
+            out = out.appendByte(tempIntToByte(192 + (_code >> 6)))
+            out = out.appendByte(tempIntToByte(128 + (_code & 63)))
         else:
-            if code < 65536:
-                out = out.appendByte(tempIntToByte(224 + (code >> 12)))
-                out = out.appendByte(tempIntToByte(128 + (code >> 6 & 63)))
-                out = out.appendByte(tempIntToByte(128 + (code & 63)))
+            if _code < 65536:
+                out = out.appendByte(tempIntToByte(224 + (_code >> 12)))
+                out = out.appendByte(tempIntToByte(128 + (_code >> 6 & 63)))
+                out = out.appendByte(tempIntToByte(128 + (_code & 63)))
             else:
-                out = out.appendByte(tempIntToByte(240 + (code >> 18)))
-                out = out.appendByte(tempIntToByte(128 + (code >> 12 & 63)))
-                out = out.appendByte(tempIntToByte(128 + (code >> 6 & 63)))
-                out = out.appendByte(tempIntToByte(128 + (code & 63)))
+                out = out.appendByte(tempIntToByte(240 + (_code >> 18)))
+                out = out.appendByte(tempIntToByte(128 + (_code >> 12 & 63)))
+                out = out.appendByte(tempIntToByte(128 + (_code >> 6 & 63)))
+                out = out.appendByte(tempIntToByte(128 + (_code & 63)))
     return out
 ; 交出缓冲；与构建器共享存储，后续追加仍会分裂。
 takeBuffer|self() -> (ByteBuffer,):

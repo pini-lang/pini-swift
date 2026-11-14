@@ -39,7 +39,7 @@ struct CodegenLocalShadowTests: Sendable {
         name: String = ""
 
         复制|func(_out: Array<Item>,) -> (Array<Item>,):
-            var result = out
+            var result = _out
             return result
 
         main|func() -> ():
@@ -51,7 +51,7 @@ struct CodegenLocalShadowTests: Sendable {
         let 局部份 = #"""
         取首|func(_names: Array<String>,) -> (Array<String>,):
             var out: Array<String> = []
-            out = out.append(names[0])
+            out = out.append(_names[0])
             return out
         """#
         try lowerTwoUnits(参数份, 局部份)

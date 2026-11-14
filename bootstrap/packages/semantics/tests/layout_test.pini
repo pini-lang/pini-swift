@@ -12,7 +12,7 @@ unit: CompilationUnit = CompilationUnit()
 
 ; 造布局样例：装载、注册、解析类型、建世界四步，顺序不能反。
 造布局样例|func(_src: String,) -> (布局样例,):
-    let loaded = loadUnit(path = "packages/p/src/api/a.pini", text = src)
+    let loaded = loadUnit(path = "packages/p/src/api/a.pini", text = _src)
     assert(!loaded.failed, "样例应可加载")
     let units = [loaded.unit]
     let table = registerPackage(units)
@@ -26,10 +26,10 @@ unit: CompilationUnit = CompilationUnit()
 布局槽名串|func(_entry: LayoutEntry,) -> (String,):
     var out = ""
     var i = 0
-    while i < len(entry.slots):
+    while i < len(_entry.slots):
         if i > 0:
             out = out + "/"
-        out = out + entry.slots[i].name
+        out = out + _entry.slots[i].name
         i = i + 1
     return out
 

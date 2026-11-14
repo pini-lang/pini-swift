@@ -43,7 +43,7 @@ warnings: Array<LexWarning> = []
 
 ; 问题类别名：用于诊断消息与测试断言。
 issueName|func(_kind: LexIssueKind,) -> (String,):
-    match kind:
+    match _kind:
         case issueTabIndent:
             return "制表符缩进"
         case issueBom:
@@ -68,14 +68,14 @@ isIssue|func(issue: LexIssue, kind: LexIssueKind,) -> (Bool,):
 
 ; 警告类别名：用于诊断消息与测试断言。
 warningName|func(_kind: LexWarningKind,) -> (String,):
-    match kind:
+    match _kind:
         case warningBidiControlInText:
             return "双向控制字符"
     return "双向控制字符"
 
 ; 文本角色名：注释或字符串。
 textRoleName|func(_role: LexTextRole,) -> (String,):
-    match role:
+    match _role:
         case textComment:
             return "注释"
         case textString:
@@ -92,7 +92,7 @@ isTextRole|func(warning: LexWarning, role: LexTextRole,) -> (Bool,):
 
 ; 扫描文本：默认按英文关键字；先把 CRLF 归一化为 LF，此后所有区间都指向归一化文本。
 lexText|func(_text: String,) -> (LexResult,):
-    return lexTextIn(language = .langEnglish, text = text)
+    return lexTextIn(language = .langEnglish, text = _text)
 
 ; 按指定关键字语言扫描文本：词表只影响整词分类，标识符与字面量的扫描规则不变。
 lexTextIn|func(language: KeywordLanguage, text: String,) -> (LexResult,):
@@ -101,7 +101,7 @@ lexTextIn|func(language: KeywordLanguage, text: String,) -> (LexResult,):
 
 ; 扫描源文本：调用方保证行尾已归一化；起始 BOM 记问题并跳过三字节，偏移仍指向原文本。
 lexSource|func(_source: SourceText,) -> (LexResult,):
-    return lexSourceIn(language = .langEnglish, source = source)
+    return lexSourceIn(language = .langEnglish, source = _source)
 
 ; 按指定关键字语言扫描源文本；BOM 的处理与默认入口同规。
 lexSourceIn|func(language: KeywordLanguage, source: SourceText,) -> (LexResult,):
@@ -131,24 +131,24 @@ makeWarning|func(kind: LexWarningKind, role: LexTextRole, start: I32, end: I32,)
 
 ; 起始 BOM：EF BB BF 三字节。
 hasBom|func(_bytes: Array<U8>,) -> (Bool,):
-    if len(bytes) < 3:
+    if len(_bytes) < 3:
         return false
-    if tempByteToInt(bytes[0]) != 239:
+    if tempByteToInt(_bytes[0]) != 239:
         return false
-    if tempByteToInt(bytes[1]) != 187:
+    if tempByteToInt(_bytes[1]) != 187:
         return false
-    return tempByteToInt(bytes[2]) == 191
+    return tempByteToInt(_bytes[2]) == 191
 
 ((LexResult))
 tokenCount|self() -> (I32,):
     return len(self.tokens)
 tokenAt|self(_index: I32,) -> (Token,):
-    return self.tokens[index]
+    return self.tokens[_index]
 issueCount|self() -> (I32,):
     return len(self.issues)
 issueAt|self(_index: I32,) -> (LexIssue,):
-    return self.issues[index]
+    return self.issues[_index]
 warningCount|self() -> (I32,):
     return len(self.warnings)
 warningAt|self(_index: I32,) -> (LexWarning,):
-    return self.warnings[index]
+    return self.warnings[_index]

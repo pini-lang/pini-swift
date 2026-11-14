@@ -9,16 +9,16 @@ count|self() -> (I32,):
 idOf|self(_name: String,) -> (I32,):
     var i = 0
     while i < len(self.names):
-        if self.names[i] == name:
+        if self.names[i] == _name:
             return i
         i = i + 1
     return -1
 nameAt|self(_id: I32,) -> (String,):
-    return self.names[id]
+    return self.names[_id]
 ; 首次出现才追加，重复名返回原表；id 与追加次序一致。
 withName|self(_name: String,) -> (StringTable,):
-    if self.idOf(name) >= 0:
+    if self.idOf(_name) >= 0:
         return self
     var out = StringTable()
-    out.names = self.names.append(name)
+    out.names = self.names.append(_name)
     return out

@@ -10,7 +10,7 @@ pool: TypePool = TypePool()
 
 ; 造容器样例：只装载不注册，容器判定不需要符号表。
 造容器样例|func(_src: String,) -> (容器样例,):
-    let loaded = loadUnit(path = "packages/p/src/api/a.pini", text = src)
+    let loaded = loadUnit(path = "packages/p/src/api/a.pini", text = _src)
     assert(!loaded.failed, "样例应可加载")
     var out = 容器样例()
     out.unit = loaded.unit
@@ -20,7 +20,7 @@ pool: TypePool = TypePool()
 
 ; 首值：首个语句的右值节点；样例统一写成 `let x = …`。
 首值|func(_unit: CompilationUnit,) -> (I32,):
-    return unit.ast.stmtChild(id = 0, index = 1)
+    return _unit.ast.stmtChild(id = 0, index = 1)
 
 ; 类型号：样例连同新下标一起带回。
 (容器号)
@@ -299,7 +299,7 @@ file: String = "packages/p/src/api/a.pini"
 
 ; 造世界：装载、注册与解析三步，顺序不能反。
 造容器世界|func(_src: String,) -> (容器世界,):
-    let loaded = loadUnit(path = "packages/p/src/api/a.pini", text = src)
+    let loaded = loadUnit(path = "packages/p/src/api/a.pini", text = _src)
     assert(!loaded.failed, "样例应可加载")
     let units = [loaded.unit]
     let table = registerPackage(units)

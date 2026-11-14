@@ -31,22 +31,22 @@ isOK|self() -> (Bool,):
 errorCount|self() -> (I32,):
     return len(self.errors)
 errorAt|self(_index: I32,) -> (ManifestError,):
-    return self.errors[index]
+    return self.errors[_index]
 packageCount|self() -> (I32,):
     return len(self.packages)
 packageAt|self(_index: I32,) -> (PackagePlan,):
-    return self.packages[index]
+    return self.packages[_index]
 
 ; 计划文本：包与 target 按拓扑序逐行铺开，错误在前；同一计划两次渲染逐字相同。
 planText|func(_plan: BuildPlan,) -> (String,):
-    var text = "root=" + plan.rootPath + " profile=" + plan.profile + "\n"
+    var text = "root=" + _plan.rootPath + " profile=" + _plan.profile + "\n"
     var i = 0
-    while i < len(plan.errors):
-        text = text + "error " + manifestErrorText(plan.errors[i]) + "\n"
+    while i < len(_plan.errors):
+        text = text + "error " + manifestErrorText(_plan.errors[i]) + "\n"
         i = i + 1
     i = 0
-    while i < len(plan.packages):
-        let pkg = plan.packages[i]
+    while i < len(_plan.packages):
+        let pkg = _plan.packages[i]
         text = text + "package " + pkg.name + " @ " + pkg.rootPath + "\n"
         var t = 0
         while t < len(pkg.targets):
@@ -107,13 +107,13 @@ assemblePlan|func(workspace: WorkspaceParse, parses: Array<PackageParse>,) -> (B
 ; 读盘入口：根清单与每个成员的清单各读一次，随后交给纯装配。
 ; 成员路径先规范化再拼路径，越界成员在读盘之前就被挡下。
 planWorkspace|func(_root: String,) -> (BuildPlan,):
-    let rootManifest = root + "/pini.toml"
+    let rootManifest = _root + "/pini.toml"
     if !exists(rootManifest):
         var plan = BuildPlan()
-        plan.rootPath = root
+        plan.rootPath = _root
         plan.errors = plan.errors.append(manifestError(kind = errorManifestMissing, path = rootManifest, detail = "pini.toml"))
         return plan
-    let workspace = parseWorkspaceManifest(text = readFile(rootManifest), rootPath = root, path = rootManifest)
+    let workspace = parseWorkspaceManifest(text = readFile(rootManifest), rootPath = _root, path = rootManifest)
     var parses: Array<PackageParse> = []
     var i = 0
     while i < len(workspace.manifest.members):
@@ -121,7 +121,7 @@ planWorkspace|func(_root: String,) -> (BuildPlan,):
         i = i + 1
         if !norm.ok:
             continue
-        let memberManifest = root + "/" + norm.value + "/pini.toml"
+        let memberManifest = _root + "/" + norm.value + "/pini.toml"
         if !exists(memberManifest):
             var missing = PackageParse()
             missing.manifest.rootPath = norm.value
@@ -158,13 +158,13 @@ packagePlan|func(pkg: PackageManifest, root: String, profile: String,) -> (Packa
 
 ; 源码根：库与可执行从 src 取生产源码，测试目标从入口目录取；扫描规则归装载面。
 sourceRootOf|func(_target: TargetSpec,) -> (String,):
-    if isTargetKind(kind = target.kind, expected = targetTest):
-        return target.entry
+    if isTargetKind(kind = _target.kind, expected = targetTest):
+        return _target.entry
     return "src"
 
 ; 测试目标判定：测试目标不进普通构建产物，装载面据此决定是否并入测试源码。
 isTestTarget|func(_target: TargetPlan,) -> (Bool,):
-    return isTargetKind(kind = target.kind, expected = targetTest)
+    return isTargetKind(kind = _target.kind, expected = targetTest)
 
 ; 可执行产物名在工作区内唯一：跨包同名会让两份产物落到同一个 bin 路径。
 checkExecutableNames|func(packages: Array<PackageManifest>, rootPath: String, errors: Array<ManifestError>,) -> (Array<ManifestError>,):
@@ -284,14 +284,14 @@ sortedRequires|func(packages: Array<PackageManifest>, requires: Array<String>,) 
 sortedPackageNames|func(_packages: Array<PackageManifest>,) -> (Array<String>,):
     var names: Array<String> = []
     var i = 0
-    while i < len(packages):
-        names = names.append(packages[i].name)
+    while i < len(_packages):
+        names = names.append(_packages[i].name)
         i = i + 1
     return sortedTexts(names)
 
 ; 字符串升序：按 UTF-8 字节比较，与平台 locale 无关。
 sortedTexts|func(_items: Array<String>,) -> (Array<String>,):
-    var out = items
+    var out = _items
     var i = 1
     while i < len(out):
         let value = out[i]

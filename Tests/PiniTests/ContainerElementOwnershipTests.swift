@@ -114,7 +114,7 @@ struct ContainerElementOwnershipTests: PiniSourceLowering, Sendable {
         let listing = try emitted(
             """
             键|func(_n: I32,) -> (String,):
-                return "k\\(n)"
+                return "k\\(_n)"
 
             main|func() -> ():
                 var d = {"a"= 1}

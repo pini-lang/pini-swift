@@ -8,8 +8,8 @@ ids: Array<I32> = []
     var pool = TypePool()
     var ids: Array<I32> = []
     var i = 0
-    while i < len(names):
-        let inserted = intern(pool = pool, kind = typeClassScalar, name = names[i], kids = [], ret = -1)
+    while i < len(_names):
+        let inserted = intern(pool = pool, kind = typeClassScalar, name = _names[i], kids = [], ret = -1)
         pool = inserted.pool
         ids = ids.append(inserted.id)
         i = i + 1

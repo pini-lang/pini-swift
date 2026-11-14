@@ -93,11 +93,11 @@ mergeSymbolSlots|func(left: Array<SymbolSlot>, right: Array<SymbolSlot>,) -> (Ar
 
 ; 排序：两路归并，槽数上万时仍是 n log n。
 sortSymbolSlots|func(_values: Array<SymbolSlot>,) -> (Array<SymbolSlot>,):
-    if len(values) <= 1:
-        return values
-    let mid = len(values) / 2
-    let left = sortSymbolSlots(takeSymbolSlots(values = values, start = 0, end = mid))
-    let right = sortSymbolSlots(takeSymbolSlots(values = values, start = mid, end = len(values)))
+    if len(_values) <= 1:
+        return _values
+    let mid = len(_values) / 2
+    let left = sortSymbolSlots(takeSymbolSlots(values = _values, start = 0, end = mid))
+    let right = sortSymbolSlots(takeSymbolSlots(values = _values, start = mid, end = len(_values)))
     return mergeSymbolSlots(left = left, right = right)
 
 ; 取区间：导入槽版本。
@@ -138,11 +138,11 @@ mergeImportSlots|func(left: Array<ImportSlot>, right: Array<ImportSlot>,) -> (Ar
 
 ; 排序：导入槽版本。
 sortImportSlots|func(_values: Array<ImportSlot>,) -> (Array<ImportSlot>,):
-    if len(values) <= 1:
-        return values
-    let mid = len(values) / 2
-    let left = sortImportSlots(takeImportSlots(values = values, start = 0, end = mid))
-    let right = sortImportSlots(takeImportSlots(values = values, start = mid, end = len(values)))
+    if len(_values) <= 1:
+        return _values
+    let mid = len(_values) / 2
+    let left = sortImportSlots(takeImportSlots(values = _values, start = 0, end = mid))
+    let right = sortImportSlots(takeImportSlots(values = _values, start = mid, end = len(_values)))
     return mergeImportSlots(left = left, right = right)
 
 ; 取区间：声明槽版本。
@@ -187,19 +187,19 @@ mergeDeclSlots|func(left: Array<DeclSlot>, right: Array<DeclSlot>,) -> (Array<De
 
 ; 排序：声明槽版本。
 sortDeclSlots|func(_values: Array<DeclSlot>,) -> (Array<DeclSlot>,):
-    if len(values) <= 1:
-        return values
-    let mid = len(values) / 2
-    let left = sortDeclSlots(takeDeclSlots(values = values, start = 0, end = mid))
-    let right = sortDeclSlots(takeDeclSlots(values = values, start = mid, end = len(values)))
+    if len(_values) <= 1:
+        return _values
+    let mid = len(_values) / 2
+    let left = sortDeclSlots(takeDeclSlots(values = _values, start = 0, end = mid))
+    let right = sortDeclSlots(takeDeclSlots(values = _values, start = mid, end = len(_values)))
     return mergeDeclSlots(left = left, right = right)
 
 ; 建符号索引：符号与导入各扫一遍，排序后只读。
 makeSymbolIndex|func(_table: SymbolTable,) -> (SymbolIndex,):
     var slots: Array<SymbolSlot> = []
     var i = 0
-    while i < table.symbolCount():
-        let symbol = table.symbolAt(i)
+    while i < _table.symbolCount():
+        let symbol = _table.symbolAt(i)
         var slot = SymbolSlot()
         slot.ownerKey = keyOfText(symbol.owner)
         slot.key = symbol.key
@@ -208,8 +208,8 @@ makeSymbolIndex|func(_table: SymbolTable,) -> (SymbolIndex,):
         i = i + 1
     var imports: Array<ImportSlot> = []
     var j = 0
-    while j < table.importCount():
-        let symbol = table.importAt(j)
+    while j < _table.importCount():
+        let symbol = _table.importAt(j)
         var slot = ImportSlot()
         slot.fileKey = keyOfText(symbol.file)
         slot.key = symbol.key
@@ -225,8 +225,8 @@ makeSymbolIndex|func(_table: SymbolTable,) -> (SymbolIndex,):
 makeDeclIndex|func(_units: Array<CompilationUnit>,) -> (DeclIndex,):
     var slots: Array<DeclSlot> = []
     var u = 0
-    while u < len(units):
-        let unit = units[u]
+    while u < len(_units):
+        let unit = _units[u]
         let fileKey = keyOfText(unit.path)
         var d = 0
         while d < unit.ast.declCount():
@@ -346,10 +346,10 @@ importCount|self() -> (I32,):
     return len(self.imports)
 ; 槽读取：下标越界是运行时陷阱，调用方先经查找取符号下标。
 slotAt|self(_index: I32,) -> (SymbolSlot,):
-    return self.slots[index]
+    return self.slots[_index]
 ; 导入槽读取：与 slotAt 同规。
 importAt|self(_index: I32,) -> (ImportSlot,):
-    return self.imports[index]
+    return self.imports[_index]
 
 ((DeclIndex))
 ; 槽数：声明总数。
@@ -357,4 +357,4 @@ slotCount|self() -> (I32,):
     return len(self.slots)
 ; 槽读取：与 SymbolIndex.slotAt 同规。
 slotAt|self(_index: I32,) -> (DeclSlot,):
-    return self.slots[index]
+    return self.slots[_index]

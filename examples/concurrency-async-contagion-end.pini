@@ -5,7 +5,7 @@
 ; —— 真正并发的末端服务（标 `=>`）——
 fetchPrice|func(_id: I32,) => (I32,):
     sleep(100)
-    return ok(id * 10) ; => 体必须 ok/err 包裹（errors-as-data）
+    return ok(_id * 10) ; => 体必须 ok/err 包裹（errors-as-data）
 
 ; —— 中间编排层：自身 `=>`，内部 `await`/`wait` 等待子任务 ——
 aggregate|func() => (I32,):

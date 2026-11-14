@@ -31,10 +31,10 @@ errorTypeId|func() -> (I32,):
 makeExprTypes|func(_units: Array<CompilationUnit>,) -> (ExprTypes,):
     var out = ExprTypes()
     var u = 0
-    while u < len(units):
+    while u < len(_units):
         var unitTable = UnitExprTypes()
         var i = 0
-        let count = units[u].ast.exprCount()
+        let count = _units[u].ast.exprCount()
         while i < count:
             unitTable.types = unitTable.types.append(unsetTypeId())
             i = i + 1

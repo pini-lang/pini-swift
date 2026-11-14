@@ -27,7 +27,7 @@ failed: Bool = false
 
 ; 类别名：诊断、测试与回执共用一份拼写。
 boundaryKindName|func(_kind: BoundaryKind,) -> (String,):
-    match kind:
+    match _kind:
         case boundaryUnknownTarget:
             return "导入目标不是工作区成员"
         case boundaryUndeclared:
@@ -64,25 +64,25 @@ appendBoundaryError|func(out: BoundaryCheck, unit: CompilationUnit, offset: I32,
 lastSlash|func(_path: String,) -> (I32,):
     var at = -1
     var i = 0
-    while i < len(path):
-        if path[i] == "/":
+    while i < len(_path):
+        if _path[i] == "/":
             at = i
         i = i + 1
     return at
 
 ; 目录：最后一个斜杠之前的部分；无斜杠答空串。
 dirOf|func(_path: String,) -> (String,):
-    let at = lastSlash(path)
+    let at = lastSlash(_path)
     if at < 0:
         return ""
-    return path.substring(0, at)
+    return _path.substring(0, at)
 
 ; 折叠路径：丢掉空段与 `.`，遇到 `..` 弹回上一段。
 collapseParts|func(_parts: Array<String>,) -> (Array<String>,):
     var out: Array<String> = []
     var i = 0
-    while i < len(parts):
-        let part = parts[i]
+    while i < len(_parts):
+        let part = _parts[i]
         if len(part) > 0 && part != ".":
             if part == "..":
                 out = dropLastPart(out)
@@ -94,11 +94,11 @@ collapseParts|func(_parts: Array<String>,) -> (Array<String>,):
 ; 丢末段：空表原样返回。
 dropLastPart|func(_parts: Array<String>,) -> (Array<String>,):
     var out: Array<String> = []
-    if len(parts) == 0:
+    if len(_parts) == 0:
         return out
     var i = 0
-    while i < len(parts) - 1:
-        out = out.append(parts[i])
+    while i < len(_parts) - 1:
+        out = out.append(_parts[i])
         i = i + 1
     return out
 
@@ -106,10 +106,10 @@ dropLastPart|func(_parts: Array<String>,) -> (Array<String>,):
 joinParts|func(_parts: Array<String>,) -> (String,):
     var out = ""
     var i = 0
-    while i < len(parts):
+    while i < len(_parts):
         if i > 0:
             out = out + "/"
-        out = out + parts[i]
+        out = out + _parts[i]
         i = i + 1
     return out
 
@@ -227,22 +227,22 @@ mergeBoundaryErrors|func(left: Array<BoundaryError>, right: Array<BoundaryError>
 
 ; 排序：稳定归并，同一输入两次得同一序列。
 sortBoundaryErrors|func(_values: Array<BoundaryError>,) -> (Array<BoundaryError>,):
-    if len(values) <= 1:
-        return values
-    let mid = len(values) / 2
-    let left = sortBoundaryErrors(takeBoundaryErrors(values = values, from = 0, to = mid))
-    let right = sortBoundaryErrors(takeBoundaryErrors(values = values, from = mid, to = len(values)))
+    if len(_values) <= 1:
+        return _values
+    let mid = len(_values) / 2
+    let left = sortBoundaryErrors(takeBoundaryErrors(values = _values, from = 0, to = mid))
+    let right = sortBoundaryErrors(takeBoundaryErrors(values = _values, from = mid, to = len(_values)))
     return mergeBoundaryErrors(left = left, right = right)
 
 ; 对账入口：按包序走全部单元，收齐错误后统一排序。
 checkWorkspaceImports|func(_ws: WorkspaceUnits,) -> (BoundaryCheck,):
     var out = BoundaryCheck()
     var p = 0
-    while p < len(ws.packages):
-        let group = ws.packages[p]
+    while p < len(_ws.packages):
+        let group = _ws.packages[p]
         var u = 0
         while u < len(group.units):
-            out = checkUnitImports(ws = ws, group = group, unit = group.units[u], out = out)
+            out = checkUnitImports(ws = _ws, group = group, unit = group.units[u], out = out)
             u = u + 1
         p = p + 1
     out.errors = sortBoundaryErrors(out.errors)

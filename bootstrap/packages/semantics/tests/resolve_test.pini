@@ -19,8 +19,8 @@ _module_loader = "../../module-loader"
 ; 首个标识符：按表达式池序找第一个 identifier 节点，找不到答 -1。
 首个标识符|func(_unit: CompilationUnit,) -> (I32,):
     var i = 0
-    while i < unit.ast.exprCount():
-        if unit.ast.isIdentifierExpr(i):
+    while i < _unit.ast.exprCount():
+        if _unit.ast.isIdentifierExpr(i):
             return i
         i = i + 1
     return -1
@@ -28,8 +28,8 @@ _module_loader = "../../module-loader"
 ; 首个成员：按表达式池序找第一个 member 节点。
 首个成员|func(_unit: CompilationUnit,) -> (I32,):
     var i = 0
-    while i < unit.ast.exprCount():
-        if unit.ast.isMemberExpr(i):
+    while i < _unit.ast.exprCount():
+        if _unit.ast.isMemberExpr(i):
             return i
         i = i + 1
     return -1
@@ -37,8 +37,8 @@ _module_loader = "../../module-loader"
 ; 首个调用：按表达式池序找第一个 call 节点。
 首个调用|func(_unit: CompilationUnit,) -> (I32,):
     var i = 0
-    while i < unit.ast.exprCount():
-        if unit.ast.isCallExpr(i):
+    while i < _unit.ast.exprCount():
+        if _unit.ast.isCallExpr(i):
             return i
         i = i + 1
     return -1

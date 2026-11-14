@@ -4,8 +4,8 @@ lineStartsOf|func(_bytes: Array<U8>,) -> (Array<I32>,):
     starts = starts.append(0)
     let lf: U8 = 10
     var i = 0
-    while i < len(bytes):
-        if bytes[i] == lf:
+    while i < len(_bytes):
+        if _bytes[i] == lf:
             starts = starts.append(i + 1)
         i = i + 1
     return starts

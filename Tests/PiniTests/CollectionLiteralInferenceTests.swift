@@ -27,7 +27,7 @@ struct CollectionLiteralInferenceTests: Sendable, PiniSourceLowering {
             return
 
         取长|func(_xs: [I32],) -> (I32,):
-            return len(xs)
+            return len(_xs)
         """#
         #expect(try variableType("a", in: source) == "Array<I32>")
         try typeChecked(source)
@@ -75,7 +75,7 @@ struct CollectionLiteralInferenceTests: Sendable, PiniSourceLowering {
             return
 
         取长|func(_xs: [I32],) -> (I32,):
-            return len(xs)
+            return len(_xs)
         """#
         do {
             _ = try typeChecked(source)
@@ -99,7 +99,7 @@ struct CollectionLiteralInferenceTests: Sendable, PiniSourceLowering {
             return
 
         取键数|func(_ages: {I32: String,},) -> (I32,):
-            return len(ages)
+            return len(_ages)
         """#
         do {
             _ = try typeChecked(source)

@@ -4,6 +4,6 @@ main|func() -> ():
     print(分类(5))
 
 分类|func(_x: I32,) -> (I32,):
-    match x:
+    match _x:
         case _:
             return 1

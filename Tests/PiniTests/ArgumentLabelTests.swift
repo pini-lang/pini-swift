@@ -35,11 +35,11 @@ struct ArgumentLabelTests: Sendable, PiniSourceLowering {
         #expect(try codes(source) == ["E4-036", "E4-036"])
     }
 
-    @Test("形参写 _ 后，调用点按位置传且体内仍用原名")
+    @Test("形参写 _ 后，调用点按位置传，体内按下划线名引用")
     func underscoreOptOut() throws {
         let source = #"""
         f|func(_a: I32, b: I32,) -> (I32,):
-            return a + b
+            return _a + b
 
         g|func() -> (I32,):
             return f(1, b = 2,)
@@ -51,10 +51,10 @@ struct ArgumentLabelTests: Sendable, PiniSourceLowering {
     func unexpectedLabel() throws {
         let source = #"""
         f|func(_a: I32,) -> (I32,):
-            return a
+            return _a
 
         g|func() -> (I32,):
-            return f(a = 1,)
+            return f(_a = 1,)
         """#
         #expect(try codes(source) == ["E4-037"])
     }
@@ -120,7 +120,7 @@ struct ArgumentLabelTests: Sendable, PiniSourceLowering {
 
         ((点))
         加|self(_dx: I32,) -> (I32,):
-            return 1 + dx
+            return 1 + _dx
 
         g|func() -> (I32,):
             var p = 点()
@@ -181,17 +181,45 @@ struct ArgumentLabelTests: Sendable, PiniSourceLowering {
         #expect(try codes(source).isEmpty)
     }
 
-    @Test("参数位的 _ 打印时回写")
-    func printerRestoresUnderscore() throws {
+    @Test("名字本身含下划线，打印原样")
+    func printerKeepsUnderscore() throws {
         let fileName = "labels.pini"
         let source = #"""
         f|func(_a: I32, b: I32,) -> (I32,):
-            return a + b
+            return _a + b
         """#
         let lexer = Lexer(source: source, fileName: fileName)
         let parsed = Parser(tokens: try lexer.tokenize(), fileName: fileName)
             .parseModuleCollectingErrors()
         let module = try FrontEnd.passes(module: parsed.module)
         #expect(Printer.print(module: module).contains("_a: I32"))
+    }
+
+    @Test("_a 与 a 是两个形参，可同处一表")
+    func underscoreIsPartOfName() throws {
+        let source = #"""
+        f|func(_a: I32, a: I32,) -> (I32,):
+            return _a - a
+
+        g|func() -> (I32,):
+            return f(3, a = 1,)
+        """#
+        #expect(try codes(source).isEmpty)
+    }
+
+    @Test("体内写裸名找不到下划线形参")
+    func bodyUsesUnderscoredName() throws {
+        let source = #"""
+        f|func(_a: I32,) -> (I32,):
+            return a
+        """#
+        var reported = ""
+        do {
+            _ = try errors(source)
+        } catch {
+            reported = "\(error)"
+        }
+        #expect(reported.contains("undefinedVariable"))
+        #expect(reported.contains("\"a\""))
     }
 }

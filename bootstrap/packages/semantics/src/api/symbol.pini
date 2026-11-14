@@ -27,7 +27,7 @@ owner: String = ""
 
 ; 种类名：诊断与测试共用一份拼写。
 symbolKindName|func(_kind: SymbolKind,) -> (String,):
-    match kind:
+    match _kind:
         case symbolType:
             return "类型"
         case symbolFunction:
@@ -50,7 +50,7 @@ isSymbolKind|func(kind: SymbolKind, expected: SymbolKind,) -> (Bool,):
 
 ; 可见性名：与语言参考的四级同名。
 visibilityName|func(_level: Visibility,) -> (String,):
-    match level:
+    match _level:
         case visibilityPrivate:
             return "private"
         case visibilityInternal:
@@ -67,7 +67,7 @@ isVisibility|func(level: Visibility, expected: Visibility,) -> (Bool,):
 
 ; 可见性次序：private 最严 0，public 最宽 3；收紧时取小值。
 visibilityRank|func(_level: Visibility,) -> (I32,):
-    match level:
+    match _level:
         case visibilityPrivate:
             return 0
         case visibilityInternal:
@@ -97,4 +97,4 @@ sameKey|func(first: Array<U8>, second: Array<U8>,) -> (Bool,):
 
 ; 跨模块可见：只有 public 能被别的模块引入。
 isExported|func(_level: Visibility,) -> (Bool,):
-    return visibilityRank(level) == visibilityRank(visibilityPublic)
+    return visibilityRank(_level) == visibilityRank(visibilityPublic)

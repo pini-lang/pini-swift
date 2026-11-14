@@ -18,7 +18,7 @@ issues: Array<LexIssue> = []
 
 ; 解析文本：默认按英文关键字；文件名留空，位置映射由调用方补。
 parseText|func(_text: String,) -> (ParseResult,):
-    return parseFile(text = text, file = "")
+    return parseFile(text = _text, file = "")
 
 ; 解析文本并登记文件名：诊断里的文件名即此参数。
 parseFile|func(text: String, file: String,) -> (ParseResult,):
@@ -43,7 +43,7 @@ parseFileIn|func(language: KeywordLanguage, text: String, file: String,) -> (Par
     return out
 
 binaryPrecedence|func(_kind: TokenKind,) -> (I32,):
-    let tag: I32 = kindTag(kind)
+    let tag: I32 = kindTag(_kind)
     if tag == kindTag(opOr):
         return 1
     if tag == kindTag(opAnd):
@@ -62,7 +62,7 @@ binaryPrecedence|func(_kind: TokenKind,) -> (I32,):
 
 ; 一元前缀：`-` `+` `!` `~` `^` `&` `++` `--` 右结合。
 isUnaryKind|func(_kind: TokenKind,) -> (Bool,):
-    let tag: I32 = kindTag(kind)
+    let tag: I32 = kindTag(_kind)
     if tag == kindTag(opSub) || tag == kindTag(opAdd) || tag == kindTag(opNot):
         return true
     if tag == kindTag(opBitNot) || tag == kindTag(opBitXor) || tag == kindTag(opBitAnd):
@@ -70,7 +70,7 @@ isUnaryKind|func(_kind: TokenKind,) -> (Bool,):
     return tag == kindTag(opInc) || tag == kindTag(opDec)
 
 isAssignOp|func(_kind: TokenKind,) -> (Bool,):
-    let tag: I32 = kindTag(kind)
+    let tag: I32 = kindTag(_kind)
     if tag == kindTag(opAssign):
         return true
     return tag >= kindTag(opAssignAdd) && tag <= kindTag(opAssignShr)
@@ -87,7 +87,7 @@ current|self() -> (Token,):
     return self.tokens[self.pos]
 ; 前瞻第 n 条记号：越界一律答结束，调用方无需重复判界。
 kindAt|self(_offset: I32,) -> (TokenKind,):
-    let index = self.pos + offset
+    let index = self.pos + _offset
     if index < 0 || index >= self.total:
         return eof
     return self.tokens[index].kind
@@ -97,8 +97,8 @@ atEnd|self() -> (Bool,):
     return self.tokens[self.pos].tag == kindTag(eof)
 at|self(_kind: TokenKind,) -> (Bool,):
     if self.pos >= self.total:
-        return kindTag(eof) == kindTag(kind)
-    return self.tokens[self.pos].tag == kindTag(kind)
+        return kindTag(eof) == kindTag(_kind)
+    return self.tokens[self.pos].tag == kindTag(_kind)
 isKindAt|self(offset: I32, kind: TokenKind,) -> (Bool,):
     let index = self.pos + offset
     if index < 0 || index >= self.total:
@@ -154,8 +154,8 @@ parseModule|self() -> ():
 ; 顶层登记：块状声明解析完才知顶层是谁，按「第一个新增」补进 items；
 ; 成员与参数在它之后入池，因此 first-new 恒为顶层那一个。
 addNewTop|self(_before: I32,) -> ():
-    if len(self.ast.decls) > before:
-        self.ast.addItem(before)
+    if len(self.ast.decls) > _before:
+        self.ast.addItem(_before)
     return
 ; 顶级分派：行首记号决定声明种类，其余按名字后的竖线区分函数与变量。
 parseTopLevel|self() -> ():
@@ -229,7 +229,7 @@ parseImportBlock|self(_start: I32,) -> ():
     self.advance()
     self.expect(kind = kwImport, what = "`import`")
     self.expect(kind = rightBracket, what = "`]`")
-    let id: I32 = self.newDecl(kind = declImportBlock, start = start, end = self.previousEnd())
+    let id: I32 = self.newDecl(kind = declImportBlock, start = _start, end = self.previousEnd())
     self.setDeclName(id = id, start = nameStart, end = nameEnd)
     var entries: Array<I32> = []
     self.skipNewlines()
@@ -435,13 +435,9 @@ parseParams|self() -> (Array<I32>,):
             self.advance()
         var nameStart = self.current().start
         var nameEnd = self.current().end
-        var takesLabel = true
         if self.at(identifier) || self.at(kwSelf):
             nameStart = self.current().nameStart
             nameEnd = self.current().nameEnd
-            if self.current().leadingUnderscore && nameEnd > nameStart + 1:
-                nameStart = nameStart + 1
-                takesLabel = false
             self.advance()
         else:
             self.report(code = "E2-012", message = "缺少参数名")
@@ -458,7 +454,7 @@ parseParams|self() -> (Array<I32>,):
         self.setDeclType(id = id, typeId = typeId)
         if def >= 0:
             self.pushDeclKid(id = id, kid = def)
-        self.setParamMarks(id = id, isOwn = isOwn, isUsing = isUsing, isSelf = isSelf, takesLabel = takesLabel)
+        self.setParamMarks(id = id, isOwn = isOwn, isUsing = isUsing, isSelf = isSelf)
         params = params.append(id)
         if self.at(comma):
             self.advance()
@@ -504,17 +500,17 @@ parseType|self() -> (I32,):
     return self.maybeOptional(id)
 ; 返回列表：括号内单元素即该元素本身，空表与多元素保持元组形状。
 collapseReturn|self(_id: I32,) -> (I32,):
-    if id < 0:
-        return id
-    let node = self.ast.typeAt(id)
+    if _id < 0:
+        return _id
+    let node = self.ast.typeAt(_id)
     if !isTupleTypeCode(node.kind):
-        return id
+        return _id
     if len(node.kids) != 1:
-        return id
+        return _id
     return node.kids[0]
 ; 后缀问号：包成可选类型；`T??` 逐层包裹。
 maybeOptional|self(_id: I32,) -> (I32,):
-    var out = id
+    var out = _id
     while self.at(question):
         self.advance()
         let wrapped: I32 = self.newType(kind = typeOptional, start = self.ast.typeAt(out).start, end = self.previousEnd())
@@ -551,7 +547,7 @@ parseExpression|self(_minPrecedence: I32,) -> (I32,):
     var climbing = true
     while climbing && left >= 0:
         let precedence: I32 = binaryPrecedence(self.current().kind)
-        if precedence < minPrecedence || precedence == 0:
+        if precedence < _minPrecedence || precedence == 0:
             climbing = false
         else:
             let op: TokenKind = self.current().kind
@@ -590,7 +586,7 @@ parsePostfix|self() -> (I32,):
     return expr
 ; 成员访问：点后接名字或元组序号；序号取整数记号的名字区间，与名字共用成员节点。
 finishMember|self(_expr: I32,) -> (I32,):
-    let start = self.ast.exprAt(expr).start
+    let start = self.ast.exprAt(_expr).start
     self.advance()
     var nameStart = -1
     var nameEnd = -1
@@ -600,17 +596,17 @@ finishMember|self(_expr: I32,) -> (I32,):
         self.advance()
     else:
         self.report(code = "E2-001", message = "期望成员名或元组序号")
-        return expr
+        return _expr
     let id: I32 = self.newExpr(kind = exprMember, start = start, end = self.previousEnd())
     self.setExprName(id = id, start = nameStart, end = nameEnd)
-    self.pushExprKid(id = id, kid = expr)
+    self.pushExprKid(id = id, kid = _expr)
     return id
 ; 调用：实参可带 `名字 = 值` 标签，尾随逗号合法。
 finishCall|self(_callee: I32,) -> (I32,):
-    let start = self.ast.exprAt(callee).start
+    let start = self.ast.exprAt(_callee).start
     self.advance()
     let id: I32 = self.newExpr(kind = exprCall, start = start, end = self.previousEnd())
-    self.pushExprKid(id = id, kid = callee)
+    self.pushExprKid(id = id, kid = _callee)
     self.skipNewlines()
     while !self.at(rightParen) && !self.atEnd():
         let before = self.pos
@@ -639,7 +635,7 @@ finishCall|self(_callee: I32,) -> (I32,):
     return id
 ; 下标或切片：`a[i]` 与 `a[i:j]`，两端都可省略。
 finishIndex|self(_target: I32,) -> (I32,):
-    let start = self.ast.exprAt(target).start
+    let start = self.ast.exprAt(_target).start
     self.advance()
     self.skipNewlines()
     var lower = -1
@@ -652,13 +648,13 @@ finishIndex|self(_target: I32,) -> (I32,):
             upper = self.parseExpression(1)
         self.expect(kind = rightBracket, what = "`]`")
         let id: I32 = self.newExpr(kind = exprSlice, start = start, end = self.previousEnd())
-        self.pushExprKid(id = id, kid = target)
+        self.pushExprKid(id = id, kid = _target)
         self.pushExprKid(id = id, kid = lower)
         self.pushExprKid(id = id, kid = upper)
         return id
     self.expect(kind = rightBracket, what = "`]`")
     let id: I32 = self.newExpr(kind = exprSubscript, start = start, end = self.previousEnd())
-    self.pushExprKid(id = id, kid = target)
+    self.pushExprKid(id = id, kid = _target)
     self.pushExprKid(id = id, kid = lower)
     return id
 ; 基本表达式：字面量、名字、枚举项、括号组、容器字面量与函数字面量。
@@ -925,7 +921,7 @@ parseVariableDecl|self(_topLevel: Bool,) -> (I32,):
     if self.at(opAssign):
         self.advance()
         init = self.parseExpression(1)
-    if topLevel:
+    if _topLevel:
         let id: I32 = self.newDecl(kind = declVariable, start = start, end = self.previousEnd())
         self.setDeclName(id = id, start = self.ast.exprAt(pattern).nameStart, end = self.ast.exprAt(pattern).nameEnd)
         self.setDeclType(id = id, typeId = typeId)
@@ -1237,13 +1233,12 @@ setFunctionMarks|self(id: I32, isTest: Bool, isSelf: Bool, isOwn: Bool, isForeig
     node.isForeign = isForeign
     self.ast.decls[id] = node
     return
-; 参数前缀写回：own / using / self 三者互斥；takesLabel 记调用面。
-setParamMarks|self(id: I32, isOwn: Bool, isUsing: Bool, isSelf: Bool, takesLabel: Bool,) -> ():
+; 参数前缀写回：own / using / self 三者互斥。
+setParamMarks|self(id: I32, isOwn: Bool, isUsing: Bool, isSelf: Bool,) -> ():
     var node = self.ast.decls[id]
     node.isOwn = isOwn
     node.isUsing = isUsing
     node.isSelf = isSelf
-    node.takesLabel = takesLabel
     self.ast.decls[id] = node
     return
 setDeclMutable|self(id: I32, value: Bool,) -> ():

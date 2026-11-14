@@ -3,7 +3,7 @@ _support = "../../support"
 
 ; 测试助手：把文本按 UTF-8 编码后解码，避免每个用例重复取字节。
 解码文本|func(_text: String,) -> (Utf8Text,):
-    return decodeUtf8(tempUtf8Bytes(text))
+    return decodeUtf8(tempUtf8Bytes(_text))
 
 ; 测试助手：错误类别与起始字节偏移一起核对，两处都不得漂移。
 断言错误|func(text: Utf8Text, expected: String, at: I32,) -> ():

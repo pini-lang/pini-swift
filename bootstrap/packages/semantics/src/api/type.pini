@@ -33,7 +33,7 @@ id: I32 = -1
 
 ; 类别名：诊断与测试共用一份拼写。
 typeClassName|func(_kind: TypeClass,) -> (String,):
-    match kind:
+    match _kind:
         case typeClassInvalid:
             return "无效类型"
         case typeClassScalar:
@@ -72,7 +72,7 @@ count|self() -> (I32,):
 errorCount|self() -> (I32,):
     return len(self.errors)
 errorAt|self(_index: I32,) -> (TypeError,):
-    return self.errors[index]
+    return self.errors[_index]
 ; 可用：没有任何类型错误。
 isOK|self() -> (Bool,):
     return len(self.errors) == 0

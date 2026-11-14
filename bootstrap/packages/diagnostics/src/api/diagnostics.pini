@@ -55,7 +55,7 @@ lexicalCategory|func() -> (Category,):
 
 ; 严重度名：与宿主诊断标签的后缀一致。
 severityName|func(_severity: Severity,) -> (String,):
-    match severity:
+    match _severity:
         case severityError:
             return "错误"
         case severityWarning:
@@ -66,7 +66,7 @@ severityName|func(_severity: Severity,) -> (String,):
 
 ; 严重度次序：错误 0、警告 1、备注 2。
 severityRank|func(_severity: Severity,) -> (I32,):
-    match severity:
+    match _severity:
         case severityError:
             return 0
         case severityWarning:
@@ -77,7 +77,7 @@ severityRank|func(_severity: Severity,) -> (I32,):
 
 ; 类别名：不带严重度后缀。
 categoryName|func(_category: Category,) -> (String,):
-    match category:
+    match _category:
         case categoryLexical:
             return "词法"
         case categorySyntax:
@@ -190,18 +190,18 @@ compareDiagnostics|func(left: Diagnostic, right: Diagnostic,) -> (I32,):
 sortDiagnostics|func(_items: Array<Diagnostic>,) -> (Array<Diagnostic>,):
     var out: Array<Diagnostic> = []
     var i = 0
-    while i < len(items):
+    while i < len(_items):
         var at = len(out)
         var placing = true
         while placing:
             if at == 0:
                 placing = false
             else:
-                if compareDiagnostics(left = items[i], right = out[at - 1]) < 0:
+                if compareDiagnostics(left = _items[i], right = out[at - 1]) < 0:
                     at = at - 1
                 else:
                     placing = false
-        out = insertDiagnostic(items = out, index = at, item = items[i])
+        out = insertDiagnostic(items = out, index = at, item = _items[i])
         i = i + 1
     return out
 
@@ -266,10 +266,10 @@ renderDiagnostic|func(d: Diagnostic, text: SourceText,) -> (String,):
 
 ; 没有源文本时只渲染头行与备注：标签要靠源文本才能定位。
 renderHeadless|func(_d: Diagnostic,) -> (String,):
-    var out = d.file + ": " + labelOf(category = d.category, severity = d.severity) + " [" + d.code + "] " + d.message + "\n"
+    var out = _d.file + ": " + labelOf(category = _d.category, severity = _d.severity) + " [" + _d.code + "] " + _d.message + "\n"
     var n = 0
-    while n < len(d.notes):
-        out = out + "  备注 " + d.notes[n] + "\n"
+    while n < len(_d.notes):
+        out = out + "  备注 " + _d.notes[n] + "\n"
         n = n + 1
     return out
 
@@ -322,12 +322,12 @@ issues|self() -> (Array<String>,):
 ; 追加标签；顺序即渲染顺序（主标签会被提到最前）。
 addLabel|self(_label: Label,) -> (Diagnostic,):
     var out = self
-    out.labels = out.labels.append(label)
+    out.labels = out.labels.append(_label)
     return out
 ; 追加备注；顺序即渲染顺序。
 addNote|self(_note: String,) -> (Diagnostic,):
     var out = self
-    out.notes = out.notes.append(note)
+    out.notes = out.notes.append(_note)
     return out
 ; 主标签下标；没有主标签答 -1。
 primaryIndex|self() -> (I32,):

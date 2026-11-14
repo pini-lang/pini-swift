@@ -46,7 +46,7 @@ entries: Array<LayoutEntry> = []
 
 ; 角色名：诊断、测试与回执共用一份拼写。
 slotRoleName|func(_role: SlotRole,) -> (String,):
-    match role:
+    match _role:
         case slotStrongCount:
             return "强计数"
         case slotWeakCount:
@@ -106,12 +106,12 @@ headSlots|func() -> (Array<Slot>,):
 ; 结构、对象的布局：头四格后按声明序每字段一格，字段类型照抄形态表。
 layoutFields|func(_shape: ShapeEntry,) -> (LayoutEntry,):
     var out = LayoutEntry()
-    out.typeId = shape.typeId
-    out.shape = shape.kind
+    out.typeId = _shape.typeId
+    out.shape = _shape.kind
     out.slots = headSlots()
     var i = 0
-    while i < len(shape.fields):
-        let field = shape.fields[i]
+    while i < len(_shape.fields):
+        let field = _shape.fields[i]
         out.slots = out.slots.append(makeSlot(index = headSlotCount() + i, role = slotField, name = field.name, typeId = field.typeId))
         i = i + 1
     out.slotCount = len(out.slots)
@@ -120,14 +120,14 @@ layoutFields|func(_shape: ShapeEntry,) -> (LayoutEntry,):
 ; 枚举的布局：头四格后是标签槽，载荷窗口按最宽用例占位；逐用例的载荷类型另表。
 layoutEnum|func(_shape: ShapeEntry,) -> (LayoutEntry,):
     var out = LayoutEntry()
-    out.typeId = shape.typeId
-    out.shape = shape.kind
+    out.typeId = _shape.typeId
+    out.shape = _shape.kind
     out.slots = headSlots()
     out.slots = out.slots.append(makeSlot(index = headSlotCount(), role = slotCaseTag, name = "用例标签", typeId = -1))
     var width = 0
     var i = 0
-    while i < len(shape.cases):
-        let item = shape.cases[i]
+    while i < len(_shape.cases):
+        let item = _shape.cases[i]
         var row = CaseLayout()
         row.name = item.name
         row.payload = item.payload
@@ -205,7 +205,7 @@ count|self() -> (I32,):
     return len(self.entries)
 ; 条目读：下标越界是运行时陷阱，调用方先经 findLayout 取下标。
 entryAt|self(_index: I32,) -> (LayoutEntry,):
-    return self.entries[index]
+    return self.entries[_index]
 
 ; 按类型下标查条目：升序表线性扫，未命中答 -1。
 findLayout|func(table: LayoutTable, typeId: I32,) -> (I32,):

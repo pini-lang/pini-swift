@@ -378,7 +378,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
             名称: String = "默认"
 
         取名|func(using _配: 配置,) -> (String,):
-            return 配.名称
+            return _配.名称
 
         main|func() -> ():
             print(取名())
@@ -401,10 +401,10 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
             return 1
 
         甲|func(using _块: 计数块,) -> (I32,):
-            return 块.值
+            return _块.值
 
         乙|func(using _块: 计数块,) -> (I32,):
-            return 块.值
+            return _块.值
 
         main|func() -> ():
             print(甲())
@@ -446,7 +446,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
             return 1
 
         取块|func(using _块: 计数块,) -> (I32,):
-            return 块.值
+            return _块.值
 
         main|func() -> ():
             let 自备 = 计数块()
@@ -463,7 +463,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
         ///  注意  全显式调用同一签名是**合法**的（见本件「取用前缀只标记它自己那一个参数」）。
         let source = #"""
         取|func(using _甲: I32,) -> (I32,):
-            return 甲
+            return _甲
 
         main|func() -> ():
             print(取())
@@ -490,7 +490,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
             值: I32 = 2
 
         甲|func(using _块: 计数块,) -> (I32,):
-            return 块.值
+            return _块.值
 
         main|func() -> ():
             print(甲())
@@ -522,7 +522,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
             值: I32 = 取乙()
 
         取乙|func(using _乙: 计数块,) -> (I32,):
-            return 乙.值
+            return _乙.值
 
         (盒)
             值: I32 = 取乙()
@@ -549,7 +549,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
             值: I32 = 读甲()
 
         读甲|func(using _甲: 甲块,) -> (I32,):
-            return 甲.值
+            return _甲.值
 
         main|func() -> ():
             print(1)
@@ -568,7 +568,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
             计数: I32 = 7
 
         取匣|func(using _箱: 匣<I32>,) -> (I32,):
-            return 箱.计数
+            return _箱.计数
 
         main|func() -> ():
             print(取匣())
@@ -698,7 +698,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
             名称: String = "默认"
 
         取|func(_x: I32,) -> (I32,):
-            return x
+            return _x
 
         main|func() -> ():
             print(取(配置))
@@ -770,7 +770,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
             名称: String = "默认"
 
         取|func(_x: String,) -> (String,):
-            return x
+            return _x
 
         main|func() -> ():
             let 配置: String = "本地"
@@ -782,7 +782,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
             值: I32 = 5
 
         取|func(_x: I32,) -> (I32,):
-            return x
+            return _x
 
         main|func() -> ():
             print(取(服务))
@@ -806,7 +806,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
             名称: String = "默认"
 
         取名|func(using _配: 配置,) -> (String,):
-            return 配.名称
+            return _配.名称
 
         main|func() -> ():
             print(取名())
@@ -851,7 +851,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
 
         <可显示>
         描述|self(using _配: 配置,) -> (String,):
-            return 配.名称
+            return _配.名称
         """#
 
         for (label, source) in [
@@ -881,7 +881,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
             名称: String = "默认"
 
         注入测试|test(using _配: 配置,) -> ():
-            print(配.名称)
+            print(_配.名称)
             return
         """#
         let foreignBlock = #"""
@@ -913,7 +913,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
             名称: String = "默认"
 
         取名|func(using _配: 配置,) -> (String,):
-            return 配.名称
+            return _配.名称
 
         main|func() -> ():
             print(取名())
@@ -928,7 +928,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
 
         [[服务]]
             取名|self(using _配: 配置,) -> (String,):
-                return 配.名称
+                return _配.名称
 
         main|func() -> ():
             let s: 服务 = 服务()
@@ -1013,7 +1013,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
             值: I32 = 7
 
         取块|func(using _块: 计数块,) -> (I32,):
-            return 块.值
+            return _块.值
 
         main|func() -> ():
             var f: () -> (I32,) = 取块
@@ -1041,7 +1041,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
             值: I32 = 7
 
         取块|func(using _块: 计数块,) -> (I32,):
-            return 块.值
+            return _块.值
 
         main|func() -> ():
             var f = 取块
@@ -1061,7 +1061,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
             值: I32 = 7
 
         取块|func(using _块: 计数块,) -> (I32,):
-            return 块.值
+            return _块.值
 
         main|func() -> ():
             var f: (计数块,) -> (I32,) = 取块
@@ -1080,7 +1080,7 @@ struct GivenUsingTests: Sendable, PiniSourceLowering {
             值: I32 = 7
 
         取块|func(using _块: 计数块,) -> (I32,):
-            return 块.值
+            return _块.值
 
         main|func() -> ():
             var h = 取块

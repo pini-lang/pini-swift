@@ -268,7 +268,7 @@ struct ContractReferenceTests: Sendable {
     private static let bareAwaitProgram = """
         f|func(_n: I32,) => (I32,):
             sleep(1)
-            return ok(n)
+            return ok(_n)
 
         g|func() => (I32,):
             await f(7)
@@ -288,7 +288,7 @@ struct ContractReferenceTests: Sendable {
     private static let matchSubjectAwaitProgram = """
         f|func(_n: I32,) => (I32,):
             sleep(1)
-            return ok(n)
+            return ok(_n)
 
         g|func() => (I32,):
             match await f(3):
@@ -311,7 +311,7 @@ struct ContractReferenceTests: Sendable {
     private static let tryOperandAwaitProgram = """
         f|func(_n: I32,) => (I32,):
             sleep(1)
-            return ok(n)
+            return ok(_n)
 
         g|func() => (I32,):
             try await f(5) else e:
@@ -437,10 +437,10 @@ struct ContractReferenceTests: Sendable {
     /// 期望值手写：收下一笔后队列长度 `1`，取走队首后 `0`。
     private static let givenInstanceProgram = """
         探|func(using _s: 调度器,) -> (I32,):
-            s.收下(空句柄)
-            print(len(s.元素))
-            s.选择下一个任务()
-            return len(s.元素)
+            _s.收下(空句柄)
+            print(len(_s.元素))
+            _s.选择下一个任务()
+            return len(_s.元素)
 
         main|func() -> ():
             print(探())
@@ -547,7 +547,7 @@ struct ContractReferenceTests: Sendable {
         """ : ""
         return overrideBlock + """
         闸|func(_毫秒: I32,) => (I32,):
-            sleep(毫秒)
+            sleep(_毫秒)
             return ok(0)
 
         甲|func() => (I32,):

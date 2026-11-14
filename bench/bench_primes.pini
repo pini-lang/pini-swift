@@ -2,11 +2,11 @@
 ; 解释器运行：pini run bench/bench_primes.pini
 ; 预期输出：9592
 isPrime|func(_n: I32,) -> (I32,):
-    if n < 2:
+    if _n < 2:
         return 0
     var d = 2
-    while d * d <= n:
-        if n % d == 0:
+    while d * d <= _n:
+        if _n % d == 0:
             return 0
         d = d + 1
     return 1

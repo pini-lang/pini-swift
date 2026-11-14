@@ -17,7 +17,7 @@ offset: I32 = -1
 
 ; 类别名：与宿主诊断表的消息组同名，回执、测试与诊断共用一份拼写。
 loadErrorName|func(_kind: LoadErrorKind,) -> (String,):
-    match kind:
+    match _kind:
         case errorRootMissing:
             return "源码根不存在"
         case errorDirectoryUnreadable:

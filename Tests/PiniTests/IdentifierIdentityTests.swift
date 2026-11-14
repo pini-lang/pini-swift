@@ -52,7 +52,7 @@ struct IdentifierIdentityTests: Sendable {
     func acceptsDecomposedIdentifier() throws {
         let 源码 = """
             cafe\u{0301}|func(_起始: I32,) -> (I32,):
-                return 起始
+                return _起始
             """
         try SemanticAnalyzer().analyze(module: try module(源码))
     }
@@ -96,7 +96,7 @@ struct IdentifierIdentityTests: Sendable {
     func acceptsJamoIdentifier() throws {
         let 源码 = """
             \u{1100}\u{1161}\u{11A8}|func(_起始: I32,) -> (I32,):
-                return 起始
+                return _起始
             """
         try SemanticAnalyzer().analyze(module: try module(源码))
     }
@@ -188,7 +188,7 @@ struct IdentifierIdentityTests: Sendable {
     func acceptsChineseWithLatin() throws {
         let 源码 = """
             计数2|func(_起始: I32,) -> (I32,):
-                return 起始
+                return _起始
             """
         try SemanticAnalyzer().analyze(module: try module(源码))
     }
@@ -234,7 +234,7 @@ struct IdentifierIdentityTests: Sendable {
     func acceptsChineseIdentifier() throws {
         let 源码 = """
             计数|func(_起始: I32,) -> (I32,):
-                var 结果 = 起始
+                var 结果 = _起始
                 return 结果
             """
         try SemanticAnalyzer().analyze(module: try module(源码))

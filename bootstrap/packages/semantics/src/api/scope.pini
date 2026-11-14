@@ -64,7 +64,7 @@ failed: Bool = false
 
 ; 局部种类名：诊断、测试与回执共用一份拼写。
 localKindName|func(_kind: LocalKind,) -> (String,):
-    match kind:
+    match _kind:
         case localParam:
             return "参数"
         case localSelf:
@@ -83,7 +83,7 @@ isLocalKind|func(kind: LocalKind, expected: LocalKind,) -> (Bool,):
 
 ; 帧种类名：与计划件的四类帧同名。
 scopeKindName|func(_kind: ScopeKind,) -> (String,):
-    match kind:
+    match _kind:
         case scopeFunction:
             return "函数"
         case scopeBlock:
@@ -113,7 +113,7 @@ isScopeError|func(error: ScopeError, kind: ScopeErrorKind,) -> (Bool,):
 
 ; 错误类别名：测试与诊断共用一份拼写。
 scopeErrorName|func(_kind: ScopeErrorKind,) -> (String,):
-    match kind:
+    match _kind:
         case scopeLocalDuplicated:
             return "局部名字重复"
         case scopeNoFrame:
@@ -134,11 +134,11 @@ enterScope|func(stack: ScopeStack, kind: ScopeKind, file: String, offset: I32,) 
 
 ; 退帧：截断到帧起点；函数帧退出时归还槽位，块帧不归还。
 leaveScope|func(_stack: ScopeStack,) -> (ScopeStack,):
-    if len(stack.frames) == 0:
-        return stack
-    let last = len(stack.frames) - 1
-    let frame = stack.frames[last]
-    var out = stack
+    if len(_stack.frames) == 0:
+        return _stack
+    let last = len(_stack.frames) - 1
+    let frame = _stack.frames[last]
+    var out = _stack
     out.frames = keepFrames(values = out.frames, count = last)
     out.locals = keepLocals(values = out.locals, count = frame.start)
     if isScopeKind(kind = frame.kind, expected = scopeFunction):
@@ -165,7 +165,7 @@ keepLocals|func(values: Array<LocalSymbol>, count: I32,) -> (Array<LocalSymbol>,
 
 ; 当前帧：空栈答 -1。
 currentFrame|func(_stack: ScopeStack,) -> (I32,):
-    return len(stack.frames) - 1
+    return len(_stack.frames) - 1
 
 ; 同帧判重：只在当前帧的局部区间内按键找。
 sameFrameHas|func(stack: ScopeStack, key: Array<U8>,) -> (Bool,):
@@ -250,7 +250,7 @@ slotCount|self() -> (I32,):
     return self.nextSlot
 ; 局部读取：下标越界是运行时陷阱，调用方先经 lookupLocal 取下标。
 localAt|self(_index: I32,) -> (LocalSymbol,):
-    return self.locals[index]
+    return self.locals[_index]
 ; 帧读取：与 localAt 同规。
 frameAt|self(_index: I32,) -> (ScopeFrame,):
-    return self.frames[index]
+    return self.frames[_index]

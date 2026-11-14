@@ -2,13 +2,13 @@
 ; 运行：pini run examples/stdlib-container.pini
 ; 预期：八个读数依次为 映射 / 筛选 / 归约 / 遍历两行 / 逆序 / 拼接 / 取前 / 跳过
 double|func(_x: I32,) -> (I32,):
-    return x * 2
+    return _x * 2
 
 isEven|func(_x: I32,) -> (Bool,):
-    return x % 2 == 0
+    return _x % 2 == 0
 
 show|func(_x: I32,) -> ():
-    print(x)
+    print(_x)
     return
 
 add|func(acc: I32, x: I32,) -> (I32,):

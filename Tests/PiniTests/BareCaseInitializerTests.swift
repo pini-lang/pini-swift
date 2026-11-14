@@ -44,7 +44,7 @@ struct BareCaseInitializerTests: Sendable, PiniSourceLowering {
         旗满
 
         拿|func(_f: 旗,) -> (I32,):
-            match f:
+            match _f:
                 case 旗空:
                     return 0
                 case 旗满:
@@ -75,7 +75,7 @@ struct BareCaseInitializerTests: Sendable, PiniSourceLowering {
 
         数|func(_t: 表,) -> (I32,):
             var n = 0
-            var cur = t
+            var cur = _t
             var go = true
             while go:
                 match cur:
@@ -142,7 +142,7 @@ struct BareCaseInitializerTests: Sendable, PiniSourceLowering {
         旗满
 
         拿|func(_f: 旗,) -> (I32,):
-            match f:
+            match _f:
                 case 旗空:
                     return 0
                 case 旗满:

@@ -53,7 +53,7 @@ def build(codes):
         "diagnosticMessage|func(_code: String,) -> (String,):",
     ]
     for code, (message, _) in codes.items():
-        lines.append('    if code == "%s":' % code)
+        lines.append('    if _code == "%s":' % code)
         lines.append('        return "%s"' % pini_string(message.encode("utf-8")))
     lines.append('    return ""')
     lines += [
@@ -64,7 +64,7 @@ def build(codes):
     for code, (_, suggestion) in codes.items():
         if not suggestion:
             continue
-        lines.append('    if code == "%s":' % code)
+        lines.append('    if _code == "%s":' % code)
         lines.append('        return "%s"' % pini_string(suggestion.encode("utf-8")))
     lines.append('    return ""')
     lines.append("")

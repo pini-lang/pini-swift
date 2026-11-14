@@ -19,9 +19,9 @@ workerB|func() => ():
 
 ; 带返回值与错误的进程：正常路径 ok(v)，失败路径 err(Error("..."))
 compute|func(_n: I32,) => (I32,):
-    if n < 0:
+    if _n < 0:
         return err(Error("n 必须非负"))
-    return ok(n * 2)
+    return ok(_n * 2)
 
 main|func() -> ():
     var a = workerA()

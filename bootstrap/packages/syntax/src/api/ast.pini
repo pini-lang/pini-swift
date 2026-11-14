@@ -50,8 +50,6 @@ isForeign: Bool = false
 isOwn: Bool = false
 isUsing: Bool = false
 isSelf: Bool = false
-; 参数是否要求调用点写标签；声明写 `_名` 时为假，名字区间已摘掉前导 `_`。
-takesLabel: Bool = true
 kids: Array<I32> = []
 
 ; 表达式类别：前缀避开记号类别名，包内枚举项名不得重名。
@@ -122,7 +120,7 @@ typeFunction
 
 ; 表达式类别码：只用于比较与索引，不参与枚举相等。
 exprKindTag|func(_kind: ExprKind,) -> (I32,):
-    match kind:
+    match _kind:
         case exprUnknown:
             return 0
         case exprInteger:
@@ -169,7 +167,7 @@ exprKindTag|func(_kind: ExprKind,) -> (I32,):
 
 ; 语句类别码。
 stmtKindTag|func(_kind: StmtKind,) -> (I32,):
-    match kind:
+    match _kind:
         case stmtUnknown:
             return 0
         case stmtBlock:
@@ -202,7 +200,7 @@ stmtKindTag|func(_kind: StmtKind,) -> (I32,):
 
 ; 声明类别码。
 declKindTag|func(_kind: DeclKind,) -> (I32,):
-    match kind:
+    match _kind:
         case declUnknown:
             return 0
         case declStruct:
@@ -231,7 +229,7 @@ declKindTag|func(_kind: DeclKind,) -> (I32,):
 
 ; 类型类别码。
 typeKindTag|func(_kind: TypeKind,) -> (I32,):
-    match kind:
+    match _kind:
         case typeUnknown:
             return 0
         case typeNamed:
@@ -281,7 +279,7 @@ pushDecl|self(kind: DeclKind, start: I32, end: I32,) -> (I32,):
     return len(self.decls) - 1
 ; 顶层登记：模块按源序保存声明下标。
 addItem|self(_id: I32,) -> ():
-    self.items = self.items.append(id)
+    self.items = self.items.append(_id)
     return
 typeCount|self() -> (I32,):
     return len(self.types)
@@ -294,15 +292,15 @@ declCount|self() -> (I32,):
 itemCount|self() -> (I32,):
     return len(self.items)
 typeAt|self(_id: I32,) -> (TypeNode,):
-    return self.types[id]
+    return self.types[_id]
 exprAt|self(_id: I32,) -> (ExprNode,):
-    return self.exprs[id]
+    return self.exprs[_id]
 stmtAt|self(_id: I32,) -> (StmtNode,):
-    return self.stmts[id]
+    return self.stmts[_id]
 declAt|self(_id: I32,) -> (DeclNode,):
-    return self.decls[id]
+    return self.decls[_id]
 itemAt|self(_index: I32,) -> (I32,):
-    return self.items[index]
+    return self.items[_index]
 ; 节点身份判定：类别码是唯一判据。
 isType|self(id: I32, kind: TypeKind,) -> (Bool,):
     return self.types[id].kind == typeKindTag(kind)
@@ -310,90 +308,90 @@ isExpr|self(id: I32, kind: ExprKind,) -> (Bool,):
     return self.exprs[id].kind == exprKindTag(kind)
 ; 跨包谓词：枚举值不能跨包引用，表达式类别只经这里分流。
 isIdentifierExpr|self(_id: I32,) -> (Bool,):
-    return self.exprs[id].kind == exprKindTag(exprIdentifier)
+    return self.exprs[_id].kind == exprKindTag(exprIdentifier)
 isCaseExpr|self(_id: I32,) -> (Bool,):
-    return self.exprs[id].kind == exprKindTag(exprCase)
+    return self.exprs[_id].kind == exprKindTag(exprCase)
 isMemberExpr|self(_id: I32,) -> (Bool,):
-    return self.exprs[id].kind == exprKindTag(exprMember)
+    return self.exprs[_id].kind == exprKindTag(exprMember)
 isCallExpr|self(_id: I32,) -> (Bool,):
-    return self.exprs[id].kind == exprKindTag(exprCall)
+    return self.exprs[_id].kind == exprKindTag(exprCall)
 isBinaryExpr|self(_id: I32,) -> (Bool,):
-    return self.exprs[id].kind == exprKindTag(exprBinary)
+    return self.exprs[_id].kind == exprKindTag(exprBinary)
 ; 标签实参：二元节点、名字区间非空且运算符为赋值，三者同时成立。
 isLabeledArgument|self(_id: I32,) -> (Bool,):
-    if !self.isBinaryExpr(id):
+    if !self.isBinaryExpr(_id):
         return false
-    let node = self.exprs[id]
+    let node = self.exprs[_id]
     if node.nameEnd <= node.nameStart:
         return false
     return node.op == kindTag(opAssign)
 isIntegerExpr|self(_id: I32,) -> (Bool,):
-    return self.exprs[id].kind == exprKindTag(exprInteger)
+    return self.exprs[_id].kind == exprKindTag(exprInteger)
 isFloatExpr|self(_id: I32,) -> (Bool,):
-    return self.exprs[id].kind == exprKindTag(exprFloat)
+    return self.exprs[_id].kind == exprKindTag(exprFloat)
 isStringExpr|self(_id: I32,) -> (Bool,):
-    return self.exprs[id].kind == exprKindTag(exprString)
+    return self.exprs[_id].kind == exprKindTag(exprString)
 isBoolExpr|self(_id: I32,) -> (Bool,):
-    if self.exprs[id].kind == exprKindTag(exprTrue):
+    if self.exprs[_id].kind == exprKindTag(exprTrue):
         return true
-    return self.exprs[id].kind == exprKindTag(exprFalse)
+    return self.exprs[_id].kind == exprKindTag(exprFalse)
 isNilExpr|self(_id: I32,) -> (Bool,):
-    return self.exprs[id].kind == exprKindTag(exprNil)
+    return self.exprs[_id].kind == exprKindTag(exprNil)
 isInterpolatedExpr|self(_id: I32,) -> (Bool,):
-    return self.exprs[id].kind == exprKindTag(exprInterpolated)
+    return self.exprs[_id].kind == exprKindTag(exprInterpolated)
 isArrayExpr|self(_id: I32,) -> (Bool,):
-    return self.exprs[id].kind == exprKindTag(exprArray)
+    return self.exprs[_id].kind == exprKindTag(exprArray)
 isTupleExpr|self(_id: I32,) -> (Bool,):
-    return self.exprs[id].kind == exprKindTag(exprTuple)
+    return self.exprs[_id].kind == exprKindTag(exprTuple)
 isDictionaryExpr|self(_id: I32,) -> (Bool,):
-    return self.exprs[id].kind == exprKindTag(exprDictionary)
+    return self.exprs[_id].kind == exprKindTag(exprDictionary)
 isSetExpr|self(_id: I32,) -> (Bool,):
-    return self.exprs[id].kind == exprKindTag(exprSet)
+    return self.exprs[_id].kind == exprKindTag(exprSet)
 isSubscriptExpr|self(_id: I32,) -> (Bool,):
-    return self.exprs[id].kind == exprKindTag(exprSubscript)
+    return self.exprs[_id].kind == exprKindTag(exprSubscript)
 isSliceExpr|self(_id: I32,) -> (Bool,):
-    return self.exprs[id].kind == exprKindTag(exprSlice)
+    return self.exprs[_id].kind == exprKindTag(exprSlice)
 ; 字面量：六类基本字面量合判，容器补判元素类型时用来分流。
 isLiteralExpr|self(_id: I32,) -> (Bool,):
-    if self.isIntegerExpr(id) || self.isFloatExpr(id):
+    if self.isIntegerExpr(_id) || self.isFloatExpr(_id):
         return true
-    if self.isStringExpr(id) || self.isInterpolatedExpr(id):
+    if self.isStringExpr(_id) || self.isInterpolatedExpr(_id):
         return true
-    if self.isBoolExpr(id) || self.isNilExpr(id):
+    if self.isBoolExpr(_id) || self.isNilExpr(_id):
         return true
     return false
 isStmt|self(id: I32, kind: StmtKind,) -> (Bool,):
     return self.stmts[id].kind == stmtKindTag(kind)
 ; 跨包谓词：枚举值不能跨包引用，语句类别只经这里分流。
 isBlockStmt|self(_id: I32,) -> (Bool,):
-    return self.stmts[id].kind == stmtKindTag(stmtBlock)
+    return self.stmts[_id].kind == stmtKindTag(stmtBlock)
 isVariableStmt|self(_id: I32,) -> (Bool,):
-    return self.stmts[id].kind == stmtKindTag(stmtVariable)
+    return self.stmts[_id].kind == stmtKindTag(stmtVariable)
 ; 变量语句的可变性：`var` 记可变，`let` 记不可变。
 isMutableVariableStmt|self(_id: I32,) -> (Bool,):
-    return self.stmts[id].op == kindTag(kwVar)
+    return self.stmts[_id].op == kindTag(kwVar)
 isAssignStmt|self(_id: I32,) -> (Bool,):
-    return self.stmts[id].kind == stmtKindTag(stmtAssign)
+    return self.stmts[_id].kind == stmtKindTag(stmtAssign)
 isExpressionStmt|self(_id: I32,) -> (Bool,):
-    return self.stmts[id].kind == stmtKindTag(stmtExpression)
+    return self.stmts[_id].kind == stmtKindTag(stmtExpression)
 isIfStmt|self(_id: I32,) -> (Bool,):
-    return self.stmts[id].kind == stmtKindTag(stmtIf)
+    return self.stmts[_id].kind == stmtKindTag(stmtIf)
 isWhileStmt|self(_id: I32,) -> (Bool,):
-    return self.stmts[id].kind == stmtKindTag(stmtWhile)
+    return self.stmts[_id].kind == stmtKindTag(stmtWhile)
 isForStmt|self(_id: I32,) -> (Bool,):
-    return self.stmts[id].kind == stmtKindTag(stmtFor)
+    return self.stmts[_id].kind == stmtKindTag(stmtFor)
 isMatchStmt|self(_id: I32,) -> (Bool,):
-    return self.stmts[id].kind == stmtKindTag(stmtMatch)
+    return self.stmts[_id].kind == stmtKindTag(stmtMatch)
 isReturnStmt|self(_id: I32,) -> (Bool,):
-    return self.stmts[id].kind == stmtKindTag(stmtReturn)
+    return self.stmts[_id].kind == stmtKindTag(stmtReturn)
 isBreakStmt|self(_id: I32,) -> (Bool,):
-    return self.stmts[id].kind == stmtKindTag(stmtBreak)
+    return self.stmts[_id].kind == stmtKindTag(stmtBreak)
 isContinueStmt|self(_id: I32,) -> (Bool,):
-    return self.stmts[id].kind == stmtKindTag(stmtContinue)
+    return self.stmts[_id].kind == stmtKindTag(stmtContinue)
 isPassStmt|self(_id: I32,) -> (Bool,):
-    return self.stmts[id].kind == stmtKindTag(stmtPass)
+    return self.stmts[_id].kind == stmtKindTag(stmtPass)
 isDeferStmt|self(_id: I32,) -> (Bool,):
-    return self.stmts[id].kind == stmtKindTag(stmtDefer)
+    return self.stmts[_id].kind == stmtKindTag(stmtDefer)
 isDecl|self(id: I32, kind: DeclKind,) -> (Bool,):
     return self.decls[id].kind == declKindTag(kind)
 ; 子节点读取：越界答 -1，调用方按 -1 表示缺省。
@@ -419,53 +417,53 @@ typeChild|self(id: I32, index: I32,) -> (I32,):
 
 ; 类别判定：下游只问「是不是某类声明」，不自己比较类别码，也不依赖码值。
 isStructDeclCode|func(_code: I32,) -> (Bool,):
-    return code == declKindTag(declStruct)
+    return _code == declKindTag(declStruct)
 
 isObjectDeclCode|func(_code: I32,) -> (Bool,):
-    return code == declKindTag(declObject)
+    return _code == declKindTag(declObject)
 
 isEnumDeclCode|func(_code: I32,) -> (Bool,):
-    return code == declKindTag(declEnum)
+    return _code == declKindTag(declEnum)
 
 isFunctionDeclCode|func(_code: I32,) -> (Bool,):
-    return code == declKindTag(declFunction)
+    return _code == declKindTag(declFunction)
 
 isVariableDeclCode|func(_code: I32,) -> (Bool,):
-    return code == declKindTag(declVariable)
+    return _code == declKindTag(declVariable)
 
 isExtensionDeclCode|func(_code: I32,) -> (Bool,):
-    return code == declKindTag(declExtension)
+    return _code == declKindTag(declExtension)
 
 isImportBlockCode|func(_code: I32,) -> (Bool,):
-    return code == declKindTag(declImportBlock)
+    return _code == declKindTag(declImportBlock)
 
 isImportEntryCode|func(_code: I32,) -> (Bool,):
-    return code == declKindTag(declImportEntry)
+    return _code == declKindTag(declImportEntry)
 
 isFieldDeclCode|func(_code: I32,) -> (Bool,):
-    return code == declKindTag(declField)
+    return _code == declKindTag(declField)
 
 isParamDeclCode|func(_code: I32,) -> (Bool,):
-    return code == declKindTag(declParam)
+    return _code == declKindTag(declParam)
 
 isVariantDeclCode|func(_code: I32,) -> (Bool,):
-    return code == declKindTag(declVariant)
+    return _code == declKindTag(declVariant)
 
 ; 类型类别判定：语义层按同一组入口分流，不自己认识类别码。
 isNamedTypeCode|func(_code: I32,) -> (Bool,):
-    return code == typeKindTag(typeNamed)
+    return _code == typeKindTag(typeNamed)
 
 isGenericTypeCode|func(_code: I32,) -> (Bool,):
-    return code == typeKindTag(typeGeneric)
+    return _code == typeKindTag(typeGeneric)
 
 isOptionalTypeCode|func(_code: I32,) -> (Bool,):
-    return code == typeKindTag(typeOptional)
+    return _code == typeKindTag(typeOptional)
 
 isPointerTypeCode|func(_code: I32,) -> (Bool,):
-    return code == typeKindTag(typePointer)
+    return _code == typeKindTag(typePointer)
 
 isTupleTypeCode|func(_code: I32,) -> (Bool,):
-    return code == typeKindTag(typeTuple)
+    return _code == typeKindTag(typeTuple)
 
 isFunctionTypeCode|func(_code: I32,) -> (Bool,):
-    return code == typeKindTag(typeFunction)
+    return _code == typeKindTag(typeFunction)

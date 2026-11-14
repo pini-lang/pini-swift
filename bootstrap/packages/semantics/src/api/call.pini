@@ -65,7 +65,7 @@ params: Array<CallParam> = []
 
 ; 错误类别名：测试、诊断与回执共用一份拼写。
 callErrorName|func(_kind: CallErrorKind,) -> (String,):
-    match kind:
+    match _kind:
         case callArity:
             return "实参个数不匹配"
         case callUnknownLabel:
@@ -88,7 +88,7 @@ isCallError|func(error: CallError, kind: CallErrorKind,) -> (Bool,):
 
 ; 诊断码：复用宿主已登记的码，标签错沿用宿主的 E4-009。
 callErrorCode|func(_kind: CallErrorKind,) -> (String,):
-    match kind:
+    match _kind:
         case callArity:
             return "E4-005"
         case callUnknownLabel:
@@ -118,7 +118,7 @@ makeCallError|func(kind: CallErrorKind, file: String, offset: I32, callee: Strin
 
 ; 计数字本：诊断里的个数与实得统一走这一条。
 countText|func(_value: I32,) -> (String,):
-    return "\(value)"
+    return "\(_value)"
 
 ; 被调方节点：调用节点首位固定是被调表达式；越界答 -1。
 calleeNode|func(unit: CompilationUnit, node: I32,) -> (I32,):
@@ -160,8 +160,8 @@ paramIndexOf|func(params: Array<CallParam>, name: String,) -> (I32,):
 requiredCount|func(_params: Array<CallParam>,) -> (I32,):
     var total = 0
     var i = 0
-    while i < len(params):
-        if !params[i].hasDefault && !params[i].isUsing:
+    while i < len(_params):
+        if !_params[i].hasDefault && !_params[i].isUsing:
             total = total + 1
         i = i + 1
     return total
@@ -176,7 +176,7 @@ failCall|func(out: CallResult, site: CallSite, offset: I32, kind: CallErrorKind,
 
 ; 待定收尾：被调方或返回尚未定型，不报错也不写错误标记。
 deferCall|func(_out: CallResult,) -> (CallResult,):
-    var done = out
+    var done = _out
     done.deferred = true
     done.typeId = unsetTypeId()
     return done
@@ -258,10 +258,11 @@ declParams|func(world: MemberWorld, ref: DeclRef,) -> (Array<CallParam>,):
         let node = unit.ast.decls[kid]
         if isParamDeclCode(node.kind):
             var param = CallParam()
-            param.name = decodeRange(bytes = bytes, start = node.nameStart, end = node.nameEnd)
+            let name = decodeRange(bytes = bytes, start = node.nameStart, end = node.nameEnd)
+            param.name = name
             param.hasDefault = len(node.kids) > 0
             param.isUsing = node.isUsing
-            param.takesLabel = node.takesLabel
+            param.takesLabel = !(len(name) > 0 && name.slice(0, 1) == "_")
             param.typeId = world.types.typeOf(unit = ref.unit, decl = kid)
             out = out.append(param)
         i = i + 1

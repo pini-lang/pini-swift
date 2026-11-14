@@ -17,7 +17,7 @@ detail: String = ""
 
 ; 类别名：诊断、测试与交付回执共用一份拼写。
 typeErrorName|func(_kind: TypeErrorKind,) -> (String,):
-    match kind:
+    match _kind:
         case typeErrorUnknownName:
             return "类型未声明"
         case typeErrorNotTypeName:

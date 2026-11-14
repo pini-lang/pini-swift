@@ -20,7 +20,7 @@ errorCount|self() -> (I32,):
 fileCount|self() -> (I32,):
     return len(self.files)
 fileAt|self(_index: I32,) -> (PendingUnit,):
-    return self.files[index]
+    return self.files[_index]
 paths|self() -> (Array<String>,):
     var out: Array<String> = []
     var i = 0
@@ -51,12 +51,12 @@ insertPending|func(items: Array<PendingUnit>, value: PendingUnit,) -> (Array<Pen
 ; 目标源码根：测试目标由公共生产源码与入口目录组成，其余只取计划给的源码根。
 targetRoots|func(_target: TargetPlan,) -> (Array<String>,):
     var out: Array<String> = []
-    if package.isTestTarget(target):
+    if package.isTestTarget(_target):
         out = out.append("src")
-        if target.sourceRoot != "src":
-            out = out.append(target.sourceRoot)
+        if _target.sourceRoot != "src":
+            out = out.append(_target.sourceRoot)
         return out
-    out = out.append(target.sourceRoot)
+    out = out.append(_target.sourceRoot)
     return out
 
 ; 收集源码集：按源码根扫描、去重排序；只碰文件系统，不解析。
@@ -151,11 +151,11 @@ loadPackage|func(packageAbs: String, plan: PackagePlan,) -> (LoadResult,):
 ; 收集整个工作区：按计划的拓扑序逐包收集，不解析；装载规则的全量判据读这里。
 collectWorkspace|func(_plan: BuildPlan,) -> (SourceSet,):
     var out = SourceSet()
-    if !plan.isOK():
+    if !_plan.isOK():
         return out
     var i = 0
-    while i < len(plan.packages):
-        let set = collectPackage(packageAbs = plan.rootPath + "/" + plan.packages[i].rootPath, plan = plan.packages[i])
+    while i < len(_plan.packages):
+        let set = collectPackage(packageAbs = _plan.rootPath + "/" + _plan.packages[i].rootPath, plan = _plan.packages[i])
         var e = 0
         while e < len(set.errors):
             out.errors = out.errors.append(set.errors[e])
@@ -170,11 +170,11 @@ collectWorkspace|func(_plan: BuildPlan,) -> (SourceSet,):
 ; 装载整个工作区：按计划的拓扑序逐包装载。
 loadWorkspace|func(_plan: BuildPlan,) -> (LoadResult,):
     var out = LoadResult()
-    if !plan.isOK():
+    if !_plan.isOK():
         return out
     var i = 0
-    while i < len(plan.packages):
-        let loaded = loadPackage(packageAbs = plan.rootPath + "/" + plan.packages[i].rootPath, plan = plan.packages[i])
+    while i < len(_plan.packages):
+        let loaded = loadPackage(packageAbs = _plan.rootPath + "/" + _plan.packages[i].rootPath, plan = _plan.packages[i])
         var u = 0
         while u < len(loaded.units):
             out.units = out.units.append(loaded.units[u])
@@ -205,12 +205,12 @@ errors: Array<LoadError> = []
 ; 装载整个工作区并保留包分组：单元归属与声明依赖随分组一起交出去。
 loadWorkspaceGrouped|func(_plan: BuildPlan,) -> (WorkspaceUnits,):
     var out = WorkspaceUnits()
-    if !plan.isOK():
+    if !_plan.isOK():
         return out
     var i = 0
-    while i < len(plan.packages):
-        let planned: PackagePlan = plan.packages[i]
-        let loaded = loadPackage(packageAbs = plan.rootPath + "/" + planned.rootPath, plan = planned)
+    while i < len(_plan.packages):
+        let planned: PackagePlan = _plan.packages[i]
+        let loaded = loadPackage(packageAbs = _plan.rootPath + "/" + planned.rootPath, plan = planned)
         var group = PackageUnits()
         group.name = planned.name
         group.rootPath = planned.rootPath
@@ -230,10 +230,10 @@ count|self() -> (I32,):
     return len(self.packages)
 ; 包读：下标越界是运行时陷阱，调用方先经 packageOf 定位。
 packageAt|self(_index: I32,) -> (PackageUnits,):
-    return self.packages[index]
+    return self.packages[_index]
 ; 单元归属：按路径分段前缀命中唯一包根，未命中答空串。
 packageOf|self(_unitPath: String,) -> (String,):
-    let parts = unitPath.split("/")
+    let parts = _unitPath.split("/")
     var i = 0
     while i < len(self.packages):
         if partsStartWith(parts = parts, prefix = self.packages[i].rootPath.split("/")):
@@ -244,7 +244,7 @@ packageOf|self(_unitPath: String,) -> (String,):
 nameAtRoot|self(_rootPath: String,) -> (String,):
     var i = 0
     while i < len(self.packages):
-        if self.packages[i].rootPath == rootPath:
+        if self.packages[i].rootPath == _rootPath:
             return self.packages[i].name
         i = i + 1
     return ""

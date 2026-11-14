@@ -2,8 +2,8 @@
 bytesOf|func(_values: Array<I32>,) -> (Array<U8>,):
     var out: Array<U8> = []
     var i = 0
-    while i < len(values):
-        out = out.append(tempIntToByte(values[i]))
+    while i < len(_values):
+        out = out.append(tempIntToByte(_values[i]))
         i = i + 1
     return out
 

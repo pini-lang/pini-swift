@@ -39,7 +39,7 @@ firstField: I32 = -1
 
 ; 首字段文本：规范化拼写的单一入口。
 标注文本|func(_sample: TypeSample,) -> (String,):
-    return sample.table.textOf(unit = 0, decl = sample.firstField)
+    return _sample.table.textOf(unit = 0, decl = _sample.firstField)
 
 ; 标量：内建名原样输出，不改写大小写。
 标量文本|test() -> ():

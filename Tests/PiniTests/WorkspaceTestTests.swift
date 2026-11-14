@@ -322,12 +322,13 @@ struct WorkspaceTestTests {
                  ✓ 排除项判定
                  ✓ 路径排序
                  ✓ 排序与输入顺序无关
-                包 semantics / semantics-tests（261 个测试）
+                包 semantics / semantics-tests（262 个测试）
                  ✓ 参数播种
                  ✓ 自身播种
                  ✓ 本型无自身
                  ✓ 非方法无自身
                  ✓ 参数重名
+                 ✓ 退面名字完整
                  ✓ 返回类型不符
                  ✓ 返回缺值
                  ✓ 值返回禁带
@@ -584,7 +585,7 @@ struct WorkspaceTestTests {
                  ✓ 块内声明不外泄
                  ✓ 存检查两次
                  ✓ 下划线占位
-                结果: 424 通过, 0 失败
+                结果: 425 通过, 0 失败
 
                 """
         #expect(result.stdout == expected)

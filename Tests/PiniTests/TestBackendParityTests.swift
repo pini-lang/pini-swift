@@ -115,7 +115,7 @@ struct TestBackendParityTests: Sendable {
             label: "测试体调普通函数",
             source: #"""
             helper(_x: I32,) -> (I32,):
-                return x * 2
+                return _x * 2
 
             调助手|test() -> ():
                 assert(helper(21,) == 42, "helper 应返回 42")
@@ -284,7 +284,7 @@ struct TestBackendParityTests: Sendable {
             装满|func(_n: I32,) -> (箱,):
                 var out = 箱()
                 var i = 0
-                while i < n:
+                while i < _n:
                     var item = 项目()
                     item.编号 = i
                     item.名称 = "条目"

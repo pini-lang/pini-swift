@@ -66,7 +66,7 @@ struct SchedulerDefaultInstanceTests: Sendable {
     private static func corpus(field: String) -> String {
         """
         取默认|func(using _s: 调度器,) -> (String,):
-            return s.\(field)
+            return _s.\(field)
 
         main|func() -> ():
             print(取默认())
@@ -121,7 +121,7 @@ struct SchedulerDefaultInstanceTests: Sendable {
         /// 本条钉的是那条让位规则（用户声明优先）。
         let source = """
         调度器|func(_x: I32,) -> (I32,):
-            return x
+            return _x
 
         main|func() -> ():
             print(调度器(5))
@@ -142,7 +142,7 @@ struct SchedulerDefaultInstanceTests: Sendable {
             名称: String = "我自己写的"
 
         取默认|func(using _s: 调度器,) -> (String,):
-            return s.名称
+            return _s.名称
 
         main|func() -> ():
             print(取默认())
@@ -165,7 +165,7 @@ struct SchedulerDefaultInstanceTests: Sendable {
                 return "你好"
 
         取默认|func(using _s: 调度器,) -> (String,):
-            return s.问好()
+            return _s.问好()
 
         main|func() -> ():
             print(取默认())
@@ -184,7 +184,7 @@ struct SchedulerDefaultInstanceTests: Sendable {
         /// 判据钉判定码而非「报了错就行」：新旧都报错，断「有错误」两种实现都通过。它与让位规则互为两半。
         let source = """
         取|func(_x: String,) -> (String,):
-            return x
+            return _x
 
         main|func() -> ():
             print(取(调度器))
@@ -203,7 +203,7 @@ struct SchedulerDefaultInstanceTests: Sendable {
         /// 断言的是「不报未定义变量」而不是「没有错误」：收集模式只跑语义层，值位那条诊断生在类型层。
         let source = """
         取|func(_x: String,) -> (String,):
-            return x
+            return _x
 
         main|func() -> ():
             print(取(调度器))
@@ -224,8 +224,8 @@ struct SchedulerDefaultInstanceTests: Sendable {
         /// 断言落在运行输出上，故静态与运行两步都被覆盖。
         let source = """
         探|func(using _s: 调度器,) -> (I32,):
-            s.收下(空句柄)
-            print(s.选择下一个任务())
+            _s.收下(空句柄)
+            print(_s.选择下一个任务())
             return 1
 
         main|func() -> ():
@@ -245,7 +245,7 @@ struct SchedulerDefaultInstanceTests: Sendable {
         /// 两个不同句柄无从区分。
         let source = """
         空|func(using _s: 调度器,) -> (I32,):
-            print(s.选择下一个任务())
+            print(_s.选择下一个任务())
             return 1
 
         main|func() -> ():
@@ -270,8 +270,8 @@ struct SchedulerDefaultInstanceTests: Sendable {
         """ : ""
         return """
         \(overrideBlock)数|func(using _s: 调度器,) -> (I32,):
-            s.收下(空句柄)
-            return len(s.元素)
+            _s.收下(空句柄)
+            return len(_s.元素)
 
         main|func() -> ():
             print(数())
@@ -304,10 +304,10 @@ struct SchedulerDefaultInstanceTests: Sendable {
         /// 队列字段是函数式更新（`slice` 返回新数组），漏了写回，下一次还会拿到同一个任务，读数退回 1。
         let source = """
         取|func(using _s: 调度器,) -> (I32,):
-            s.收下(空句柄)
-            print(len(s.元素))
-            s.选择下一个任务()
-            return len(s.元素)
+            _s.收下(空句柄)
+            print(len(_s.元素))
+            _s.选择下一个任务()
+            return len(_s.元素)
 
         main|func() -> ():
             print(取())

@@ -26,7 +26,7 @@ deferred: Bool = false
 
 ; 错误类别名：测试、诊断与回执共用一份拼写。
 opErrorName|func(_kind: OpErrorKind,) -> (String,):
-    match kind:
+    match _kind:
         case opOperandType:
             return "操作数类型不合"
         case opLogicalOperand:
@@ -39,7 +39,7 @@ isOpError|func(error: OpError, kind: OpErrorKind,) -> (Bool,):
 
 ; 诊断码：操作数类型不合取 E4-004，逻辑操作数非布尔取 E4-001。
 opErrorCode|func(_kind: OpErrorKind,) -> (String,):
-    match kind:
+    match _kind:
         case opOperandType:
             return "E4-004"
         case opLogicalOperand:
@@ -67,14 +67,14 @@ failOp|func(out: OpResult, file: String, offset: I32, op: String, kind: OpErrorK
 
 ; 待定收尾：操作数尚未定型，不报错也不写错误标记。
 deferOp|func(_out: OpResult,) -> (OpResult,):
-    var done = out
+    var done = _out
     done.deferred = true
     done.typeId = unsetTypeId()
     return done
 
 ; 布尔类型：比较与逻辑的结果统一从这里取。
 boolType|func(_pool: TypePool,) -> (TypeInsert,):
-    return intern(pool = pool, kind = typeClassScalar, name = "Bool", kids = [], ret = -1)
+    return intern(pool = _pool, kind = typeClassScalar, name = "Bool", kids = [], ret = -1)
 
 ; 判据包装：结果直接写成功类型，调用方只关心失败分支。
 acceptType|func(out: OpResult, typeId: I32,) -> (OpResult,):

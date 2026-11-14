@@ -16,8 +16,8 @@ sameBytes|func(left: Array<U8>, right: Array<U8>,) -> (Bool,):
 bytesOf|func(_codes: Array<I32>,) -> (Array<U8>,):
     var builder = ByteBuilder()
     var i = 0
-    while i < len(codes):
-        builder = builder.appendScalar(codes[i])
+    while i < len(_codes):
+        builder = builder.appendScalar(_codes[i])
         i = i + 1
     return builder.takeBuffer().bytes
 

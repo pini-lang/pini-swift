@@ -94,7 +94,7 @@ struct RecursionGuardTests: Sendable {
             return 包(绕(层 = 层 + 1, 位置 = 位置,), 位置,)
 
         数|func(_n: 节点,) -> (I32,):
-            match n:
+            match _n:
                 case 叶(名, 位置):
                     return 1
                 case 包(内, 位置):

@@ -10,7 +10,7 @@ types: ExprTypes = ExprTypes()
 
 ; 造控样例：装载、注册、解析类型、建世界四步，顺序不能反。
 造控样例|func(_src: String,) -> (控样例,):
-    let loaded = loadUnit(path = "packages/p/src/api/a.pini", text = src)
+    let loaded = loadUnit(path = "packages/p/src/api/a.pini", text = _src)
     assert(!loaded.failed, "样例应可加载")
     let units = [loaded.unit]
     let table = registerPackage(units)
@@ -43,8 +43,8 @@ types: ExprTypes = ExprTypes()
 ; 首个条件语句：返回第一个 if 语句的下标，没有答 -1。
 首个条件语句|func(_ast: Ast,) -> (I32,):
     var i = 0
-    while i < ast.stmtCount():
-        if ast.isIfStmt(i):
+    while i < _ast.stmtCount():
+        if _ast.isIfStmt(i):
             return i
         i = i + 1
     return -1
@@ -52,8 +52,8 @@ types: ExprTypes = ExprTypes()
 ; 首个循环语句：返回第一个 while 语句的下标，没有答 -1。
 首个循环语句|func(_ast: Ast,) -> (I32,):
     var i = 0
-    while i < ast.stmtCount():
-        if ast.isWhileStmt(i):
+    while i < _ast.stmtCount():
+        if _ast.isWhileStmt(i):
             return i
         i = i + 1
     return -1

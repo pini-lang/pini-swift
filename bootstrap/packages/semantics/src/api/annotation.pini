@@ -59,7 +59,7 @@ isOK|self() -> (Bool,):
 errorCount|self() -> (I32,):
     return self.pool.errorCount()
 errorAt|self(_index: I32,) -> (TypeError,):
-    return self.pool.errorAt(index)
+    return self.pool.errorAt(_index)
 bindingCount|self() -> (I32,):
     return len(self.bindings)
 ; 声明查类型：同一单元内同一声明只留一条绑定；找不到答 -1。
@@ -79,29 +79,29 @@ textOf|self(unit: I32, decl: I32,) -> (String,):
 
 ; 内建值类型：数值、布尔、字符、字符串与内建错误类型；具名解析先查这张表。
 isBuiltinType|func(_name: String,) -> (Bool,):
-    if name == "I8" || name == "I16":
+    if _name == "I8" || _name == "I16":
         return true
-    if name == "I32" || name == "I64":
+    if _name == "I32" || _name == "I64":
         return true
-    if name == "U8" || name == "U16":
+    if _name == "U8" || _name == "U16":
         return true
-    if name == "U32" || name == "U64":
+    if _name == "U32" || _name == "U64":
         return true
-    if name == "F32" || name == "F64":
+    if _name == "F32" || _name == "F64":
         return true
-    if name == "Bool" || name == "Char" || name == "String":
+    if _name == "Bool" || _name == "Char" || _name == "String":
         return true
-    if name == "Error" || name == "CancelError":
+    if _name == "Error" || _name == "CancelError":
         return true
     return false
 
 ; 容器实参个数：可接受的最小个数，非容器答 -1。
 containerMinArity|func(_name: String,) -> (I32,):
-    if name == "Array" || name == "Set" || name == "Optional":
+    if _name == "Array" || _name == "Set" || _name == "Optional":
         return 1
-    if name == "Dictionary":
+    if _name == "Dictionary":
         return 2
-    if name == "Result":
+    if _name == "Result":
         return 1
     return -1
 
@@ -117,9 +117,9 @@ containerAccepts|func(name: String, count: I32,) -> (Bool,):
 
 ; 容器类别：数组、字典与集合同归集合类，其余各自成类。
 containerClass|func(_name: String,) -> (TypeClass,):
-    if name == "Array" || name == "Set" || name == "Dictionary":
+    if _name == "Array" || _name == "Set" || _name == "Dictionary":
         return typeClassCollection
-    if name == "Optional":
+    if _name == "Optional":
         return typeClassOptional
     return typeClassResult
 
@@ -443,7 +443,7 @@ resolvePackage|func(units: Array<CompilationUnit>, table: SymbolTable,) -> (Type
 
 ; 字段环：先判直接自引用，再沿值语义链走一遍间接环；对象与堆容器到此为止。
 checkTypeCycles|func(_stage: TypePass,) -> (TypePass,):
-    var out = stage
+    var out = _stage
     var i = 0
     while i < len(out.members):
         let member = out.members[i]

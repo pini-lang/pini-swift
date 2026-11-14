@@ -10,7 +10,7 @@ types: ExprTypes = ExprTypes()
 
 ; 造存样例：装载、注册、解析类型、建世界四步，顺序不能反。
 造存样例|func(_src: String,) -> (存样例,):
-    let loaded = loadUnit(path = "packages/p/src/api/a.pini", text = src)
+    let loaded = loadUnit(path = "packages/p/src/api/a.pini", text = _src)
     assert(!loaded.failed, "样例应可加载")
     let units = [loaded.unit]
     let table = registerPackage(units)
@@ -68,8 +68,8 @@ types: ExprTypes = ExprTypes()
 ; 首个赋值：返回第一个赋值语句的下标，没有答 -1。
 首个赋值|func(_ast: Ast,) -> (I32,):
     var i = 0
-    while i < ast.stmtCount():
-        if ast.isAssignStmt(i):
+    while i < _ast.stmtCount():
+        if _ast.isAssignStmt(i):
             return i
         i = i + 1
     return -1

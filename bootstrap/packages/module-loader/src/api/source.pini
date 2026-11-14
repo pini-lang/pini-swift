@@ -10,14 +10,14 @@ offset: I32 = 0
 ; 字节级检查：起始 BOM、逐标量合法性、NUL 一次判完，先命中者即答案。
 checkSourceBytes|func(_bytes: Array<U8>,) -> (SourceCheck,):
     var out = SourceCheck()
-    if hasUtf8Bom(bytes):
+    if hasUtf8Bom(_bytes):
         out.passed = false
         out.kind = .errorSourceBom
         out.offset = 0
         return out
     var i = 0
-    while i < len(bytes):
-        let unit = decodeScalarAt(bytes = bytes, offset = i)
+    while i < len(_bytes):
+        let unit = decodeScalarAt(bytes = _bytes, offset = i)
         if unit.length == 0:
             out.passed = false
             out.kind = .errorSourceNotUtf8
@@ -34,23 +34,23 @@ checkSourceBytes|func(_bytes: Array<U8>,) -> (SourceCheck,):
 ; 文本级检查：读到 String 即已排除非法 UTF-8，BOM 与 NUL 交给字节步进。
 ; 不按字符串比较判 NUL：插值出的 NUL 在原生通道会被截断成空串，判据会两通道分叉。
 checkSourceText|func(_text: String,) -> (SourceCheck,):
-    return checkSourceBytes(tempUtf8Bytes(text))
+    return checkSourceBytes(tempUtf8Bytes(_text))
 
 ; UTF-8 BOM：EF BB BF 三字节起始。只认开头，中途出现的同序列不是 BOM。
 hasUtf8Bom|func(_bytes: Array<U8>,) -> (Bool,):
-    if len(bytes) < 3:
+    if len(_bytes) < 3:
         return false
-    if tempByteToInt(bytes[0]) != 239:
+    if tempByteToInt(_bytes[0]) != 239:
         return false
-    if tempByteToInt(bytes[1]) != 187:
+    if tempByteToInt(_bytes[1]) != 187:
         return false
-    return tempByteToInt(bytes[2]) == 191
+    return tempByteToInt(_bytes[2]) == 191
 
 ; 换行归一：CRLF 折成 LF；孤立 CR 不是换行，原样保留。
 normalizeNewlines|func(_text: String,) -> (String,):
-    if text.indexOf("\r\n") < 0:
-        return text
-    let parts = text.split("\r\n")
+    if _text.indexOf("\r\n") < 0:
+        return _text
+    let parts = _text.split("\r\n")
     var out = parts[0]
     var i = 1
     while i < len(parts):

@@ -83,14 +83,14 @@ parsePackageManifest|func(text: String, rootPath: String, path: String,) -> (Pac
 ; 收集三类 target：[lib] 至多一个，[[bin]] 与 [[test]] 按行展开。
 collectTargets|func(_doc: TomlDocument,) -> (Array<TargetSpec>,):
     var out: Array<TargetSpec> = []
-    if tomlHasTable(doc = doc, name = "lib"):
+    if tomlHasTable(doc = _doc, name = "lib"):
         var target = TargetSpec()
         target.kind = .targetLibrary
-        target.name = tomlValue(doc = doc, table = "lib", key = "name")
-        target.entry = tomlValue(doc = doc, table = "lib", key = "entry")
+        target.name = tomlValue(doc = _doc, table = "lib", key = "name")
+        target.entry = tomlValue(doc = _doc, table = "lib", key = "entry")
         out = out.append(target)
-    out = appendRows(doc = doc, table = "bin", kind = targetExecutable, out = out)
-    out = appendRows(doc = doc, table = "test", kind = targetTest, out = out)
+    out = appendRows(doc = _doc, table = "bin", kind = targetExecutable, out = out)
+    out = appendRows(doc = _doc, table = "test", kind = targetTest, out = out)
     return out
 
 ; 数组表按行展开成 target，行序即清单里的出现顺序。
@@ -138,7 +138,7 @@ hasEarlierTarget|func(targets: Array<TargetSpec>, at: I32, name: String,) -> (Bo
 
 ; 目标类别的清单拼写：诊断与计划文本共用。
 targetKindName|func(_kind: TargetKind,) -> (String,):
-    match kind:
+    match _kind:
         case targetLibrary:
             return "lib"
         case targetExecutable:

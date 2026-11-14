@@ -19,20 +19,20 @@ keyOf|func(bytes: Array<U8>, start: I32, end: I32,) -> (Array<U8>,):
 
 ; 下划线前缀：只看首字符，空串答否。
 startsWithUnderscore|func(_text: String,) -> (Bool,):
-    if len(text) == 0:
+    if len(_text) == 0:
         return false
-    return text.substring(0, 1) == "_"
+    return _text.substring(0, 1) == "_"
 
 ; 末段：最后一个斜杠之后的部分；无斜杠时整串即末段。
 lastSegment|func(_path: String,) -> (String,):
-    let parts = path.split("/")
+    let parts = _path.split("/")
     if len(parts) == 0:
-        return path
+        return _path
     return parts[len(parts) - 1]
 
 ; 目录链：末段之外的分段里只要有一段以 `_` 开头，声明即降为包级可见。
 directoryHasUnderscore|func(_path: String,) -> (Bool,):
-    let parts = path.split("/")
+    let parts = _path.split("/")
     var i = 0
     while i < len(parts) - 1:
         if startsWithUnderscore(parts[i]):
@@ -52,5 +52,5 @@ visibilityOf|func(spelling: String, path: String,) -> (Visibility,):
 
 ; 整串取键：短名字与测试的便利入口，等价于对全长调 keyOf。
 keyOfText|func(_text: String,) -> (Array<U8>,):
-    let bytes = tempUtf8Bytes(text)
+    let bytes = tempUtf8Bytes(_text)
     return keyOf(bytes = bytes, start = 0, end = len(bytes))

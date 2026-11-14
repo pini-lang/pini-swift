@@ -8,15 +8,15 @@ errors: Array<SymbolError> = []
 symbolCount|self() -> (I32,):
     return len(self.symbols)
 symbolAt|self(_index: I32,) -> (Symbol,):
-    return self.symbols[index]
+    return self.symbols[_index]
 importCount|self() -> (I32,):
     return len(self.imports)
 importAt|self(_index: I32,) -> (Symbol,):
-    return self.imports[index]
+    return self.imports[_index]
 errorCount|self() -> (I32,):
     return len(self.errors)
 errorAt|self(_index: I32,) -> (SymbolError,):
-    return self.errors[index]
+    return self.errors[_index]
 ; 无错误即注册完成；有错时符号集只作诊断用，不得继续向下游交付。
 isOK|self() -> (Bool,):
     return len(self.errors) == 0
@@ -25,7 +25,7 @@ topIndex|self(_key: Array<U8>,) -> (I32,):
     var i = 0
     while i < len(self.symbols):
         let symbol = self.symbols[i]
-        if len(symbol.owner) == 0 && sameKey(first = symbol.key, second = key):
+        if len(symbol.owner) == 0 && sameKey(first = symbol.key, second = _key):
             return i
         i = i + 1
     return -1

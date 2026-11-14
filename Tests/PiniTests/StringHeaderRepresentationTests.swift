@@ -250,7 +250,7 @@ struct StringHeaderRepresentationTests: PiniSourceLowering, Sendable {
         defer { try? FileManager.default.removeItem(at: dir) }
         try """
             取首|func(_s: String,) -> (Char,):
-                return s[1]
+                return _s[1]
 
             main|func() -> ():
                 let c = 取首("A🇨🇳B")

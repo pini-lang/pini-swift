@@ -102,7 +102,7 @@ def emit_range_tree(ranges, lines, depth):
         lines.append("%sreturn %d" % (pad, ranges[0][2]))
         return
     mid = len(ranges) // 2
-    lines.append("%sif code < %s:" % (pad, hex_literal(ranges[mid][0])))
+    lines.append("%sif _code < %s:" % (pad, hex_literal(ranges[mid][0])))
     emit_range_tree(ranges[:mid], lines, depth + 1)
     lines.append("%selse:" % pad)
     emit_range_tree(ranges[mid:], lines, depth + 1)
@@ -114,12 +114,12 @@ def emit_blocked_exact(entries, lines, depth):
     pad = "    " * depth
     if len(blocks) == 1:
         for code, value in blocks[0]:
-            lines.append("%sif code == %s:" % (pad, hex_literal(code)))
+            lines.append("%sif _code == %s:" % (pad, hex_literal(code)))
             lines.append("%s    return %s" % (pad, value))
         lines.append("%sreturn -1" % pad)
         return
     mid = (len(blocks) + 1) // 2
-    lines.append("%sif code < %s:" % (pad, hex_literal(blocks[mid][0][0])))
+    lines.append("%sif _code < %s:" % (pad, hex_literal(blocks[mid][0][0])))
     emit_blocked_exact([e for b in blocks[:mid] for e in b], lines, depth + 1)
     lines.append("%selse:" % pad)
     emit_blocked_exact([e for b in blocks[mid:] for e in b], lines, depth + 1)
@@ -273,9 +273,9 @@ def build_scripts(ranges):
         "",
         "; 码点脚本号：只区分三个高风险脚本，其余一律 0；越界码点按 0。",
         "scriptClassOf|func(_code: I32,) -> (I32,):",
-        "    if code < 0:",
+        "    if _code < 0:",
         "        return 0",
-        "    if code > %s:" % hex_literal(MAX_CODE),
+        "    if _code > %s:" % hex_literal(MAX_CODE),
         "        return 0",
     ]
     emit_range_tree(ranges, lines, 1)
@@ -328,9 +328,9 @@ def build_class(ranges):
         "",
         "; 码点分类：0 其它，1 字母，2 数字，3 空白；越界码点一律按其它。",
         "unicodeClassOf|func(_code: I32,) -> (I32,):",
-        "    if code < 0:",
+        "    if _code < 0:",
         "        return 0",
-        "    if code > %s:" % hex_literal(MAX_CODE),
+        "    if _code > %s:" % hex_literal(MAX_CODE),
         "        return 0",
     ]
     emit_range_tree(ranges, lines, 1)
@@ -366,9 +366,9 @@ def build_nfc(table, ccc, groups):
         "",
         "; 组合类（Canonical_Combining_Class）区间：0 为起始字符，覆盖整个码点空间。",
         "combiningClassOf|func(_code: I32,) -> (I32,):",
-        "    if code < 0:",
+        "    if _code < 0:",
         "        return 0",
-        "    if code > %s:" % hex_literal(MAX_CODE),
+        "    if _code > %s:" % hex_literal(MAX_CODE),
         "        return 0",
     ]
     emit_range_tree(ccc, lines, 1)

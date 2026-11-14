@@ -13,7 +13,7 @@ types: ExprTypes = ExprTypes()
 
 ; 造语句样例：装载、注册、解析类型、建世界四步，顺序不能反。
 造语句样例|func(_src: String,) -> (语句样例,):
-    let loaded = loadUnit(path = "packages/p/src/api/a.pini", text = src)
+    let loaded = loadUnit(path = "packages/p/src/api/a.pini", text = _src)
     assert(!loaded.failed, "样例应可加载")
     let units = [loaded.unit]
     let table = registerPackage(units)
@@ -64,7 +64,7 @@ types: ExprTypes = ExprTypes()
 
 ; 诊断总数：语句诊断与匹配诊断合起来数。
 诊断总数|func(_check: StoreCheck,) -> (I32,):
-    return len(check.errors) + len(check.matchCheck.errors)
+    return len(_check.errors) + len(_check.matchCheck.errors)
 
 ; 臂内可见：变体形参绑进臂帧，体内读到类型。
 臂内可见|test() -> ():

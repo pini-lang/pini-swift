@@ -744,7 +744,7 @@ extension Printer {
     static func parameters(_ params: [Parameter]) -> String {
         guard !params.isEmpty else { return "" }
         let parts = params.map { parameter -> String in
-            var text = parameter.isUsing ? "using \(parameter.writtenName)" : parameter.writtenName
+            var text = parameter.isUsing ? "using \(parameter.name)" : parameter.name
             if let annotation = parameter.typeAnnotation { text += ": \(type(annotation))" }
             return text
         }

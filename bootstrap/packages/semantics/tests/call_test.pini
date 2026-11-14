@@ -139,13 +139,13 @@ id: I32 = -1
     assert(callErrorCode(hit.error.kind) == "E4-036", "实得 " + callErrorCode(hit.error.kind))
     return
 
-; 退面收标签：声明写 _ 的形参收到标签报 E4-037。
+; 退面收标签：声明写 _ 的形参收到同名标签报 E4-037。
 退面收标签|test() -> ():
-    var 样例 = 造调用样例(path = "packages/p/src/api/a.pini", src = "g|func(_a: I32,) -> (I32,):\n    return a\n")
+    var 样例 = 造调用样例(path = "packages/p/src/api/a.pini", src = "g|func(_a: I32,) -> (I32,):\n    return _a\n")
     let 数 = 加标量(sample = 样例, name = "I32")
     样例 = 数.sample
     var args: Array<CallArg> = []
-    args = args.append(实参(label = "a", typeId = 数.id))
+    args = args.append(实参(label = "_a", typeId = 数.id))
     let hit = checkCall(world = 样例.world, site = 调用点(sample = 样例, name = "g", args = args))
     assert(hit.failed, "退面形参收标签应报错")
     assert(callErrorCode(hit.error.kind) == "E4-037", "实得 " + callErrorCode(hit.error.kind))

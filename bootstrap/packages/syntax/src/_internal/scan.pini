@@ -49,13 +49,13 @@ byteAt|func(bytes: Array<U8>, index: I32,) -> (I32,):
 
 ; 布局抑制只看最内层括号：块携带括号压栈为真，其内部照常发射行结构。
 layoutSuppressed|func(_state: LexState,) -> (Bool,):
-    if len(state.brackets) == 0:
+    if len(_state.brackets) == 0:
         return false
-    return !state.brackets[len(state.brackets) - 1]
+    return !_state.brackets[len(_state.brackets) - 1]
 
 ; 行首：先量缩进再决定是否开块；空行与注释行整行跳过，不产记号也不改栈。
 scanLineStart|func(_state: LexState,) -> (LexState,):
-    var out = state
+    var out = _state
     let total = len(out.bytes)
     var width = 0
     var measuring = true
@@ -114,7 +114,7 @@ popIndent|func(state: LexState, at: I32,) -> (LexState,):
 
 ; 行内：空白与注释跳过；换行发记号并把游标交给行首逻辑。
 scanInline|func(_state: LexState,) -> (LexState,):
-    var out = state
+    var out = _state
     let c = byteAt(bytes = out.bytes, index = out.pos)
     if c == 32 || c == 9 || c == 13:
         out.pos = out.pos + 1
@@ -130,7 +130,7 @@ scanInline|func(_state: LexState,) -> (LexState,):
 
 ; 括号内：换行与缩进一律按空白跳过，行首标记失效，直到括号栈清空。
 scanInsideBrackets|func(_state: LexState,) -> (LexState,):
-    var out = state
+    var out = _state
     let c = byteAt(bytes = out.bytes, index = out.pos)
     if c == 10 || c == 32 || c == 9 || c == 13:
         out.pos = out.pos + 1
@@ -143,7 +143,7 @@ scanInsideBrackets|func(_state: LexState,) -> (LexState,):
 
 ; 注释跳过：从当前字节到行尾，不消费换行本身；内容里的双向控制字符记警告。
 skipComment|func(_state: LexState,) -> (LexState,):
-    var out = state
+    var out = _state
     let total = len(out.bytes)
     let start = out.pos
     while out.pos < total && byteAt(bytes = out.bytes, index = out.pos) != 10:
@@ -167,52 +167,47 @@ scanBidiWarnings|func(state: LexState, from: I32, to: I32, role: LexTextRole,) -
 
 ; 记号分派：按首字节选专用扫描，互不重叠。
 scanToken|func(_state: LexState,) -> (LexState,):
-    let c = byteAt(bytes = state.bytes, index = state.pos)
+    let c = byteAt(bytes = _state.bytes, index = _state.pos)
     if c == 34:
-        return scanString(state)
+        return scanString(_state)
     if c == 96:
-        return scanBacktick(state)
+        return scanBacktick(_state)
     if c >= 48 && c <= 57:
-        return scanNumber(state)
+        return scanNumber(_state)
     if isIdentifierStartByte(c) || c >= 128:
-        return scanIdentifier(state)
-    return scanPunctuation(state)
+        return scanIdentifier(_state)
+    return scanPunctuation(_state)
 
 ; ASCII 字母。
 isAlphaByte|func(_c: I32,) -> (Bool,):
-    if c >= 65 && c <= 90:
+    if _c >= 65 && _c <= 90:
         return true
-    return c >= 97 && c <= 122
+    return _c >= 97 && _c <= 122
 
 isDigitByte|func(_c: I32,) -> (Bool,):
-    return c >= 48 && c <= 57
+    return _c >= 48 && _c <= 57
 
 ; 标识符首字节：ASCII 字母或下划线；非 ASCII 交给标量判据。
 isIdentifierStartByte|func(_c: I32,) -> (Bool,):
-    if c == 95:
+    if _c == 95:
         return true
-    return isAlphaByte(c)
+    return isAlphaByte(_c)
 
 isIdentifierContinueByte|func(_c: I32,) -> (Bool,):
-    if isIdentifierStartByte(c):
+    if isIdentifierStartByte(_c):
         return true
-    return isDigitByte(c)
+    return isDigitByte(_c)
 
 ; 标识符：首标量按 Unicode 字母判据，续写按字母、数字与下划线；词面命中关键字表则改判关键字。
 scanIdentifier|func(_state: LexState,) -> (LexState,):
-    var out = state
+    var out = _state
     let start = out.pos
     let end = identifierEnd(bytes = out.bytes, start = start)
     if end == start:
         return scanWideByte(out)
     out.pos = end
     let kind = keywordKind(language = out.language, bytes = out.bytes, start = start, end = end)
-    var done = emitToken(state = out, kind = kind, start = start, end = end)
-    if end > start + 1 && byteAt(bytes = done.bytes, index = start) == 95:
-        var token = done.tokens[len(done.tokens) - 1]
-        token.leadingUnderscore = true
-        done.tokens[len(done.tokens) - 1] = token
-    return done
+    return emitToken(state = out, kind = kind, start = start, end = end)
 
 ; 标识符词界：起点不是标识符首字节时答原位置；否则按 ASCII 快路与标量分类推进到词尾。
 identifierEnd|func(bytes: Array<U8>, start: I32,) -> (I32,):
@@ -252,7 +247,7 @@ identifierEnd|func(bytes: Array<U8>, start: I32,) -> (I32,):
 ; 非 ASCII 且不构成标识符的字节序列：按整条标量记问题并消费，保证游标不离字界。
 ; 组合附加符号单独出现在标识符首字符位时单列问题类别，与宿主的专用诊断同源。
 scanWideByte|func(_state: LexState,) -> (LexState,):
-    var out = state
+    var out = _state
     let start = out.pos
     let unit = decodeScalarAt(bytes = out.bytes, offset = start)
     var width = unit.length
@@ -268,7 +263,7 @@ scanWideByte|func(_state: LexState,) -> (LexState,):
 
 ; 反引号标识符：闭合且非空才按名字处理；否则回退为单字符标识符，不阻断扫描。
 scanBacktick|func(_state: LexState,) -> (LexState,):
-    var out = state
+    var out = _state
     let total = len(out.bytes)
     let start = out.pos
     var i = start + 1
@@ -288,7 +283,7 @@ scanBacktick|func(_state: LexState,) -> (LexState,):
 
 ; 数值：前缀决定进制，小数点后必须跟数字才算浮点；进制内出现非法字母整段记问题。
 scanNumber|func(_state: LexState,) -> (LexState,):
-    var out = state
+    var out = _state
     let total = len(out.bytes)
     let start = out.pos
     var pos = start
@@ -372,13 +367,13 @@ isRadixDigit|func(c: I32, radix: I32,) -> (Bool,):
 
 ; 字母数字合并判据：用于把 `0b2` 这类整段判成数字格式问题，而不是切成两条记号。
 isAsciiWordByte|func(_c: I32,) -> (Bool,):
-    if isAlphaByte(c):
+    if isAlphaByte(_c):
         return true
-    return isDigitByte(c)
+    return isDigitByte(_c)
 
 ; 字符串：整条跨度含两侧引号；插值按配平扫描切成段，`\0` 之后不再取值。
 scanString|func(_state: LexState,) -> (LexState,):
-    var out = state
+    var out = _state
     let total = len(out.bytes)
     let start = out.pos
     var pos = start + 1
@@ -499,7 +494,7 @@ makeSegment|func(kind: SegmentKind, start: I32, end: I32,) -> (Segment,):
 
 ; 段是否为字面内容：枚举相等比较不可用，按模式分派。
 isLiteralSegment|func(_seg: Segment,) -> (Bool,):
-    match seg.kind:
+    match _seg.kind:
         case segmentLiteral:
             return true
         case segmentInterpolation:
@@ -508,7 +503,7 @@ isLiteralSegment|func(_seg: Segment,) -> (Bool,):
 
 ; 运算符与定界符：先试三字节、再两字节、最后一字节；括号同步维护括号栈。
 scanPunctuation|func(_state: LexState,) -> (LexState,):
-    var out = state
+    var out = _state
     let c = byteAt(bytes = out.bytes, index = out.pos)
     let c1 = byteAt(bytes = out.bytes, index = out.pos + 1)
     let c2 = byteAt(bytes = out.bytes, index = out.pos + 2)
@@ -634,7 +629,7 @@ pushBracket|func(state: LexState, carrying: Bool,) -> (LexState,):
 
 ; 弹括号栈：不匹配的闭括号一律弹栈，栈空时保持不变。
 popBracket|func(_state: LexState,) -> (LexState,):
-    var out = state
+    var out = _state
     if len(out.brackets) == 0:
         return out
     var kept: Array<Bool> = []

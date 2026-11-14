@@ -1,5 +1,5 @@
 ; 工作区识别：根清单出现 [workspace] 表头即为工作区；注释里的同名字样不算。
 hasWorkspace|func(_root: String,) -> (Bool,):
-    let path = root + "/pini.toml"
+    let path = _root + "/pini.toml"
     let doc = parseToml(text = readFile(path), path = path)
     return tomlHasTable(doc = doc, name = "workspace")

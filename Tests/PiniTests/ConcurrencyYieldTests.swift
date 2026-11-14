@@ -26,10 +26,10 @@ struct ConcurrencyYieldTests: Sendable, PiniSourceLowering {
         print("S-start")
         sleep(250)
         print("S-done")
-        return ok(n)
+        return ok(_n)
 
     父|func(_n: I32,) => (I32,):
-        let a = 慢(n)
+        let a = 慢(_n)
         let x = try await a else e:
             return err(Error("failed"))
         return ok(x)
@@ -53,10 +53,10 @@ struct ConcurrencyYieldTests: Sendable, PiniSourceLowering {
         print("S-start")
         sleep(60)
         print("S-done")
-        return ok(n)
+        return ok(_n)
 
     父|func(_n: I32,) => (I32,):
-        let a = 慢(n)
+        let a = 慢(_n)
         let x = try await a else e:
             return err(Error("failed"))
         let b = 慢(x)
@@ -82,10 +82,10 @@ struct ConcurrencyYieldTests: Sendable, PiniSourceLowering {
         print("S-start")
         sleep(100)
         print("S-done")
-        return ok(n)
+        return ok(_n)
 
     父|func(_n: I32,) => (I32,):
-        let a = 慢(n)
+        let a = 慢(_n)
         sleep(1500)
         let x = try await a else e:
             return err(Error("failed"))
@@ -222,7 +222,7 @@ struct ConcurrencyYieldTests: Sendable, PiniSourceLowering {
         """ : ""
         return overrideBlock + """
         闸|func(_毫秒: I32,) => (I32,):
-            sleep(毫秒)
+            sleep(_毫秒)
             return ok(0)
 
         甲|func() => (I32,):

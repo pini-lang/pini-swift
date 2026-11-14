@@ -15,10 +15,10 @@ struct IRFutureTypeTests: Sendable, PiniSourceLowering {
     /// 同步那一条是阳性对照 —— 它证明分叉是**只在异步上**发生的，不是「所有调用都变了」。
     private static let corpus = #"""
     慢|func(_n: I32,) => (I32,):
-        return ok(n)
+        return ok(_n)
 
     同步取|func(_n: I32,) -> (I32,):
-        return n
+        return _n
 
     main|func() -> ():
         let t = 慢(1)

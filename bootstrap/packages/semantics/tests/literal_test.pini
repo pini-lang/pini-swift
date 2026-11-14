@@ -10,7 +10,7 @@ result: LiteralResult = LiteralResult()
 
 ; 造字面单元：从源码字符串装载；失败即断言。
 造字面单元|func(_src: String,) -> (CompilationUnit,):
-    let loaded = loadUnit(path = "packages/p/src/api/a.pini", text = src)
+    let loaded = loadUnit(path = "packages/p/src/api/a.pini", text = _src)
     assert(!loaded.failed, "样例应可加载")
     return loaded.unit
 
@@ -54,7 +54,7 @@ result: LiteralResult = LiteralResult()
 
 ; 可选样例：期望 Optional<I32>，用于空值。
 可选样例|func(_src: String,) -> (字面样例,):
-    let unit = 造字面单元(src)
+    let unit = 造字面单元(_src)
     let node = 取字面量(unit = unit, kind = "空值")
     let i32 = intern(pool = TypePool(), kind = typeClassScalar, name = "I32", kids = [], ret = -1)
     let opt = intern(pool = i32.pool, kind = typeClassOptional, name = "", kids = [i32.id], ret = -1)
@@ -66,7 +66,7 @@ result: LiteralResult = LiteralResult()
 
 ; 指针样例：期望 *I32，用于空值。
 指针样例|func(_src: String,) -> (字面样例,):
-    let unit = 造字面单元(src)
+    let unit = 造字面单元(_src)
     let node = 取字面量(unit = unit, kind = "空值")
     let i32 = intern(pool = TypePool(), kind = typeClassScalar, name = "I32", kids = [], ret = -1)
     let ptr = intern(pool = i32.pool, kind = typeClassPointer, name = "", kids = [i32.id], ret = -1)

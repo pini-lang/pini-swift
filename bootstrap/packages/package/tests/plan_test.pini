@@ -8,7 +8,7 @@
 
 ; 测试助手：库 target 用统一入口形状，判据只关心名字与产物路径。
 库目标|func(_name: String,) -> (TargetSpec,):
-    return 造目标(name = name, kind = targetLibrary, entry = "src/api/" + name + ".pini")
+    return 造目标(name = _name, kind = targetLibrary, entry = "src/api/" + _name + ".pini")
 
 ; 测试助手：空依赖表；直接写 `[]` 会被推成 I32 元素。
 空依赖|func() -> (Array<String>,):
@@ -29,7 +29,7 @@
     var out = WorkspaceParse()
     out.manifest.rootPath = "."
     out.manifest.profile = "debug"
-    out.manifest.members = members
+    out.manifest.members = _members
     return out
 
 ; 六包依赖图：拓扑序固定；同一份输入两次装配逐字相同。

@@ -22,10 +22,10 @@ replace|self(old: String, new: String,) -> (String,):
             i = i + 1
     return out
 startsWith|self(_prefix: String,) -> (Bool,):
-    var m = len(prefix)
+    var m = len(_prefix)
     if m > len(self):
         return false
-    return self.slice(0, m) == prefix
+    return self.slice(0, m) == _prefix
 contains|self(_needle: String,) -> (Bool,):
     return true
 

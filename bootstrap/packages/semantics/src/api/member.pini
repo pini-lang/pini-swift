@@ -67,7 +67,7 @@ labels: Array<TypeLabels> = []
 
 ; 成员类别名：诊断、测试与回执共用一份拼写。
 memberKindName|func(_kind: MemberKind,) -> (String,):
-    match kind:
+    match _kind:
         case memberField:
             return "字段"
         case memberMethod:
@@ -90,7 +90,7 @@ isMemberKind|func(kind: MemberKind, expected: MemberKind,) -> (Bool,):
 
 ; 错误类别名：与诊断码一一对应。
 memberErrorName|func(_kind: MemberErrorKind,) -> (String,):
-    match kind:
+    match _kind:
         case memberUnknown:
             return "未知成员"
         case memberPrivate:
@@ -105,7 +105,7 @@ isMemberError|func(error: MemberError, kind: MemberErrorKind,) -> (Bool,):
 
 ; 诊断码：复用宿主已登记的码，不新增码表条目。
 memberErrorCode|func(_kind: MemberErrorKind,) -> (String,):
-    match kind:
+    match _kind:
         case memberUnknown:
             return "E4-009"
         case memberPrivate:
@@ -138,21 +138,21 @@ memberAccess|func(receiver: I32, name: String, isTypeName: Bool, owner: String, 
 
 ; 名义类别：结构、对象与枚举三类，其余答无效。
 nominalClassOf|func(_code: I32,) -> (TypeClass,):
-    if isStructDeclCode(code):
+    if isStructDeclCode(_code):
         return typeClassStruct
-    if isObjectDeclCode(code):
+    if isObjectDeclCode(_code):
         return typeClassObject
-    if isEnumDeclCode(code):
+    if isEnumDeclCode(_code):
         return typeClassEnum
     return typeClassInvalid
 
 ; 名义判定：三类共用一条，指针、可选与函数都不算。
 isNominalClass|func(_kind: TypeClass,) -> (Bool,):
-    if isTypeClass(kind = kind, expected = typeClassStruct):
+    if isTypeClass(kind = _kind, expected = typeClassStruct):
         return true
-    if isTypeClass(kind = kind, expected = typeClassObject):
+    if isTypeClass(kind = _kind, expected = typeClassObject):
         return true
-    return isTypeClass(kind = kind, expected = typeClassEnum)
+    return isTypeClass(kind = _kind, expected = typeClassEnum)
 
 ; 名义类型驻留：顶层类型声明逐个进池，未被引用的类型也有下标可查。
 internNominalTypes|func(units: Array<CompilationUnit>, pool: TypePool,) -> (TypePool,):
@@ -219,12 +219,12 @@ tupleLabelIndex|func(world: MemberWorld, typeId: I32, key: Array<U8>,) -> (I32,)
 
 ; 数字序号：整串十进制数字才成立，否则答 -1；四位以上直接否决，避免回绕。
 digitIndex|func(_text: String,) -> (I32,):
-    if len(text) == 0:
+    if len(_text) == 0:
         return -1
     var value = 0
     var i = 0
-    while i < len(text):
-        let code = ord(text[i])
+    while i < len(_text):
+        let code = ord(_text[i])
         if code < 48 || code > 57:
             return -1
         value = value * 10 + (code - 48)

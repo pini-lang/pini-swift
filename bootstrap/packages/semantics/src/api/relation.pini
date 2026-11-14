@@ -40,33 +40,33 @@ sameTypeList|func(pool: TypePool, first: Array<I32>, second: Array<I32>,) -> (Bo
 
 ; 有符号名次：I8 到 I64 递增，非有符号答 -1。
 signedRankOf|func(_name: String,) -> (I32,):
-    if name == "I8":
+    if _name == "I8":
         return 1
-    if name == "I16":
+    if _name == "I16":
         return 2
-    if name == "I32":
+    if _name == "I32":
         return 3
-    if name == "I64":
+    if _name == "I64":
         return 4
     return -1
 
 ; 无符号名次：U8 到 U64 递增，非无符号答 -1。
 unsignedRankOf|func(_name: String,) -> (I32,):
-    if name == "U8":
+    if _name == "U8":
         return 1
-    if name == "U16":
+    if _name == "U16":
         return 2
-    if name == "U32":
+    if _name == "U32":
         return 3
-    if name == "U64":
+    if _name == "U64":
         return 4
     return -1
 
 ; 浮点名次：F32 到 F64 递增，非浮点答 -1。
 floatRankOf|func(_name: String,) -> (I32,):
-    if name == "F32":
+    if _name == "F32":
         return 1
-    if name == "F64":
+    if _name == "F64":
         return 2
     return -1
 

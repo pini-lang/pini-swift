@@ -10,7 +10,7 @@ types: ExprTypes = ExprTypes()
 
 ; 造体样例：装载、注册、解析类型、建世界四步，顺序不能反。
 造体样例|func(_src: String,) -> (体样例,):
-    let loaded = loadUnit(path = "packages/p/src/api/a.pini", text = src)
+    let loaded = loadUnit(path = "packages/p/src/api/a.pini", text = _src)
     assert(!loaded.failed, "样例应可加载")
     let units = [loaded.unit]
     let table = registerPackage(units)
@@ -68,8 +68,8 @@ types: ExprTypes = ExprTypes()
 ; 首个返回：返回第一个 return 语句的下标，没有答 -1。
 首个返回|func(_ast: Ast,) -> (I32,):
     var i = 0
-    while i < ast.stmtCount():
-        if ast.isReturnStmt(i):
+    while i < _ast.stmtCount():
+        if _ast.isReturnStmt(i):
             return i
         i = i + 1
     return -1
@@ -138,6 +138,16 @@ types: ExprTypes = ExprTypes()
     assert(len(hit.errors) == 1, "应报一条重名")
     assert(bodyErrorCode(hit.errors[0].kind) == "E3-004", "实得 " + bodyErrorCode(hit.errors[0].kind))
     assert(hit.errors[0].name == "a", "实得 " + hit.errors[0].name)
+    return
+
+; 退面名字完整：`_a` 与 `a` 是两个不同的参数，下划线属于名字，不摘除也不撞名。
+退面名字完整|test() -> ():
+    let sample = 造体样例("f|func(_a: I32, a: String,) -> (I32,):\n    return _a\n")
+    let hit = 查体(sample = sample, name = "f")
+    assert(!hit.failed, "两个形参名字不同，不应报重名")
+    assert(hit.scope.localCount() == 2, "应有两个参数")
+    assert(hit.scope.localAt(0).spelling == "_a", "实得 " + hit.scope.localAt(0).spelling)
+    assert(hit.scope.localAt(1).spelling == "a", "实得 " + hit.scope.localAt(1).spelling)
     return
 
 ; 返回类型不符：return 值的类型不可赋给返回类型，报类型不匹配。

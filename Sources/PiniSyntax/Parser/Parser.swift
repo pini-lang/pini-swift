@@ -3526,15 +3526,8 @@ public class Parser {
             isUsing = true
         }
 
-        // 参数名
-        let written = try parseIdentifier()
-        // 前导 `_` 是调用面标记，不是名字的一部分：摘掉后体内用 `名`，标记落到 takesLabel。
-        var name = written
-        var takesLabel = true
-        if written.count > 1, written.hasPrefix("_") {
-            name = String(written.dropFirst())
-            takesLabel = false
-        }
+        // 参数名：`_名` 整串就是名字，`_` 同时使它退出标签面，名字不改写。
+        let name = try parseIdentifier()
 
         // 类型标注（可选）
         var typeAnnotation: TypeAnnotation? = nil
@@ -3547,7 +3540,7 @@ public class Parser {
         // 注意：参数默认值在参数元组中使用 = 表达式 形式
         // 但这里暂时不处理
 
-        return Parameter(name: name, typeAnnotation: typeAnnotation, isUsing: isUsing, takesLabel: takesLabel)
+        return Parameter(name: name, typeAnnotation: typeAnnotation, isUsing: isUsing)
     }
 
     // MARK: - 辅助

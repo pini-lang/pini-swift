@@ -54,7 +54,7 @@ typeId: I32 = -1
 
 ; 错误类别名：诊断、测试与回执共用一份拼写。
 storeErrorName|func(_kind: StoreErrorKind,) -> (String,):
-    match kind:
+    match _kind:
         case storeValueMismatch:
             return "值类型不符"
         case storeValueUnknown:
@@ -89,7 +89,7 @@ isStoreError|func(error: StoreError, kind: StoreErrorKind,) -> (Bool,):
 
 ; 诊断码：复用宿主已登记的码，不新增码表条目。
 storeErrorCode|func(_kind: StoreErrorKind,) -> (String,):
-    match kind:
+    match _kind:
         case storeValueMismatch:
             return "E4-001"
         case storeValueUnknown:

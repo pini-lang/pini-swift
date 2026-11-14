@@ -36,7 +36,7 @@ failed: Bool = false
 
 ; 错误类别名：诊断、测试与回执共用一份拼写。
 bodyErrorName|func(_kind: BodyErrorKind,) -> (String,):
-    match kind:
+    match _kind:
         case bodyParamDuplicated:
             return "参数重名"
         case bodyReturnValueMissing:
@@ -55,7 +55,7 @@ isBodyError|func(error: BodyError, kind: BodyErrorKind,) -> (Bool,):
 
 ; 诊断码：复用宿主已登记的码，不新增码表条目。
 bodyErrorCode|func(_kind: BodyErrorKind,) -> (String,):
-    match kind:
+    match _kind:
         case bodyParamDuplicated:
             return "E3-004"
         case bodyReturnValueMissing:
@@ -105,9 +105,9 @@ containsDeclKid|func(kids: Array<I32>, id: I32,) -> (Bool,):
 
 ; 带成员的类型声明：结构、对象、枚举与扩展块四类，方法都挂在它们的 kids 上。
 isOwnerDeclCode|func(_code: I32,) -> (Bool,):
-    if isStructDeclCode(code) || isObjectDeclCode(code):
+    if isStructDeclCode(_code) || isObjectDeclCode(_code):
         return true
-    if isEnumDeclCode(code) || isExtensionDeclCode(code):
+    if isEnumDeclCode(_code) || isExtensionDeclCode(_code):
         return true
     return false
 

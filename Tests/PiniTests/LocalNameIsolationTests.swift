@@ -11,12 +11,12 @@ struct LocalNameIsolationTests: Sendable {
 
     private static let corpus = #"""
     narrow|func(_q: I32,) -> (I32,):
-        var n = q
+        var n = _q
         var i = n - 1
         return i
 
     wide|func(_p: U64,) -> (U64,):
-        var n = p
+        var n = _p
         return n
 
     main|func() -> ():
@@ -165,7 +165,7 @@ struct LocalNameIsolationTests: Sendable {
     func genuineMismatchIsStillRejected() throws {
         let source = #"""
         narrow|func(_q: I32,) -> (I32,):
-            var n = q
+            var n = _q
             var i: U64 = n - 1
             return i
 

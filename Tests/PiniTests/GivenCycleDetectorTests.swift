@@ -72,7 +72,7 @@ struct GivenCycleDetectorTests: Sendable, PiniSourceLowering {
             值: I32 = 读甲()
 
         读甲|func(using _甲: 甲块,) -> (I32,):
-            return 甲.值
+            return _甲.值
 
         main|func() -> ():
             print(1)
@@ -96,7 +96,7 @@ struct GivenCycleDetectorTests: Sendable, PiniSourceLowering {
             return 读甲()
 
         读甲|func(using _甲: 甲块,) -> (I32,):
-            return 甲.值
+            return _甲.值
 
         main|func() -> ():
             print(1)
@@ -125,7 +125,7 @@ struct GivenCycleDetectorTests: Sendable, PiniSourceLowering {
             return 读甲()
 
         读甲|func(using _甲: 甲块,) -> (I32,):
-            return 甲.值
+            return _甲.值
 
         取数|func() -> (I32,):
             return 工具().读数()

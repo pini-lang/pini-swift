@@ -84,10 +84,10 @@ struct ConcurrencyCapabilitiesTests: Sendable, PiniSourceLowering {
     private static let 共用语料 = """
     慢|func(_n: I32,) => (I32,):
         sleep(40)
-        return ok(n)
+        return ok(_n)
 
     父|func(_n: I32,) => (I32,):
-        let a = 慢(n)
+        let a = 慢(_n)
         let x = try await a else e:
             return err(Error("failed"))
         return ok(x)

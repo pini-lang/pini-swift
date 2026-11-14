@@ -5,10 +5,10 @@
     return f(x)
 
 加倍|func(_n: I32,) -> (I32,):
-    return n * 2
+    return _n * 2
 
 加一|func(_n: I32,) -> (I32,):
-    return n + 1
+    return _n + 1
 
 main|func() -> ():
     print(应用(f = 加倍, x = 5)) ; 10：传入具名函数

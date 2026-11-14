@@ -5,8 +5,8 @@ _support = "../../../support"
 scalarCodes|func(_text: Utf8Text,) -> (Array<I32>,):
     var codes: Array<I32> = []
     var i = 0
-    while i < text.scalarCount():
-        codes = codes.append(text.scalarAt(i).code)
+    while i < _text.scalarCount():
+        codes = codes.append(_text.scalarAt(i).code)
         i = i + 1
     return codes
 
@@ -14,8 +14,8 @@ scalarCodes|func(_text: Utf8Text,) -> (Array<I32>,):
 encodeScalars|func(_codes: Array<I32>,) -> (Array<U8>,):
     var builder = ByteBuilder()
     var i = 0
-    while i < len(codes):
-        builder = builder.appendScalar(codes[i])
+    while i < len(_codes):
+        builder = builder.appendScalar(_codes[i])
         i = i + 1
     return builder.takeBuffer().bytes
 

@@ -7,7 +7,7 @@
     return f(x)
 
 加倍|func(_n: I32,) -> (I32,):
-    return n * 2
+    return _n * 2
 
 main|func() -> ():
     ; 1) 闭包绑定 + 直接调用（无捕获）

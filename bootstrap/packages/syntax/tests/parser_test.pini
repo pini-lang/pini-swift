@@ -21,17 +21,16 @@
     assert(ast.isStmt(id = decl.body, kind = stmtBlock), "体是块")
     return
 
-; 参数位下划线：声明写 _名 时摘掉前导下划线，并退出标签面。
+; 参数位下划线：名字含前导 `_`，名字区间原样保留，标签面由名字推出。
 参数退面|test() -> ():
-    let result = parseText("f|func(_a: I32, b: I32,) -> (I32,):\n    return a\n")
+    let result = parseText("f|func(_a: I32, b: I32,) -> (I32,):\n    return _a\n")
     assert(len(result.diagnostics) == 0, "不应有语法诊断")
     let ast = result.ast
     let decl = ast.declAt(ast.itemAt(0))
     let first = ast.declAt(decl.kids[0])
     let second = ast.declAt(decl.kids[1])
-    assert(!first.takesLabel, "带下划线的形参退出标签面")
-    assert(first.nameEnd - first.nameStart == 1, "名字区间已摘掉前导下划线")
-    assert(second.takesLabel, "未写 _ 的形参要求标签")
+    assert(first.nameEnd - first.nameStart == 2, "名字区间含前导下划线")
+    assert(second.nameEnd - second.nameStart == 1, "未写下划线的名字原样")
     return
 
 ; 优先级：乘法先于加法，左结合；括号组不产生额外节点。
@@ -220,8 +219,8 @@
 ; 首个匹配语句：返回第一个 match 语句的下标，没有答 -1。
 首个匹配|func(_ast: Ast,) -> (I32,):
     var i = 0
-    while i < ast.stmtCount():
-        if ast.isStmt(id = i, kind = stmtMatch):
+    while i < _ast.stmtCount():
+        if _ast.isStmt(id = i, kind = stmtMatch):
             return i
         i = i + 1
     return -1

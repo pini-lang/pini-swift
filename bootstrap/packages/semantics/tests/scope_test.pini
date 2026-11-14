@@ -11,7 +11,7 @@ file: String = ""
 
 ; 取参数：解析一段最小函数，返回首个形参；解析失败即断言。
 取参数|func(_src: String,) -> (参数样本,):
-    let loaded = loadUnit(path = "packages/p/src/api/a.pini", text = src)
+    let loaded = loadUnit(path = "packages/p/src/api/a.pini", text = _src)
     assert(!loaded.failed, "样例应可解析")
     let unit = loaded.unit
     let fn = unit.ast.decls[unit.ast.items[0]]
@@ -25,7 +25,7 @@ file: String = ""
 
 ; 函数栈：进一个函数帧，文件取样本。
 函数栈|func(_sample: 参数样本,) -> (ScopeStack,):
-    return enterScope(stack = ScopeStack(), kind = scopeFunction, file = sample.file, offset = 0)
+    return enterScope(stack = ScopeStack(), kind = scopeFunction, file = _sample.file, offset = 0)
 
 ; 两栈同形：帧起点、局部键、槽位与种类逐项相同。
 同栈|func(first: ScopeStack, second: ScopeStack,) -> (Bool,):

@@ -7,7 +7,7 @@ c(n: I32, t: L,)
 
 lLen|func(_list: L,) -> (I32,):
     var k = 0
-    var cur = list
+    var cur = _list
     var go = true
     while go:
         match cur:

@@ -2,7 +2,7 @@
 ; 运行：pini run examples/stdlib-container-ops.pini
 ; 预期：十组读数依次为 存在 / 全称 / 条件计数 / 首命中 / 末段 / 弃末 / 重复 / 轮转 / 插位 / 删位
 isEven|func(_x: I32,) -> (Bool,):
-    return x % 2 == 0
+    return _x % 2 == 0
 
 main|func() -> ():
     print(any<I32>([1, 2, 3], isEven))

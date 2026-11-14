@@ -3,7 +3,7 @@
 ; （调用即返回运行中的 Future，任务此刻已并发推进），而非来自 wait。
 慢|func(_n: I32,) => (I32,):
     sleep(30)
-    return ok(n)
+    return ok(_n)
 
 main|func() -> ():
     var a = 慢(1) ; 急切派发：a 此刻已并发推进

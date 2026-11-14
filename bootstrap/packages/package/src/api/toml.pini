@@ -145,7 +145,7 @@ nextRow|func(doc: TomlDocument, table: String,) -> (I32,):
 
 ; 行内注释剥离：引号内的 # 是值的一部分，不截断；引号不成对时按未闭合处理。
 stripComment|func(_line: String,) -> (String,):
-    let chars = line.split("")
+    let chars = _line.split("")
     var quoted = false
     var i = 0
     while i < len(chars):
@@ -153,13 +153,13 @@ stripComment|func(_line: String,) -> (String,):
         if c == "\"":
             quoted = !quoted
         elif c == "#" && !quoted:
-            return line.substring(0, i)
+            return _line.substring(0, i)
         i = i + 1
-    return line
+    return _line
 
 ; 去两端空白：只认空格与制表符，与清单书写习惯一致。
 trimSpace|func(_s: String,) -> (String,):
-    let chars = s.split("")
+    let chars = _s.split("")
     var lo = 0
     while lo < len(chars):
         let c = chars[lo]
@@ -174,32 +174,32 @@ trimSpace|func(_s: String,) -> (String,):
             hi = hi - 1
         else:
             break
-    return s.substring(lo, hi)
+    return _s.substring(lo, hi)
 
 ; 去引号：两端都是引号才剥，单边引号原样保留。
 unquote|func(_raw: String,) -> (String,):
-    if len(raw) >= 2 && startsWith(text = raw, prefix = "\"") && endsWith(text = raw, suffix = "\""):
-        return raw.substring(1, len(raw) - 1)
-    return raw
+    if len(_raw) >= 2 && startsWith(text = _raw, prefix = "\"") && endsWith(text = _raw, suffix = "\""):
+        return _raw.substring(1, len(_raw) - 1)
+    return _raw
 
 ; 表头判定：[[...]] 先判，避免被 [ ... ] 抢先。
 isArrayHeader|func(_line: String,) -> (Bool,):
-    return len(line) >= 4 && startsWith(text = line, prefix = "[[") && endsWith(text = line, suffix = "]]")
+    return len(_line) >= 4 && startsWith(text = _line, prefix = "[[") && endsWith(text = _line, suffix = "]]")
 
 ; 平表头判定：方括号包住整行，且不是数组表。
 isTableHeader|func(_line: String,) -> (Bool,):
-    if isArrayHeader(line):
+    if isArrayHeader(_line):
         return false
-    return len(line) >= 2 && startsWith(text = line, prefix = "[") && endsWith(text = line, suffix = "]")
+    return len(_line) >= 2 && startsWith(text = _line, prefix = "[") && endsWith(text = _line, suffix = "]")
 
 ; 内联数组判定：整值被方括号包住。
 isInlineArray|func(_raw: String,) -> (Bool,):
-    return len(raw) >= 2 && startsWith(text = raw, prefix = "[") && endsWith(text = raw, suffix = "]")
+    return len(_raw) >= 2 && startsWith(text = _raw, prefix = "[") && endsWith(text = _raw, suffix = "]")
 
 ; 内联数组拆元素：逗号分隔，逐项去空白与引号，空项跳过。
 splitElements|func(_raw: String,) -> (Array<String>,):
     var out: Array<String> = []
-    let inner = raw.substring(1, len(raw) - 1)
+    let inner = _raw.substring(1, len(_raw) - 1)
     let parts = inner.split(",")
     var i = 0
     while i < len(parts):

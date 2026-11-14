@@ -2,10 +2,10 @@
 ; 归因同 `string-escapes-interp.pini`。`burn` 把那片栈压掉 —— 没有它，判据只是「栈还没被复用」，会碰运气变绿。
 ; 权威 = 解释器的行为（BEFORE 与 AFTER 都必须是 `alpha,beta,gamma`）。
 burn|func(_n: I32,) -> (I32,):
-    if n <= 0:
+    if _n <= 0:
         return 0
-    let dirty = "\(n)-\(n)-\(n)-\(n)-\(n)-\(n)-\(n)-\(n)"
-    return burn(n - 1) + len(dirty)
+    let dirty = "\(_n)-\(_n)-\(_n)-\(_n)-\(_n)-\(_n)-\(_n)-\(_n)"
+    return burn(_n - 1) + len(dirty)
 
 main|func() -> ():
     let xs: Array<String> = ["alpha", "beta", "gamma"]

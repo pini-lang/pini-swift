@@ -50,7 +50,7 @@ variadic: Bool = false
 
 ; 形状名：诊断、测试与回执共用一份拼写。
 builtinShapeName|func(_shape: BuiltinShape,) -> (String,):
-    match shape:
+    match _shape:
         case builtinAny:
             return "不限"
         case builtinVoid:
@@ -124,14 +124,14 @@ oneParam|func(name: String, shape: BuiltinShape,) -> (Array<BuiltinParam>,):
 ; 有长度形参：具体类型由实参决定，调用侧只要求可取长。
 makeSizedParam|func(_name: String,) -> (BuiltinParam,):
     var out = BuiltinParam()
-    out.name = name
+    out.name = _name
     out.sized = true
     return out
 
 ; 单形参（带长度约束）：`len` 与将来的同类内建共用。
 oneSizedParam|func(_name: String,) -> (Array<BuiltinParam>,):
     var out: Array<BuiltinParam> = []
-    out = out.append(makeSizedParam(name))
+    out = out.append(makeSizedParam(_name))
     return out
 
 ; 双形参。
@@ -249,15 +249,15 @@ hitType|func(pool: TypePool, id: I32,) -> (TypeInsert,):
 
 ; 首实参：空表答 -1，调用方按待定处理。
 firstArg|func(_kids: Array<I32>,) -> (I32,):
-    if len(kids) == 0:
+    if len(_kids) == 0:
         return -1
-    return kids[0]
+    return _kids[0]
 
 ; 次实参：不足两个答 -1。
 secondArg|func(_kids: Array<I32>,) -> (I32,):
-    if len(kids) < 2:
+    if len(_kids) < 2:
         return -1
-    return kids[1]
+    return _kids[1]
 
 ; 单实参容器：实参缺失答 -1，否则驻留名为 name 的容器类。
 wrapArg|func(pool: TypePool, kind: TypeClass, name: String, child: I32,) -> (TypeInsert,):
@@ -292,12 +292,12 @@ resultType|func(pool: TypePool, elem: I32,) -> (TypeInsert,):
 
 ; 空结果：`^()` 的元素是空元组。
 resultVoid|func(_pool: TypePool,) -> (TypeInsert,):
-    let unit = intern(pool = pool, kind = typeClassTuple, name = "", kids = [], ret = -1)
+    let unit = intern(pool = _pool, kind = typeClassTuple, name = "", kids = [], ret = -1)
     return resultType(pool = unit.pool, elem = unit.id)
 
 ; 指针返回：`*U8`。
 pointerU8|func(_pool: TypePool,) -> (TypeInsert,):
-    let byteType = scalarType(pool = pool, name = "U8")
+    let byteType = scalarType(pool = _pool, name = "U8")
     return wrapArg(pool = byteType.pool, kind = typeClassPointer, name = "", child = byteType.id)
 
 ; 弹出元组：数组与其元素各占一位，顺序与运行时返回值一致。
