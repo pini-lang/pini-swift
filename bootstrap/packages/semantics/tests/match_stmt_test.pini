@@ -1,0 +1,186 @@
+[match_stmt_test|import]
+_syntax = "../../syntax"
+_module_loader = "../../module-loader"
+
+; 匹配语句与延迟的检查：按名字走整个函数体，读语句检查结果。
+; 匹配诊断留在 matchCheck，语句诊断在 errors，两者都计入 failed。
+
+; 语句样例：单元、世界与表达式类型表；检查只读这三样。
+(语句样例)
+world: MemberWorld = MemberWorld()
+unit: CompilationUnit = CompilationUnit()
+types: ExprTypes = ExprTypes()
+
+; 造语句样例：装载、注册、解析类型、建世界四步，顺序不能反。
+造语句样例|func(src: String,) -> (语句样例,):
+    let loaded = loadUnit("packages/p/src/api/a.pini", src)
+    assert(!loaded.failed, "样例应可加载")
+    let units = [loaded.unit]
+    let table = registerPackage(units)
+    let types = resolvePackage(units, table)
+    var out = 语句样例()
+    out.world = makeMemberWorld(units, table, types)
+    out.unit = loaded.unit
+    out.types = makeExprTypes(units)
+    return out
+
+; 找语句函数：按名字找顶层函数声明，找不到答 -1。
+找语句函数|func(sample: 语句样例, name: String,) -> (I32,):
+    let ast = sample.unit.ast
+    let bytes = tempUtf8Bytes(sample.unit.text)
+    var i = 0
+    while i < len(ast.items):
+        let id = ast.items[i]
+        if isFunctionDeclCode(ast.decls[id].kind):
+            if decodeRange(bytes, ast.decls[id].nameStart, ast.decls[id].nameEnd) == name:
+                return id
+        i = i + 1
+    return -1
+
+; 查语句：按名字检查整个函数体，返回语句检查结果。
+查语句|func(sample: 语句样例, name: String,) -> (StoreCheck,):
+    let id = 找语句函数(sample, name)
+    assert(id >= 0, "应找到函数 " + name)
+    return checkFunctionStores(sample.world, 0, id, sample.types)
+
+; 找语句声明：按名字在声明清单里找局部，找不到答 -1。
+找语句声明|func(check: StoreCheck, name: String,) -> (I32,):
+    var i = 0
+    while i < len(check.declared):
+        if check.declared[i].spelling == name:
+            return i
+        i = i + 1
+    return -1
+
+; 同名声明数：统计同拼写的条数，用于判跨帧遮蔽是否两份都在册。
+同名声明数|func(check: StoreCheck, name: String,) -> (I32,):
+    var total = 0
+    var i = 0
+    while i < len(check.declared):
+        if check.declared[i].spelling == name:
+            total = total + 1
+        i = i + 1
+    return total
+
+; 诊断总数：语句诊断与匹配诊断合起来数。
+诊断总数|func(check: StoreCheck,) -> (I32,):
+    return len(check.errors) + len(check.matchCheck.errors)
+
+; 臂内可见：变体形参绑进臂帧，体内读到类型。
+臂内可见|test() -> ():
+    let sample = 造语句样例("[形状]\n圆(半径: F64,)\n点\n\nf|func(x: 形状,) -> (F64,):\n    match x:\n        case 形状.圆(半径):\n            return 半径\n        case 形状.点:\n            return 0.0\n    return 0.0\n")
+    let hit = 查语句(sample, "f")
+    assert(!hit.failed, "不应报错，实得 " + countText(诊断总数(hit)))
+    let at = 找语句声明(hit, "半径")
+    assert(at >= 0, "应绑定半径")
+    assert(isLocalKind(hit.declared[at].kind, localBinding), "应判作模式绑定")
+    assert(typeText(hit.pool, hit.declared[at].typeId) == "F64", "实得 " + typeText(hit.pool, hit.declared[at].typeId))
+    return
+
+; 臂绑定不外泄：出臂后绑定名不可见，按未定处理。
+臂绑定不外泄|test() -> ():
+    let sample = 造语句样例("[形状]\n圆(半径: F64,)\n点\n\nf|func(x: 形状,) -> ():\n    match x:\n        case 形状.圆(半径):\n            pass\n        case 形状.点:\n            pass\n    let u = 半径\n")
+    let hit = 查语句(sample, "f")
+    assert(!hit.failed, "不应报错，实得 " + countText(诊断总数(hit)))
+    let at = 找语句声明(hit, "u")
+    assert(at >= 0, "应声明 u")
+    assert(hit.declared[at].typeId < 0, "绑定出臂后不该可见")
+    return
+
+; 跨帧遮蔽：臂体内再声明同名，落在块帧，两份都在册且不报错。
+臂内遮蔽|test() -> ():
+    let sample = 造语句样例("[形状]\n圆(半径: F64,)\n点\n\nf|func(x: 形状,) -> ():\n    match x:\n        case 形状.圆(半径):\n            let 半径 = 1\n            pass\n        case 形状.点:\n            pass\n")
+    let hit = 查语句(sample, "f")
+    assert(!hit.failed, "遮蔽不应报错，实得 " + countText(诊断总数(hit)))
+    assert(同名声明数(hit, "半径") == 2, "实得 " + countText(同名声明数(hit, "半径")))
+    return
+
+; 缺变体：枚举少一臂且无通配，报未穷尽并列出缺项。
+匹配语句缺变体|test() -> ():
+    let sample = 造语句样例("[形状]\n圆(半径: F64,)\n点\n\nf|func(x: 形状,) -> ():\n    match x:\n        case 形状.圆(半径):\n            pass\n")
+    let hit = 查语句(sample, "f")
+    assert(hit.failed, "应判失败")
+    assert(len(hit.matchCheck.errors) == 1, "应报一条，实得 " + countText(len(hit.matchCheck.errors)))
+    assert(matchErrorCode(hit.matchCheck.errors[0].kind) == "E3-007", "实得 " + matchErrorCode(hit.matchCheck.errors[0].kind))
+    assert(len(hit.matchCheck.missing) == 1 && hit.matchCheck.missing[0] == "点", "缺项应是点")
+    return
+
+; 通配兜底：缺的变体由 `case _:` 补上，不再报未穷尽。
+匹配语句通配兜底|test() -> ():
+    let sample = 造语句样例("[形状]\n圆(半径: F64,)\n点\n\nf|func(x: 形状,) -> ():\n    match x:\n        case 形状.圆(半径):\n            pass\n        case _:\n            pass\n")
+    let hit = 查语句(sample, "f")
+    assert(!hit.failed, "通配兜底不应报错，实得 " + countText(诊断总数(hit)))
+    assert(hit.matchCheck.hasWildcard, "应记下通配")
+    return
+
+; 未知用例：不属于该枚举的用例报未知。
+匹配语句未知用例|test() -> ():
+    let sample = 造语句样例("[形状]\n圆(半径: F64,)\n点\n\nf|func(x: 形状,) -> ():\n    match x:\n        case 形状.方:\n            pass\n        case _:\n            pass\n")
+    let hit = 查语句(sample, "f")
+    assert(len(hit.matchCheck.errors) == 1, "应报一条，实得 " + countText(len(hit.matchCheck.errors)))
+    assert(matchErrorCode(hit.matchCheck.errors[0].kind) == "E3-006", "实得 " + matchErrorCode(hit.matchCheck.errors[0].kind))
+    assert(hit.matchCheck.errors[0].caseName == "方", "实得 " + hit.matchCheck.errors[0].caseName)
+    return
+
+; 绑定数不符：变体一个形参，模式给两个绑定位，报个数不匹配。
+匹配语句绑定数不符|test() -> ():
+    let sample = 造语句样例("[形状]\n圆(半径: F64,)\n点\n\nf|func(x: 形状,) -> ():\n    match x:\n        case 形状.圆(_, _):\n            pass\n        case _:\n            pass\n")
+    let hit = 查语句(sample, "f")
+    assert(len(hit.matchCheck.errors) == 1, "应报一条，实得 " + countText(len(hit.matchCheck.errors)))
+    assert(matchErrorCode(hit.matchCheck.errors[0].kind) == "E4-005", "实得 " + matchErrorCode(hit.matchCheck.errors[0].kind))
+    return
+
+; 重复绑定只报一条：同一臂两个绑定位同名，匹配面已判则不重复补报。
+重复绑定一条|test() -> ():
+    let sample = 造语句样例("[形状]\n矩形(宽: F64, 高: F64,)\n\nf|func(x: 形状,) -> ():\n    match x:\n        case 形状.矩形(a, a):\n            pass\n        case _:\n            pass\n")
+    let hit = 查语句(sample, "f")
+    assert(len(hit.matchCheck.errors) == 1, "应报一条，实得 " + countText(len(hit.matchCheck.errors)))
+    assert(matchErrorCode(hit.matchCheck.errors[0].kind) == "E3-004", "实得 " + matchErrorCode(hit.matchCheck.errors[0].kind))
+    return
+
+; 主体判不出：主题未定按待定放过，绑定名仍入臂帧，类型留未定。
+主体判不出|test() -> ():
+    let sample = 造语句样例("[形状]\n圆(半径: F64,)\n点\n\nf|func() -> ():\n    match 未知:\n        case 形状.圆(半径):\n            pass\n")
+    let hit = 查语句(sample, "f")
+    assert(!hit.failed, "待定不应报错，实得 " + countText(诊断总数(hit)))
+    assert(hit.matchCheck.deferred, "应判作待定")
+    let at = 找语句声明(hit, "半径")
+    assert(at >= 0, "待定时绑定名仍应入帧")
+    assert(hit.declared[at].typeId < 0, "待定时绑定类型应未定")
+    return
+
+; 延迟记录：每条延迟语句按源序记入清单，供 IR 排清理栈。
+延迟记录|test() -> ():
+    let sample = 造语句样例("f|func() -> ():\n    defer:\n        pass\n    defer:\n        pass\n")
+    let hit = 查语句(sample, "f")
+    assert(!hit.failed, "延迟不应报错，实得 " + countText(诊断总数(hit)))
+    assert(len(hit.defers) == 2, "实得 " + countText(len(hit.defers)))
+    return
+
+; 延迟体不外泄：体内声明落块帧，出块后不可见。
+延迟体不外泄|test() -> ():
+    let sample = 造语句样例("f|func() -> ():\n    defer:\n        let t = 1\n        pass\n    let u = t\n")
+    let hit = 查语句(sample, "f")
+    assert(!hit.failed, "不应报错，实得 " + countText(诊断总数(hit)))
+    let at = 找语句声明(hit, "u")
+    assert(at >= 0, "应声明 u")
+    assert(hit.declared[at].typeId < 0, "延迟体内声明出块后不该可见")
+    return
+
+; 延迟体照查：体内的跳出与直接写在函数体里同规。
+延迟体照查|test() -> ():
+    let sample = 造语句样例("f|func() -> ():\n    defer:\n        break\n")
+    let hit = 查语句(sample, "f")
+    assert(len(hit.errors) == 1, "应报一条，实得 " + countText(len(hit.errors)))
+    assert(isStoreError(hit.errors[0], storeLoopControlOutside), "实得 " + storeErrorName(hit.errors[0].kind))
+    return
+
+; 两次检查一致：同一份源码查两遍，诊断条数与类别相同。
+匹配两次一致|test() -> ():
+    let sample = 造语句样例("[形状]\n圆(半径: F64,)\n点\n\nf|func(x: 形状,) -> ():\n    match x:\n        case 形状.圆(半径):\n            pass\n    defer:\n        pass\n")
+    let first = 查语句(sample, "f")
+    let second = 查语句(sample, "f")
+    assert(诊断总数(first) == 诊断总数(second), "两次条数应相同")
+    assert(len(first.defers) == len(second.defers), "两次延迟读数应相同")
+    assert(len(first.matchCheck.missing) == len(second.matchCheck.missing), "两次缺项应相同")
+    return

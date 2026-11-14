@@ -35,6 +35,7 @@ got: String = ""
 
 ; 语句检查结果：池、表达式类型表、走到末尾的作用域、错误、声明清单与循环深度。
 ; 循环深度只数外层 while 与 for：进循环体加一，出循环还原；break 与 continue 靠它判位置。
+; 匹配诊断留在匹配面自己的表里；延迟语句按源序记录，供 IR 排清理栈。
 (StoreCheck)
 pool: TypePool = TypePool()
 types: ExprTypes = ExprTypes()
@@ -42,6 +43,8 @@ scope: ScopeStack = ScopeStack()
 errors: Array<StoreError> = []
 declared: Array<LocalSymbol> = []
 loopDepth: I32 = 0
+matchCheck: MatchResult = MatchResult()
+defers: Array<I32> = []
 failed: Bool = false
 
 ; 初值定型结果：检查状态与类型下标；-2 表示已判错。
@@ -352,15 +355,9 @@ walkStoreStmt|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, st
     if ast.isContinueStmt(stmtId):
         return checkLoopControl(unit, stmtId, "continue", out)
     if ast.isMatchStmt(stmtId):
-        var done = out
-        let kids = ast.stmtAt(stmtId).kids
-        var i = 2
-        while i < len(kids):
-            done = walkStoreStmt(world, unit, unitIndex, kids[i], done)
-            i = i + 2
-        return done
+        return walkMatchStmt(world, unit, unitIndex, stmtId, out)
     if ast.isDeferStmt(stmtId):
-        return walkStoreStmt(world, unit, unitIndex, ast.stmtChild(stmtId, 0), out)
+        return walkDeferStmt(world, unit, unitIndex, stmtId, out)
     return out
 
 ; 检查入口：播种函数帧后走一遍体；块帧退出，作用域回到参数层，声明清单留全量记录。
@@ -377,5 +374,5 @@ checkFunctionStores|func(world: MemberWorld, unitIndex: I32, declId: I32, types:
     if decl.body < 0:
         return out
     out = walkStoreBlock(world, unit, unitIndex, decl.body, out)
-    out.failed = len(out.errors) > 0
+    out.failed = len(out.errors) + len(out.matchCheck.errors) > 0
     return out
