@@ -149,7 +149,7 @@ public enum ConstantFolder {
         case .unary(let op, let operand, let loc):
             return foldUnary(op, fold(operand), loc)
         case .call(let callee, let args, let loc):
-            return .call(callee: fold(callee), arguments: args.map { CallArgument(label: $0.label, expression: fold($0.expression)) }, location: loc)
+            return .call(callee: fold(callee), arguments: args.map { CallArgument(label: $0.label, expression: fold($0.expression), location: $0.location) }, location: loc)
         case .member(let obj, let name, let loc):
             return .member(object: fold(obj), name: name, location: loc)
         case .tryExpression(let operand, let errorVar, let handler, let loc):
@@ -181,6 +181,9 @@ public enum ConstantFolder {
         case .unsafe(let operand, let loc):
             // Phase 2a（FFI 子系统）：不安全消耗点——递归折叠操作数。
             return .unsafe(operand: fold(operand), location: loc)
+        case .cast(let operand, let target, let loc):
+            // 显式转换：折叠操作数；数值变换留给语义层按目标类型定型，此处不改类型。
+            return .cast(operand: fold(operand), target: target, location: loc)
         case .addressOf(let operand, let loc):
             // Phase 2a（FFI 子系统）：取地址——递归折叠操作数（折叠只做常量归约，地址不变）。
             return .addressOf(operand: fold(operand), location: loc)

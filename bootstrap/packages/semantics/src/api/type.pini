@@ -1,0 +1,201 @@
+; 类型类别：标量、指针、结构、对象、枚举、元组、集合、可选、结果、函数与泛型实例各成一类。
+[TypeClass]
+typeClassInvalid
+typeClassScalar
+typeClassPointer
+typeClassStruct
+typeClassObject
+typeClassEnum
+typeClassTuple
+typeClassCollection
+typeClassOptional
+typeClassResult
+typeClassFunction
+typeClassGeneric
+
+; 类型条目：名字是名义拼写，键用于判等；kids 是元素、分量或实参，ret 只给函数类型。
+(TypeEntry)
+kind: TypeClass = .typeClassInvalid
+name: String = ""
+key: Array<U8> = []
+kids: Array<I32> = []
+ret: I32 = -1
+
+; 类型池：条目只增不改，下标即身份；同形只驻留一份，故下标相等即类型相等。
+(TypePool)
+entries: Array<TypeEntry> = []
+errors: Array<TypeError> = []
+
+; 驻留结果：池与命中或新条目下标；调用方一律拿新池覆盖旧池。
+(TypeInsert)
+pool: TypePool = TypePool()
+id: I32 = -1
+
+; 类别名：诊断与测试共用一份拼写。
+typeClassName|func(_kind: TypeClass,) -> (String,):
+    match _kind:
+        case typeClassInvalid:
+            return "无效类型"
+        case typeClassScalar:
+            return "标量"
+        case typeClassPointer:
+            return "指针"
+        case typeClassStruct:
+            return "结构"
+        case typeClassObject:
+            return "对象"
+        case typeClassEnum:
+            return "枚举"
+        case typeClassTuple:
+            return "元组"
+        case typeClassCollection:
+            return "集合"
+        case typeClassOptional:
+            return "可选"
+        case typeClassResult:
+            return "结果"
+        case typeClassFunction:
+            return "函数"
+        case typeClassGeneric:
+            return "泛型实例"
+    return "无效类型"
+
+; 类别判定：下游只问「是不是某类」，不直接比较枚举值。
+isTypeClass|func(kind: TypeClass, expected: TypeClass,) -> (Bool,):
+    return typeClassName(kind) == typeClassName(expected)
+
+((TypePool))
+; 条目数：下标合法区间是 0 到 count() - 1。
+count|self() -> (I32,):
+    return len(self.entries)
+; 错误数：非零即池不可用于下游。
+errorCount|self() -> (I32,):
+    return len(self.errors)
+errorAt|self(_index: I32,) -> (TypeError,):
+    return self.errors[_index]
+; 可用：没有任何类型错误。
+isOK|self() -> (Bool,):
+    return len(self.errors) == 0
+
+; 追加一条错误：不改动条目集，只累积诊断。
+addTypeError|func(pool: TypePool, error: TypeError,) -> (TypePool,):
+    var out = pool
+    out.errors = out.errors.append(error)
+    return out
+
+; 逐项相等：类型分量按下标比，长度不同直接假。
+sameTypeIds|func(first: Array<I32>, second: Array<I32>,) -> (Bool,):
+    if len(first) != len(second):
+        return false
+    var i = 0
+    while i < len(first):
+        if first[i] != second[i]:
+            return false
+        i = i + 1
+    return true
+
+; 查同形条目：类别、名字键、分量与返回全同才算命中；找不到答 -1。
+findTypeEntry|func(pool: TypePool, kind: TypeClass, key: Array<U8>, kids: Array<I32>, ret: I32,) -> (I32,):
+    var i = 0
+    while i < len(pool.entries):
+        let entry = pool.entries[i]
+        if typeClassName(entry.kind) == typeClassName(kind):
+            if sameKey(first = entry.key, second = key) && sameTypeIds(first = entry.kids, second = kids) && entry.ret == ret:
+                return i
+        i = i + 1
+    return -1
+
+; 驻留一个类型：同形复用已有下标，否则追加到池尾。
+intern|func(pool: TypePool, kind: TypeClass, name: String, kids: Array<I32>, ret: I32,) -> (TypeInsert,):
+    let key = keyOfText(name)
+    var out = TypeInsert()
+    let at = findTypeEntry(pool = pool, kind = kind, key = key, kids = kids, ret = ret)
+    if at >= 0:
+        out.pool = pool
+        out.id = at
+        return out
+    var entry = TypeEntry()
+    entry.kind = kind
+    entry.name = name
+    entry.key = key
+    entry.kids = kids
+    entry.ret = ret
+    var grown = pool
+    grown.entries = grown.entries.append(entry)
+    out.pool = grown
+    out.id = len(grown.entries) - 1
+    return out
+
+; 分量拼成文本：逗号加空格分隔，供元组、实参与形参共用。
+joinTypes|func(pool: TypePool, ids: Array<I32>,) -> (String,):
+    var out = ""
+    var i = 0
+    while i < len(ids):
+        if i > 0:
+            out = out + ", "
+        out = out + typeText(pool = pool, id = ids[i])
+        i = i + 1
+    return out
+
+; 前缀运算符的括号：函数类型作指针或可选的操作数时必须括起。
+needsParens|func(pool: TypePool, id: I32,) -> (Bool,):
+    if id < 0 || id >= len(pool.entries):
+        return false
+    return isTypeClass(kind = pool.entries[id].kind, expected = typeClassFunction)
+
+; 规范化文本：接口产物与诊断共用一份拼写，同一类型在任何遍历顺序下都得到同一串。
+typeText|func(pool: TypePool, id: I32,) -> (String,):
+    if id < 0 || id >= len(pool.entries):
+        return "<无效>"
+    let entry = pool.entries[id]
+    if isTypeClass(kind = entry.kind, expected = typeClassScalar):
+        return entry.name
+    if isTypeClass(kind = entry.kind, expected = typeClassStruct) || isTypeClass(kind = entry.kind, expected = typeClassObject):
+        return entry.name
+    if isTypeClass(kind = entry.kind, expected = typeClassEnum):
+        return entry.name
+    if isTypeClass(kind = entry.kind, expected = typeClassGeneric):
+        if len(entry.kids) == 0:
+            return entry.name
+        return entry.name + "<" + joinTypes(pool = pool, ids = entry.kids) + ">"
+    if isTypeClass(kind = entry.kind, expected = typeClassCollection):
+        return entry.name + "<" + joinTypes(pool = pool, ids = entry.kids) + ">"
+    if isTypeClass(kind = entry.kind, expected = typeClassPointer):
+        if len(entry.kids) == 0:
+            return "<无效>"
+        let inner = typeText(pool = pool, id = entry.kids[0])
+        if needsParens(pool = pool, id = entry.kids[0]):
+            return "*(" + inner + ")"
+        return "*" + inner
+    if isTypeClass(kind = entry.kind, expected = typeClassOptional):
+        if len(entry.kids) == 0:
+            return "<无效>"
+        let inner = typeText(pool = pool, id = entry.kids[0])
+        if needsParens(pool = pool, id = entry.kids[0]):
+            return "(" + inner + ")?"
+        return inner + "?"
+    if isTypeClass(kind = entry.kind, expected = typeClassTuple):
+        if len(entry.kids) == 0:
+            return "()"
+        return "(" + joinTypes(pool = pool, ids = entry.kids) + ",)"
+    if isTypeClass(kind = entry.kind, expected = typeClassResult):
+        return resultText(pool = pool, entry = entry)
+    if isTypeClass(kind = entry.kind, expected = typeClassFunction):
+        var params = "(" + joinTypes(pool = pool, ids = entry.kids) + ",)"
+        if len(entry.kids) == 0:
+            params = "()"
+        return params + " -> " + typeText(pool = pool, id = entry.ret)
+    return "<无效>"
+
+; 结果文本：`^T` 是 `Result<T, Error>` 的糖；错误实参非内建 Error 时退回全写。
+resultText|func(pool: TypePool, entry: TypeEntry,) -> (String,):
+    if len(entry.kids) == 0:
+        return "^<无效>"
+    if len(entry.kids) == 1:
+        return "^" + typeText(pool = pool, id = entry.kids[0])
+    var second = ""
+    if entry.kids[1] >= 0 && entry.kids[1] < len(pool.entries):
+        second = pool.entries[entry.kids[1]].name
+    if second == "Error":
+        return "^" + typeText(pool = pool, id = entry.kids[0])
+    return "Result<" + joinTypes(pool = pool, ids = entry.kids) + ">"

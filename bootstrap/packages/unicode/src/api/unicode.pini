@@ -30,8 +30,8 @@ length: I32 = 0
 error: Utf8Error = .utf8None
 
 ; 错误类别的稳定名称；合法时答「无」。
-utf8ErrorName|func(error: Utf8Error,) -> (String,):
-    match error:
+utf8ErrorName|func(_error: Utf8Error,) -> (String,):
+    match _error:
         case utf8None:
             return "无"
         case utf8Truncated:
@@ -50,7 +50,7 @@ utf8ErrorName|func(error: Utf8Error,) -> (String,):
 
 ; 从 `offset` 解一个标量：只读该标量的首字节与续字节，不扫描其后文本；调用方保证偏移在界内。
 decodeScalarAt|func(bytes: Array<U8>, offset: I32,) -> (Utf8Step,):
-    let unit = stepScalar(bytes, offset)
+    let unit = stepScalar(bytes = bytes, start = offset)
     var out = Utf8Step()
     out.code = unit.code
     out.length = unit.length
@@ -58,18 +58,18 @@ decodeScalarAt|func(bytes: Array<U8>, offset: I32,) -> (Utf8Step,):
     return out
 
 ; 解码字节数组；标量区间以数组下标为基准，与输入共用同一份存储。
-decodeUtf8|func(bytes: Array<U8>,) -> (Utf8Text,):
+decodeUtf8|func(_bytes: Array<U8>,) -> (Utf8Text,):
     var buffer = ByteBuffer()
-    buffer.bytes = bytes
-    return decodeUtf8Slice(buffer.slice(0, len(bytes)))
+    buffer.bytes = _bytes
+    return decodeUtf8Slice(buffer.slice(start = 0, end = len(_bytes)))
 
 ; 解码切片；不复制字节，`start` 相对切片起点，调用方加上切片起点即得源内偏移。
-decodeUtf8Slice|func(part: ByteSlice,) -> (Utf8Text,):
+decodeUtf8Slice|func(_part: ByteSlice,) -> (Utf8Text,):
     var out = Utf8Text()
-    let count = part.end - part.start
+    let count = _part.end - _part.start
     var i = 0
     while i < count:
-        let unit = stepScalar(part.bytes, part.start + i)
+        let unit = stepScalar(bytes = _part.bytes, start = _part.start + i)
         if unit.length == 0:
             out.error = unit.error
             out.errorAt = i
@@ -84,9 +84,9 @@ decodeUtf8Slice|func(part: ByteSlice,) -> (Utf8Text,):
     return out
 
 ; 按 Unicode 标量编码为 UTF-8；负值、超上限与代理区由构建器的前置检查拒绝。
-utf8Encode|func(code: I32,) -> (Array<U8>,):
+utf8Encode|func(_code: I32,) -> (Array<U8>,):
     var builder = ByteBuilder()
-    builder = builder.appendScalar(code)
+    builder = builder.appendScalar(_code)
     return builder.takeBuffer().bytes
 
 ; 数据版本由生成表提供，上层据此核对表与规范声明同版。
@@ -94,58 +94,103 @@ unicodeVersion|func() -> (String,):
     return unicodeDataVersion()
 
 ; 是否为 ASCII 码点；负值与大于 U+007F 均答假。
-isAsciiScalar|func(code: I32,) -> (Bool,):
-    if code < 0:
+isAsciiScalar|func(_code: I32,) -> (Bool,):
+    if _code < 0:
         return false
-    return code < 128
+    return _code < 128
 
 ; 是否为 Unicode 字母（通用类别 L*）。
-isLetterScalar|func(code: I32,) -> (Bool,):
-    return unicodeClassOf(code) == 1
+isLetterScalar|func(_code: I32,) -> (Bool,):
+    return unicodeClassOf(_code) == 1
 
 ; 是否为 Unicode 数字（通用类别 N*）。
-isNumberScalar|func(code: I32,) -> (Bool,):
-    return unicodeClassOf(code) == 2
+isNumberScalar|func(_code: I32,) -> (Bool,):
+    return unicodeClassOf(_code) == 2
 
 ; 是否为 White_Space 属性字符；零宽空格与 BOM 不在其中。
-isWhitespaceScalar|func(code: I32,) -> (Bool,):
-    return unicodeClassOf(code) == 3
+isWhitespaceScalar|func(_code: I32,) -> (Bool,):
+    return unicodeClassOf(_code) == 3
 
 ; 标识符首字符：下划线或字母；数字不得起始。
-startsIdentifier|func(code: I32,) -> (Bool,):
-    if code == 95:
+startsIdentifier|func(_code: I32,) -> (Bool,):
+    if _code == 95:
         return true
-    return unicodeClassOf(code) == 1
+    return unicodeClassOf(_code) == 1
 
-; 标识符后续字符：下划线、字母或数字；组合附加符号不进入标识符。
-continuesIdentifier|func(code: I32,) -> (Bool,):
-    if code == 95:
+; 高风险脚本号：0 其它，1 拉丁，2 西里尔，3 希腊。只服务混写判定，不作字符分类。
+scriptOf|func(_code: I32,) -> (I32,):
+    return scriptClassOf(_code)
+
+; 混写判定：两个不同的高风险脚本同时出现即为混写；其它脚本号不参与比较。
+scriptsConflict|func(first: I32, second: I32,) -> (Bool,):
+    if first == 0 || second == 0:
+        return false
+    return first != second
+
+; 组合附加符号：四个组合标记区块。只作续字符，不得作标识符首字符。
+isCombiningMarkScalar|func(_code: I32,) -> (Bool,):
+    if _code >= 0x0300 && _code <= 0x036F:
         return true
-    let kind = unicodeClassOf(code)
+    if _code >= 0x1DC0 && _code <= 0x1DFF:
+        return true
+    if _code >= 0x20D0 && _code <= 0x20FF:
+        return true
+    return _code >= 0xFE20 && _code <= 0xFE2F
+
+; 双向控制字符：Unicode Bidi_Control 属性的全部成员。
+; 标识符里按未知字节拒绝；注释与字符串里只记警告——那两处是文字，不是程序结构。
+isBidiControlScalar|func(_code: I32,) -> (Bool,):
+    if _code == 0x061C:
+        return true
+    if _code == 0x200E || _code == 0x200F:
+        return true
+    if _code >= 0x202A && _code <= 0x202E:
+        return true
+    return _code >= 0x2066 && _code <= 0x2069
+
+; 标识符后续字符：下划线、字母、数字或组合附加符号。
+continuesIdentifier|func(_code: I32,) -> (Bool,):
+    if _code == 95:
+        return true
+    if isCombiningMarkScalar(_code):
+        return true
+    let kind = unicodeClassOf(_code)
     if kind == 1:
         return true
     return kind == 2
 
 ; 规范分解（NFD）：按等价类拆成基字与附标；非法 UTF-8 原样返回，不吞字节。
-normalizeNfdBytes|func(bytes: Array<U8>,) -> (Array<U8>,):
-    let text = decodeUtf8(bytes)
+normalizeNfdBytes|func(_bytes: Array<U8>,) -> (Array<U8>,):
+    let text = decodeUtf8(_bytes)
     if !text.isValid():
-        return bytes
+        return _bytes
     return encodeScalars(nfdOfCodes(scalarCodes(text)))
 
 ; 规范组合（NFC）：同一等价类的两种写法归到同一字节序列；非法 UTF-8 原样返回。
-normalizeNfcBytes|func(bytes: Array<U8>,) -> (Array<U8>,):
-    let text = decodeUtf8(bytes)
+normalizeNfcBytes|func(_bytes: Array<U8>,) -> (Array<U8>,):
+    let text = decodeUtf8(_bytes)
     if !text.isValid():
-        return bytes
+        return _bytes
     return encodeScalars(nfcOfCodes(scalarCodes(text)))
 
 ; 混淆骨架：把形近字符折到同一代表，供诊断比较；非法 UTF-8 原样返回。
-confusableSkeletonBytes|func(bytes: Array<U8>,) -> (Array<U8>,):
-    let text = decodeUtf8(bytes)
+confusableSkeletonBytes|func(_bytes: Array<U8>,) -> (Array<U8>,):
+    let text = decodeUtf8(_bytes)
     if !text.isValid():
-        return bytes
+        return _bytes
     return encodeScalars(confusableSkeletonCodes(scalarCodes(text)))
+
+; 标识符查找键：把源内字节区间按 NFC 规范化，符号表以此为比较键。
+; 两界夹紧后取区间；调用方只对标识符区间调用，不得把整份源码送进来。
+identifierKeyBytes|func(bytes: Array<U8>, start: I32, end: I32,) -> (Array<U8>,):
+    var part: Array<U8> = []
+    var i = start
+    if i < 0:
+        i = 0
+    while i < end && i < len(bytes):
+        part = part.append(bytes[i])
+        i = i + 1
+    return normalizeNfcBytes(part)
 
 ((Utf8Text))
 ; 整段合法：出错位置为 -1。
@@ -153,8 +198,8 @@ isValid|self() -> (Bool,):
     return self.errorAt < 0
 scalarCount|self() -> (I32,):
     return len(self.scalars)
-scalarAt|self(index: I32,) -> (Scalar,):
-    return self.scalars[index]
+scalarAt|self(_index: I32,) -> (Scalar,):
+    return self.scalars[_index]
 ; 出错序列的起始字节偏移；合法时答 -1。
 errorOffset|self() -> (I32,):
     return self.errorAt

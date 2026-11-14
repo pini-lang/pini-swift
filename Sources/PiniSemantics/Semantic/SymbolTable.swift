@@ -1,4 +1,5 @@
 import Foundation
+import PiniSyntax
 
 /// 符号表
 /// 管理全局和局部作用域中的符号
@@ -24,11 +25,38 @@ public final class SymbolTable {
     public var forbiddenNames: Set<String> = []
     public var onForbiddenDefine: ((String) -> Void)?
 
+    /// 同作用域混淆回调：新名与已有名的形近骨架（UTS 39）相同而 NFC 不同。
+    /// 只报告，不阻断——两个名字确实可能都是有意写的。
+    public var onConfusableIdentifier: ((String, String, SourceLocation) -> Void)?
+
+    /// 名字到骨架的缓存：一次分析内同一名字只算一遍。
+    private var skeletonCache: [String: String] = [:]
+
     public func define(_ symbol: Symbol) {
         if !forbiddenNames.isEmpty, forbiddenNames.contains(symbol.name) {
             onForbiddenDefine?(symbol.name)
         }
+        reportConfusable(symbol)
         current.define(symbol)
+    }
+
+    /// 只与当前作用域里的名字比：跨作用域的遮蔽不在这条规则里。
+    private func reportConfusable(_ symbol: Symbol) {
+        guard let onConfusableIdentifier else { return }
+        let target = skeleton(of: symbol.name)
+        for existing in current.symbols.keys.sorted() where existing != symbol.name {
+            if skeleton(of: existing) == target {
+                onConfusableIdentifier(symbol.name, existing, symbol.location)
+                return
+            }
+        }
+    }
+
+    private func skeleton(of name: String) -> String {
+        if let cached = skeletonCache[name] { return cached }
+        let value = ConfusableSkeleton.skeleton(of: name)
+        skeletonCache[name] = value
+        return value
     }
 
     public func resolve(_ name: String) -> Symbol? {

@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""生成 unicode 包的码点分类表、规范化表与混淆映射表。
+"""生成 unicode 包的码点分类表、规范化表、混淆映射表与脚本归属表。
 
-数据来源有两处：分类与规范化取自本机 Python 的 unicodedata，混淆映射取自随仓库提交的
-UTS #39 数据文件。重新生成要求宿主数据正好是钉定版本，否则同一脚本会在不同解释器上产出
-不同的表。产物是 Pini 源码，构建与运行不读宿主 Unicode 数据。
+数据来源有三处：分类与规范化取自本机 Python 的 unicodedata，混淆映射与脚本归属取自随仓库
+提交的 UTS #39 与 UCD 数据文件。重新生成要求宿主数据正好是钉定版本，否则同一脚本会在不同
+解释器上产出不同的表。产物是 Pini 源码，构建与运行不读宿主 Unicode 数据。
+
+宿主语义层要用同一份混淆与脚本数据，故生成器同时把它们复制进 `Sources/PiniSemantics/Resources`
+并登记摘要；两份不一致时门禁先红，不靠人工比对。
 
 校验只看登记摘要与生成物头部的版本，不读宿主数据：门禁的判据是「提交的产物与登记的摘要
 一致」，因此宿主 Python 的 Unicode 版本漂移不影响校验结果。
@@ -16,6 +19,7 @@ UTS #39 数据文件。重新生成要求宿主数据正好是钉定版本，否
 
 import hashlib
 import os
+import shutil
 import sys
 import unicodedata
 
@@ -28,8 +32,13 @@ INTERNAL = os.path.join(ROOT, "bootstrap", "packages", "unicode", "src", "_inter
 OUT_CLASS = os.path.join(INTERNAL, "tables.pini")
 OUT_NFC = os.path.join(INTERNAL, "nfc_tables.pini")
 OUT_CONFUSABLE = os.path.join(INTERNAL, "confusable_tables.pini")
+OUT_SCRIPTS = os.path.join(INTERNAL, "script_tables.pini")
 CONFUSABLE_DATA = os.path.join(
     ROOT, "bootstrap", "tools", "data", "confusables-15.1.0.txt")
+SCRIPTS_DATA = os.path.join(
+    ROOT, "bootstrap", "tools", "data", "scripts-15.1.0.txt")
+HOST_RESOURCES = os.path.join(ROOT, "Sources", "PiniSemantics", "Resources")
+HOST_LEXER_RESOURCES = os.path.join(ROOT, "Sources", "PiniSyntax", "Resources")
 DIGEST_MANIFEST = os.path.join(
     ROOT, "bootstrap", "tools", "data", "unicode-%s.digests" % UNICODE_VERSION)
 MAX_CODE = 0x10FFFF
@@ -93,7 +102,7 @@ def emit_range_tree(ranges, lines, depth):
         lines.append("%sreturn %d" % (pad, ranges[0][2]))
         return
     mid = len(ranges) // 2
-    lines.append("%sif code < %s:" % (pad, hex_literal(ranges[mid][0])))
+    lines.append("%sif _code < %s:" % (pad, hex_literal(ranges[mid][0])))
     emit_range_tree(ranges[:mid], lines, depth + 1)
     lines.append("%selse:" % pad)
     emit_range_tree(ranges[mid:], lines, depth + 1)
@@ -105,12 +114,12 @@ def emit_blocked_exact(entries, lines, depth):
     pad = "    " * depth
     if len(blocks) == 1:
         for code, value in blocks[0]:
-            lines.append("%sif code == %s:" % (pad, hex_literal(code)))
+            lines.append("%sif _code == %s:" % (pad, hex_literal(code)))
             lines.append("%s    return %s" % (pad, value))
         lines.append("%sreturn -1" % pad)
         return
     mid = (len(blocks) + 1) // 2
-    lines.append("%sif code < %s:" % (pad, hex_literal(blocks[mid][0][0])))
+    lines.append("%sif _code < %s:" % (pad, hex_literal(blocks[mid][0][0])))
     emit_blocked_exact([e for b in blocks[:mid] for e in b], lines, depth + 1)
     lines.append("%selse:" % pad)
     emit_blocked_exact([e for b in blocks[mid:] for e in b], lines, depth + 1)
@@ -200,6 +209,104 @@ def confusables():
     return table
 
 
+# 高风险脚本各占一号；其余脚本一律 0，故中文与日韩的组合天然不参与混写判定。
+HIGH_RISK_SCRIPTS = {"Latin": 1, "Cyrillic": 2, "Greek": 3}
+
+
+def high_risk_scripts():
+    """从 UCD 脚本数据取高风险脚本区间，只保留拉丁、西里尔与希腊。"""
+    if not os.path.exists(SCRIPTS_DATA):
+        raise SystemExit("生成器：缺少 %s" % SCRIPTS_DATA)
+    with open(SCRIPTS_DATA, encoding="utf-8") as handle:
+        header = handle.readline().strip()
+    if UNICODE_VERSION not in header:
+        raise SystemExit(
+            "生成器：脚本数据版本与脚本钉定的 %s 不符（首行 %s）。"
+            % (UNICODE_VERSION, header))
+    ranges = []
+    with open(SCRIPTS_DATA, encoding="utf-8") as handle:
+        for raw in handle:
+            line = raw.split("#")[0].strip()
+            if not line:
+                continue
+            parts = [item.strip() for item in line.split(";")]
+            if len(parts) < 2:
+                continue
+            value = HIGH_RISK_SCRIPTS.get(parts[1], 0)
+            if value == 0:
+                continue
+            span = parts[0]
+            if ".." in span:
+                lo, hi = span.split("..")
+            else:
+                lo = hi = span
+            ranges.append((int(lo, 16), int(hi, 16), value))
+    ranges.sort()
+    merged = []
+    for lo, hi, value in ranges:
+        if merged and merged[-1][2] == value and merged[-1][1] + 1 >= lo:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], hi), value)
+        else:
+            merged.append((lo, hi, value))
+    return merged
+
+
+def script_segments():
+    """补上未被高风险脚本覆盖的码点，得到从 0 到上限连续覆盖的分段。"""
+    out = []
+    cursor = 0
+    for lo, hi, value in high_risk_scripts():
+        if lo > cursor:
+            out.append((cursor, lo - 1, 0))
+        out.append((lo, hi, value))
+        cursor = hi + 1
+    if cursor <= MAX_CODE:
+        out.append((cursor, MAX_CODE, 0))
+    return out
+
+
+def build_scripts(ranges):
+    lines = [
+        "; 本文件由 bootstrap/tools/gen-unicode-tables.py 生成，勿手改。",
+        "; 数据版本 Unicode %s；区间为闭区间，按码点升序。" % UNICODE_VERSION,
+        "; 脚本号：0 其它，1 拉丁，2 西里尔，3 希腊。",
+        "",
+        "; 码点脚本号：只区分三个高风险脚本，其余一律 0；越界码点按 0。",
+        "scriptClassOf|func(_code: I32,) -> (I32,):",
+        "    if _code < 0:",
+        "        return 0",
+        "    if _code > %s:" % hex_literal(MAX_CODE),
+        "        return 0",
+    ]
+    emit_range_tree(ranges, lines, 1)
+    lines += [""]
+    return "\n".join(lines)
+
+
+def host_resource_copies():
+    """数据各归其层：混淆给语义层，脚本给词法层，两条依赖方向都不许反向。"""
+    placements = [
+        (CONFUSABLE_DATA, HOST_RESOURCES),
+        (SCRIPTS_DATA, HOST_LEXER_RESOURCES),
+    ]
+    copied = []
+    for source, directory in placements:
+        os.makedirs(directory, exist_ok=True)
+        destination = os.path.join(directory, os.path.basename(source))
+        shutil.copyfile(source, destination)
+        copied.append(destination)
+    return copied
+
+
+def all_paths():
+    """门禁与封存共用的路径集：生成物、数据源与宿主副本一视同仁。"""
+    copies = [
+        os.path.join(HOST_RESOURCES, os.path.basename(CONFUSABLE_DATA)),
+        os.path.join(HOST_LEXER_RESOURCES, os.path.basename(SCRIPTS_DATA)),
+    ]
+    return [OUT_CLASS, OUT_NFC, OUT_CONFUSABLE, OUT_SCRIPTS, CONFUSABLE_DATA, SCRIPTS_DATA] + copies
+
+
 def pool_of(table):
     """把目标串按码点升序拼成 UTF-8 池，返回池与 码点→(偏移, 字节长)。"""
     chunks = []
@@ -220,10 +327,10 @@ def build_class(ranges):
         "; 分类：0 其它，1 字母（L*），2 数字（N*），3 空白（White_Space）。",
         "",
         "; 码点分类：0 其它，1 字母，2 数字，3 空白；越界码点一律按其它。",
-        "unicodeClassOf|func(code: I32,) -> (I32,):",
-        "    if code < 0:",
+        "unicodeClassOf|func(_code: I32,) -> (I32,):",
+        "    if _code < 0:",
         "        return 0",
-        "    if code > %s:" % hex_literal(MAX_CODE),
+        "    if _code > %s:" % hex_literal(MAX_CODE),
         "        return 0",
     ]
     emit_range_tree(ranges, lines, 1)
@@ -252,16 +359,16 @@ def build_nfc(table, ccc, groups):
         '    return "%s"' % pini_string(pool),
         "",
         "; 码点的分解在池中的位置：字节偏移左移 %d 位或上字节长度；-1 表示无分解。" % DECOMP_SHIFT,
-        "decompositionPacked|func(code: I32,) -> (I32,):",
+        "decompositionPacked|func(_code: I32,) -> (I32,):",
     ]
     emit_blocked_exact(entries, lines, 1)
     lines += [
         "",
         "; 组合类（Canonical_Combining_Class）区间：0 为起始字符，覆盖整个码点空间。",
-        "combiningClassOf|func(code: I32,) -> (I32,):",
-        "    if code < 0:",
+        "combiningClassOf|func(_code: I32,) -> (I32,):",
+        "    if _code < 0:",
         "        return 0",
-        "    if code > %s:" % hex_literal(MAX_CODE),
+        "    if _code > %s:" % hex_literal(MAX_CODE),
         "        return 0",
     ]
     emit_range_tree(ccc, lines, 1)
@@ -290,7 +397,7 @@ def build_confusable(table):
         '    return "%s"' % pini_string(pool),
         "",
         "; 源码点的目标在池中的位置：字节偏移左移 %d 位或上字节长度；-1 表示无映射。" % CONFUSABLE_SHIFT,
-        "confusablePacked|func(code: I32,) -> (I32,):",
+        "confusablePacked|func(_code: I32,) -> (I32,):",
     ]
     emit_blocked_exact(entries, lines, 1)
     lines.append("")
@@ -397,9 +504,9 @@ def seal(paths):
 def main():
     check = "--check" in sys.argv[1:]
     if check:
-        return verify([OUT_CLASS, OUT_NFC, OUT_CONFUSABLE, CONFUSABLE_DATA])
+        return verify(all_paths())
     if "--seal" in sys.argv[1:]:
-        return seal([OUT_CLASS, OUT_NFC, OUT_CONFUSABLE, CONFUSABLE_DATA])
+        return seal(all_paths())
     if unicodedata.unidata_version != UNICODE_VERSION:
         print(
             "生成器：本机 Unicode 数据是 %s，脚本钉定 %s。换用匹配版本的 Python 再生成。"
@@ -411,6 +518,7 @@ def main():
     ccc = combining_ranges()
     groups = composition_groups(table)
     confusable = confusables()
+    script_ranges = script_segments()
 
     outputs = [
         (OUT_CLASS, build_class(ranges), "%d 个分类区间" % len(ranges)),
@@ -418,10 +526,13 @@ def main():
          "%d 条分解 / %d 段组合类 / %d 组组合" % (len(table), len(ccc), len(groups))),
         (OUT_CONFUSABLE, build_confusable(confusable),
          "%d 条混淆映射" % len(confusable)),
+        (OUT_SCRIPTS, build_scripts(script_ranges),
+         "%d 个脚本区间" % len(script_ranges)),
     ]
     for path, text, _ in outputs:
         write(path, text)
-    manifest = write_manifest([out[0] for out in outputs] + [CONFUSABLE_DATA])
+    host_resource_copies()
+    manifest = write_manifest(all_paths())
     for path, _, summary in outputs:
         print("生成器：写入 %s（%s）。" % (path, summary))
     print("生成器：摘要清单 %s 已重写。" % relative(manifest))

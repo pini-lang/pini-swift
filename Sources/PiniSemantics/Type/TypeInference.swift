@@ -403,6 +403,11 @@ public final class TypeInference {
             // Phase 2a（FFI 子系统）：`&x` 的类型 = `*T`（指向操作数类型的指针）。
             guard let inner = infer(expression: operand) else { return nil }
             return .pointer(element: inner, location: loc)
+        case .cast(let operand, let target, _):
+            // 显式转换：结果类型就是目标标注，不参与推断；操作数仍递归推断，
+            // 其可转性由检查阶段判（推断只答「是什么」，不答「许不许」）。
+            _ = infer(expression: operand)
+            return target
         }
     }
 

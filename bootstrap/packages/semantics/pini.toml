@@ -1,0 +1,16 @@
+[package]
+name = "semantics"
+
+[require]
+unicode = "*"
+syntax = "*"
+module_loader = "*"
+package = "*"
+
+[lib]
+name = "semantics"
+entry = "src/api/symbol.pini"
+
+[[test]]
+name = "semantics-tests"
+entry = "tests"

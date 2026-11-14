@@ -1,0 +1,15 @@
+; 演示：手写外部块承接生成面接不住的声明。`pini bind` 遇到 `unsigned int` 形参 / 返回值整条跳过，
+; 因为 IR 没有 U32 宽度。手写块可以自行承诺映射 —— 这里按 I32 声明，只对非负值成立。
+
+; 按值结构体连手写面也接不住（Pini 签名没有按值聚合），那类接口只能改 C 侧签名包一层。
+
+; 运行：pini run examples/ffi-handwritten.pini
+; 预期：取消闹钟后剩余 = 0 / 微睡零微秒返回 = 0
+[libc|foreign]
+alarm: (I32,) -> (I32,) ; C: unsigned int alarm(unsigned int)
+usleep: (I32,) -> (I32,) ; C: int usleep(unsigned int)
+
+main|func() -> ():
+    print("取消闹钟后剩余 =", unsafe alarm(0))
+    print("微睡零微秒返回 =", unsafe usleep(0))
+    return

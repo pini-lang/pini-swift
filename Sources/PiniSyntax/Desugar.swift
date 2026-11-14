@@ -266,7 +266,7 @@ public enum Desugar {
         case .call(let callee, let args, let loc):
             return .call(
                 callee: desugar(callee),
-                arguments: args.map { CallArgument(label: $0.label, expression: desugar($0.expression)) },
+                arguments: args.map { CallArgument(label: $0.label, expression: desugar($0.expression), location: $0.location) },
                 location: loc)
         case .member(let obj, let name, let loc):
             return .member(object: desugar(obj), name: name, location: loc)
@@ -315,6 +315,8 @@ public enum Desugar {
             return .unsafe(operand: desugar(operand), location: loc)
         case .addressOf(let operand, let loc):
             return .addressOf(operand: desugar(operand), location: loc)
+        case .cast(let operand, let target, let loc):
+            return .cast(operand: desugar(operand), target: target, location: loc)
         }
     }
 }

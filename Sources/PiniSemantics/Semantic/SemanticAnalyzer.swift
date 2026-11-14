@@ -55,14 +55,30 @@ public final class SemanticAnalyzer {
     /// 单文件模式（`analyze(module:)`）下恒为 `nil`，故单文件行为零回归。
     private var packageContext: (index: PackageSymbolIndex, currentFileName: String)? = nil
 
+    /// 本模块的外部符号表：跨文件合并与冲突裁决在注册之前一次做完，注册阶段只认合并后的那一份。
+    /// `nil` 表示建表已失败（收集模式），此后外部符号按原样逐个登记，不再判冲突。
+    private var foreignSymbols: ForeignSymbolTable?
+    /// 本次分析里已登记进符号表的外部符号名。每个文件一份符号表，故随文件重置。
+    private var registeredForeignNames: Set<String> = []
+
     public init() {
         self.symbolTable = SymbolTable()
+        installIdentityHooks()
         registerBuiltins()
+    }
+
+    /// 混淆告警挂在符号表上：同作用域的每次定义都判一次，分析器只负责收结果。
+    private func installIdentityHooks() {
+        symbolTable.onConfusableIdentifier = { [weak self] name, existing, location in
+            self?.warnings.append(
+                .confusableIdentifier(name: name, existing: existing, location: location))
+        }
     }
 
     /// 重置符号表为干净全局作用域并重新登记内建（多文件模式下每个文件独立分析用）。
     private func resetSymbolTable() {
         symbolTable = SymbolTable()
+        installIdentityHooks()
         enumCaseParents = [:]
         enumAllCases = [:]
         usedSymbols = []  // B2：每文件独立的读取引用集（跨文件同名不互相洗白）
@@ -97,6 +113,12 @@ public final class SemanticAnalyzer {
 
         try setupInjections(for: module)
         defer { teardownInjections() }
+        /// 外部符号先建表：同名同型合并、异型与同名冲突都在声明处定案，注册阶段才有一份确定的名字。
+        foreignSymbols = try ForeignSymbolTable.build(
+            units: [
+                (fileName: module.location.fileName, declarations: module.declarations, exports: module.exports)
+            ])
+        registeredForeignNames = []
         /// 预置声明（宿主提供）先注册，让语言预置的名字在本文件里存在——缺了这步，该名字落在值位会被
         /// 判「未定义变量」，而它确实存在、只是不能作值。只注册未被本模块占名的那些：用户已占名时
         /// 再注册会被判重声明，而这类名字的处置承诺是用户声明优先（让位规则，与降载层同源）。
@@ -135,8 +157,15 @@ public final class SemanticAnalyzer {
         }
 
         let index = try PackageSymbolIndex.build(package: package)
+        /// 建表覆盖全包：外部符号是模块级资源，跨文件同名必须在这里定案，
+        /// 晚一步就退回「后注册者覆盖前者」的老行为。
+        foreignSymbols = try ForeignSymbolTable.build(
+            units: package.fileUnits.map {
+                (fileName: $0.fileName, declarations: $0.module.declarations, exports: $0.module.exports)
+            })
         for unit in package.fileUnits {
             resetSymbolTable()
+            registeredForeignNames = []
             packageContext = (index: index, currentFileName: unit.fileName)
             defer { packageContext = nil }
             importAliasInfos = [:]
@@ -363,6 +392,18 @@ public final class SemanticAnalyzer {
             }
         }
 
+        /// 外部符号建表：失败收成一条诊断并把表置空，后续按原样登记，其它问题照旧报得出来。
+        do {
+            foreignSymbols = try ForeignSymbolTable.build(
+                units: [
+                    (fileName: module.location.fileName, declarations: module.declarations, exports: module.exports)
+                ])
+        } catch let error as SemanticError {
+            errors.append(error)
+            foreignSymbols = nil
+        } catch {}
+        registeredForeignNames = []
+
         // 预置声明先注册 —— 与单错误入口同一规则、同一顺序，理由见那里。
         //  注意  本入口是 `pini check` 实际走的那个：只在另一处加，命令行探针会**照旧**报
         // 「未定义的变量」，而单元测试（走前者）却绿 ⇒ 一处漏改会伪装成「已修好」。
@@ -430,7 +471,11 @@ public final class SemanticAnalyzer {
         case .givenDecl(let g):
             // 给定块是具名复合类型 ⇒ 纳入包级符号表（与对象同族）。
             symbolTable.define(Symbol(name: g.name, kind: .object, location: g.location))
-        case .extensionDecl, .foreignDecl, .varDecl, .statement, .importDecl, .exportDecl:
+        case .foreignDecl(let fd):
+            for symbol in fd.symbols where registeredForeignNames.insert(symbol.name).inserted {
+                symbolTable.define(Symbol(name: symbol.name, kind: .foreignSymbol, location: symbol.location))
+            }
+        case .extensionDecl, .varDecl, .statement, .importDecl, .exportDecl:
             break
         }
     }
@@ -487,9 +532,10 @@ public final class SemanticAnalyzer {
             }
             return
         case .foreignDecl(let fd):
-            // 外部符号注册为模块级函数（调用点可解析）；块本身不引入新符号，C 符号运行时解析。
-            for symbol in fd.symbols {
-                try defineUnique(name: symbol.name, kind: .function, location: symbol.location)
+            // 外部符号是模块级名字：同名只登记一次（同型合并已由 ForeignSymbolTable 定案）。
+            // 块本身不引入符号，C 符号在运行期解析。
+            for symbol in fd.symbols where registeredForeignNames.insert(symbol.name).inserted {
+                try defineUnique(name: symbol.name, kind: .foreignSymbol, location: symbol.location)
             }
             return
         case .varDecl, .statement, .importDecl, .exportDecl:
@@ -1135,6 +1181,9 @@ public final class SemanticAnalyzer {
             try checkExpression(operand)
         case .addressOf(let operand, _):
             // Phase 2a（FFI 子系统）：取地址——递归检查操作数。
+            try checkExpression(operand)
+        case .cast(let operand, _, _):
+            // 显式转换：递归检查操作数；可转类型对由类型检查阶段判。
             try checkExpression(operand)
         }
     }

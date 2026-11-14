@@ -1,0 +1,256 @@
+[match_test|import]
+_syntax = "../../syntax"
+_module_loader = "../../module-loader"
+
+; 匹配样例：单元、世界与表达式类型表；检查只带 match 语句下标。
+(匹配样例)
+world: MemberWorld = MemberWorld()
+unit: CompilationUnit = CompilationUnit()
+types: ExprTypes = ExprTypes()
+
+; 造匹配样例：装载、注册、解析类型、建世界四步，顺序不能反。
+造匹配样例|func(_src: String,) -> (匹配样例,):
+    let loaded = loadUnit(path = "packages/p/src/api/a.pini", text = _src)
+    assert(!loaded.failed, "样例应可加载")
+    let units = [loaded.unit]
+    let table = registerPackage(units)
+    let types = resolvePackage(units = units, table = table)
+    var out = 匹配样例()
+    out.world = makeMemberWorld(units = units, table = table, types = types)
+    out.unit = loaded.unit
+    out.types = makeExprTypes(units)
+    return out
+
+; 首个匹配语句：返回第一个 match 语句的下标，没有答 -1。
+首个匹配语句|func(_ast: Ast,) -> (I32,):
+    var i = 0
+    while i < _ast.stmtCount():
+        if _ast.isMatchStmt(i):
+            return i
+        i = i + 1
+    return -1
+
+; 定主体：把被匹配值的类型写进类型表，检查器只读这一格。
+定主体|func(sample: 匹配样例, typeId: I32,) -> (匹配样例,):
+    let stmt = 首个匹配语句(sample.unit.ast)
+    assert(stmt >= 0, "样例应有 match 语句")
+    let subject = sample.unit.ast.stmtChild(id = stmt, index = 0)
+    var out = sample
+    out.types = writeExprType(table = out.types, unit = 0, node = subject, typeId = typeId)
+    return out
+
+; 查匹配：主体类型已写好后跑一遍检查。
+查匹配|func(_sample: 匹配样例,) -> (MatchResult,):
+    let stmt = 首个匹配语句(_sample.unit.ast)
+    return checkMatch(world = _sample.world, unit = _sample.unit, unitIndex = 0, stmt = stmt, types = _sample.types)
+
+; 全覆盖：枚举两个变体都覆盖，缺项为空。
+全覆盖|test() -> ():
+    var sample = 造匹配样例("[形状]\n圆(圆心: I32, 半径: F64,)\n点\n\nf|func(x: 形状,) -> (F64,):\n    match x:\n        case 形状.圆(_, 半径):\n            return 半径\n        case 形状.点:\n            return 0.0\n    return 0.0\n")
+    let 形状 = nominalTypeId(world = sample.world, name = "形状")
+    assert(形状 >= 0, "枚举类型应已驻留")
+    sample = 定主体(sample = sample, typeId = 形状)
+    let hit = 查匹配(sample)
+    assert(len(hit.errors) == 0, "全覆盖不应报错")
+    assert(len(hit.missing) == 0, "缺项应为空")
+    assert(len(hit.covered) == 2, "应覆盖两个变体")
+    return
+
+; 缺变体：只覆盖一个变体且无通配，报未穷尽并列出缺项。
+缺变体|test() -> ():
+    var sample = 造匹配样例("[形状]\n圆(圆心: I32, 半径: F64,)\n点\n\nf|func(x: 形状,) -> (F64,):\n    match x:\n        case 形状.圆(_, 半径):\n            return 半径\n    return 0.0\n")
+    let 形状 = nominalTypeId(world = sample.world, name = "形状")
+    sample = 定主体(sample = sample, typeId = 形状)
+    let hit = 查匹配(sample)
+    assert(len(hit.errors) == 1, "应报一条未穷尽")
+    assert(matchErrorCode(hit.errors[0].kind) == "E3-007", "实得 " + matchErrorCode(hit.errors[0].kind))
+    assert(len(hit.missing) == 1 && hit.missing[0] == "点", "缺项应是点")
+    return
+
+; 通配兜底：缺的变体由 `case _:` 补上，不再报未穷尽。
+通配兜底|test() -> ():
+    var sample = 造匹配样例("[形状]\n圆(圆心: I32, 半径: F64,)\n点\n\nf|func(x: 形状,) -> (F64,):\n    match x:\n        case 形状.圆(_, 半径):\n            return 半径\n        case _:\n            return 0.0\n    return 0.0\n")
+    let 形状 = nominalTypeId(world = sample.world, name = "形状")
+    sample = 定主体(sample = sample, typeId = 形状)
+    let hit = 查匹配(sample)
+    assert(len(hit.errors) == 0, "通配兜底不应报错")
+    assert(hit.hasWildcard, "应记下通配")
+    return
+
+; 未知用例：不属于该枚举的用例报未知。
+未知用例|test() -> ():
+    var sample = 造匹配样例("[形状]\n圆(圆心: I32, 半径: F64,)\n点\n\nf|func(x: 形状,) -> (F64,):\n    match x:\n        case 形状.方:\n            return 0.0\n        case _:\n            return 0.0\n    return 0.0\n")
+    let 形状 = nominalTypeId(world = sample.world, name = "形状")
+    sample = 定主体(sample = sample, typeId = 形状)
+    let hit = 查匹配(sample)
+    assert(len(hit.errors) == 1, "应报一条未知用例")
+    assert(matchErrorCode(hit.errors[0].kind) == "E3-006", "实得 " + matchErrorCode(hit.errors[0].kind))
+    assert(hit.errors[0].caseName == "方", "实得 " + hit.errors[0].caseName)
+    return
+
+; 字面量臂：被匹配值是枚举时字面量永远不匹配，报未知用例。
+字面量臂|test() -> ():
+    var sample = 造匹配样例("[形状]\n圆(圆心: I32, 半径: F64,)\n点\n\nf|func(x: 形状,) -> (F64,):\n    match x:\n        case 1:\n            return 0.0\n        case _:\n            return 0.0\n    return 0.0\n")
+    let 形状 = nominalTypeId(world = sample.world, name = "形状")
+    sample = 定主体(sample = sample, typeId = 形状)
+    let hit = 查匹配(sample)
+    assert(len(hit.errors) == 1, "应报一条字面量臂")
+    assert(matchErrorCode(hit.errors[0].kind) == "E3-006", "实得 " + matchErrorCode(hit.errors[0].kind))
+    return
+
+; 标量上的枚举项：主体不是枚举，任何枚举项都匹配不上，报未知用例。
+标量枚举项|test() -> ():
+    var sample = 造匹配样例("f|func(x: I32,) -> (I32,):\n    match x:\n        case 红:\n            return 1\n        case _:\n            return 0\n    return 0\n")
+    let 整数 = intern(pool = sample.world.types.pool, kind = typeClassScalar, name = "I32", kids = [], ret = -1)
+    sample.world.types.pool = 整数.pool
+    sample = 定主体(sample = sample, typeId = 整数.id)
+    let hit = 查匹配(sample)
+    assert(len(hit.errors) == 1, "应报一条未知用例")
+    assert(matchErrorCode(hit.errors[0].kind) == "E3-006", "实得 " + matchErrorCode(hit.errors[0].kind))
+    return
+
+; 绑定数不符：变体一个形参，模式给了两个绑定位，报个数不匹配。
+绑定数不符|test() -> ():
+    var sample = 造匹配样例("[形状]\n圆(半径: F64,)\n点\n\nf|func(x: 形状,) -> (F64,):\n    match x:\n        case 形状.圆(_, _):\n            return 0.0\n        case _:\n            return 0.0\n    return 0.0\n")
+    let 形状 = nominalTypeId(world = sample.world, name = "形状")
+    sample = 定主体(sample = sample, typeId = 形状)
+    let hit = 查匹配(sample)
+    assert(len(hit.errors) == 1, "应报一条绑定数不匹配")
+    assert(matchErrorCode(hit.errors[0].kind) == "E4-005", "实得 " + matchErrorCode(hit.errors[0].kind))
+    return
+
+; 绑定作用域：绑定逐个进匹配臂帧，`_` 不占局部，类型取变体形参。
+绑定作用域|test() -> ():
+    var sample = 造匹配样例("[形状]\n圆(半径: F64, 高: F64,)\n点\n\nf|func(x: 形状,) -> (F64,):\n    match x:\n        case 形状.圆(_, 高):\n            return 高\n        case _:\n            return 0.0\n    return 0.0\n")
+    let 形状 = nominalTypeId(world = sample.world, name = "形状")
+    assert(形状 >= 0, "枚举类型应已驻留")
+    let stmt = 首个匹配语句(sample.unit.ast)
+    let pattern = sample.unit.ast.stmtChild(id = stmt, index = 1)
+    let bound = bindArm(world = sample.world, unit = sample.unit, subjectType = 形状, patternNode = pattern, scope = ScopeStack())
+    assert(len(bound.errors) == 0, "绑定不应报错")
+    assert(bound.scope.localCount() == 1, "只应有一个局部")
+    assert(bound.scope.localAt(0).spelling == "高", "实得 " + bound.scope.localAt(0).spelling)
+    assert(isLocalKind(kind = bound.scope.localAt(0).kind, expected = localBinding), "应判作模式绑定")
+    assert(typeText(pool = sample.world.types.pool, id = bound.scope.localAt(0).typeId) == "F64", "实得 " + typeText(pool = sample.world.types.pool, id = bound.scope.localAt(0).typeId))
+    assert(isScopeKind(kind = bound.scope.frameAt(0).kind, expected = scopeArm), "应进匹配臂帧")
+    return
+
+; 重复绑定：同一臂内两个绑定位写同一个名字，报重名。
+重复绑定|test() -> ():
+    var sample = 造匹配样例("[形状]\n矩形(宽: F64, 高: F64,)\n\nf|func(x: 形状,) -> (F64,):\n    match x:\n        case 形状.矩形(a, a):\n            return a\n    return 0.0\n")
+    let 形状 = nominalTypeId(world = sample.world, name = "形状")
+    let stmt = 首个匹配语句(sample.unit.ast)
+    let pattern = sample.unit.ast.stmtChild(id = stmt, index = 1)
+    let bound = bindArm(world = sample.world, unit = sample.unit, subjectType = 形状, patternNode = pattern, scope = ScopeStack())
+    assert(len(bound.errors) == 1, "应报一条重名")
+    assert(matchErrorCode(bound.errors[0].kind) == "E3-004", "实得 " + matchErrorCode(bound.errors[0].kind))
+    return
+
+; 可选模式：`.some(x)` 通过并绑定内层，`nil` 不产生绑定。
+可选模式|test() -> ():
+    var sample = 造匹配样例("f|func(x: I32,) -> (I32,):\n    match x:\n        case .some(v):\n            return v\n        case nil:\n            return 0\n    return 0\n")
+    let 整数 = intern(pool = sample.world.types.pool, kind = typeClassScalar, name = "I32", kids = [], ret = -1)
+    sample.world.types.pool = 整数.pool
+    var args: Array<I32> = []
+    args = args.append(整数.id)
+    let 可选 = intern(pool = sample.world.types.pool, kind = typeClassOptional, name = "", kids = args, ret = -1)
+    sample.world.types.pool = 可选.pool
+    sample = 定主体(sample = sample, typeId = 可选.id)
+    let hit = 查匹配(sample)
+    assert(len(hit.errors) == 0, "可选模式不应报错")
+    let stmt = 首个匹配语句(sample.unit.ast)
+    let somePattern = sample.unit.ast.stmtChild(id = stmt, index = 1)
+    let bound = bindArm(world = sample.world, unit = sample.unit, subjectType = 可选.id, patternNode = somePattern, scope = ScopeStack())
+    assert(len(bound.errors) == 0, "some 绑定不应报错")
+    assert(bound.scope.localCount() == 1, "some 应绑定一个局部")
+    assert(typeText(pool = sample.world.types.pool, id = bound.scope.localAt(0).typeId) == "I32", "实得 " + typeText(pool = sample.world.types.pool, id = bound.scope.localAt(0).typeId))
+    let nilPattern = sample.unit.ast.stmtChild(id = stmt, index = 3)
+    let empty = bindArm(world = sample.world, unit = sample.unit, subjectType = 可选.id, patternNode = nilPattern, scope = ScopeStack())
+    assert(len(empty.errors) == 0, "nil 不应报错")
+    assert(empty.scope.localCount() == 0, "nil 不产生绑定")
+    return
+
+; 可选未知：可选只认 some 与 none，其余名字报未知用例。
+可选未知|test() -> ():
+    var sample = 造匹配样例("f|func(x: I32,) -> (I32,):\n    match x:\n        case .maybe:\n            return 0\n    return 0\n")
+    let 整数 = intern(pool = sample.world.types.pool, kind = typeClassScalar, name = "I32", kids = [], ret = -1)
+    sample.world.types.pool = 整数.pool
+    var args: Array<I32> = []
+    args = args.append(整数.id)
+    let 可选 = intern(pool = sample.world.types.pool, kind = typeClassOptional, name = "", kids = args, ret = -1)
+    sample.world.types.pool = 可选.pool
+    sample = 定主体(sample = sample, typeId = 可选.id)
+    let hit = 查匹配(sample)
+    assert(len(hit.errors) == 1, "应报一条未知用例")
+    assert(matchErrorCode(hit.errors[0].kind) == "E3-006", "实得 " + matchErrorCode(hit.errors[0].kind))
+    return
+
+; 空值非可空：主体不可空时 `case nil:` 报类型不匹配。
+空值非可空|test() -> ():
+    var sample = 造匹配样例("f|func(x: I32,) -> (I32,):\n    match x:\n        case nil:\n            return 0\n        case _:\n            return 1\n    return 0\n")
+    let 整数 = intern(pool = sample.world.types.pool, kind = typeClassScalar, name = "I32", kids = [], ret = -1)
+    sample.world.types.pool = 整数.pool
+    sample = 定主体(sample = sample, typeId = 整数.id)
+    let hit = 查匹配(sample)
+    assert(len(hit.errors) == 1, "应报一条空值错误")
+    assert(matchErrorCode(hit.errors[0].kind) == "E4-001", "实得 " + matchErrorCode(hit.errors[0].kind))
+    return
+
+; 同名消歧：两个枚举都有 `红`，裸名按被匹配值解析，限定别的枚举报未知。
+同名消歧|test() -> ():
+    var sample = 造匹配样例("[甲]\n红\n蓝\n\n[乙]\n红\n\nf|func(x: 甲,) -> (I32,):\n    match x:\n        case 红:\n            return 1\n        case 蓝:\n            return 2\n    return 0\n")
+    let 甲 = nominalTypeId(world = sample.world, name = "甲")
+    assert(甲 >= 0, "甲应已驻留")
+    sample = 定主体(sample = sample, typeId = 甲)
+    let hit = 查匹配(sample)
+    assert(len(hit.errors) == 0, "裸名应解析到甲")
+    assert(len(hit.missing) == 0, "甲应全覆盖")
+    var other = 造匹配样例("[甲]\n红\n蓝\n\n[乙]\n红\n\nf|func(x: 甲,) -> (I32,):\n    match x:\n        case 乙.红:\n            return 1\n        case _:\n            return 2\n    return 0\n")
+    other = 定主体(sample = other, typeId = 甲)
+    let wrong = 查匹配(other)
+    assert(len(wrong.errors) == 1, "限定别的枚举应报未知")
+    assert(matchErrorCode(wrong.errors[0].kind) == "E3-006", "实得 " + matchErrorCode(wrong.errors[0].kind))
+    return
+
+; 模式分类：五类形态各自成形，绑定表逐位记录 `_` 与名字。
+模式分类|test() -> ():
+    let sample = 造匹配样例("[形状]\n圆(半径: F64,)\n\nf|func(x: 形状,) -> (F64,):\n    match x:\n        case _:\n            return 0.0\n        case 1:\n            return 0.0\n        case nil:\n            return 0.0\n        case 形状.圆(_, 半径):\n            return 半径\n        case 形状.圆:\n            return 0.0\n    return 0.0\n")
+    let ast = sample.unit.ast
+    let stmt = 首个匹配语句(ast)
+    let wild = classifyPattern(unit = sample.unit, node = ast.stmtChild(id = stmt, index = 1))
+    assert(isPatternForm(form = wild.form, expected = patternWildcard), "首臂应是通配")
+    let literal = classifyPattern(unit = sample.unit, node = ast.stmtChild(id = stmt, index = 3))
+    assert(isPatternForm(form = literal.form, expected = patternLiteral), "次臂应是字面量")
+    let none = classifyPattern(unit = sample.unit, node = ast.stmtChild(id = stmt, index = 5))
+    assert(isPatternForm(form = none.form, expected = patternNil), "三臂应是空值")
+    let enumCase = classifyPattern(unit = sample.unit, node = ast.stmtChild(id = stmt, index = 7))
+    assert(isPatternForm(form = enumCase.form, expected = patternEnumCase), "四臂应是枚举项")
+    assert(enumCase.owner == "形状", "实得 " + enumCase.owner)
+    assert(enumCase.name == "圆", "实得 " + enumCase.name)
+    assert(len(enumCase.bindings) == 2, "两个绑定位")
+    assert(enumCase.bindings[0] == "_", "首位应是占位")
+    assert(enumCase.bindings[1] == "半径", "实得 " + enumCase.bindings[1])
+    let bare = classifyPattern(unit = sample.unit, node = ast.stmtChild(id = stmt, index = 9))
+    assert(isPatternForm(form = bare.form, expected = patternEnumCase), "五臂应是枚举项")
+    assert(len(bare.bindings) == 0, "无载荷不留绑定位")
+    return
+
+; 判不出类型：主体类型未写时不报错，按待定处理。
+判不出类型|test() -> ():
+    let sample = 造匹配样例("[形状]\n圆(圆心: I32, 半径: F64,)\n点\n\nf|func(x: 形状,) -> (F64,):\n    match x:\n        case 形状.圆(_, 半径):\n            return 半径\n    return 0.0\n")
+    let hit = 查匹配(sample)
+    assert(hit.deferred, "应判作待定")
+    assert(len(hit.errors) == 0, "待定不应报错")
+    return
+
+; 两次检查：同一输入两次得到同一组错误与覆盖读数。
+两次检查|test() -> ():
+    var sample = 造匹配样例("[形状]\n圆(圆心: I32, 半径: F64,)\n点\n\nf|func(x: 形状,) -> (F64,):\n    match x:\n        case 形状.圆(_, 半径):\n            return 半径\n    return 0.0\n")
+    let 形状 = nominalTypeId(world = sample.world, name = "形状")
+    sample = 定主体(sample = sample, typeId = 形状)
+    let first = 查匹配(sample)
+    let second = 查匹配(sample)
+    assert(len(first.errors) == len(second.errors), "错误数应相同")
+    assert(len(first.missing) == len(second.missing), "缺项数应相同")
+    assert(first.errors[0].caseName == second.errors[0].caseName, "错误用例名应相同")
+    return

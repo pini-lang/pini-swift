@@ -24,6 +24,9 @@ public struct Parameter: Equatable, Sendable {
     /// 只记「这个参数由取用位引入」这一事实；谁来提供实参（默认实例物化）与值位的强制规则都不在此层。
     /// 缺省 `false`，故非取用参数的构造点与结构不受影响。
     public let isUsing: Bool
+    /// 调用点是否必须写标签。`_` 是名字的首字符而不是标记：`_名` 这个名字同时退出标签面。
+    /// 由名字推出而非另存字段，故「名字」与「标签面」不会各记一份而彼此不符。
+    public var takesLabel: Bool { !name.hasPrefix("_") }
 
     public init(name: String, typeAnnotation: TypeAnnotation? = nil, isUsing: Bool = false) {
         self.name = name

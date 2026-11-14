@@ -33,8 +33,8 @@ struct ConcurrentAwaitContextTests: Sendable {
     }
 
     private static let 子任务 = """
-    慢|func(n: I32,) => (I32,):
-        return ok(n)
+    慢|func(_n: I32,) => (I32,):
+        return ok(_n)
 
     """
 
@@ -129,11 +129,11 @@ struct ConcurrentAwaitContextTests: Sendable {
         /// 续跑的跳转只跳得回体那一层那一块，嵌套块的进入条件在那条路径上被整段跳过。
         /// 与成对的 `theFourStatementRootsStillLower`（顶层四形态照旧合法）合起来才说明收窄没变成砍掉让出。
         let source = Self.子任务 + """
-        父|func(c: Bool) => (I32,):
+        父|func(_c: Bool) => (I32,):
             let t = 慢(1)
-            if c:
+            if _c:
                 var r = await t
-            while c:
+            while _c:
                 await t
                 break
             return ok(0)

@@ -1,0 +1,76 @@
+[expr_types_test|import]
+_syntax = "../../syntax"
+_module_loader = "../../module-loader"
+
+; 造类型表单元：从源码字符串装载；失败即断言。
+造类型表单元|func(path: String, src: String,) -> (CompilationUnit,):
+    let loaded = loadUnit(path = path, text = src)
+    assert(!loaded.failed, "样例应可加载：" + path)
+    return loaded.unit
+
+; 多表达式源码：两个整数字面量与一个二元节点。
+多表达式源码|func() -> (String,):
+    return "f|func() -> ():\n    return 1 + 2\n"
+
+; 表长与初值：每单元一条槽，初值全为未写。
+类型表长|test() -> ():
+    let unit = 造类型表单元(path = "packages/p/src/api/a.pini", src = 多表达式源码())
+    let table = makeExprTypes([unit])
+    assert(unitTypeCount(table = table, unit = 0) == unit.ast.exprCount(), "表长应等于表达式数")
+    assert(settledCount(table = table, unit = 0) == 0, "初值应全为未写")
+    assert(exprTypeAt(table = table, unit = 0, node = 0) == unsetTypeId(), "首槽应为未写")
+    return
+
+; 写入与读取：写入目标槽；新建表不带旧写入。
+类型写入|test() -> ():
+    let unit = 造类型表单元(path = "packages/p/src/api/a.pini", src = 多表达式源码())
+    let table = makeExprTypes([unit])
+    let changed = writeExprType(table = table, unit = 0, node = 1, typeId = 7)
+    assert(exprTypeAt(table = changed, unit = 0, node = 1) == 7, "目标槽应写入")
+    assert(exprTypeAt(table = changed, unit = 0, node = 0) == unsetTypeId(), "别的槽应保持未写")
+    let fresh = makeExprTypes([unit])
+    assert(exprTypeAt(table = fresh, unit = 0, node = 1) == unsetTypeId(), "新建表不得带旧写入")
+    return
+
+; 错误标记：-2 算已判定，但不算有效类型。
+类型错误标记|test() -> ():
+    let unit = 造类型表单元(path = "packages/p/src/api/a.pini", src = 多表达式源码())
+    let table = writeExprType(table = makeExprTypes([unit]), unit = 0, node = 0, typeId = errorTypeId())
+    assert(exprTypeAt(table = table, unit = 0, node = 0) == -2, "错误标记应为 -2")
+    assert(settledCount(table = table, unit = 0) == 1, "错误标记应计入已判定")
+    assert(validCount(table = table, unit = 0) == 0, "错误标记不计入有效类型")
+    return
+
+; 越界：单元或节点越界时写入无效，读取答未写。
+类型表越界|test() -> ():
+    let unit = 造类型表单元(path = "packages/p/src/api/a.pini", src = 多表达式源码())
+    let table = makeExprTypes([unit])
+    let same = writeExprType(table = table, unit = 99, node = 0, typeId = 1)
+    assert(unitTypeCount(table = same, unit = 99) == 0, "越界单元不应有表")
+    assert(exprTypeAt(table = same, unit = 99, node = 0) == unsetTypeId(), "越界读取应为未写")
+    let also = writeExprType(table = table, unit = 0, node = 999999, typeId = 1)
+    assert(exprTypeAt(table = also, unit = 0, node = 999999) == unsetTypeId(), "越界节点不应写入")
+    return
+
+; 覆盖：已判定含错误标记，首个缺失按节点序。
+类型覆盖|test() -> ():
+    let unit = 造类型表单元(path = "packages/p/src/api/a.pini", src = 多表达式源码())
+    let table = makeExprTypes([unit])
+    let before = typeCoverage(table = table, unit = 0)
+    assert(before.required == unit.ast.exprCount(), "必填数应等于表达式数")
+    assert(before.covered == 0, "初值不应覆盖")
+    assert(before.firstMissing == 0, "首个缺失应为首节点")
+    let 中间 = writeExprType(table = table, unit = 0, node = 0, typeId = 3)
+    let after = typeCoverage(table = 中间, unit = 0)
+    assert(after.covered == 1, "写一个应覆盖一条")
+    assert(after.firstMissing == 1, "首个缺失应后移")
+    return
+
+; 确定性：同一单元建两次，表长与初值相同。
+类型表确定|test() -> ():
+    let unit = 造类型表单元(path = "packages/p/src/api/a.pini", src = 多表达式源码())
+    let first = makeExprTypes([unit])
+    let second = makeExprTypes([unit])
+    assert(unitTypeCount(table = first, unit = 0) == unitTypeCount(table = second, unit = 0), "表长应相同")
+    assert(settledCount(table = first, unit = 0) == settledCount(table = second, unit = 0), "已判定数应相同")
+    return

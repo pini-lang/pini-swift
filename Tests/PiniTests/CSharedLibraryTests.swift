@@ -231,15 +231,15 @@ struct CSharedLibraryTests {
         [demo|foreign]
         demo_twice: (I32,) -> (I32,)
 
-        翻倍|unsafe(x: I32,) -> (I32,):
-            return demo_twice(x)
+        翻倍|unsafe(_x: I32,) -> (I32,):
+            return demo_twice(_x)
         """.write(to: dir.appendingPathComponent("ffi.pini"), atomically: true, encoding: .utf8)
         try """
         [demo|foreign]
         demo_twice: (I32,) -> (I32,)
 
-        双倍|unsafe(x: I32,) -> (I32,):
-            return demo_twice(x)
+        双倍|unsafe(_x: I32,) -> (I32,):
+            return demo_twice(_x)
 
         [calc|export]
         calc_twice|c = 双倍

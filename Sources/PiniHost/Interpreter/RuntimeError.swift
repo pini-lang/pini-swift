@@ -45,8 +45,9 @@ public enum RuntimeError: Error, CustomStringConvertible {
     case undefinedNativeFunction(name: String, available: [String], location: SourceLocation)
     /// Phase 2b（解释器 dlsym 加载 FFI dlsym）：`[名称|foreign]` 块名对应的库在搜索路径中未找到。
     case libraryNotFound(library: String, searched: [String], location: SourceLocation)
-    /// Phase 2b（解释器 dlsym 加载 FFI dlsym）：库已加载但其中未找到 foreign 声明的符号。
-    case symbolNotFound(library: String, symbol: String, location: SourceLocation)
+    /// 符号在 `[ffi].libs` 预加载的库与进程映像里都找不到。`searched` 是查过的库标签，
+    /// 顺序与解析顺序一致 —— 报错要能回答「到底找过哪些地方」。
+    case symbolNotFound(symbol: String, searched: [String], location: SourceLocation)
     /// 变参调用落到解释器上：转发靠把地址位转成固定槽位，而 Apple arm64 把变参放在栈上。
     /// 这不是「还没实现」，是这条路本身走不通 —— 文案给两条能走的路。
     case variadicCallUnsupported(name: String, location: SourceLocation)
@@ -91,8 +92,8 @@ public enum RuntimeError: Error, CustomStringConvertible {
             return "未注册的原生函数 '\(name)'（`[名称|foreign]` 声明的 C 函数须在原生函数表内）；可用: \(available.isEmpty ? "（无）" : available.joined(separator: ", ")) at \(loc)"
         case .libraryNotFound(let library, let searched, let loc):
             return "FFI 库 '\(library)' 未找到（已搜索：\(searched.isEmpty ? "（无搜索路径）" : searched.joined(separator: ", "))）at \(loc)"
-        case .symbolNotFound(let library, let symbol, let loc):
-            return "FFI 库 '\(library)' 中未找到符号 '\(symbol)' at \(loc)"
+        case .symbolNotFound(let symbol, let searched, let loc):
+            return "未找到外部符号 '\(symbol)'（已查：\(searched.isEmpty ? "（无）" : searched.joined(separator: ", "))）at \(loc)"
         case .variadicCallUnsupported(let name, let loc):
             return "变参调用 '\(name)' 需要 C 变参 ABI：解释器只能按固定签名转发，"
                 + "变参在 Apple arm64 上走栈而不走寄存器。改用 `pini run-llvm`，"

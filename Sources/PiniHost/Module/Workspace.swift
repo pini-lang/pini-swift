@@ -151,8 +151,10 @@ public enum WorkspaceBuilder {
         {
             throw WorkspaceError.sourceMissing(package: plan.name, target: target.name)
         }
-        let interfacePackage = Package(
-            name: plan.name, fileUnits: selected, rootPath: plan.rootPath)
+        // 生成模块不在源码树里，`src/` 过滤与点前缀扫描都看不见它；由计划显式登记后接上。
+        let interfacePackage = try GeneratedModules.attach(
+            to: Package(name: plan.name, fileUnits: selected, rootPath: plan.rootPath),
+            packageRoot: plan.rootPath)
         let symbols = try PackageSymbolIndex.build(package: interfacePackage).publicSymbols
         let interface = (["package=\(plan.name)"] + symbols).joined(separator: "\n") + "\n"
         if let drift = try ModuleToolchain.checkRequireImportAlignment(

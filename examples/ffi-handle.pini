@@ -1,0 +1,35 @@
+; 演示：给定块包不透明句柄。`FILE*` 只能以 `*U8` 进来，给定块把它收进字段，方法负责读写与关闭。
+
+; 默认实例 = 打开的空流，因此 `using` 形参有可用的默认值，不必再造一个可选句柄。
+
+; 运行：pini run examples/ffi-handle.pini
+; 预期：默认实例读到 = 0 / 关闭默认实例 = 0 / 换成零流读到 = 8 / 关闭零流 = 0
+[libc|foreign]
+fopen: (String, String,) -> (*U8,)
+fread: (*U8, U64, U64, *U8,) -> (U64,)
+fclose: (*U8,) -> (I32,)
+malloc: (U64,) -> (*U8,)
+free: (*U8,) -> ()
+
+打开空流|unsafe() -> (*U8,):
+    return fopen("/dev/null", "r")
+
+[文件|given]
+句柄: *U8 = 打开空流()
+
+[[文件]]
+读|self(缓冲: *U8, 大小: U64,) -> (U64,):
+        return unsafe fread(缓冲, 1, 大小, 句柄)
+关闭|self() -> (I32,):
+        return unsafe fclose(句柄)
+
+main|func() -> ():
+    var 缓冲 = unsafe malloc(8)
+    var 流 = 文件()
+    print("默认实例读到 =", 流.读(缓冲 = 缓冲, 大小 = 8))
+    print("关闭默认实例 =", 流.关闭())
+    流.句柄 = unsafe fopen("/dev/zero", "r")
+    print("换成零流读到 =", 流.读(缓冲 = 缓冲, 大小 = 8))
+    print("关闭零流 =", 流.关闭())
+    unsafe free(缓冲)
+    return

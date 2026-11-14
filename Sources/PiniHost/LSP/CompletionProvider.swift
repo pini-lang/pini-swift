@@ -50,6 +50,7 @@ public struct CompletionProvider {
         case .enumCase: return .enumMember
         case .trait: return .interface
         case .parameter: return .variable
+        case .foreignSymbol: return .function
         }
     }
 
@@ -63,6 +64,7 @@ public struct CompletionProvider {
         case .enumCase: return "case"
         case .trait: return "trait"
         case .parameter: return "param"
+        case .foreignSymbol: return "extern"
         }
     }
 }

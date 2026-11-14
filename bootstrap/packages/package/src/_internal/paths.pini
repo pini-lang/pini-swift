@@ -1,0 +1,80 @@
+; 路径规范化结果：ok 为假时 reason 给判据，调用方据此造出成员错误。
+(PathResult)
+ok: Bool = false
+value: String = ""
+reason: String = ""
+
+; 成员路径规范化：拒绝绝对路径与反斜杠，逐段吃掉 `.` 与 `..`；`..` 弹空栈即越界。
+normalizeMemberPath|func(_path: String,) -> (PathResult,):
+    var out = PathResult()
+    if len(_path) == 0:
+        out.reason = "路径为空"
+        return out
+    if startsWith(text = _path, prefix = "/") || startsWith(text = _path, prefix = "\\"):
+        out.reason = "成员必须是工作区相对路径"
+        return out
+    if _path.contains("\\"):
+        out.reason = "路径分隔符只能是 /"
+        return out
+    var parts: Array<String> = []
+    let raw = _path.split("/")
+    var i = 0
+    while i < len(raw):
+        let part = raw[i]
+        if part == ".":
+            i = i + 1
+            continue
+        if part == "..":
+            if len(parts) == 0:
+                out.reason = "成员不得越出工作区根"
+                return out
+            parts = dropLast(parts)
+        else:
+            parts = parts.append(part)
+        i = i + 1
+    if len(parts) == 0:
+        out.reason = "路径为空"
+        return out
+    var joined = ""
+    i = 0
+    while i < len(parts):
+        if i > 0:
+            joined = joined + "/"
+        joined = joined + parts[i]
+        i = i + 1
+    out.ok = true
+    out.value = joined
+    return out
+
+; 去掉末元素：数组按值传递，重建一份比原地删除更直白。
+dropLast|func(_items: Array<String>,) -> (Array<String>,):
+    var out: Array<String> = []
+    var i = 0
+    while i < len(_items) - 1:
+        out = out.append(_items[i])
+        i = i + 1
+    return out
+
+; 单一路径分量：非空、不是 `.` / `..`、不含分隔符；包名与 target 名共用。
+isPathComponent|func(_value: String,) -> (Bool,):
+    if len(_value) == 0:
+        return false
+    if _value == "." || _value == "..":
+        return false
+    if _value.contains("/") || _value.contains("\\"):
+        return false
+    return true
+
+; 入口路径：包根相对、非绝对、每段都不是 `.` / `..`；不检查磁盘上是否存在。
+isCleanEntry|func(_value: String,) -> (Bool,):
+    if len(_value) == 0:
+        return false
+    if startsWith(text = _value, prefix = "/") || _value.contains("\\"):
+        return false
+    let parts = _value.split("/")
+    var i = 0
+    while i < len(parts):
+        if parts[i] == "." || parts[i] == "..":
+            return false
+        i = i + 1
+    return true

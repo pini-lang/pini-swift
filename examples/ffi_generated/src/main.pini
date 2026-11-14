@@ -1,0 +1,8 @@
+; 演示：build.pini 把 C 头文件翻成 [cstr|foreign] 块，源码里直接调用，生成物只活在构建目录。
+; 运行：pini build examples/ffi_generated && pini run examples/ffi_generated
+; 预期：长度 = 9 / 数值 = 2048 / 宏值 = 3
+main|func() -> ():
+    print("长度 =", unsafe strlen("generated"))
+    print("数值 =", unsafe atoi("2048"))
+    print("宏值 =", PINI_LIMIT)
+    return

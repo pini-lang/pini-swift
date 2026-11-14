@@ -1,0 +1,16 @@
+[package]
+name = "module_loader"
+
+[require]
+unicode = "*"
+diagnostics = "*"
+syntax = "*"
+package = "*"
+
+[lib]
+name = "module-loader"
+entry = "src/api/unit.pini"
+
+[[test]]
+name = "module-loader-tests"
+entry = "tests"

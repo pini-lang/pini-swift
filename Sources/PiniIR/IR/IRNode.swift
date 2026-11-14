@@ -128,7 +128,11 @@ public indirect enum IRType: Equatable {
             return .function(
                 params: annotations, returns: returns, captured: [],
                 usingIndices: usingIndices, location: at)
-        case .nominal, .enumeration, .dict, .cFunction, .future, .set:
+        case .nominal(let name, _), .enumeration(let name):
+            // 名义类型回到源码里的名字。注解层只为「本函数的局部叫什么类型」服务，
+            // 反向的 `IRType(from:)` 认不出用户类型，仍走按表达式降载那条路。
+            return .simple(name: name, location: at)
+        case .dict, .cFunction, .future, .set:
             return nil
         }
     }
@@ -388,6 +392,9 @@ public enum IRUnaryOp: Equatable {
     case bitwiseNot
     /// `abs(v)` (G9) — I32 select(0-v, v<0).
     case abs
+    /// `v as T` — 数值显式转换。结果类型在节点的 `type` 上，源类型由操作数的 IR 类型给出；
+    /// 发什么指令（截断 / 符号扩展 / 零扩展 / 整数浮点互转 / 精度舍入）由这两者共同决定。
+    case cast
 }
 
 /// Typed expression tree (slice set).

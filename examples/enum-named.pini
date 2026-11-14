@@ -5,24 +5,24 @@
 identifier(text: String, loc: I32,)
 plus
 
-取文本|func(t: Token,) -> (String,):
-    match t:
+取文本|func(_t: Token,) -> (String,):
+    match _t:
         case identifier(text, loc,):
             return text
         case plus:
             return "plus"
     return "?"
 
-具名取文本|func(t: Token,) -> (String,):
-    match t:
+具名取文本|func(_t: Token,) -> (String,):
+    match _t:
         case identifier(text: s, loc: l,):
             return s
         case plus:
             return "plus"
     return "?"
 
-取位置|func(t: Token,) -> (I32,):
-    match t:
+取位置|func(_t: Token,) -> (I32,):
+    match _t:
         case identifier(_, l,):
             return l
         case plus:

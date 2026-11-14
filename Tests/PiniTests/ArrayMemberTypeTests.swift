@@ -24,8 +24,8 @@ struct ArrayMemberTypeTests: Sendable {
         return out
 
     main|func() -> ():
-        print(map<I32>(func (n,) -> (I32,): return n * 2, [1, 2, 3]))
-        print(map<String>(func (s,) -> (String,): return s + "!", ["a", "b"]))
+        print(map<I32>(f = func (n,) -> (I32,): return n * 2, arr = [1, 2, 3]))
+        print(map<String>(f = func (s,) -> (String,): return s + "!", arr = ["a", "b"]))
         print([1, 2, 3].join("-"))
         print([true, false].join(","))
         print([1.5, 2.5].join("|"))

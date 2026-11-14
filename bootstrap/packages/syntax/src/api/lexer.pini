@@ -11,6 +11,7 @@ issueUnterminatedString
 issueBadEscape
 issueNumberFormat
 issueUnterminatedInterpolation
+issueMisplacedCombiningMark
 
 ; 词法问题：出错字节区间；同一条输入上的问题按出现顺序登记。
 (LexIssue)
@@ -18,14 +19,31 @@ kind: LexIssueKind = .issueUnknownByte
 start: I32 = 0
 end: I32 = 0
 
-; 词法结果：记号序列含布局记号与末尾的结束记号；问题序列不参与记号流。
+; 承载文字的两种源码位置：注释与字符串。双向控制字符只在这两处给警告。
+[LexTextRole]
+textComment
+textString
+
+; 词法警告类别：不中断扫描，只记下看得见却读不出顺序的字符。
+[LexWarningKind]
+warningBidiControlInText
+
+; 词法警告：类别、所在文本种类与字节区间。与问题分开两类，因为它不阻断编译。
+(LexWarning)
+kind: LexWarningKind = .warningBidiControlInText
+role: LexTextRole = .textComment
+start: I32 = 0
+end: I32 = 0
+
+; 词法结果：记号序列含布局记号与末尾的结束记号；问题与警告不参与记号流。
 (LexResult)
 tokens: Array<Token> = []
 issues: Array<LexIssue> = []
+warnings: Array<LexWarning> = []
 
 ; 问题类别名：用于诊断消息与测试断言。
-issueName|func(kind: LexIssueKind,) -> (String,):
-    match kind:
+issueName|func(_kind: LexIssueKind,) -> (String,):
+    match _kind:
         case issueTabIndent:
             return "制表符缩进"
         case issueBom:
@@ -40,33 +58,59 @@ issueName|func(kind: LexIssueKind,) -> (String,):
             return "数字格式"
         case issueUnterminatedInterpolation:
             return "插值未闭合"
+        case issueMisplacedCombiningMark:
+            return "组合附标错位"
     return "未知字节"
 
 ; 同一问题类别判定：枚举相等比较不可用，按名称比。
 isIssue|func(issue: LexIssue, kind: LexIssueKind,) -> (Bool,):
     return issueName(issue.kind) == issueName(kind)
 
+; 警告类别名：用于诊断消息与测试断言。
+warningName|func(_kind: LexWarningKind,) -> (String,):
+    match _kind:
+        case warningBidiControlInText:
+            return "双向控制字符"
+    return "双向控制字符"
+
+; 文本角色名：注释或字符串。
+textRoleName|func(_role: LexTextRole,) -> (String,):
+    match _role:
+        case textComment:
+            return "注释"
+        case textString:
+            return "字符串"
+    return "注释"
+
+; 同一警告类别判定：与问题同规，按名称比。
+isWarning|func(warning: LexWarning, kind: LexWarningKind,) -> (Bool,):
+    return warningName(warning.kind) == warningName(kind)
+
+; 同一文本角色判定：同上。
+isTextRole|func(warning: LexWarning, role: LexTextRole,) -> (Bool,):
+    return textRoleName(warning.role) == textRoleName(role)
+
 ; 扫描文本：默认按英文关键字；先把 CRLF 归一化为 LF，此后所有区间都指向归一化文本。
-lexText|func(text: String,) -> (LexResult,):
-    return lexTextIn(.langEnglish, text)
+lexText|func(_text: String,) -> (LexResult,):
+    return lexTextIn(language = .langEnglish, text = _text)
 
 ; 按指定关键字语言扫描文本：词表只影响整词分类，标识符与字面量的扫描规则不变。
 lexTextIn|func(language: KeywordLanguage, text: String,) -> (LexResult,):
     let normalized = text.replace("\r\n", "\n")
-    return lexSourceIn(language, makeSourceText(normalized))
+    return lexSourceIn(language = language, source = makeSourceText(normalized))
 
 ; 扫描源文本：调用方保证行尾已归一化；起始 BOM 记问题并跳过三字节，偏移仍指向原文本。
-lexSource|func(source: SourceText,) -> (LexResult,):
-    return lexSourceIn(.langEnglish, source)
+lexSource|func(_source: SourceText,) -> (LexResult,):
+    return lexSourceIn(language = .langEnglish, source = _source)
 
 ; 按指定关键字语言扫描源文本；BOM 的处理与默认入口同规。
 lexSourceIn|func(language: KeywordLanguage, source: SourceText,) -> (LexResult,):
     var issues: Array<LexIssue> = []
     var start = 0
     if hasBom(source.bytes):
-        issues = issues.append(makeIssue(.issueBom, 0, 3))
+        issues = issues.append(makeIssue(kind = .issueBom, start = 0, end = 3))
         start = 3
-    return scanAll(language, source.bytes, start, issues)
+    return scanAll(language = language, bytes = source.bytes, start = start, issues = issues)
 
 ; 造问题：区间是源内字节半开区间。
 makeIssue|func(kind: LexIssueKind, start: I32, end: I32,) -> (LexIssue,):
@@ -76,22 +120,35 @@ makeIssue|func(kind: LexIssueKind, start: I32, end: I32,) -> (LexIssue,):
     out.end = end
     return out
 
+; 造警告：区间与问题同规，按源内字节计。
+makeWarning|func(kind: LexWarningKind, role: LexTextRole, start: I32, end: I32,) -> (LexWarning,):
+    var out = LexWarning()
+    out.kind = kind
+    out.role = role
+    out.start = start
+    out.end = end
+    return out
+
 ; 起始 BOM：EF BB BF 三字节。
-hasBom|func(bytes: Array<U8>,) -> (Bool,):
-    if len(bytes) < 3:
+hasBom|func(_bytes: Array<U8>,) -> (Bool,):
+    if len(_bytes) < 3:
         return false
-    if tempByteToInt(bytes[0]) != 239:
+    if tempByteToInt(_bytes[0]) != 239:
         return false
-    if tempByteToInt(bytes[1]) != 187:
+    if tempByteToInt(_bytes[1]) != 187:
         return false
-    return tempByteToInt(bytes[2]) == 191
+    return tempByteToInt(_bytes[2]) == 191
 
 ((LexResult))
 tokenCount|self() -> (I32,):
     return len(self.tokens)
-tokenAt|self(index: I32,) -> (Token,):
-    return self.tokens[index]
+tokenAt|self(_index: I32,) -> (Token,):
+    return self.tokens[_index]
 issueCount|self() -> (I32,):
     return len(self.issues)
-issueAt|self(index: I32,) -> (LexIssue,):
-    return self.issues[index]
+issueAt|self(_index: I32,) -> (LexIssue,):
+    return self.issues[_index]
+warningCount|self() -> (I32,):
+    return len(self.warnings)
+warningAt|self(_index: I32,) -> (LexWarning,):
+    return self.warnings[_index]

@@ -30,7 +30,7 @@ struct StandardLibraryTests: Sendable {
     /// 用户在同一目标上给出同名方法：装配期摘掉标准库那份，读数取用户的 false。
     private static let overrideCorpus = #"""
     ((String))
-    startsWith|self(prefix: String,) -> (Bool,):
+    startsWith|self(_prefix: String,) -> (Bool,):
         return false
 
     main|func() -> ():
@@ -88,14 +88,14 @@ struct StandardLibraryTests: Sendable {
 
     /// 容器算法语料：I32 与 String 两种元素 · 空数组 · 零与越界的取放 · 跨类型归约。
     private static let containerCorpus = #"""
-    double|func(x: I32,) -> (I32,):
-        return x * 2
+    double|func(_x: I32,) -> (I32,):
+        return _x * 2
 
-    upper|func(s: String,) -> (String,):
-        return s.upper()
+    upper|func(_s: String,) -> (String,):
+        return _s.upper()
 
-    isEven|func(x: I32,) -> (Bool,):
-        return x % 2 == 0
+    isEven|func(_x: I32,) -> (Bool,):
+        return _x % 2 == 0
 
     add|func(acc: I32, x: I32,) -> (I32,):
         return acc + x
@@ -103,8 +103,8 @@ struct StandardLibraryTests: Sendable {
     bang|func(acc: String, x: I32,) -> (String,):
         return acc + "!"
 
-    show|func(x: I32,) -> ():
-        print(x)
+    show|func(_x: I32,) -> ():
+        print(_x)
         return
 
     main|func() -> ():
@@ -199,11 +199,11 @@ struct StandardLibraryTests: Sendable {
 
     /// 容器操作边界：空数组 · 非正与越界下标 · 负轮转 · String 元素 · 首尾插删。
     private static let containerOpsCorpus = #"""
-    isEven|func(x: I32,) -> (Bool,):
-        return x % 2 == 0
+    isEven|func(_x: I32,) -> (Bool,):
+        return _x % 2 == 0
 
-    isA|func(s: String,) -> (Bool,):
-        return s == "a"
+    isA|func(_s: String,) -> (Bool,):
+        return _s == "a"
 
     main|func() -> ():
         print(any<I32>([], isEven))
@@ -386,8 +386,8 @@ struct StandardLibraryTests: Sendable {
     @Test("解释器腿：用户同名函数压过标准库")
     func userFunctionOverridesPrelude() throws {
         let source = #"""
-        map|func(x: I32,) -> (I32,):
-            return x + 100
+        map|func(_x: I32,) -> (I32,):
+            return _x + 100
 
         main|func() -> ():
             print(map(5))
@@ -406,7 +406,7 @@ struct StandardLibraryTests: Sendable {
     func packageLegSeesPrelude() throws {
         let mainSource = #"""
         main|func() -> ():
-            print(add(2, 3))
+            print(add(a = 2, b = 3))
             print("hello".startsWith("he"))
             return
         """#

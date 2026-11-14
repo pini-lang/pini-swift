@@ -99,14 +99,14 @@ final class GCDScheduler: Scheduler, @unchecked Sendable {
         activeCount = current
         countLock.unlock()
         if let em = Self.emergencyMsg(current) { print(em) }
-        queue.async { [weak self] in
+        // 块强持调度器：本块占的槽位要等 defer 才归还，信号量必须活到那一刻。
+        // 弱持会让「最后一个外部引用在体内落地」把释放提到归还之前，libdispatch 随即终止进程。
+        queue.async { [self] in
             defer {
-                if let self = self {
-                    self.countLock.lock()
-                    self.activeCount -= 1
-                    self.countLock.unlock()
-                    self.semaphore.signal()
-                }
+                self.countLock.lock()
+                self.activeCount -= 1
+                self.countLock.unlock()
+                self.semaphore.signal()
             }
             do {
                 let outcome = try work()
@@ -117,7 +117,7 @@ final class GCDScheduler: Scheduler, @unchecked Sendable {
                     // 计在 `noteYield()` 上，不从池水位推断：水位是整台机器的读数，并行跑第二个程序就会挪动它；
                     // 本数只由让出这一个动作驱动，故判据取增量即可，无须独占机器。
                     // 这一趟只是两个来源之一（另一处是续跑，不走这里），两处必须落到同一个数上。
-                    if let self = self { self.noteYield() }
+                    self.noteYield()
                 }
             } catch {
                 future.reject(GCDScheduler.coerce(error))

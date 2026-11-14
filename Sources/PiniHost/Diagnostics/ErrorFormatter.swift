@@ -105,6 +105,8 @@ public enum ErrorFormatter {
         let fallback: String
         switch error {
         case is LexerError: key = "lexer"; fallback = "词法错误"
+        // 词法警告与词法错误分属两个类型：前者不阻断编译，标签也随之分开。
+        case is LexerWarning: key = "lexerWarning"; fallback = "词法警告"
         case is ParserError: key = "parser"; fallback = "语法错误"
         // 展开诊断借语义域报出（检查点在类型检查之前，归属同一次静态检查）。
         case is UnrollError: key = "semantic"; fallback = "语义错误"
@@ -181,6 +183,11 @@ public enum ErrorFormatter {
             case .invalidCharacter(let ch, _): return "invalid character '\(ch)'"
             case .unterminatedString: return "unterminated string literal"
             case .indentationError: return "indentation error"
+            case .invisibleCharacter(let label, _): return "源码含不可见字符 '\(label)'"
+            case .misplacedCombiningMark(let label, _):
+                return "组合附加符号 '\(label)' 不能作标识符首字符"
+            case .mixedScriptIdentifier(let name, _):
+                return "标识符 '\(name)' 混用多个高风险脚本"
             }
         case let e as ParserError:
             return parserMessage(e)
@@ -194,6 +201,11 @@ public enum ErrorFormatter {
             return typeMessage(e)
         case let e as RuntimeError:
             return runtimeMessage(e)
+        case let e as LexerWarning:
+            switch e {
+            case .bidirectionalControl(let label, _, _):
+                return "注释或字符串里出现双向控制字符 '\(label)'"
+            }
         case let e as SemanticWarning:
             switch e {
             case .givenCycle(let path, _):
@@ -209,6 +221,8 @@ public enum ErrorFormatter {
                 return "foreign function '\(name)' is variadic: only the LLVM channel can call it"
             case .stringHandleForeignSymbol(let name, _):
                 return "foreign function '\(name)' uses a string handle: only the LLVM channel and `build --shared` provide those symbols"
+            case .confusableIdentifier(let name, let existing, _):
+                return "identifier '\(name)' looks the same as '\(existing)'"
             }
         case let e as IRValidator.Failure:
             return e.report
@@ -289,6 +303,8 @@ public enum ErrorFormatter {
         case .moduleRootMissing(let path): return "模块根 '\(path)' 缺少 pini.toml 或 .pini 源文件（R1 物理边界）"
         case .crossModuleAccessDenied(let symbol, _): return "符号 '\(symbol)' 非 public，不可跨模块引入（G52 D8：门槛 = 仅 public）"
         case .injectedSymbolConflict(let symbol, let holder, _): return "注入符号 '\(symbol)' 与 \(holder) 冲突（D-4：裸名必须无歧义）；请改用显式别名并以 `别名.符号` 限定调用"
+        case .foreignSignatureConflict(let name, let firstFile, _): return "外部符号 '\(name)' 的声明与 '\(firstFile)' 中的那份不一致（签名或标志不同）"
+        case .foreignSymbolNotCIdentifier(let name, _): return "外部符号名 '\(name)' 不是合法 C 标识符"
         }
     }
 
@@ -321,6 +337,12 @@ public enum ErrorFormatter {
             return "变参的第 \(position) 个实参类型 `\(type)` 不能传给 C：\(reason)"
         case .stringHandleOutsideCFace(let type, _):
             return "`\(type)` 只在 C 面上成立：写在外部函数声明里，或写在带 `|c` 条目的函数签名上"
+        case .missingArgumentLabel(let callee, let param, _, _, _, _):
+            return "调用 '\(callee)' 缺少实参标签：形参 '\(param)' 要求写 '\(param) = ...'"
+        case .unexpectedArgumentLabel(let callee, let param, _):
+            return "调用 '\(callee)' 的形参 '\(param)' 已退出标签面（声明为 '_\(param)'），实参不要写标签"
+        case .duplicateArgumentLabel(let callee, let param, _):
+            return "调用 '\(callee)' 重复写了形参 '\(param)' 的标签"
         }
     }
 
@@ -342,7 +364,7 @@ public enum ErrorFormatter {
         case .argumentCountMismatch(let name, let expected, let got, _): return "原生函数 \(name) 参数数量不匹配：期望 \(expected) 个，实际 \(got) 个"
         case .undefinedNativeFunction(let name, let available, _): return "未注册的原生函数 '\(name)'（`[名称|foreign]` 声明的 C 函数须在原生函数表内）；可用：\(available.isEmpty ? "（无）" : available.joined(separator: ", "))"
         case .libraryNotFound(let library, let searched, _): return "FFI 库 '\(library)' 未找到（已搜索：\(searched.isEmpty ? "（无搜索路径）" : searched.joined(separator: ", "))）"
-        case .symbolNotFound(let library, let symbol, _): return "FFI 库 '\(library)' 中未找到符号 '\(symbol)'"
+        case .symbolNotFound(let symbol, let searched, _): return "未找到外部符号 '\(symbol)'（已查：\(searched.isEmpty ? "（无）" : searched.joined(separator: ", "))）"
         case .entryMainMismatch(let entries, let declaredIn, _): return "入口配置与代码不一致：清单声明入口为 \(entries.joined(separator: " / "))，但 main 定义在 \(declaredIn)"
         case .variadicCallUnsupported(let name, _):
             return "变参调用 '\(name)' 需要 C 变参 ABI，解释器只能按固定签名转发 —— 这条只在 `run-llvm` 上成立"

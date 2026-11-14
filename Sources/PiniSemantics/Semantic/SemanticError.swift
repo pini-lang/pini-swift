@@ -31,4 +31,9 @@ public enum SemanticError: Error, Equatable {
     /// 注入冲突——`_别名` 隐式注入的 public 符号与本文件既有可裸引用名相撞
     /// （本地顶级/局部声明、其他注入、显式别名、内建）。`holder` 描述冲突双方。
     case injectedSymbolConflict(symbol: String, holder: String, location: SourceLocation)
+    /// 同一外部符号在模块内被声明两次，且签名或标志不同。`firstFile` 是首次声明所在文件：
+    /// 报错落在第二处，但要能一眼指回第一处。
+    case foreignSignatureConflict(name: String, firstFile: String, location: SourceLocation)
+    /// 外部符号名不是合法 C 标识符。这个名字要原样交给 `dlsym`，中文名只会得到「库里没有」。
+    case foreignSymbolNotCIdentifier(name: String, location: SourceLocation)
 }

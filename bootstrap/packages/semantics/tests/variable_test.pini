@@ -1,0 +1,284 @@
+[variable_test|import]
+_syntax = "../../syntax"
+_module_loader = "../../module-loader"
+
+; 存储样例：单元、世界与表达式类型表；声明与赋值检查只读这三样。
+(存样例)
+world: MemberWorld = MemberWorld()
+unit: CompilationUnit = CompilationUnit()
+types: ExprTypes = ExprTypes()
+
+; 造存样例：装载、注册、解析类型、建世界四步，顺序不能反。
+造存样例|func(_src: String,) -> (存样例,):
+    let loaded = loadUnit(path = "packages/p/src/api/a.pini", text = _src)
+    assert(!loaded.failed, "样例应可加载")
+    let units = [loaded.unit]
+    let table = registerPackage(units)
+    let types = resolvePackage(units = units, table = table)
+    var out = 存样例()
+    out.world = makeMemberWorld(units = units, table = table, types = types)
+    out.unit = loaded.unit
+    out.types = makeExprTypes(units)
+    return out
+
+; 找存函数：按名字找顶层函数声明，找不到答 -1。
+找存函数|func(sample: 存样例, name: String,) -> (I32,):
+    let ast = sample.unit.ast
+    let bytes = tempUtf8Bytes(sample.unit.text)
+    var i = 0
+    while i < len(ast.items):
+        let id = ast.items[i]
+        if isFunctionDeclCode(ast.decls[id].kind):
+            if decodeRange(bytes = bytes, start = ast.decls[id].nameStart, end = ast.decls[id].nameEnd) == name:
+                return id
+        i = i + 1
+    return -1
+
+; 找存方法：按扩展块目标名与方法名找声明，找不到答 -1。
+找存方法|func(sample: 存样例, owner: String, name: String,) -> (I32,):
+    let ast = sample.unit.ast
+    let bytes = tempUtf8Bytes(sample.unit.text)
+    var i = 0
+    while i < ast.declCount():
+        let decl = ast.declAt(i)
+        if isExtensionDeclCode(decl.kind):
+            if decodeRange(bytes = bytes, start = decl.nameStart, end = decl.nameEnd) == owner:
+                var k = 0
+                while k < len(decl.kids):
+                    let kid = decl.kids[k]
+                    if isFunctionDeclCode(ast.decls[kid].kind):
+                        if decodeRange(bytes = bytes, start = ast.decls[kid].nameStart, end = ast.decls[kid].nameEnd) == name:
+                            return kid
+                    k = k + 1
+        i = i + 1
+    return -1
+
+; 查存：顶层函数按名字检查声明与赋值。
+查存|func(sample: 存样例, name: String,) -> (StoreCheck,):
+    let id = 找存函数(sample = sample, name = name)
+    assert(id >= 0, "应找到函数 " + name)
+    return checkFunctionStores(world = sample.world, unitIndex = 0, declId = id, types = sample.types)
+
+; 查存方法：扩展块方法按目标名与方法名检查。
+查存方法|func(sample: 存样例, owner: String, name: String,) -> (StoreCheck,):
+    let id = 找存方法(sample = sample, owner = owner, name = name)
+    assert(id >= 0, "应找到方法 " + name)
+    return checkFunctionStores(world = sample.world, unitIndex = 0, declId = id, types = sample.types)
+
+; 首个赋值：返回第一个赋值语句的下标，没有答 -1。
+首个赋值|func(_ast: Ast,) -> (I32,):
+    var i = 0
+    while i < _ast.stmtCount():
+        if _ast.isAssignStmt(i):
+            return i
+        i = i + 1
+    return -1
+
+; 定目标：把首个赋值目标的类型写进表，供左值类型比对。
+定目标|func(sample: 存样例, typeId: I32,) -> (存样例,):
+    let stmt = 首个赋值(sample.unit.ast)
+    assert(stmt >= 0, "应有赋值语句")
+    var out = sample
+    out.types = writeExprType(table = out.types, unit = 0, node = sample.unit.ast.stmtChild(id = stmt, index = 0), typeId = typeId)
+    return out
+
+; 声明与初值：`let` 记不可变局部，`var` 记可变局部，初值字面量按缺省类型定型。
+声明与初值|test() -> ():
+    let sample = 造存样例("f|func() -> ():\n    let x = 1\n    var y = 2.5\n")
+    let hit = 查存(sample = sample, name = "f")
+    assert(!hit.failed, "不应报错")
+    assert(len(hit.declared) == 2, "应声明两个局部")
+    assert(hit.declared[0].spelling == "x", "实得 " + hit.declared[0].spelling)
+    assert(!hit.declared[0].mutable, "let 应不可变")
+    assert(typeText(pool = hit.pool, id = hit.declared[0].typeId) == "I32", "实得 " + typeText(pool = hit.pool, id = hit.declared[0].typeId))
+    assert(isLocalKind(kind = hit.declared[0].kind, expected = localVariable), "应判作局部变量")
+    assert(hit.declared[1].mutable, "var 应可变")
+    assert(typeText(pool = hit.pool, id = hit.declared[1].typeId) == "F64", "实得 " + typeText(pool = hit.pool, id = hit.declared[1].typeId))
+    return
+
+; 标注收窄：整数初值在浮点标注下取标注类型，不先定 I32 再判可赋值。
+标注收窄|test() -> ():
+    let sample = 造存样例("f|func() -> ():\n    let x: F64 = 1\n")
+    let hit = 查存(sample = sample, name = "f")
+    assert(!hit.failed, "标注应被字面量采用")
+    assert(typeText(pool = hit.pool, id = hit.declared[0].typeId) == "F64", "实得 " + typeText(pool = hit.pool, id = hit.declared[0].typeId))
+    return
+
+; 标注不符：初值字面量与标注不同族，报类型不匹配并保留标注类型。
+标注不符|test() -> ():
+    let sample = 造存样例("f|func() -> ():\n    let x: I32 = \"s\"\n")
+    let hit = 查存(sample = sample, name = "f")
+    assert(hit.failed, "应判失败")
+    assert(len(hit.errors) == 1, "应报一条不匹配")
+    assert(storeErrorCode(hit.errors[0].kind) == "E4-001", "实得 " + storeErrorCode(hit.errors[0].kind))
+    assert(hit.errors[0].name == "x", "实得 " + hit.errors[0].name)
+    assert(hit.errors[0].expected == "I32", "实得 " + hit.errors[0].expected)
+    assert(hit.errors[0].got == "String", "实得 " + hit.errors[0].got)
+    assert(typeText(pool = hit.pool, id = hit.declared[0].typeId) == "I32", "声明仍应按标注定型")
+    return
+
+; 空值无望：没有标注的 nil 初值判不出类型，报无法推断。
+空值无望|test() -> ():
+    let sample = 造存样例("f|func() -> ():\n    let x = nil\n")
+    let hit = 查存(sample = sample, name = "f")
+    assert(len(hit.errors) == 1, "应报一条无法推断")
+    assert(storeErrorCode(hit.errors[0].kind) == "E4-003", "实得 " + storeErrorCode(hit.errors[0].kind))
+    return
+
+; let不可变：给 let 局部重新赋值报专用错误，名字指向被写变量。
+let不可变|test() -> ():
+    let sample = 造存样例("f|func() -> ():\n    let x = 1\n    x = 2\n")
+    let hit = 查存(sample = sample, name = "f")
+    assert(len(hit.errors) == 1, "应报一条不可变")
+    assert(storeErrorCode(hit.errors[0].kind) == "E4-010", "实得 " + storeErrorCode(hit.errors[0].kind))
+    assert(hit.errors[0].name == "x", "实得 " + hit.errors[0].name)
+    return
+
+; 参数可赋值：参数默认可变，重新赋值不报错。
+参数可赋值|test() -> ():
+    let sample = 造存样例("f|func(a: I32,) -> ():\n    a = 1\n")
+    let hit = 查存(sample = sample, name = "f")
+    assert(!hit.failed, "参数赋值不应报错")
+    return
+
+; 自身不可赋值：`|self` 方法里的自身不可写，报与 let 同一条错误。
+自身不可赋值|test() -> ():
+    let sample = 造存样例("(点)\nx: I32 = 0\n\n((点))\n改|self() -> ():\n    self = self\n")
+    let hit = 查存方法(sample = sample, owner = "点", name = "改")
+    assert(len(hit.errors) == 1, "应报一条不可变")
+    assert(storeErrorCode(hit.errors[0].kind) == "E4-010", "实得 " + storeErrorCode(hit.errors[0].kind))
+    assert(hit.errors[0].name == "self", "实得 " + hit.errors[0].name)
+    return
+
+; 元组解构：按初值元组类型逐位声明，名字与类型一一对应。
+元组解构|test() -> ():
+    let sample = 造存样例("f|func(pair: (I32, String,),) -> ():\n    let (a, b) = pair\n")
+    let hit = 查存(sample = sample, name = "f")
+    assert(!hit.failed, "解构不应报错")
+    assert(len(hit.declared) == 2, "应声明两个局部")
+    assert(hit.declared[0].spelling == "a", "实得 " + hit.declared[0].spelling)
+    assert(typeText(pool = hit.pool, id = hit.declared[0].typeId) == "I32", "实得 " + typeText(pool = hit.pool, id = hit.declared[0].typeId))
+    assert(hit.declared[1].spelling == "b", "实得 " + hit.declared[1].spelling)
+    assert(typeText(pool = hit.pool, id = hit.declared[1].typeId) == "String", "实得 " + typeText(pool = hit.pool, id = hit.declared[1].typeId))
+    return
+
+; 解构个数：名字数多于初值分量数，报个数不匹配。
+解构个数|test() -> ():
+    let sample = 造存样例("f|func(pair: (I32, String,),) -> ():\n    let (a, b, c) = pair\n")
+    let hit = 查存(sample = sample, name = "f")
+    assert(len(hit.errors) == 1, "应报一条个数不匹配")
+    assert(storeErrorCode(hit.errors[0].kind) == "E4-005", "实得 " + storeErrorCode(hit.errors[0].kind))
+    return
+
+; 解构非名字：解构位里出现非名字表达式，报模式不合法。
+解构非名字|test() -> ():
+    let sample = 造存样例("f|func(pair: (I32, String,),) -> ():\n    let (a, 1) = pair\n")
+    let hit = 查存(sample = sample, name = "f")
+    assert(len(hit.errors) == 1, "应报一条坏模式")
+    assert(storeErrorCode(hit.errors[0].kind) == "E4-001", "实得 " + storeErrorCode(hit.errors[0].kind))
+    return
+
+; 复合赋值全部：十类复合赋值在 I32 上都成立，不报错。
+复合赋值全部|test() -> ():
+    let sample = 造存样例("f|func() -> ():\n    var a = 1\n    a += 1\n    a -= 1\n    a *= 1\n    a /= 1\n    a %= 1\n    a &= 1\n    a |= 1\n    a ^= 1\n    a <<= 1\n    a >>= 1\n")
+    let hit = 查存(sample = sample, name = "f")
+    assert(!hit.failed, "十类复合赋值都不应报错")
+    return
+
+; 复合赋值类型不合：字符串相减不成立，按二元运算判据报操作数类型不合。
+复合赋值类型不合|test() -> ():
+    let sample = 造存样例("f|func() -> ():\n    var s = \"x\"\n    s -= \"y\"\n")
+    let hit = 查存(sample = sample, name = "f")
+    assert(len(hit.errors) == 1, "应报一条操作数类型不合")
+    assert(storeErrorCode(hit.errors[0].kind) == "E4-004", "实得 " + storeErrorCode(hit.errors[0].kind))
+    return
+
+; 复合赋值拼接：字符串加法成立，复合赋值同样放行。
+复合赋值拼接|test() -> ():
+    let sample = 造存样例("f|func() -> ():\n    var s = \"x\"\n    s += \"y\"\n")
+    let hit = 查存(sample = sample, name = "f")
+    assert(!hit.failed, "字符串拼接不应报错")
+    return
+
+; 字段写：字段目标按类型表取类型，初值按该类型定型。
+字段写|test() -> ():
+    var sample = 造存样例("(点)\nx: I32 = 0\n\nf|func(p: 点,) -> ():\n    p.x = 1\n")
+    let 整数 = intern(pool = sample.world.types.pool, kind = typeClassScalar, name = "I32", kids = [], ret = -1)
+    sample.world.types.pool = 整数.pool
+    sample = 定目标(sample = sample, typeId = 整数.id)
+    let hit = 查存(sample = sample, name = "f")
+    assert(!hit.failed, "字段写不应报错")
+    return
+
+; 字段写不符：字段是 I32 而初值是字符串，报类型不匹配。
+字段写不符|test() -> ():
+    var sample = 造存样例("(点)\nx: I32 = 0\n\nf|func(p: 点,) -> ():\n    p.x = \"s\"\n")
+    let 整数 = intern(pool = sample.world.types.pool, kind = typeClassScalar, name = "I32", kids = [], ret = -1)
+    sample.world.types.pool = 整数.pool
+    sample = 定目标(sample = sample, typeId = 整数.id)
+    let hit = 查存(sample = sample, name = "f")
+    assert(len(hit.errors) == 1, "应报一条不匹配")
+    assert(storeErrorCode(hit.errors[0].kind) == "E4-001", "实得 " + storeErrorCode(hit.errors[0].kind))
+    return
+
+; 下标写：下标目标按类型表取元素类型，写值可赋值即放行。
+下标写|test() -> ():
+    var sample = 造存样例("f|func(a: Array<I32>,) -> ():\n    a[0] = 1\n")
+    let 整数 = intern(pool = sample.world.types.pool, kind = typeClassScalar, name = "I32", kids = [], ret = -1)
+    sample.world.types.pool = 整数.pool
+    sample = 定目标(sample = sample, typeId = 整数.id)
+    let hit = 查存(sample = sample, name = "f")
+    assert(!hit.failed, "下标写不应报错")
+    return
+
+; 目标非左值：字面量不能作赋值目标，报对类型执行赋值无效。
+目标非左值|test() -> ():
+    let sample = 造存样例("f|func() -> ():\n    1 = 2\n")
+    let hit = 查存(sample = sample, name = "f")
+    assert(len(hit.errors) == 1, "应报一条非法目标")
+    assert(storeErrorCode(hit.errors[0].kind) == "E4-004", "实得 " + storeErrorCode(hit.errors[0].kind))
+    return
+
+; 声明重名：同一块内两次声明同名，报符号重复声明。
+声明重名|test() -> ():
+    let sample = 造存样例("f|func() -> ():\n    let x = 1\n    let x = 2\n")
+    let hit = 查存(sample = sample, name = "f")
+    assert(len(hit.errors) == 1, "应报一条重名")
+    assert(storeErrorCode(hit.errors[0].kind) == "E3-004", "实得 " + storeErrorCode(hit.errors[0].kind))
+    assert(hit.errors[0].name == "x", "实得 " + hit.errors[0].name)
+    return
+
+; 跨块遮蔽：内层块声明同名局部是遮蔽，不算重名。
+跨块遮蔽|test() -> ():
+    let sample = 造存样例("f|func() -> ():\n    let x = 1\n    if true:\n        let x = 2\n")
+    let hit = 查存(sample = sample, name = "f")
+    assert(!hit.failed, "跨块遮蔽不应报错")
+    assert(len(hit.declared) == 2, "两块各自声明一个局部")
+    return
+
+; 块内声明不外泄：块退出后局部从作用域里消失，声明清单仍留记录。
+块内声明不外泄|test() -> ():
+    let sample = 造存样例("f|func() -> ():\n    if true:\n        let y = 1\n")
+    let hit = 查存(sample = sample, name = "f")
+    assert(!hit.failed, "不应报错")
+    assert(len(hit.declared) == 1, "声明清单应留下记录")
+    assert(hit.scope.localCount() == 0, "块退出后局部应清空")
+    return
+
+; 存检查两次：同一输入两次得到同一组错误与声明读数。
+存检查两次|test() -> ():
+    let sample = 造存样例("f|func() -> ():\n    let x = 1\n    x = 2\n    let y: I32 = \"s\"\n")
+    let first = 查存(sample = sample, name = "f")
+    let second = 查存(sample = sample, name = "f")
+    assert(len(first.errors) == len(second.errors), "错误数应相同")
+    assert(len(first.declared) == len(second.declared), "声明数应相同")
+    assert(storeErrorCode(first.errors[0].kind) == storeErrorCode(second.errors[0].kind), "错误类别应相同")
+    return
+
+; 下划线占位：单名声明写 `_` 时只判初值，不占局部与槽位。
+下划线占位|test() -> ():
+    let sample = 造存样例("f|func() -> ():\n    let _ = 1\n")
+    let hit = 查存(sample = sample, name = "f")
+    assert(!hit.failed, "占位声明不应报错")
+    assert(len(hit.declared) == 0, "占位不产生局部")
+    return

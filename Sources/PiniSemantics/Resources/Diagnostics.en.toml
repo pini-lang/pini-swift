@@ -4,6 +4,7 @@
 
 [labels]
 lexer = "Lexer Error"
+lexerWarning = "Lexer Warning"
 parser = "Parse Error"
 semantic = "Semantic Error"
 semanticWarning = "Semantic Warning"
@@ -41,6 +42,26 @@ suggestion = "use `run-llvm`, or write a fixed-arity shim on the C side and decl
 [E7-007]
 message = "foreign function '{name}' uses a string handle: only the LLVM channel and `build --shared` provide those symbols"
 suggestion = "use `run-llvm` or `build --shared`; the interpreter rejects the call site"
+
+[E7-008]
+message = "identifier '{name}' looks the same as '{existing}'"
+suggestion = "their UTS #39 skeletons match while the encodings differ; ignore if intentional, otherwise rename one"
+
+[E7-009]
+message = "bidirectional control character '{label}' in a comment or string"
+suggestion = "it changes how that text displays; remove it from comments, or build the code point with chr() when a string really must emit it"
+
+[E1-004]
+message = "source contains an invisible character '{label}'"
+suggestion = "remove it; identifiers may only use letters, numbers, underscores, and combining marks"
+
+[E1-005]
+message = "combining mark '{label}' cannot begin an identifier"
+suggestion = "attach the combining mark to the preceding character; it may continue an identifier but cannot start one"
+
+[E1-006]
+message = "identifier '{name}' mixes multiple high-risk scripts"
+suggestion = "use a single script; combining Chinese with Latin is not affected"
 
 [E2-001]
 message = "expected {expected}, got {actual}"
@@ -177,6 +198,18 @@ suggestion = "the variadic tail accepts I8 / U8 / I32 / I64 / U64 / F64 / Bool /
 message = "`{type}` exists only on the C face"
 suggestion = "write it in a `[name|foreign]` symbol, or in the signature of a function referenced by a `|c` entry; plain variables, fields and methods do not take handles"
 
+[E4-036]
+message = "call to '{callee}' is missing an argument label: parameter '{param}' requires '{param} = ...'"
+suggestion = "write '{param} = ' before the argument; if this parameter is meant to be positional, declare it as '_{param}: ...'"
+
+[E4-037]
+message = "parameter '{param}' of '{callee}' has left the label surface"
+suggestion = "drop '{param} = ' before the argument; a declaration written as '_{param}' is passed positionally"
+
+[E4-038]
+message = "call to '{callee}' repeats the label for parameter '{param}'"
+suggestion = "give each parameter exactly one argument; remove the duplicate"
+
 [E5-001]
 message = "undefined variable '{name}'"
 suggestion = "Did you mean '{closest}'?"
@@ -208,7 +241,7 @@ message = "assertion failed: {message}"
 [E5-016]
 message = "FFI library '{library}' not found (searched: {searched})"
 [E5-017]
-message = "symbol '{symbol}' not found in FFI library '{library}'"
+message = "foreign symbol '{symbol}' not found (searched: {searched})"
 
 [E5-019]
 message = "variadic call '{name}' needs the C variadic ABI; the interpreter can only forward a fixed signature, so this works on `run-llvm` only"
@@ -284,3 +317,11 @@ suggestion = "drop this unroll, or put at least one row in the table"
 [E3-018]
 message = "unroll expands to {count} rounds, over the limit of {limit}"
 suggestion = "split the table across several unroll statements, or use an ordinary loop"
+
+[E3-019]
+message = "foreign symbol '{name}' is declared differently from the declaration in '{firstFile}' (signature or flags differ)"
+suggestion = "keep only one of the two; when a generated module and a hand-written block share a name, the signatures must match exactly"
+
+[E3-020]
+message = "foreign symbol name '{name}' is not a valid C identifier"
+suggestion = "the name is the C symbol name: use ASCII letters, digits and underscores only, and do not start with a digit"

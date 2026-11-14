@@ -1,0 +1,199 @@
+[member_test|import]
+_syntax = "../../syntax"
+_module_loader = "../../module-loader"
+
+; 成员样例：一整套单元、符号、类型与索引；查询只带世界与访问点。
+(成员样例)
+world: MemberWorld = MemberWorld()
+file: String = ""
+
+; 造成员样例：装载、注册、解析类型、建世界四步，顺序不能反。
+造成员样例|func(path: String, src: String,) -> (成员样例,):
+    let loaded = loadUnit(path = path, text = src)
+    assert(!loaded.failed, "样例应可加载：" + path)
+    let units = [loaded.unit]
+    let table = registerPackage(units)
+    let types = resolvePackage(units = units, table = table)
+    var out = 成员样例()
+    out.world = makeMemberWorld(units = units, table = table, types = types)
+    out.file = path
+    return out
+
+; 查成员：访问点按值位、空所有者与样例文件填。
+查成员|func(world: MemberWorld, file: String, receiver: I32, name: String, isTypeName: Bool, owner: String,) -> (MemberResult,):
+    return checkMember(world = world, access = memberAccess(receiver = receiver, name = name, isTypeName = isTypeName, owner = owner, file = file, offset = 0))
+
+; 查样例：常用形态，文件与所有者取样例默认值。
+查样例|func(sample: 成员样例, receiver: I32, name: String, isTypeName: Bool, owner: String,) -> (MemberResult,):
+    return 查成员(world = sample.world, file = sample.file, receiver = receiver, name = name, isTypeName = isTypeName, owner = owner)
+
+; 元组样例：标量与元组驻留进世界池，返回更新后的世界与元组下标。
+(元组样例)
+world: MemberWorld = MemberWorld()
+id: I32 = -1
+
+造元组样例|func(_world: MemberWorld,) -> (元组样例,):
+    let first = intern(pool = _world.types.pool, kind = typeClassScalar, name = "I32", kids = [], ret = -1)
+    var grown = _world
+    grown.types.pool = first.pool
+    let second = intern(pool = grown.types.pool, kind = typeClassScalar, name = "Bool", kids = [], ret = -1)
+    grown.types.pool = second.pool
+    var kids: Array<I32> = []
+    kids = kids.append(first.id)
+    kids = kids.append(second.id)
+    let tuple = intern(pool = grown.types.pool, kind = typeClassTuple, name = "", kids = kids, ret = -1)
+    grown.types.pool = tuple.pool
+    var out = 元组样例()
+    out.world = grown
+    out.id = tuple.id
+    return out
+
+; 字段命中：结构字段按声明类型回表，容器字段逐层写出。
+字段命中|test() -> ():
+    let sample = 造成员样例(path = "packages/p/src/api/a.pini", src = "(点)\nx: I32 = 0\nxs: Array<I32> = []\n")
+    let point = nominalTypeId(world = sample.world, name = "点")
+    assert(point >= 0, "结构类型应已驻留")
+    let plain = 查样例(sample = sample, receiver = point, name = "x", isTypeName = false, owner = "")
+    assert(!plain.failed, "字段应命中")
+    assert(isMemberKind(kind = plain.kind, expected = memberField), "应判作字段")
+    assert(typeText(pool = plain.pool, id = plain.typeId) == "I32", "实得 " + typeText(pool = plain.pool, id = plain.typeId))
+    let listed = 查样例(sample = sample, receiver = point, name = "xs", isTypeName = false, owner = "")
+    assert(!listed.failed, "容器字段应命中")
+    assert(typeText(pool = listed.pool, id = listed.typeId) == "Array<I32>", "实得 " + typeText(pool = listed.pool, id = listed.typeId))
+    return
+
+; 方法签名：形参逐项转写，返回类型单列；值位访问判作方法。
+方法签名|test() -> ():
+    let src = "(点)\nx: I32 = 0\n\n((点))\n取|self(a: I32, b: Bool,) -> (I32,):\n    return a\n"
+    let sample = 造成员样例(path = "packages/p/src/api/a.pini", src = src)
+    let point = nominalTypeId(world = sample.world, name = "点")
+    let hit = 查样例(sample = sample, receiver = point, name = "取", isTypeName = false, owner = "")
+    assert(!hit.failed, "方法应命中")
+    assert(isMemberKind(kind = hit.kind, expected = memberMethod), "应判作方法")
+    assert(typeText(pool = hit.pool, id = hit.typeId) == "(I32, Bool,) -> I32", "实得 " + typeText(pool = hit.pool, id = hit.typeId))
+    return
+
+; 本型方法：类型名访问命中并判作本型方法，值位访问同样命中。
+本型方法|test() -> ():
+    let src = "(点)\nx: I32 = 0\n\n((点))\n造|own() -> (I32,):\n    return 1\n"
+    let sample = 造成员样例(path = "packages/p/src/api/a.pini", src = src)
+    let point = nominalTypeId(world = sample.world, name = "点")
+    let byName = 查样例(sample = sample, receiver = point, name = "造", isTypeName = true, owner = "")
+    assert(!byName.failed, "类型名访问本型方法应命中")
+    assert(isMemberKind(kind = byName.kind, expected = memberOwnMethod), "应判作本型方法")
+    assert(typeText(pool = byName.pool, id = byName.typeId) == "() -> I32", "实得 " + typeText(pool = byName.pool, id = byName.typeId))
+    let byValue = 查样例(sample = sample, receiver = point, name = "造", isTypeName = false, owner = "")
+    assert(!byValue.failed, "值位访问本型方法同样命中")
+    return
+
+; 实例方法经类型名：类型名作接收者时看不到自身方法，报未知成员。
+实例方法经类型名|test() -> ():
+    let src = "(点)\nx: I32 = 0\n\n((点))\n取|self() -> (I32,):\n    return 0\n"
+    let sample = 造成员样例(path = "packages/p/src/api/a.pini", src = src)
+    let point = nominalTypeId(world = sample.world, name = "点")
+    let hit = 查样例(sample = sample, receiver = point, name = "取", isTypeName = true, owner = "")
+    assert(hit.failed, "类型名不应看到自身方法")
+    assert(memberErrorCode(hit.error.kind) == "E4-009", "实得 " + memberErrorCode(hit.error.kind))
+    return
+
+; 枚举项：无载荷给枚举自身，带载荷给构造签名。
+枚举项|test() -> ():
+    let src = "[颜色]\n红\n绿(值: I32,)\n"
+    let sample = 造成员样例(path = "packages/p/src/api/a.pini", src = src)
+    let color = nominalTypeId(world = sample.world, name = "颜色")
+    let plain = 查样例(sample = sample, receiver = color, name = "红", isTypeName = true, owner = "")
+    assert(!plain.failed, "无载荷用例应命中")
+    assert(isMemberKind(kind = plain.kind, expected = memberEnumCase), "应判作枚举项")
+    assert(typeText(pool = plain.pool, id = plain.typeId) == "颜色", "实得 " + typeText(pool = plain.pool, id = plain.typeId))
+    let payload = 查样例(sample = sample, receiver = color, name = "绿", isTypeName = true, owner = "")
+    assert(!payload.failed, "带载荷用例应命中")
+    assert(typeText(pool = payload.pool, id = payload.typeId) == "(I32,) -> 颜色", "实得 " + typeText(pool = payload.pool, id = payload.typeId))
+    return
+
+; 元组序号：数字名字按位置取分量，越界报未知成员。
+元组序号|test() -> ():
+    let sample = 造成员样例(path = "packages/p/src/api/a.pini", src = "(点)\nx: I32 = 0\n")
+    let tuple = 造元组样例(sample.world)
+    let first = 查成员(world = tuple.world, file = sample.file, receiver = tuple.id, name = "0", isTypeName = false, owner = "")
+    assert(!first.failed, "首个分量应命中")
+    assert(isMemberKind(kind = first.kind, expected = memberTupleIndex), "应判作元组序号")
+    assert(typeText(pool = first.pool, id = first.typeId) == "I32", "实得 " + typeText(pool = first.pool, id = first.typeId))
+    let second = 查成员(world = tuple.world, file = sample.file, receiver = tuple.id, name = "1", isTypeName = false, owner = "")
+    assert(typeText(pool = second.pool, id = second.typeId) == "Bool", "实得 " + typeText(pool = second.pool, id = second.typeId))
+    let beyond = 查成员(world = tuple.world, file = sample.file, receiver = tuple.id, name = "2", isTypeName = false, owner = "")
+    assert(beyond.failed, "越界序号应报错")
+    assert(memberErrorCode(beyond.error.kind) == "E4-009", "实得 " + memberErrorCode(beyond.error.kind))
+    let huge = 查成员(world = tuple.world, file = sample.file, receiver = tuple.id, name = "10000", isTypeName = false, owner = "")
+    assert(huge.failed, "超长序号应报错")
+    return
+
+; 元组标签：标签表按类型下标挂上后，名字与序号同样命中。
+元组标签|test() -> ():
+    let sample = 造成员样例(path = "packages/p/src/api/a.pini", src = "(点)\nx: I32 = 0\n")
+    let tuple = 造元组样例(sample.world)
+    var labels: Array<String> = []
+    labels = labels.append("a")
+    labels = labels.append("b")
+    let world = withTupleLabels(world = tuple.world, typeId = tuple.id, labels = labels)
+    let hit = 查成员(world = world, file = sample.file, receiver = tuple.id, name = "b", isTypeName = false, owner = "")
+    assert(!hit.failed, "标签应命中")
+    assert(isMemberKind(kind = hit.kind, expected = memberTupleLabel), "应判作元组标签")
+    assert(typeText(pool = hit.pool, id = hit.typeId) == "Bool", "实得 " + typeText(pool = hit.pool, id = hit.typeId))
+    let missing = 查成员(world = world, file = sample.file, receiver = tuple.id, name = "c", isTypeName = false, owner = "")
+    assert(missing.failed, "未知标签应报错")
+    return
+
+; 私有字段：本类型方法内可读，空所有者按外人拒。
+私有字段|test() -> ():
+    let sample = 造成员样例(path = "packages/p/src/api/a.pini", src = "(点)\n_秘密: I32 = 0\n")
+    let point = nominalTypeId(world = sample.world, name = "点")
+    let inside = 查样例(sample = sample, receiver = point, name = "_秘密", isTypeName = false, owner = "点")
+    assert(!inside.failed, "本类型方法应可读私有字段")
+    let outside = 查样例(sample = sample, receiver = point, name = "_秘密", isTypeName = false, owner = "")
+    assert(outside.failed, "外人不得读私有字段")
+    assert(memberErrorCode(outside.error.kind) == "E4-012", "实得 " + memberErrorCode(outside.error.kind))
+    return
+
+; 文件内字段跨文件：文件名的下划线把成员降为文件内可见。
+文件内字段跨文件|test() -> ():
+    let sample = 造成员样例(path = "packages/p/src/api/_a.pini", src = "(点)\nx: I32 = 0\n")
+    let point = nominalTypeId(world = sample.world, name = "点")
+    let same = 查成员(world = sample.world, file = "packages/p/src/api/_a.pini", receiver = point, name = "x", isTypeName = false, owner = "")
+    assert(!same.failed, "同文件应可读")
+    let other = 查成员(world = sample.world, file = "packages/p/src/api/b.pini", receiver = point, name = "x", isTypeName = false, owner = "")
+    assert(other.failed, "跨文件不得读文件内成员")
+    assert(memberErrorCode(other.error.kind) == "E4-011", "实得 " + memberErrorCode(other.error.kind))
+    return
+
+; 未找到成员：诊断带类型名与成员名，类型表写错误标记。
+未找到成员|test() -> ():
+    let sample = 造成员样例(path = "packages/p/src/api/a.pini", src = "(点)\nx: I32 = 0\n")
+    let point = nominalTypeId(world = sample.world, name = "点")
+    let hit = 查样例(sample = sample, receiver = point, name = "无此成员", isTypeName = false, owner = "")
+    assert(hit.failed, "未知成员应报错")
+    assert(memberErrorCode(hit.error.kind) == "E4-009", "实得 " + memberErrorCode(hit.error.kind))
+    assert(hit.error.typeName == "点", "类型名实得 " + hit.error.typeName)
+    assert(hit.error.memberName == "无此成员", "成员名实得 " + hit.error.memberName)
+    assert(hit.typeId == errorTypeId(), "失败应写错误标记")
+    return
+
+; 接收者未定：不报错也不落错误标记，交给调用方补判。
+接收者未定|test() -> ():
+    let sample = 造成员样例(path = "packages/p/src/api/a.pini", src = "(点)\nx: I32 = 0\n")
+    let hit = 查样例(sample = sample, receiver = unsetTypeId(), name = "x", isTypeName = false, owner = "")
+    assert(!hit.failed, "未定接收者不应报错")
+    assert(hit.deferred, "应记为待定")
+    assert(hit.typeId == unsetTypeId(), "待定不写错误标记")
+    return
+
+; 两次判定一致：同一输入两次查询得到同一类别与类型。
+两次判定一致|test() -> ():
+    let src = "(点)\nx: I32 = 0\n\n((点))\n取|self() -> (I32,):\n    return 0\n"
+    let sample = 造成员样例(path = "packages/p/src/api/a.pini", src = src)
+    let point = nominalTypeId(world = sample.world, name = "点")
+    let first = 查样例(sample = sample, receiver = point, name = "取", isTypeName = false, owner = "")
+    let second = 查样例(sample = sample, receiver = point, name = "取", isTypeName = false, owner = "")
+    assert(memberKindName(first.kind) == memberKindName(second.kind), "类别应相同")
+    assert(first.typeId == second.typeId, "类型下标应相同")
+    assert(typeText(pool = first.pool, id = first.typeId) == typeText(pool = second.pool, id = second.typeId), "文本应相同")
+    return

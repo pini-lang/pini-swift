@@ -1,0 +1,137 @@
+[resolve|import]
+_syntax = "../../../syntax"
+_module_loader = "../../../module-loader"
+
+; 解析表：每个表达式节点一条记录，记录名字解析到哪份声明；表与表达式池同下标。
+; 未解析的节点保持空形态；覆盖判据按标识符、成员与调用三类节点计。
+
+; 解析形态：局部、参数、自身、包级、导入、成员、内建、类型名与枚举项。
+[ResolveForm]
+resolveNone
+resolveLocal
+resolveParam
+resolveSelf
+resolveTop
+resolveImport
+resolveMember
+resolveBuiltin
+resolveTypeName
+resolveEnumCase
+
+; 解析记录：形态、符号表下标与声明下标；三者独立，空形态时后两项为 -1。
+(ResolveEntry)
+form: ResolveForm = .resolveNone
+symbol: I32 = -1
+decl: I32 = -1
+
+; 单元解析表：条目与表达式池同下标。
+(UnitResolve)
+entries: Array<ResolveEntry> = []
+
+; 解析表：按单元存放；单元次序与 type 面一致。
+(ResolveTable)
+units: Array<UnitResolve> = []
+
+; 覆盖读数：必填节点数、已覆盖数与首个缺失节点下标。
+(ResolveCoverage)
+required: I32 = 0
+covered: I32 = 0
+firstMissing: I32 = -1
+
+; 解析形态名：诊断、测试与回执共用一份拼写。
+resolveFormName|func(_form: ResolveForm,) -> (String,):
+    match _form:
+        case resolveNone:
+            return "未解析"
+        case resolveLocal:
+            return "局部"
+        case resolveParam:
+            return "参数"
+        case resolveSelf:
+            return "自身"
+        case resolveTop:
+            return "包级"
+        case resolveImport:
+            return "导入"
+        case resolveMember:
+            return "成员"
+        case resolveBuiltin:
+            return "内建"
+        case resolveTypeName:
+            return "类型名"
+        case resolveEnumCase:
+            return "枚举项"
+    return "未解析"
+
+; 同一形态判定：枚举相等比较不可用，按名称比。
+isResolveForm|func(form: ResolveForm, expected: ResolveForm,) -> (Bool,):
+    return resolveFormName(form) == resolveFormName(expected)
+
+; 已解析：空形态之外都算已写。
+isResolved|func(_entry: ResolveEntry,) -> (Bool,):
+    return !isResolveForm(form = _entry.form, expected = resolveNone)
+
+; 建表：逐单元按表达式池长度铺空条目；调用方先 sortedUnits，类型面与解析表共用同一序。
+makeResolveTable|func(_units: Array<CompilationUnit>,) -> (ResolveTable,):
+    var out = ResolveTable()
+    var u = 0
+    while u < len(_units):
+        var unitTable = UnitResolve()
+        var i = 0
+        let count = _units[u].ast.exprCount()
+        while i < count:
+            unitTable.entries = unitTable.entries.append(ResolveEntry())
+            i = i + 1
+        out.units = out.units.append(unitTable)
+        u = u + 1
+    return out
+
+; 写一条记录：原地写入并返回同一张表；越界时原表返回，旧快照不得与它共存。
+writeResolve|func(table: ResolveTable, unit: I32, node: I32, entry: ResolveEntry,) -> (ResolveTable,):
+    if unit < 0 || unit >= len(table.units):
+        return table
+    if node < 0 || node >= len(table.units[unit].entries):
+        return table
+    var out = table
+    out.units[unit].entries[node] = entry
+    return out
+
+; 读一条记录：越界答空记录，调用方不必先判边界。
+resolveAt|func(table: ResolveTable, unit: I32, node: I32,) -> (ResolveEntry,):
+    if unit < 0 || unit >= len(table.units):
+        return ResolveEntry()
+    if node < 0 || node >= len(table.units[unit].entries):
+        return ResolveEntry()
+    return table.units[unit].entries[node]
+
+; 表长：单元越界答 0。
+unitResolveCount|func(table: ResolveTable, unit: I32,) -> (I32,):
+    if unit < 0 || unit >= len(table.units):
+        return 0
+    return len(table.units[unit].entries)
+
+; 已解析数：只数已写形态，空条目不计。
+resolvedCount|func(table: ResolveTable, unit: I32,) -> (I32,):
+    if unit < 0 || unit >= len(table.units):
+        return 0
+    var total = 0
+    var i = 0
+    while i < len(table.units[unit].entries):
+        if isResolved(table.units[unit].entries[i]):
+            total = total + 1
+        i = i + 1
+    return total
+
+; 覆盖：标识符、成员与调用节点各要一条记录；首个缺失供诊断定位。
+resolveCoverage|func(table: ResolveTable, unit: CompilationUnit, unitIndex: I32,) -> (ResolveCoverage,):
+    var out = ResolveCoverage()
+    var i = 0
+    while i < unit.ast.exprCount():
+        if unit.ast.isIdentifierExpr(i) || unit.ast.isMemberExpr(i) || unit.ast.isCallExpr(i):
+            out.required = out.required + 1
+            if isResolved(resolveAt(table = table, unit = unitIndex, node = i)):
+                out.covered = out.covered + 1
+            elif out.firstMissing < 0:
+                out.firstMissing = i
+        i = i + 1
+    return out

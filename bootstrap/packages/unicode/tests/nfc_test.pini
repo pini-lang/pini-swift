@@ -13,86 +13,86 @@ sameBytes|func(left: Array<U8>, right: Array<U8>,) -> (Bool,):
     return true
 
 ; 测试助手：按码点构造 UTF-8 字节；期望值一律写码点，不写字面量字符。
-bytesOf|func(codes: Array<I32>,) -> (Array<U8>,):
+bytesOf|func(_codes: Array<I32>,) -> (Array<U8>,):
     var builder = ByteBuilder()
     var i = 0
-    while i < len(codes):
-        builder = builder.appendScalar(codes[i])
+    while i < len(_codes):
+        builder = builder.appendScalar(_codes[i])
         i = i + 1
     return builder.takeBuffer().bytes
 
 ; NFD 把预组合字符拆成基字与附标，字节按 UTF-8 展开。
 分解预组合字符|test() -> ():
     let actual = normalizeNfdBytes(bytesOf([0xE9]))
-    assert(sameBytes(actual, bytesOf([0x65, 0x301])), "é 应分解为 e + U+0301")
+    assert(sameBytes(left = actual, right = bytesOf([0x65, 0x301])), "é 应分解为 e + U+0301")
     return
 
 ; NFC 把基字与附标合成预组合字符。
 组合基字与附标|test() -> ():
     let actual = normalizeNfcBytes(bytesOf([0x65, 0x301]))
-    assert(sameBytes(actual, bytesOf([0xE9])), "e + U+0301 应合成为 é")
+    assert(sameBytes(left = actual, right = bytesOf([0xE9])), "e + U+0301 应合成为 é")
     return
 
 ; 已组合的输入再走 NFC 不变：合成是幂等的入口条件。
 已组合保持|test() -> ():
     let actual = normalizeNfcBytes(bytesOf([0xE9]))
-    assert(sameBytes(actual, bytesOf([0xE9])), "é 应保持 é")
+    assert(sameBytes(left = actual, right = bytesOf([0xE9])), "é 应保持 é")
     return
 
 ; 同序附标挡住后续合成：ä 之后的 U+0301 与前者组合类相同，不得越过它继续合成。
 组合阻断|test() -> ():
     let actual = normalizeNfcBytes(bytesOf([0x61, 0x308, 0x301]))
-    assert(sameBytes(actual, bytesOf([0xE4, 0x301])), "应得 ä + U+0301")
+    assert(sameBytes(left = actual, right = bytesOf([0xE4, 0x301])), "应得 ä + U+0301")
     return
 
 ; 组合类小的附标排到前面：NFD 按组合类升序重排，输入顺序不保留。
 规范重排|test() -> ():
     let actual = normalizeNfdBytes(bytesOf([0x61, 0x301, 0x328]))
-    assert(sameBytes(actual, bytesOf([0x61, 0x328, 0x301])), "U+0328 应排到 U+0301 之前")
+    assert(sameBytes(left = actual, right = bytesOf([0x61, 0x328, 0x301])), "U+0328 应排到 U+0301 之前")
     return
 
 ; 组合排除：有分解映射但被排除在合成之外，NFC 给出分解形式而不是预组合形式。
 组合排除|test() -> ():
     let decomposed = normalizeNfdBytes(bytesOf([0x958]))
-    assert(sameBytes(decomposed, bytesOf([0x915, 0x93C])), "U+0958 应分解")
+    assert(sameBytes(left = decomposed, right = bytesOf([0x915, 0x93C])), "U+0958 应分解")
     let composed = normalizeNfcBytes(bytesOf([0x915, 0x93C]))
-    assert(sameBytes(composed, bytesOf([0x915, 0x93C])), "被排除的组合不得合成")
+    assert(sameBytes(left = composed, right = bytesOf([0x915, 0x93C])), "被排除的组合不得合成")
     let normalized = normalizeNfcBytes(bytesOf([0x958]))
-    assert(sameBytes(normalized, bytesOf([0x915, 0x93C])), "预组合形式应归一为分解形式")
+    assert(sameBytes(left = normalized, right = bytesOf([0x915, 0x93C])), "预组合形式应归一为分解形式")
     return
 
 ; 韩文音节按算术分解与合成，不查表。
 韩文算术|test() -> ():
     let lvt = normalizeNfdBytes(bytesOf([0xAC01]))
-    assert(sameBytes(lvt, bytesOf([0x1100, 0x1161, 0x11A8])), "각 分解为三个字母")
+    assert(sameBytes(left = lvt, right = bytesOf([0x1100, 0x1161, 0x11A8])), "각 分解为三个字母")
     let lv = normalizeNfdBytes(bytesOf([0xAC00]))
-    assert(sameBytes(lv, bytesOf([0x1100, 0x1161])), "가 分解为两个字母")
+    assert(sameBytes(left = lv, right = bytesOf([0x1100, 0x1161])), "가 分解为两个字母")
     let back = normalizeNfcBytes(bytesOf([0x1100, 0x1161, 0x11A8]))
-    assert(sameBytes(back, bytesOf([0xAC01])), "三个字母合成 각")
+    assert(sameBytes(left = back, right = bytesOf([0xAC01])), "三个字母合成 각")
     return
 
 ; 只做规范等价：兼容字符与全角形式都不改。
 不做兼容等价|test() -> ():
     let ligature = normalizeNfcBytes(bytesOf([0xFB01]))
-    assert(sameBytes(ligature, bytesOf([0xFB01])), "ﬁ 不得拆成 fi")
+    assert(sameBytes(left = ligature, right = bytesOf([0xFB01])), "ﬁ 不得拆成 fi")
     let wide = normalizeNfcBytes(bytesOf([0xFF21]))
-    assert(sameBytes(wide, bytesOf([0xFF21])), "全角 Ａ 不得折成 A")
+    assert(sameBytes(left = wide, right = bytesOf([0xFF21])), "全角 Ａ 不得折成 A")
     return
 
 ; 两种等价写法归一到同一字节序列，且再规范一次不变。
 等价写法归一|test() -> ():
     let composed = normalizeNfcBytes(bytesOf([0xE9]))
     let decomposed = normalizeNfcBytes(bytesOf([0x65, 0x301]))
-    assert(sameBytes(composed, decomposed), "两种写法应同字节")
+    assert(sameBytes(left = composed, right = decomposed), "两种写法应同字节")
     let twice = normalizeNfcBytes(composed)
-    assert(sameBytes(twice, composed), "NFC 应幂等")
+    assert(sameBytes(left = twice, right = composed), "NFC 应幂等")
     return
 
 ; 非法 UTF-8 原样返回：规范化不得吞字节，也不得让错误扩散到调用方。
 非法输入原样|test() -> ():
     let broken: Array<U8> = [228, 65]
-    assert(sameBytes(normalizeNfcBytes(broken), broken), "NFC 应原样返回")
-    assert(sameBytes(normalizeNfdBytes(broken), broken), "NFD 应原样返回")
+    assert(sameBytes(left = normalizeNfcBytes(broken), right = broken), "NFC 应原样返回")
+    assert(sameBytes(left = normalizeNfdBytes(broken), right = broken), "NFD 应原样返回")
     let empty: Array<U8> = []
-    assert(sameBytes(normalizeNfcBytes(empty), empty), "空输入应原样返回")
+    assert(sameBytes(left = normalizeNfcBytes(empty), right = empty), "空输入应原样返回")
     return

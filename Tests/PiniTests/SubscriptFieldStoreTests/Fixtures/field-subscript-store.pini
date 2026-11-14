@@ -11,7 +11,7 @@ put|self(i: I32, v: I32,) -> ():
 
 main|func() -> ():
     var h = Holder()
-    h.put(1, 7)
+    h.put(i = 1, v = 7)
     print(h.xs[0])
     print(h.xs[1])
     print(h.xs[2])

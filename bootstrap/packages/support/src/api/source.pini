@@ -4,9 +4,9 @@ bytes: Array<U8> = []
 lineStarts: Array<I32> = []
 
 ; 从文本建源：一次 UTF-8 复制，再扫一遍 LF 建行表。
-makeSourceText|func(text: String,) -> (SourceText,):
+makeSourceText|func(_text: String,) -> (SourceText,):
     var out = SourceText()
-    out.bytes = tempUtf8Bytes(text)
+    out.bytes = tempUtf8Bytes(_text)
     out.lineStarts = lineStartsOf(out.bytes)
     return out
 
@@ -17,11 +17,11 @@ byteLength|self() -> (I32,):
 lineCount|self() -> (I32,):
     return len(self.lineStarts)
 ; 行首字节偏移；行号越界落到数组下标的运行时陷阱。
-lineStart|self(line: I32,) -> (I32,):
-    return self.lineStarts[line]
+lineStart|self(_line: I32,) -> (I32,):
+    return self.lineStarts[_line]
 ; 偏移所在行：二分查找最后一个行首不大于偏移的行，负偏移按 0 处理。
-lineOf|self(offset: I32,) -> (I32,):
-    var target = offset
+lineOf|self(_offset: I32,) -> (I32,):
+    var target = _offset
     if target < 0:
         target = 0
     var lo = 0
@@ -33,5 +33,5 @@ lineOf|self(offset: I32,) -> (I32,):
         else:
             hi = mid - 1
     return lo
-byteAt|self(index: I32,) -> (U8,):
-    return self.bytes[index]
+byteAt|self(_index: I32,) -> (U8,):
+    return self.bytes[_index]

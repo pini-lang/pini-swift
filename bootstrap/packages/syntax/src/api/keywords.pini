@@ -4,8 +4,8 @@ langEnglish
 langChinese
 
 ; 语言码：只用于比较与分流，不依赖枚举相等。
-languageTag|func(language: KeywordLanguage,) -> (I32,):
-    match language:
+languageTag|func(_language: KeywordLanguage,) -> (I32,):
+    match _language:
         case langEnglish:
             return 0
         case langChinese:
@@ -13,14 +13,14 @@ languageTag|func(language: KeywordLanguage,) -> (I32,):
     return 0
 
 ; 语言名：诊断与测试用的可读名。
-languageName|func(language: KeywordLanguage,) -> (String,):
-    if languageTag(language) == 1:
+languageName|func(_language: KeywordLanguage,) -> (String,):
+    if languageTag(_language) == 1:
         return "中文"
     return "英文"
 
 ; 关键字词表：下标即关键字类别区的序号，两种语言同序，靠 `kindFromTag(8 + 下标)` 得类别。
-keywordWords|func(language: KeywordLanguage,) -> (Array<String>,):
-    if languageTag(language) == 1:
+keywordWords|func(_language: KeywordLanguage,) -> (Array<String>,):
+    if languageTag(_language) == 1:
         return [
             "变量",
             "常量",
@@ -94,12 +94,16 @@ keywordWords|func(language: KeywordLanguage,) -> (Array<String>,):
         "unroll",
     ]
 
-; 关键字匹配：与词表逐条比整词，未命中答 `.identifier`；词表顺序即关键字类别区顺序。
+; 关键字匹配：先认真假字面量（不属关键字表），再与词表逐条比整词。
 keywordKind|func(language: KeywordLanguage, bytes: Array<U8>, start: I32, end: I32,) -> (TokenKind,):
+    if matchesWord(bytes = bytes, start = start, end = end, word = "true"):
+        return trueLiteral
+    if matchesWord(bytes = bytes, start = start, end = end, word = "false"):
+        return falseLiteral
     let words = keywordWords(language)
     var index = 0
     while index < len(words):
-        if matchesWord(bytes, start, end, words[index]):
+        if matchesWord(bytes = bytes, start = start, end = end, word = words[index]):
             return kindFromTag(8 + index)
         index = index + 1
     return identifier

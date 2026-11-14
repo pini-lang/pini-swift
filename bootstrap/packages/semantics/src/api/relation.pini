@@ -1,0 +1,179 @@
+; 类型关系：等价按结构逐位比，可赋值在等价之外只放行标量拓宽、字符到串与两类包装。
+; 名义类型比查找键，拼写不参与；泛型实参一律不变，容器不因实参拓宽而互赋。
+
+; 等价：同类同形即等价，名义名按 NFC 键比，函数另比返回。
+sameType|func(pool: TypePool, first: I32, second: I32,) -> (Bool,):
+    if first == second:
+        return true
+    if first < 0 || second < 0:
+        return false
+    if first >= len(pool.entries) || second >= len(pool.entries):
+        return false
+    let a = pool.entries[first]
+    let b = pool.entries[second]
+    if typeClassName(a.kind) != typeClassName(b.kind):
+        return false
+    if isTypeClass(kind = a.kind, expected = typeClassScalar):
+        return sameKey(first = a.key, second = b.key)
+    if isTypeClass(kind = a.kind, expected = typeClassStruct) || isTypeClass(kind = a.kind, expected = typeClassObject) || isTypeClass(kind = a.kind, expected = typeClassEnum):
+        return sameKey(first = a.key, second = b.key)
+    if isTypeClass(kind = a.kind, expected = typeClassGeneric) || isTypeClass(kind = a.kind, expected = typeClassCollection):
+        return sameKey(first = a.key, second = b.key) && sameTypeList(pool = pool, first = a.kids, second = b.kids)
+    if isTypeClass(kind = a.kind, expected = typeClassPointer) || isTypeClass(kind = a.kind, expected = typeClassOptional):
+        return sameType(pool = pool, first = a.kids[0], second = b.kids[0])
+    if isTypeClass(kind = a.kind, expected = typeClassResult) || isTypeClass(kind = a.kind, expected = typeClassTuple):
+        return sameTypeList(pool = pool, first = a.kids, second = b.kids)
+    if isTypeClass(kind = a.kind, expected = typeClassFunction):
+        return sameTypeList(pool = pool, first = a.kids, second = b.kids) && sameType(pool = pool, first = a.ret, second = b.ret)
+    return false
+
+; 分量逐位等价：长度不同直接假。
+sameTypeList|func(pool: TypePool, first: Array<I32>, second: Array<I32>,) -> (Bool,):
+    if len(first) != len(second):
+        return false
+    var i = 0
+    while i < len(first):
+        if !sameType(pool = pool, first = first[i], second = second[i]):
+            return false
+        i = i + 1
+    return true
+
+; 有符号名次：I8 到 I64 递增，非有符号答 -1。
+signedRankOf|func(_name: String,) -> (I32,):
+    if _name == "I8":
+        return 1
+    if _name == "I16":
+        return 2
+    if _name == "I32":
+        return 3
+    if _name == "I64":
+        return 4
+    return -1
+
+; 无符号名次：U8 到 U64 递增，非无符号答 -1。
+unsignedRankOf|func(_name: String,) -> (I32,):
+    if _name == "U8":
+        return 1
+    if _name == "U16":
+        return 2
+    if _name == "U32":
+        return 3
+    if _name == "U64":
+        return 4
+    return -1
+
+; 浮点名次：F32 到 F64 递增，非浮点答 -1。
+floatRankOf|func(_name: String,) -> (I32,):
+    if _name == "F32":
+        return 1
+    if _name == "F64":
+        return 2
+    return -1
+
+; 标量拓宽：同族内由窄到宽，跨族一律不成立。
+widensScalar|func(fromName: String, toName: String,) -> (Bool,):
+    let fromSigned = signedRankOf(fromName)
+    let toSigned = signedRankOf(toName)
+    if fromSigned > 0 && toSigned > 0:
+        return fromSigned < toSigned
+    let fromUnsigned = unsignedRankOf(fromName)
+    let toUnsigned = unsignedRankOf(toName)
+    if fromUnsigned > 0 && toUnsigned > 0:
+        return fromUnsigned < toUnsigned
+    let fromFloat = floatRankOf(fromName)
+    let toFloat = floatRankOf(toName)
+    if fromFloat > 0 && toFloat > 0:
+        return fromFloat < toFloat
+    return false
+
+; 可赋值：等价、标量拓宽、字符到串、可选与结果的单向包装；容器实参不变。
+isAssignable|func(pool: TypePool, from: I32, to: I32,) -> (Bool,):
+    if sameType(pool = pool, first = from, second = to):
+        return true
+    if from < 0 || to < 0:
+        return false
+    if from >= len(pool.entries) || to >= len(pool.entries):
+        return false
+    let source = pool.entries[from]
+    let target = pool.entries[to]
+    if isTypeClass(kind = source.kind, expected = typeClassScalar) && isTypeClass(kind = target.kind, expected = typeClassScalar):
+        if widensScalar(fromName = source.name, toName = target.name):
+            return true
+        return source.name == "Char" && target.name == "String"
+    if isTypeClass(kind = target.kind, expected = typeClassOptional):
+        if isTypeClass(kind = source.kind, expected = typeClassOptional):
+            return isAssignable(pool = pool, from = source.kids[0], to = target.kids[0])
+        return isAssignable(pool = pool, from = from, to = target.kids[0])
+    if isTypeClass(kind = target.kind, expected = typeClassResult):
+        if isTypeClass(kind = source.kind, expected = typeClassResult):
+            return isAssignable(pool = pool, from = source.kids[0], to = target.kids[0])
+        return isAssignable(pool = pool, from = from, to = target.kids[0])
+    return false
+
+; 标量名：只有标量有名字，其余答空串。
+scalarNameOf|func(pool: TypePool, id: I32,) -> (String,):
+    if id < 0 || id >= len(pool.entries):
+        return ""
+    let entry = pool.entries[id]
+    if !isTypeClass(kind = entry.kind, expected = typeClassScalar):
+        return ""
+    return entry.name
+
+; 整型：八种有符号与无符号标量。
+isIntegerType|func(pool: TypePool, id: I32,) -> (Bool,):
+    let name = scalarNameOf(pool = pool, id = id)
+    if name == "I8" || name == "I16":
+        return true
+    if name == "I32" || name == "I64":
+        return true
+    if name == "U8" || name == "U16":
+        return true
+    return name == "U32" || name == "U64"
+
+; 浮点：F32 与 F64。
+isFloatType|func(pool: TypePool, id: I32,) -> (Bool,):
+    let name = scalarNameOf(pool = pool, id = id)
+    return name == "F32" || name == "F64"
+
+; 数值：整型与浮点合起来，供字面量期望与运算判定共用。
+isNumericType|func(pool: TypePool, id: I32,) -> (Bool,):
+    return isIntegerType(pool = pool, id = id) || isFloatType(pool = pool, id = id)
+
+; 字符串：只有内建 String 标量。
+isStringType|func(pool: TypePool, id: I32,) -> (Bool,):
+    return scalarNameOf(pool = pool, id = id) == "String"
+
+; 布尔：只有内建 Bool 标量。
+isBoolType|func(pool: TypePool, id: I32,) -> (Bool,):
+    return scalarNameOf(pool = pool, id = id) == "Bool"
+
+; 可空：可选与指针能接 nil；结果不是可空类型。
+isNullableType|func(pool: TypePool, id: I32,) -> (Bool,):
+    if id < 0 || id >= len(pool.entries):
+        return false
+    let entry = pool.entries[id]
+    if isTypeClass(kind = entry.kind, expected = typeClassOptional):
+        return true
+    return isTypeClass(kind = entry.kind, expected = typeClassPointer)
+
+; 字符：只有内建 Char 标量。
+isCharType|func(pool: TypePool, id: I32,) -> (Bool,):
+    return scalarNameOf(pool = pool, id = id) == "Char"
+
+; 文本：字符串与字符合起来，加法与比较都按这一组放行。
+isTextType|func(pool: TypePool, id: I32,) -> (Bool,):
+    return isStringType(pool = pool, id = id) || isCharType(pool = pool, id = id)
+
+; 数值提升：同族内取更宽的一侧；跨族（整型与浮点、有符号与无符号）不提升，答 -1。
+promoteNumeric|func(pool: TypePool, left: I32, right: I32,) -> (I32,):
+    if !isNumericType(pool = pool, id = left) || !isNumericType(pool = pool, id = right):
+        return -1
+    if sameType(pool = pool, first = left, second = right):
+        return left
+    let leftName = scalarNameOf(pool = pool, id = left)
+    let rightName = scalarNameOf(pool = pool, id = right)
+    if widensScalar(fromName = leftName, toName = rightName):
+        return right
+    if widensScalar(fromName = rightName, toName = leftName):
+        return left
+    return -1

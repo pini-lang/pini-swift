@@ -17,10 +17,14 @@ public enum JoinForm: String, Sendable, Equatable {
 public struct CallArgument: Equatable, Sendable {
     public let label: String?
     public let expression: Expression
+    /// 实参起点（括号参数指向 `(`）。缺标签诊断与批量改码按它落点；
+    /// 表达式自身的 `location` 可能是运算符或内层记号的，不能当实参起点用。
+    public let location: SourceLocation?
 
-    public init(label: String? = nil, expression: Expression) {
+    public init(label: String? = nil, expression: Expression, location: SourceLocation? = nil) {
         self.label = label
         self.expression = expression
+        self.location = location
     }
 }
 
@@ -92,4 +96,25 @@ public indirect enum Expression: Equatable, Sendable {
     /// 解析期只携带名字，决议在类型检查按期望类型完成（命中则该枚举；唯一父枚举则回退；歧义或缺期望则报错）。
     /// `.caseName(args)` 解为 `.call(.dotCaseRef, args)`，无实参解为裸 `dotCaseRef`（零关联值即直接构造）。
     case dotCaseRef(name: String, location: SourceLocation)
+    /// `as` 显式转换：`操作数 as 目标类型`。`as` 是上下文关键字，只在操作数完整之后按转换解释。
+    /// 可转类型对与结果语义见参考件类型系统的显式转换一节；连写左结合。
+    case cast(operand: Expression, target: TypeAnnotation, location: SourceLocation)
+}
+
+extension Expression {
+    /// 起始位置：调用点缺标签等按实参定位的诊断取它。
+    public var location: SourceLocation {
+        switch self {
+        case .identifier(_, let loc), .integerLiteral(_, let loc), .floatLiteral(_, let loc),
+            .stringLiteral(_, let loc), .stringInterpolation(_, let loc), .boolLiteral(_, let loc),
+            .binary(_, _, _, let loc), .unary(_, _, let loc), .call(_, _, let loc),
+            .member(_, _, let loc), .tupleIndex(_, _, let loc), .tuple(_, _, let loc),
+            .arrayLiteral(_, let loc), .dictionaryLiteral(_, let loc), .setLiteral(_, let loc),
+            .subscript(_, _, let loc), .funcLiteral(_, let loc), .selfKeyword(let loc),
+            .selfTypeKeyword(let loc), .genericConstruct(_, _, _, let loc), .join(_, let loc, _),
+            .tryExpression(_, _, _, let loc), .unsafe(_, let loc), .addressOf(_, let loc),
+            .dotCaseRef(_, let loc), .cast(_, _, let loc):
+            return loc
+        }
+    }
 }

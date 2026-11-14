@@ -1,0 +1,44 @@
+; 可见性四级：符号 `_` 取 private，文件名 `_` 取 internal，目录 `_` 取 package，其余 public。
+四级收紧|test() -> ():
+    let 私有 = visibilityOf(spelling = "_缓存", path = "packages/p/src/api/a.pini")
+    assert(visibilityName(私有) == "private", "符号下划线应最严")
+    let 文件 = visibilityOf(spelling = "缓存", path = "packages/p/src/api/_a.pini")
+    assert(visibilityName(文件) == "internal", "文件名下划线应降为文件级")
+    let 目录 = visibilityOf(spelling = "缓存", path = "packages/p/src/_internal/a.pini")
+    assert(visibilityName(目录) == "package", "目录下划线应降为包级")
+    let 公开 = visibilityOf(spelling = "缓存", path = "packages/p/src/api/a.pini")
+    assert(visibilityName(公开) == "public", "无下划线即公开")
+    return
+
+; 次序与取严：private < internal < package < public，两级取窄者。
+次序与取严|test() -> ():
+    assert(visibilityRank(visibilityPrivate) == 0, "private 最严")
+    assert(visibilityRank(visibilityPublic) == 3, "public 最宽")
+    let 窄 = stricter(first = visibilityPublic, second = visibilityPackage)
+    assert(visibilityName(窄) == "package", "取更窄的一侧")
+    let 同 = stricter(first = visibilityInternal, second = visibilityInternal)
+    assert(visibilityName(同) == "internal", "同级不变")
+    return
+
+; 跨模块可见只有 public：其余三级都不可被别的模块引入。
+导出判定|test() -> ():
+    assert(isExported(visibilityPublic), "public 可引入")
+    assert(!isExported(visibilityPackage), "package 不可引入")
+    assert(!isExported(visibilityInternal), "internal 不可引入")
+    assert(!isExported(visibilityPrivate), "private 不可引入")
+    return
+
+; 键相等只看 NFC：预组合字与 Jamo 序列同键，拼写不同不判同一符号。
+键按NFC判等|test() -> ():
+    let 合成 = keyOfText("각")
+    let 分解 = keyOfText("각")
+    assert(sameKey(first = 合成, second = 分解), "规范等价应同键")
+    let 别的 = keyOfText("가")
+    assert(!sameKey(first = 合成, second = 别的), "不同字应不同键")
+    return
+
+; 键与拼写分开：键相同不代表原文相同，原文只服务诊断。
+键不覆盖原文|test() -> ():
+    assert(sameKey(first = keyOfText("abc"), second = keyOfText("abc")), "同名同键")
+    assert(!sameKey(first = keyOfText("abc"), second = keyOfText("abd")), "末字符不同即不同键")
+    return

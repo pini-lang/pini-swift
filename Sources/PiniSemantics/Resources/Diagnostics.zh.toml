@@ -4,6 +4,7 @@
 
 [labels]
 lexer = "词法错误"
+lexerWarning = "词法警告"
 parser = "语法错误"
 semantic = "语义错误"
 semanticWarning = "语义警告"
@@ -41,6 +42,26 @@ suggestion = "换 `run-llvm`，或在 C 侧写一个固定参数的 shim 再声�
 [E7-007]
 message = "外部函数 '{name}' 用了字符串句柄：只有 LLVM 通道与 `build --shared` 提供这些符号"
 suggestion = "换 `run-llvm` 或 `build --shared`；解释器会在调用点拒绝"
+
+[E7-008]
+message = "标识符 '{name}' 与 '{existing}' 看起来一样"
+suggestion = "两者的 UTS #39 骨架相同而编码不同；若是有意为之可忽略，否则改名以示区别"
+
+[E7-009]
+message = "注释或字符串里出现双向控制字符 '{label}'"
+suggestion = "它会改变这段文字的显示顺序；注释里删掉，字符串里确实要输出该码点时用 chr() 拼接"
+
+[E1-004]
+message = "源码含不可见字符 '{label}'"
+suggestion = "删除它；标识符只用字母、数字、下划线与组合附加符号"
+
+[E1-005]
+message = "组合附加符号 '{label}' 不能作标识符首字符"
+suggestion = "把组合附加符号并到前一个字符上；它可以续写，不能作首字符"
+
+[E1-006]
+message = "标识符 '{name}' 混用多个高风险脚本"
+suggestion = "改用单一脚本；中文与拉丁的组合不受此限"
 
 [E2-001]
 message = "期望 {expected}，实际得到 {actual}"
@@ -177,6 +198,18 @@ suggestion = "变参尾只收 I8 / U8 / I32 / I64 / U64 / F64 / Bool / *T / Stri
 message = "`{type}` 只在 C 面上成立"
 suggestion = "写在 `[名称|foreign]` 的符号声明里，或写在带 `|c` 条目的函数签名上；普通变量、字段与方法不收句柄"
 
+[E4-036]
+message = "调用 '{callee}' 缺少实参标签：形参 '{param}' 要求写 '{param} = ...'"
+suggestion = "在实参前写 '{param} = '；若这个参数本就该按位置传，把声明改成 '_{param}: ...'"
+
+[E4-037]
+message = "调用 '{callee}' 的形参 '{param}' 已退出标签面"
+suggestion = "删掉实参前的 '{param} = '；声明写成 '_{param}' 就表示按位置传"
+
+[E4-038]
+message = "调用 '{callee}' 重复写了形参 '{param}' 的标签"
+suggestion = "每个形参只给一个实参；去掉重复的那个"
+
 [E5-001]
 message = "未定义变量 '{name}'"
 suggestion = "你是想说 '{closest}' 吗？"
@@ -208,7 +241,7 @@ message = "断言失败：{message}"
 [E5-016]
 message = "FFI 库 '{library}' 未找到（已搜索：{searched}）"
 [E5-017]
-message = "FFI 库 '{library}' 中未找到符号 '{symbol}'"
+message = "外部符号 '{symbol}' 未找到（已查：{searched}）"
 
 [E5-019]
 message = "变参调用 '{name}' 需要 C 变参 ABI，解释器只能按固定签名转发 —— 这条只在 `run-llvm` 上成立"
@@ -283,3 +316,11 @@ suggestion = "删掉这条 unroll，或往表里补至少一行"
 [E3-018]
 message = "unroll 展开 {count} 轮，超过上限 {limit}"
 suggestion = "把表拆成几条 unroll，或改用普通循环"
+
+[E3-019]
+message = "外部符号 '{name}' 的声明与 '{firstFile}' 中的那份不一致（签名或标志不同）"
+suggestion = "两处只留一处；生成模块与手写块同名时，签名必须逐位一致"
+
+[E3-020]
+message = "外部符号名 '{name}' 不是合法 C 标识符"
+suggestion = "名字就是 C 符号名，只能用 ASCII 字母、数字与下划线，且不以数字开头"

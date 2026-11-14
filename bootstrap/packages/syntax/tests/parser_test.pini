@@ -5,20 +5,32 @@
     let ast = result.ast
     assert(ast.itemCount() == 1, "一条顶层声明")
     let decl = ast.declAt(ast.itemAt(0))
-    assert(ast.isDecl(ast.itemAt(0), declFunction), "函数声明")
+    assert(ast.isDecl(id = ast.itemAt(0), kind = declFunction), "函数声明")
     assert(decl.nameStart == 0, "函数名起点")
     assert(decl.nameEnd == 1, "函数名终点")
     assert(len(decl.kids) == 1, "一个参数")
     let param = ast.declAt(decl.kids[0])
-    assert(ast.isDecl(decl.kids[0], declParam), "参数节点")
+    assert(ast.isDecl(id = decl.kids[0], kind = declParam), "参数节点")
     assert(param.nameStart == 7, "参数名起点")
     assert(param.nameEnd == 8, "参数名终点")
     assert(param.typeId >= 0, "参数有类型")
-    assert(ast.isType(param.typeId, typeNamed), "具名类型")
+    assert(ast.isType(id = param.typeId, kind = typeNamed), "具名类型")
     assert(ast.typeAt(param.typeId).nameStart == 10, "类型名起点")
     assert(ast.typeAt(param.typeId).nameEnd == 13, "类型名终点")
     assert(decl.body >= 0, "有函数体")
-    assert(ast.isStmt(decl.body, stmtBlock), "体是块")
+    assert(ast.isStmt(id = decl.body, kind = stmtBlock), "体是块")
+    return
+
+; 参数位下划线：名字含前导 `_`，名字区间原样保留，标签面由名字推出。
+参数退面|test() -> ():
+    let result = parseText("f|func(_a: I32, b: I32,) -> (I32,):\n    return _a\n")
+    assert(len(result.diagnostics) == 0, "不应有语法诊断")
+    let ast = result.ast
+    let decl = ast.declAt(ast.itemAt(0))
+    let first = ast.declAt(decl.kids[0])
+    let second = ast.declAt(decl.kids[1])
+    assert(first.nameEnd - first.nameStart == 2, "名字区间含前导下划线")
+    assert(second.nameEnd - second.nameStart == 1, "未写下划线的名字原样")
     return
 
 ; 优先级：乘法先于加法，左结合；括号组不产生额外节点。
@@ -26,15 +38,15 @@
     let result = parseText("f|func() -> ():\n    x = a + b * c\n")
     assert(len(result.diagnostics) == 0, "不应有语法诊断")
     let ast = result.ast
-    assert(ast.isStmt(0, stmtAssign), "赋值语句")
-    let value = ast.stmtChild(0, 1)
-    assert(ast.isExpr(value, exprBinary), "顶层是二元")
+    assert(ast.isStmt(id = 0, kind = stmtAssign), "赋值语句")
+    let value = ast.stmtChild(id = 0, index = 1)
+    assert(ast.isExpr(id = value, kind = exprBinary), "顶层是二元")
     assert(ast.exprAt(value).op == kindTag(opAdd), "顶层运算符是加")
-    let right = ast.childOf(value, 1)
+    let right = ast.childOf(id = value, index = 1)
     assert(ast.exprAt(right).op == kindTag(opMul), "右侧先结合乘法")
     let paren = parseText("f|func() -> ():\n    x = (a + b) * c\n")
     assert(len(paren.diagnostics) == 0, "括号组不报错")
-    let outer = paren.ast.stmtChild(0, 1)
+    let outer = paren.ast.stmtChild(id = 0, index = 1)
     assert(paren.ast.exprAt(outer).op == kindTag(opMul), "括号改变了结合")
     return
 
@@ -43,14 +55,14 @@
     let result = parseText("f|func() -> ():\n    f(a).b[0]\n")
     assert(len(result.diagnostics) == 0, "不应有语法诊断")
     let ast = result.ast
-    assert(ast.isStmt(0, stmtExpression), "表达式语句")
-    let index = ast.stmtChild(0, 0)
-    assert(ast.isExpr(index, exprSubscript), "最外层是下标")
-    let member = ast.childOf(index, 0)
-    assert(ast.isExpr(member, exprMember), "接收者是成员")
+    assert(ast.isStmt(id = 0, kind = stmtExpression), "表达式语句")
+    let index = ast.stmtChild(id = 0, index = 0)
+    assert(ast.isExpr(id = index, kind = exprSubscript), "最外层是下标")
+    let member = ast.childOf(id = index, index = 0)
+    assert(ast.isExpr(id = member, kind = exprMember), "接收者是成员")
     assert(ast.exprAt(member).nameEnd - ast.exprAt(member).nameStart == 1, "成员名宽一字节")
-    let call = ast.childOf(member, 0)
-    assert(ast.isExpr(call, exprCall), "接收者是调用")
+    let call = ast.childOf(id = member, index = 0)
+    assert(ast.isExpr(id = call, kind = exprCall), "接收者是调用")
     assert(len(ast.exprAt(call).kids) == 2, "调用含被调与一个实参")
     return
 
@@ -59,11 +71,11 @@
     let result = parseText("f|func() -> ():\n    if a:\n        b\n    elif c:\n        d\n    else:\n        e\n")
     assert(len(result.diagnostics) == 0, "不应有语法诊断")
     let ast = result.ast
-    assert(ast.isStmt(0, stmtIf), "如果语句")
+    assert(ast.isStmt(id = 0, kind = stmtIf), "如果语句")
     let stmt = ast.stmtAt(0)
     assert(len(stmt.kids) == 5, "条件、体、否则如果条件、否则如果体、否则体")
-    assert(ast.stmtChild(0, 1) >= 0, "体存在")
-    assert(ast.stmtChild(0, 4) >= 0, "否则体存在")
+    assert(ast.stmtChild(id = 0, index = 1) >= 0, "体存在")
+    assert(ast.stmtChild(id = 0, index = 4) >= 0, "否则体存在")
     let plain = parseText("f|func() -> ():\n    if a:\n        b\n")
     assert(len(plain.ast.stmtAt(0).kids) == 2, "只有条件与体")
     return
@@ -72,13 +84,13 @@
 循环与遍历|test() -> ():
     let loop = parseText("f|func() -> ():\n    while a < b:\n        f()\n    step:\n        g()\n")
     assert(len(loop.diagnostics) == 0, "循环不应有语法诊断")
-    assert(loop.ast.isStmt(0, stmtWhile), "循环语句")
-    assert(loop.ast.stmtChild(0, 2) >= 0, "step 块存在")
+    assert(loop.ast.isStmt(id = 0, kind = stmtWhile), "循环语句")
+    assert(loop.ast.stmtChild(id = 0, index = 2) >= 0, "step 块存在")
     let each = parseText("f|func() -> ():\n    for (v,) in xs:\n        f(v)\n")
     assert(len(each.diagnostics) == 0, "遍历不应有语法诊断")
-    assert(each.ast.isStmt(0, stmtFor), "遍历语句")
-    assert(each.ast.isExpr(each.ast.stmtChild(0, 0), exprTuple), "遍历模式是元组")
-    assert(each.ast.stmtChild(0, 3) == -1, "缺省 step 答 -1")
+    assert(each.ast.isStmt(id = 0, kind = stmtFor), "遍历语句")
+    assert(each.ast.isExpr(id = each.ast.stmtChild(id = 0, index = 0), kind = exprTuple), "遍历模式是元组")
+    assert(each.ast.stmtChild(id = 0, index = 3) == -1, "缺省 step 答 -1")
     return
 
 ; 匹配语句：主题之后逐对登记模式与块；带绑定的模式把绑定名放进子表。
@@ -86,10 +98,10 @@
     let result = parseText("f|func() -> ():\n    match x:\n        case 甲:\n            f()\n        case 乙(v: y):\n            g(y)\n")
     assert(len(result.diagnostics) == 0, "不应有语法诊断")
     let ast = result.ast
-    assert(ast.isStmt(0, stmtMatch), "匹配语句")
+    assert(ast.isStmt(id = 0, kind = stmtMatch), "匹配语句")
     assert(len(ast.stmtAt(0).kids) == 5, "主题加两组模式与块")
-    let pattern = ast.stmtChild(0, 3)
-    assert(ast.isExpr(pattern, exprCase), "第二组模式是枚举项")
+    let pattern = ast.stmtChild(id = 0, index = 3)
+    assert(ast.isExpr(id = pattern, kind = exprCase), "第二组模式是枚举项")
     assert(len(ast.exprAt(pattern).kids) == 1, "带一个绑定")
     return
 
@@ -98,20 +110,20 @@
     let result = parseText("[方向]\n东\n西\n")
     assert(len(result.diagnostics) == 0, "枚举不应有语法诊断")
     let ast = result.ast
-    assert(ast.isDecl(0, declEnum), "枚举声明")
+    assert(ast.isDecl(id = 0, kind = declEnum), "枚举声明")
     assert(len(ast.declAt(0).kids) == 2, "两个变体")
-    assert(ast.isDecl(ast.declChild(0, 0), declVariant), "变体节点")
+    assert(ast.isDecl(id = ast.declChild(id = 0, index = 0), kind = declVariant), "变体节点")
     let imported = parseText("[m|import]\n_p = \"../x\"\n")
     assert(len(imported.diagnostics) == 0, "导入不应有语法诊断")
     let importedAst = imported.ast
-    assert(importedAst.isDecl(0, declImportBlock), "导入块")
+    assert(importedAst.isDecl(id = 0, kind = declImportBlock), "导入块")
     assert(importedAst.declAt(0).nameStart == 1, "块名起点")
     assert(importedAst.declAt(0).nameEnd == 2, "块名终点")
     assert(len(importedAst.declAt(0).kids) == 1, "一个导入项")
-    let entry = importedAst.declChild(0, 0)
+    let entry = importedAst.declChild(id = 0, index = 0)
     assert(importedAst.declAt(entry).nameStart == 11, "别名起点")
     assert(importedAst.declAt(entry).nameEnd == 13, "别名终点")
-    assert(importedAst.isExpr(importedAst.declChild(entry, 0), exprString), "路径是字符串字面量")
+    assert(importedAst.isExpr(id = importedAst.declChild(id = entry, index = 0), kind = exprString), "路径是字符串字面量")
     return
 
 ; 函数字面量：参数与体同处一个表达式节点，体是单条语句块。
@@ -119,11 +131,11 @@
     let result = parseText("f|func() -> ():\n    g = func (n,) -> (I32,): return n\n")
     assert(len(result.diagnostics) == 0, "不应有语法诊断")
     let ast = result.ast
-    let value = ast.stmtChild(0, 1)
-    assert(ast.isExpr(value, exprFunction), "函数字面量")
+    let value = ast.stmtChild(id = 0, index = 1)
+    assert(ast.isExpr(id = value, kind = exprFunction), "函数字面量")
     assert(len(ast.exprAt(value).kids) == 2, "一个参数加体")
-    assert(ast.isDecl(ast.exprAt(value).kids[0], declParam), "参数节点")
-    assert(ast.isStmt(ast.exprAt(value).kids[1], stmtBlock), "体是块")
+    assert(ast.isDecl(id = ast.exprAt(value).kids[0], kind = declParam), "参数节点")
+    assert(ast.isStmt(id = ast.exprAt(value).kids[1], kind = stmtBlock), "体是块")
     return
 
 ; 非法输入：给稳定码与至少一字节宽的标签，并且必须终止。
@@ -149,8 +161,98 @@
 
 ; 中文关键字解析：声明、参数、返回与缩进块走同一套类别，诊断数为零。
 中文关键字解析|test() -> ():
-    let result = parseTextIn(.langChinese, "加|函数(甲: I32, 乙: I32,) -> (I32,):\n    返回 甲 + 乙\n")
+    let result = parseTextIn(language = .langChinese, text = "加|函数(甲: I32, 乙: I32,) -> (I32,):\n    返回 甲 + 乙\n")
     assert(len(result.diagnostics) == 0, "不应有语法诊断")
     assert(result.ast.itemCount() == 1, "一条顶层声明")
-    assert(result.ast.isDecl(result.ast.itemAt(0), declFunction), "函数声明")
+    assert(result.ast.isDecl(id = result.ast.itemAt(0), kind = declFunction), "函数声明")
+    return
+
+; 元组序号：点后接整数按成员访问记录，名字区间覆盖数字本身。
+元组序号成员|test() -> ():
+    let src = "f|func() -> ():\n    x = t.0\n"
+    let result = parseText(src)
+    assert(len(result.diagnostics) == 0, "元组序号不应报诊断")
+    let value = result.ast.stmtChild(id = 0, index = 1)
+    assert(result.ast.isMemberExpr(value), "应记为成员访问")
+    let node = result.ast.exprAt(value)
+    assert(src.substring(node.nameStart, node.nameEnd) == "0", "名字区间应覆盖数字")
+    return
+
+; 本型方法：`|own` 记为 isOwn，`|self` 仍只记 isSelf，两者互斥。
+本型方法标记|test() -> ():
+    let src = "((P))\n造|own() -> ():\n    return\n取|self() -> ():\n    return\n"
+    let result = parseText(src)
+    assert(len(result.diagnostics) == 0, "本型方法不应报诊断")
+    let ast = result.ast
+    assert(ast.isDecl(id = ast.itemAt(0), kind = declExtension), "扩展块")
+    let ext = ast.declAt(ast.itemAt(0))
+    assert(len(ext.kids) == 2, "两个方法")
+    assert(ast.declAt(ext.kids[0]).isOwn, "首个记为 |own")
+    assert(!ast.declAt(ext.kids[0]).isSelf, "首个不记 |self")
+    assert(ast.declAt(ext.kids[1]).isSelf, "次个记为 |self")
+    assert(!ast.declAt(ext.kids[1]).isOwn, "次个不记 |own")
+    return
+
+; 返回列表：单元素即该类型本身，多元素仍是元组，空表是空元组。
+返回列表|test() -> ():
+    let single = parseText("f|func() -> (I32,):\n    return 1\n")
+    let decl = single.ast.declAt(single.ast.itemAt(0))
+    assert(single.ast.isType(id = decl.typeId, kind = typeNamed), "单元素返回应是具名类型")
+    let multi = parseText("f|func() -> (I32, Bool,):\n    return (1, true,)\n")
+    let mdecl = multi.ast.declAt(multi.ast.itemAt(0))
+    assert(multi.ast.isType(id = mdecl.typeId, kind = typeTuple), "多元素返回应是元组")
+    assert(len(multi.ast.typeAt(mdecl.typeId).kids) == 2, "两个分量")
+    let empty = parseText("f|func() -> ():\n    return\n")
+    let edecl = empty.ast.declAt(empty.ast.itemAt(0))
+    assert(empty.ast.isType(id = edecl.typeId, kind = typeTuple), "空返回仍是空元组")
+    return
+
+; 空花括号：`{}` 解析为空集合，不是空字典；字典没有空字面量形态。
+空花括号|test() -> ():
+    let result = parseText("main|func() -> ():\n    let s = {}\n    return\n")
+    assert(len(result.diagnostics) == 0, "空花括号不应报诊断")
+    let value = result.ast.stmtChild(id = 0, index = 1)
+    assert(result.ast.isSetExpr(value), "应解析成集合")
+    assert(len(result.ast.exprAt(value).kids) == 0, "元素数应为零")
+    return
+
+; 首个匹配语句：返回第一个 match 语句的下标，没有答 -1。
+首个匹配|func(_ast: Ast,) -> (I32,):
+    var i = 0
+    while i < _ast.stmtCount():
+        if _ast.isStmt(id = i, kind = stmtMatch):
+            return i
+        i = i + 1
+    return -1
+
+; 匹配模式：限定枚举项按成员加调用成形，无载荷项按成员成形，裸枚举项按枚举项节点成形。
+匹配模式|test() -> ():
+    let src = "[形状]\n圆(半径: F64,)\n点\n\nf|func(x: 形状,) -> (F64,):\n    match x:\n        case 形状.圆(_, 半径):\n            return 0.0\n        case 形状.点:\n            return 0.0\n    return 0.0\n"
+    let result = parseText(src)
+    assert(len(result.diagnostics) == 0, "模式不应报诊断")
+    let ast = result.ast
+    let id = 首个匹配(ast)
+    assert(id >= 0, "应有 match 语句")
+    let qualified = ast.stmtChild(id = id, index = 1)
+    assert(ast.isCallExpr(qualified), "限定枚举项应是调用")
+    assert(len(ast.exprAt(qualified).kids) == 3, "一个被调方加两个绑定位")
+    assert(ast.isMemberExpr(ast.exprAt(qualified).kids[0]), "被调方应是成员访问")
+    assert(ast.isIdentifierExpr(ast.exprAt(qualified).kids[1]), "占位应是标识符")
+    let bare = ast.stmtChild(id = id, index = 3)
+    assert(ast.isMemberExpr(bare), "无载荷枚举项应是成员访问")
+    return
+
+; 位置绑定：裸枚举项的每个绑定位都留下，`_` 同样占位；具名绑定只留绑定变量。
+位置绑定|test() -> ():
+    let src = "[形状]\n圆(半径: F64, 高: F64,)\n\nf|func(x: 形状,) -> (F64,):\n    match x:\n        case 圆(_, 半径):\n            return 半径\n        case 圆(半径: r):\n            return r\n    return 0.0\n"
+    let result = parseText(src)
+    assert(len(result.diagnostics) == 0, "位置绑定不应报诊断")
+    let ast = result.ast
+    let id = 首个匹配(ast)
+    let positional = ast.stmtChild(id = id, index = 1)
+    assert(ast.isExpr(id = positional, kind = exprCase), "裸枚举项应是枚举项节点")
+    assert(len(ast.exprAt(positional).kids) == 2, "两个绑定位都应留下")
+    assert(ast.isIdentifierExpr(ast.exprAt(positional).kids[1]), "次位应是标识符")
+    let named = ast.stmtChild(id = id, index = 3)
+    assert(len(ast.exprAt(named).kids) == 1, "具名绑定只留变量名")
     return

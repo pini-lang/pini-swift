@@ -100,7 +100,7 @@
 |---|---|---|---|
 | 5 | `load(name:type:)` | 读变量当前值；`type` 为变量声明类型 | 不改变变量状态 |
 | 6 | `binary(op:lhs:rhs:type:)` | 二元运算：算术 / 比较 / 逻辑 / 位运算；关系运算结果为 `boolean` | 运算语义由语言定义，不由后端指令集定义 |
-| 7 | `unary(op:operand:type:)` | 一元运算：`negate` / `logicalNot` / `bitwiseNot` / `abs` | `abs` 为选择式取绝对值 |
+| 7 | `unary(op:operand:type:)` | 一元运算：`negate` / `logicalNot` / `bitwiseNot` / `abs` / `cast` | `abs` 为选择式取绝对值；`cast` 的 `type` 即目标类型，源类型取自操作数的 IR 类型 |
 
 ### 2.3 调用
 

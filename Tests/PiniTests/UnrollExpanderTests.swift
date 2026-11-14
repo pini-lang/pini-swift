@@ -17,14 +17,14 @@ struct UnrollExpanderTests {
 
             main|func() -> ():
                 unroll (码, 名) in [(1, "开始"), (2, "进行")]:
-                    登记(码, 名)
+                    登记(码 = 码, 名 = 名)
                 return
             """
         let module = try Self.expanded(source)
         let printed = Printer.print(module: module)
         #expect(!printed.contains("unroll"), "展开产物里还留着 unroll：\n\(printed)")
-        #expect(printed.contains("登记(1, \"开始\")"), "第一轮没换成字面量：\n\(printed)")
-        #expect(printed.contains("登记(2, \"进行\")"), "第二轮没换成字面量：\n\(printed)")
+        #expect(printed.contains("登记(码 = 1, 名 = \"开始\")"), "第一轮没换成字面量：\n\(printed)")
+        #expect(printed.contains("登记(码 = 2, 名 = \"进行\")"), "第二轮没换成字面量：\n\(printed)")
         // 展开后仍是同一棵可打印、可回读的树。
         let second = try Self.expanded(printed)
         #expect(PrinterRoundTripTests.firstMismatch(module, second, "Module") == nil)
@@ -41,11 +41,11 @@ struct UnrollExpanderTests {
             main|func() -> ():
                 unroll (组) in ["甲", "乙"]:
                     unroll (序) in [1, 2]:
-                        登记(组, 序)
+                        登记(组 = 组, 序 = 序)
                 return
             """
         let printed = Printer.print(module: try Self.expanded(source))
-        #expect(printed.contains("登记(\"甲\", 1)") && printed.contains("登记(\"乙\", 2)"))
+        #expect(printed.contains("登记(组 = \"甲\", 序 = 1)") && printed.contains("登记(组 = \"乙\", 序 = 2)"))
         #expect(printed.components(separatedBy: "登记(").count - 1 == 4, "四轮应当各一份：\n\(printed)")
     }
 
@@ -193,7 +193,7 @@ struct UnrollExpanderTests {
 
             main|func() -> ():
                 unroll (码, 名) in [(1, "开始"), (2, "进行"), (3, "结束")]:
-                    登记(码, 名)
+                    登记(码 = 码, 名 = 名)
                 return
             """
         let path = URL(fileURLWithPath: NSTemporaryDirectory())

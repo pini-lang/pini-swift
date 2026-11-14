@@ -10,6 +10,22 @@ public final class TypeEnvironment {
         var functions: [String: FunctionSignature] = [:]
     }
 
+    /// 形参的调用面信息：名字、是否要求标签与声明位置。
+    /// 声明位置随诊断带出，供调用方定位形参；内建与函数值没有声明，留空串与 0。
+    public struct ParamCallInfo: Equatable, Sendable {
+        public let name: String
+        public let takesLabel: Bool
+        public let declFile: String
+        public let declLine: Int
+
+        public init(name: String, takesLabel: Bool, declFile: String = "", declLine: Int = 0) {
+            self.name = name
+            self.takesLabel = takesLabel
+            self.declFile = declFile
+            self.declLine = declLine
+        }
+    }
+
     public struct FunctionSignature {
         public let params: [TypeAnnotation]
         public let returns: [TypeAnnotation]
@@ -22,19 +38,23 @@ public final class TypeEnvironment {
         /// 位置返回为 `[]`。调用点据此构造带标签的元组类型——标签既决定 `.名称` 能否
         /// 命中，也决定 `print` 是否呈现它，丢在这里等于静态层读不到自己签名里写过的名字。
         public let returnLabels: [String?]
+        /// 形参的调用面：名字与是否要求标签。空数组 = 不判标签（内建、函数值、未登记声明）。
+        public let paramCalls: [ParamCallInfo]
 
         public init(
             params: [TypeAnnotation],
             returns: [TypeAnnotation],
             isVariadic: Bool = false,
             returnLabels: [String?] = [],
-            usingParamIndices: Set<Int> = []
+            usingParamIndices: Set<Int> = [],
+            paramCalls: [ParamCallInfo] = []
         ) {
             self.params = params
             self.returns = returns
             self.isVariadic = isVariadic
             self.returnLabels = returnLabels
             self.usingParamIndices = usingParamIndices
+            self.paramCalls = paramCalls
         }
 
         /// 把「实参个数」映射到「形参位置」；两种合法形态，其余一律 nil（= arity 错）。
@@ -145,11 +165,13 @@ public final class TypeEnvironment {
         returns: [TypeAnnotation],
         isVariadic: Bool = false,
         returnLabels: [String?] = [],
-        usingParamIndices: Set<Int> = []
+        usingParamIndices: Set<Int> = [],
+        paramCalls: [ParamCallInfo] = []
     ) {
         let sig = FunctionSignature(
             params: params, returns: returns, isVariadic: isVariadic,
-            returnLabels: returnLabels, usingParamIndices: usingParamIndices
+            returnLabels: returnLabels, usingParamIndices: usingParamIndices,
+            paramCalls: paramCalls
         )
         scopes[scopes.count - 1].functions[name] = sig
     }
@@ -191,11 +213,12 @@ public final class TypeEnvironment {
         params: [TypeAnnotation],
         returns: [TypeAnnotation],
         returnLabels: [String?] = [],
-        usingParamIndices: Set<Int> = []
+        usingParamIndices: Set<Int> = [],
+        paramCalls: [ParamCallInfo] = []
     ) {
         let sig = FunctionSignature(
             params: params, returns: returns, returnLabels: returnLabels,
-            usingParamIndices: usingParamIndices
+            usingParamIndices: usingParamIndices, paramCalls: paramCalls
         )
         if typeMethods[typeName] == nil {
             typeMethods[typeName] = [:]
@@ -213,11 +236,12 @@ public final class TypeEnvironment {
         params: [TypeAnnotation],
         returns: [TypeAnnotation],
         returnLabels: [String?] = [],
-        usingParamIndices: Set<Int> = []
+        usingParamIndices: Set<Int> = [],
+        paramCalls: [ParamCallInfo] = []
     ) {
         let sig = FunctionSignature(
             params: params, returns: returns, returnLabels: returnLabels,
-            usingParamIndices: usingParamIndices
+            usingParamIndices: usingParamIndices, paramCalls: paramCalls
         )
         if ownMethodSignatures[typeName] == nil {
             ownMethodSignatures[typeName] = [:]
@@ -261,7 +285,7 @@ public final class TypeEnvironment {
     private struct GenericTypeTemplate {
         let genericParams: [String]
         let fields: [(name: String, type: TypeAnnotation)]
-        let methods: [(name: String, params: [TypeAnnotation], returns: [TypeAnnotation])]
+        let methods: [(name: String, params: [TypeAnnotation], returns: [TypeAnnotation], paramCalls: [ParamCallInfo])]
     }
 
     private var genericTypes: [String: GenericTypeTemplate] = [:]
@@ -270,7 +294,7 @@ public final class TypeEnvironment {
         name: String,
         genericParams: [String],
         fields: [(name: String, type: TypeAnnotation)],
-        methods: [(name: String, params: [TypeAnnotation], returns: [TypeAnnotation])] = []
+        methods: [(name: String, params: [TypeAnnotation], returns: [TypeAnnotation], paramCalls: [ParamCallInfo])] = []
     ) {
         genericTypes[name] = GenericTypeTemplate(
             genericParams: genericParams,
@@ -324,10 +348,10 @@ public final class TypeEnvironment {
             if method.name == methodName {
                 let subParams = method.params.map { substitutor.substitute(type: $0) }
                 let subReturns = method.returns.map { substitutor.substitute(type: $0) }
-                /// Generic method templates keep methods as plain `(name:params:returns:)` tuples, so no declared
+                /// Generic method templates keep methods as plain tuples, so no declared
                 /// labels survive specialisation — a specialised generic method's named returns stay positional.
                 /// Left as is: no measured case, and closing it means widening the template tuple in `defineGenericStruct`.
-                return FunctionSignature(params: subParams, returns: subReturns)
+                return FunctionSignature(params: subParams, returns: subReturns, paramCalls: method.paramCalls)
             }
         }
         return nil
@@ -359,7 +383,8 @@ public final class TypeEnvironment {
             params: template.params.map { substitutor.substitute(type: $0) },
             returns: template.returns.map { substitutor.substitute(type: $0) },
             returnLabels: template.returnLabels,
-            usingParamIndices: template.usingParamIndices)
+            usingParamIndices: template.usingParamIndices,
+            paramCalls: template.paramCalls)
     }
 
     // MARK: - Generic functions
@@ -368,6 +393,7 @@ public final class TypeEnvironment {
         let genericParams: [String]
         let params: [TypeAnnotation]
         let returns: [TypeAnnotation]
+        let paramCalls: [ParamCallInfo]
     }
 
     private var genericFunctions: [String: GenericFunctionTemplate] = [:]
@@ -376,12 +402,14 @@ public final class TypeEnvironment {
         name: String,
         genericParams: [String],
         params: [TypeAnnotation],
-        returns: [TypeAnnotation]
+        returns: [TypeAnnotation],
+        paramCalls: [ParamCallInfo] = []
     ) {
         genericFunctions[name] = GenericFunctionTemplate(
             genericParams: genericParams,
             params: params,
-            returns: returns
+            returns: returns,
+            paramCalls: paramCalls
         )
     }
 
@@ -406,7 +434,7 @@ public final class TypeEnvironment {
 
         let subParams = tmpl.params.map { substitutor.substitute(type: $0) }
         let subReturns = tmpl.returns.map { substitutor.substitute(type: $0) }
-        return FunctionSignature(params: subParams, returns: subReturns)
+        return FunctionSignature(params: subParams, returns: subReturns, paramCalls: tmpl.paramCalls)
     }
 
     // MARK: - Enums

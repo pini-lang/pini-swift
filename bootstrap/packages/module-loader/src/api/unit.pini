@@ -1,0 +1,62 @@
+[unit|import]
+_syntax = "../../../syntax"
+_diagnostics = "../../../diagnostics"
+
+; 编译单元：归一后的源文本、工作区相对路径、语法树与语法诊断、词法问题分列。
+(CompilationUnit)
+path: String = ""
+text: String = ""
+ast: Ast = Ast()
+diagnostics: Array<Diagnostic> = []
+issues: Array<LexIssue> = []
+
+; 单元装载结果：失败时 unit 无效，成功时 error 无效；调用方只看 failed 分流。
+(UnitLoad)
+unit: CompilationUnit = CompilationUnit()
+error: LoadError = LoadError()
+failed: Bool = false
+
+; 装载结果：按路径升序的单元与装载期错误；错误非空时单元集不完整。
+(LoadResult)
+units: Array<CompilationUnit> = []
+errors: Array<LoadError> = []
+
+((LoadResult))
+; 可用：没有任何装载期错误。
+isOK|self() -> (Bool,):
+    return len(self.errors) == 0
+unitCount|self() -> (I32,):
+    return len(self.units)
+errorCount|self() -> (I32,):
+    return len(self.errors)
+unitAt|self(_index: I32,) -> (CompilationUnit,):
+    return self.units[_index]
+errorAt|self(_index: I32,) -> (LoadError,):
+    return self.errors[_index]
+; 诊断总数：语法诊断与词法问题合并计数，「零诊断」判据读它。
+diagnosticCount|self() -> (I32,):
+    var total = 0
+    var i = 0
+    while i < len(self.units):
+        total = total + len(self.units[i].diagnostics) + len(self.units[i].issues)
+        i = i + 1
+    return total
+
+; 从文本建单元：文本检查、换行归一、解析三步；检查不过不解析，错误带偏移。
+loadUnit|func(path: String, text: String,) -> (UnitLoad,):
+    var out = UnitLoad()
+    let check = checkSourceText(text)
+    if !check.passed:
+        out.failed = true
+        out.error = makeSourceError(kind = check.kind, path = path, offset = check.offset)
+        return out
+    let normalized = normalizeNewlines(text)
+    let parsed = parseFile(text = normalized, file = path)
+    var unit = CompilationUnit()
+    unit.path = path
+    unit.text = normalized
+    unit.ast = parsed.ast
+    unit.diagnostics = parsed.diagnostics
+    unit.issues = parsed.issues
+    out.unit = unit
+    return out

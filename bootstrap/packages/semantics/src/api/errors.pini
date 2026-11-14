@@ -1,0 +1,40 @@
+; 语义错误类别：注册期只判名字与作用域，类型层面的失效不在此列。
+[SymbolErrorKind]
+symbolRedeclared
+symbolMemberDuplicated
+symbolImportAmbiguous
+symbolExtensionUnknown
+
+; 语义错误：类别、文件、源内字节偏移与相关名字；位置指向声明头。
+(SymbolError)
+kind: SymbolErrorKind = .symbolRedeclared
+file: String = ""
+offset: I32 = 0
+name: String = ""
+detail: String = ""
+
+; 类别名：诊断、测试与回执共用一份拼写。
+symbolErrorName|func(_kind: SymbolErrorKind,) -> (String,):
+    match _kind:
+        case symbolRedeclared:
+            return "顶层名字重复"
+        case symbolMemberDuplicated:
+            return "类型成员同名"
+        case symbolImportAmbiguous:
+            return "导入别名与本文件名字相撞"
+        case symbolExtensionUnknown:
+            return "扩展目标未声明"
+    return "语义错误"
+
+; 同一类别判定：枚举相等比较不可用，按名称比。
+isSymbolError|func(error: SymbolError, kind: SymbolErrorKind,) -> (Bool,):
+    return symbolErrorName(error.kind) == symbolErrorName(kind)
+
+; 造错误：位置取声明头的字节偏移，相关名字取原始拼写。
+makeSymbolError|func(kind: SymbolErrorKind, file: String, offset: I32, name: String,) -> (SymbolError,):
+    var out = SymbolError()
+    out.kind = kind
+    out.file = file
+    out.offset = offset
+    out.name = name
+    return out

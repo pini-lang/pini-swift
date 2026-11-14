@@ -222,6 +222,8 @@ func describeExpression(_ expr: PiniCore.Expression, indent: String = "") -> Str
         return "\(indent)addressOf(&):\n" + describeExpression(operand, indent: indent + " ")
     case .dotCaseRef(let name, _):
         return "\(indent)dotCaseRef(.): \(name)"
+    case .cast(let operand, _, _):
+        return "\(indent)cast(as):\n" + describeExpression(operand, indent: indent + " ")
     }
 }
 
@@ -635,6 +637,71 @@ func describeAST(_ module: Module) -> String {
 
 // MARK: - CLI Commands
 
+/// `pini bind <header>`：头文件 → `[名称|foreign]` 块。跳过项打到 stderr，
+/// 生成文本默认写 stdout，`-o` 落文件。翻译只读头文件与 C 工具链，不碰构建状态。
+func runBindCommand(_ arguments: [String]) {
+    var header: String?
+    var includePaths: [String] = []
+    var defines: [String] = []
+    var blockName: String?
+    var outputPath: String?
+    var cursor = 0
+    func usage() -> Never {
+        printError("用法：pini bind <header.h> [-I <dir>]... [-D <name>]... [--block <name>] [-o <path>]")
+        exit(1)
+    }
+    while cursor < arguments.count {
+        let argument = arguments[cursor]
+        switch argument {
+        case "-I", "--include":
+            guard cursor + 1 < arguments.count else { usage() }
+            includePaths.append(arguments[cursor + 1])
+            cursor += 2
+        case "-D", "--define":
+            guard cursor + 1 < arguments.count else { usage() }
+            defines.append(arguments[cursor + 1])
+            cursor += 2
+        case "--block":
+            guard cursor + 1 < arguments.count else { usage() }
+            blockName = arguments[cursor + 1]
+            cursor += 2
+        case "-o", "--output":
+            guard cursor + 1 < arguments.count else { usage() }
+            outputPath = arguments[cursor + 1]
+            cursor += 2
+        case "-h", "--help":
+            printHelp()
+            return
+        default:
+            guard !argument.hasPrefix("-"), header == nil else { usage() }
+            header = argument
+            cursor += 1
+        }
+    }
+    guard let header = header else { usage() }
+    do {
+        let result = try CHeaderTranslator.translate(
+            CHeaderTranslator.Options(
+                header: header, includePaths: includePaths, defines: defines,
+                blockName: blockName))
+        if let outputPath = outputPath {
+            try result.text.write(toFile: outputPath, atomically: true, encoding: .utf8)
+            print("已写入 \(outputPath)（块 \(result.blockName)，跳过 \(result.skipped.count) 条）")
+        } else {
+            print(result.text, terminator: "")
+        }
+        for skip in result.skipped {
+            printError("跳过 \(skip.name)：\(skip.reason)")
+        }
+        if result.fromIncludedHeaders > 0 {
+            printError("其中 \(result.fromIncludedHeaders) 条声明来自被包含的头文件")
+        }
+    } catch {
+        printError("Error: \(error)")
+        exit(1)
+    }
+}
+
 func printHelp() {
     print("Pini - A programming language")
     print("")
@@ -644,6 +711,7 @@ func printHelp() {
     print(" run <path> Run a Pini program (single .pini file or a directory/module)")
     print(" check <path> Type check a Pini program (file or directory/module)")
     print(" build <path> Check a package, or build a workspace's targets in dependency order")
+    print(" build <path> --print-plan Print the build plan without running any translation")
     print(" build --shared <path> [-o out] Link the export block's |c entries into lib<file>.{dylib,so}")
     print(" test [path] [--filter <text>] Run |test blocks; a workspace root runs every [[test]] target")
     print(" test-llvm [path] [--filter <text>] Same collection and report as `test`, emitted as a native binary (single module)")
@@ -653,6 +721,7 @@ func printHelp() {
     print(" expand <file.pini> Print the source after constant folding and unroll expansion (comments dropped)")
     print(" tokens <file.pini> Print tokens from lexical analysis")
     print(" emit <file.pini> [-o <out>] [--backend <name>] Emit a target listing to stdout or the given file")
+    print(" bind <header.h> [-I <dir>]... [-D <name>]... [--block <name>] [-o <out>] Translate a C header into a [name|foreign] block")
     print(" backends [--tsv] Print the backend capability matrix (family x channel)")
     print(" compile <file.pini> Compile via clang and run (needs LLVM; set PINI_LLVM_BIN if not on PATH)")
     print(" run-llvm <file.pini> Run via LLVM JIT (lli) (needs LLVM; set PINI_LLVM_BIN if not on PATH)")
@@ -716,8 +785,11 @@ func readFile(_ path: String) throws -> String {
 /// 仅在无任何解析错误时返回成功解析的 module。词法错误仍按原有方式渲染并退出。
 /// `withStdlib` 关闭时只交出用户源码的树——`parse` / `fmt` 要看的就是那一份，标准库会污染它们的输出。
 func parseOrReport(source: String, fileName: String, withStdlib: Bool = true) -> Module {
-    switch FrontEnd.collect(source: source, fileName: fileName) {
+    let scan = FrontEnd.scan(source: source, fileName: fileName)
+    switch scan.outcome {
     case .parsed(let module):
+        // 警告只在编译继续时呈现：有错就只报错，别让同一份源码的提示与错误抢注意力。
+        emitLexerWarnings(scan.warnings)
         return withStdlib ? FrontEnd.assemble(module: module) : module
     case .lexFailed(let error):
         printError(formatCLIError(error: error, source: source))
@@ -859,6 +931,10 @@ func semanticWarningMessage(_ warning: SemanticWarning) -> String {
         return
             "外部函数 '\(name)' 用了字符串句柄：句柄由运行时段持有，只在 `run-llvm` 与 "
             + "`build --shared` 上成立，解释器会在调用点拒绝"
+    case .confusableIdentifier(let name, let existing, _):
+        return
+            "标识符 '\(name)' 与 '\(existing)' 看起来一样：两者的 UTS #39 骨架相同而编码不同。"
+            + "若是有意为之可忽略，否则改名以示区别"
     }
 }
 
@@ -878,6 +954,16 @@ func emitSemanticWarnings(_ analyzer: SemanticAnalyzer) {
 
 func emitSemanticWarning(_ warning: SemanticWarning) {
     FileHandle.standardError.write(Data((renderedWarning(warning, source: sourceFor(warning)) + "\n").utf8))
+}
+
+/// 词法警告：不阻断编译，走 stderr 与语义警告同一出口。文案由资源表给出，这里只补源码片段。
+/// 包级调用在语义与类型检查之前 —— 它只依赖源码文本，与检查结果无关。
+func emitLexerWarnings(_ warnings: [LexerWarning]) {
+    for warning in warnings {
+        let source = (try? readFile(warning.diagnosticLocation.fileName)) ?? ""
+        FileHandle.standardError.write(
+            Data((ErrorFormatter.formatDiagnostic(warning, source: source) + "\n").utf8))
+    }
 }
 
 /// 诊断所在文件的源码。模块检查没有单一 source，但位置自带文件名 —— 回读一次比传一份全文省事。
@@ -1053,9 +1139,10 @@ func runRunPath(_ path: String, argv: [String] = []) {
         exit(1)
     }
     let pkg: Package
-    do { pkg = try FileLoader.loadDirectory(path: path, manifest: manifest) } catch {
+    do { pkg = try loadPackageWithGenerated(path: path, manifest: manifest) } catch {
         printError(formatCLIError(error: error, source: nil)); exit(1)
     }
+    emitLexerWarnings(pkg.warnings)
     // build 时校验 require ↔ import 一致性（与 verify 的防篡改是两个检查）。
     // 仅对采用依赖通道的清单生效；不符报错并提示 `pini mod tidy`。
     let driftResult = Result {
@@ -1088,7 +1175,7 @@ func runRunPath(_ path: String, argv: [String] = []) {
         try runIRPackageEngine(
             package: pkg, moduleRoot: path,
             typeInference: checker.typeInference,
-            ffiConfig: manifest.ffi ?? .default, argv: argv)
+            ffiConfig: foreignConfigFor(root: path, manifest: manifest), argv: argv)
     } catch {
         printError(formatCLIError(error: error, source: nil)); exit(1)
     }
@@ -1189,32 +1276,35 @@ private func runDebugFile(_ path: String) {
 // 目录/模块调试：用 FileLoader 载入包，按 `unit.fileName` 收集各文件源码，供 SourceMap 跨文件
 // 展示断点上下文；运行时 `SourceLocation.fileName` 为全路径，由 `Debugger.breakpointMatches` 容差匹配。
 private func runDebugDirectory(_ path: String) {
-    let pkg: Package
-    do { pkg = try FileLoader.loadDirectory(path: path) } catch {
-        printError("Error: \(error.localizedDescription)"); exit(1)
-    }
-    var sources: [String: String] = [:]
-    for unit in pkg.fileUnits {
-        if let src = try? readFile(unit.fileName) {
-            sources[unit.fileName] = src
+    let manifest: ModuleManifest?
+    do {
+        manifest = try FileLoader.loadManifest(directory: path)
+        let pkg = try loadPackageWithGenerated(path: path, manifest: manifest)
+        var sources: [String: String] = [:]
+        for unit in pkg.fileUnits {
+            if let src = try? readFile(unit.fileName) {
+                sources[unit.fileName] = src
+            }
         }
-    }
-    let checker = TypeChecker()
-    do { try checker.check(package: pkg) } catch {
+        let checker = TypeChecker()
+        try checker.check(package: pkg)
+        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
+        let executor = IRExecutor(
+            programBase: absoluteProgramBase(path),
+            ffiConfig: foreignConfigFor(root: path, manifest: manifest))
+        startDebugger(
+            run: DebugRun(host: executor) {
+                let ir = try IRLowerer.lower(
+                    package: pkg, typeInference: checker.typeInference,
+                    foreignConstants: try evaluateForeignMacros(
+                        symbols: pkg.fileUnits.flatMap { foreignSymbols(in: $0.module) },
+                        config: foreignConfigFor(root: path, manifest: manifest)))
+                try executor.run(module: ir)
+            }, sources: sources, primaryName: sources.keys.first ?? path)
+    } catch {
         printError(formatCLIError(error: error, source: nil))
         exit(1)
     }
-    checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-    let executor = IRExecutor(programBase: absoluteProgramBase(path))
-    startDebugger(
-        run: DebugRun(host: executor) {
-            let ir = try IRLowerer.lower(
-                package: pkg, typeInference: checker.typeInference,
-                foreignConstants: try evaluateForeignMacros(
-                    symbols: pkg.fileUnits.flatMap { foreignSymbols(in: $0.module) },
-                    config: .default))
-            try executor.run(module: ir)
-        }, sources: sources, primaryName: sources.keys.first ?? path)
 }
 
 // 装配一次调试会话：入参是 `DebugRun` 而非具体引擎，装配只认协议面与「开始跑」的动作，
@@ -1451,7 +1541,7 @@ private func runModuleTests(
     moduleRoot: String, scopePath: String?, filter: String?, channel: TestChannel
 ) throws {
     let manifest = try FileLoader.loadManifest(directory: moduleRoot)
-    var pkg = try FileLoader.loadDirectory(path: moduleRoot, manifest: manifest)
+    var pkg = try loadPackageWithGenerated(path: moduleRoot, manifest: manifest)
 
     var scope: ((String) -> Bool)? = nil
     var scopeLabel: String? = nil
@@ -1481,7 +1571,7 @@ private func runModuleTests(
 
     try gateAndRunTests(
         pkg: pkg, scope: scope, scopeLabel: scopeLabel,
-        ffiConfig: manifest?.ffi ?? .default,
+        ffiConfig: foreignConfigFor(root: moduleRoot, manifest: manifest),
         programBase: absoluteProgramBase(moduleRoot), filter: filter, channel: channel)
 }
 
@@ -1493,6 +1583,7 @@ private func gateAndRunTests(
     ffiConfig: FFIConfig, programBase: String? = nil,
     filter: String? = nil, channel: TestChannel = .interpreter
 ) throws {
+    emitLexerWarnings(pkg.warnings)
     do {
         let analyzer = SemanticAnalyzer()
         try analyzer.analyze(package: pkg)
@@ -1711,7 +1802,7 @@ func runCheckPath(_ path: String) {
     if let manifest = manifest {
         // 显式多文件模块
         let pkg: Package
-        do { pkg = try FileLoader.loadDirectory(path: path, manifest: manifest) } catch {
+        do { pkg = try loadPackageWithGenerated(path: path, manifest: manifest) } catch {
             printError(formatCLIError(error: error, source: nil)); exit(1)
         }
         // build 漂移检查（run 同款；仅对采用依赖通道的清单生效）。
@@ -1730,6 +1821,7 @@ func runCheckPath(_ path: String) {
             printError("Error: 依赖清单与代码漂移——\(parts.joined(separator: "；"))。请运行 `pini mod tidy`")
             exit(1)
         }
+        emitLexerWarnings(pkg.warnings)
         do {
             let analyzer = SemanticAnalyzer()
             try analyzer.analyze(package: pkg)
@@ -1739,7 +1831,7 @@ func runCheckPath(_ path: String) {
             /// 宏常量在检查阶段就求值：值展不开是声明或配置的问题，不该等到运行才显形。
             _ = try evaluateForeignMacros(
                 symbols: pkg.fileUnits.flatMap { foreignSymbols(in: $0.module) },
-                config: manifest.ffi ?? .default)
+                config: foreignConfigFor(root: path, manifest: manifest))
             for warning in givenCycleWarnings(package: pkg, checker: checker) {
                 emitSemanticWarning(warning)
             }
@@ -1913,7 +2005,7 @@ private func loadOwningPackageIfModule(path: String) throws -> (package: Package
     else { return nil }
     guard let moduleRoot = try FileLoader.locateModuleRoot(for: path) else { return nil }
     let manifest = try FileLoader.loadManifest(directory: moduleRoot)
-    return try (FileLoader.loadDirectory(path: moduleRoot, manifest: manifest), moduleRoot)
+    return try (loadPackageWithGenerated(path: moduleRoot, manifest: manifest), moduleRoot)
 }
 
 // Package-level IR emit: package semantic + type-check, then `IRLowerer.lower(package:)` ->
@@ -1950,21 +2042,70 @@ private func lowerPackage(
         package: package, typeInference: checker.typeInference,
         foreignConstants: try evaluateForeignMacros(
             symbols: package.fileUnits.flatMap { foreignSymbols(in: $0.module) },
-            config: (try? FileLoader.loadManifest(directory: moduleRoot))?.ffi ?? .default),
+            config: foreignConfigFor(
+                root: moduleRoot,
+                manifest: try? FileLoader.loadManifest(directory: moduleRoot))),
         requiresMain: policy.requiresMain(
             hasCSurface: package.fileUnits.contains { hasCSurface($0.module.exports) }))
     try IRValidator.check(irModule)
     return irModule
 }
 
-/// 普通单包沿用 check；工作区根则按计划产出接口、IR 和可执行文件。
-func runBuildPath(_ path: String) {
+/// 装载包并接上计划里的生成模块。需要看见生成声明的命令都走这里：
+/// `.build` 路径只在生成模块装载器里拼一份，命令层不自行拼。
+func loadPackageWithGenerated(path: String, manifest: ModuleManifest?) throws -> Package {
+    let package = try FileLoader.loadDirectory(path: path, manifest: manifest)
+    return try GeneratedModules.attach(to: package, packageRoot: path)
+}
+
+/// 宏求值用的 FFI 配置：清单 `[ffi]` 加上计划里翻译步声明的头文件、包含路径与定义。
+/// 生成的 `|macro` 条目值只能来自声明它的那个头文件；两处各抄一份就会各算一套值。
+func foreignConfigFor(root: String, manifest: ModuleManifest?) -> FFIConfig {
+    let base = manifest?.ffi ?? .default
+    guard let layout = try? BuildLayout.locate(packageRoot: root),
+        let plan = try? BuildPlan.read(at: layout.planPath, layout: layout),
+        let name = manifest?.name
+    else { return base }
+    return plan.ffiConfig(for: name, base: base)
+}
+
+/// `pini build`：先配置（登记翻译步，出计划），再执行（翻译），最后才是发射与链接。
+/// 单包在翻译之后仍走 check，工作区根则按计划产出接口、IR 和可执行文件。
+func runBuildPath(_ path: String, printPlan: Bool = false) {
     do {
-        guard let plan = try WorkspaceBuilder.plan(rootDirectory: path) else {
+        let configured = try BuildRunner.configure(rootDirectory: path)
+        if printPlan {
+            guard let configured = configured else {
+                print("\(path) 不是包或工作区，没有构建计划")
+                return
+            }
+            print(try configured.plan.render(layout: configured.layout), terminator: "")
+            return
+        }
+        if let configured = configured {
+            let report = try BuildRunner.execute(configured)
+            for outcome in report.outcomes {
+                let output = configured.layout.relativeToRoot(outcome.step.planned.output)
+                if outcome.translated {
+                    print("已翻译 \(output)（跳过 \(outcome.skipped.count) 条）")
+                    for skip in outcome.skipped {
+                        printError("  跳过 \(skip.name)：\(skip.reason)")
+                    }
+                } else {
+                    print("未变 \(output)")
+                }
+            }
+            if !report.plan.steps.isEmpty {
+                print(
+                    "构建计划 \(configured.layout.relativeToRoot(report.planPath))："
+                        + "\(report.plan.steps.count) 条翻译步")
+            }
+        }
+        guard let workspace = try WorkspaceBuilder.plan(rootDirectory: path) else {
             runCheckPath(path)
             return
         }
-        try buildWorkspace(plan)
+        try buildWorkspace(workspace)
         CommentStyleHint.emit()
     } catch {
         printError(formatCLIError(error: error, source: nil))
@@ -1975,9 +2116,14 @@ func runBuildPath(_ path: String) {
 /// 整图校验先于逐 target 发射；任何上游失败都阻止下游产物，避免留下半张构建图。
 private func buildWorkspace(_ plan: WorkspaceBuildPlan) throws {
     var writtenInterfaces: Set<String> = []
+    // 同一包按 target 反复装载；警告属于源码，一个包只报一次。
+    var reportedWarnings: Set<String> = []
     for package in plan.packages {
         for target in package.targets where target.isBuiltByDefault {
             let loaded = try WorkspaceBuilder.load(package: package, target: target)
+            if reportedWarnings.insert(package.name).inserted {
+                emitLexerWarnings(loaded.package.warnings)
+            }
             let policy: EntryPolicy = target.kind == .executable ? .required : .notRequired
             let module = try lowerPackage(
                 package: loaded.package, moduleRoot: package.rootPath, policy: policy)
@@ -2209,7 +2355,7 @@ private func lowerForShared(path: String) throws -> (module: IRModule, programBa
             throw SharedBuildError(
                 message: "目录里没有 pini.toml：共享库要一个模块，散放的多份文件各是独立程序")
         }
-        let package = try FileLoader.loadDirectory(path: path, manifest: manifest)
+        let package = try loadPackageWithGenerated(path: path, manifest: manifest)
         return (
             try lowerPackage(package: package, moduleRoot: path, policy: .notRequired),
             absoluteProgramBase(path)
@@ -2455,18 +2601,29 @@ case "repl":
     ReplSession().run()
     exit(0)
 case "check":
-    guard args.count >= 3 else {
+    var checkPath: String? = nil
+    for arg in args.dropFirst(2) {
+        if arg.hasPrefix("--") {
+            printError("Error: \(arg)")
+            printError("  合法用法：pini \(command) <路径>")
+            exit(1)
+        } else if checkPath == nil {
+            checkPath = arg
+        } else {
+            printError("Error: 多余的参数 \(arg)")
+            exit(1)
+        }
+    }
+    guard let path = checkPath else {
         printError("Error: \(command) command requires a file or directory path")
         exit(1)
     }
-    if let unknown = args.dropFirst(3).first(where: { $0.hasPrefix("--") }) {
-        printError("Error: \(unknown)")
-        printError("  合法用法：pini \(command) <路径>")
-        exit(1)
-    }
-    runCheckPath(args[2])
+    runCheckPath(path)
+case "bind":
+    runBindCommand(Array(args.dropFirst(2)))
 case "build":
     var shared = false
+    var printPlan = false
     var outputPath: String?
     var positional: [String] = []
     var cursor = 2
@@ -2474,6 +2631,9 @@ case "build":
         switch args[cursor] {
         case "--shared":
             shared = true
+            cursor += 1
+        case "--print-plan":
+            printPlan = true
             cursor += 1
         case "-o":
             guard cursor + 1 < args.count else {
@@ -2497,13 +2657,17 @@ case "build":
         exit(1)
     }
     if shared {
+        guard !printPlan else {
+            printError("Error: --print-plan 只用于普通构建，不与 --shared 同用")
+            exit(1)
+        }
         runBuildShared(path: path, outputPath: outputPath)
     } else {
         guard outputPath == nil else {
             printError("Error: -o 只跟 --shared 一起用")
             exit(1)
         }
-        runBuildPath(path)
+        runBuildPath(path, printPlan: printPlan)
     }
 case "test":
     // 测试子命令：path 可选；无参 = 收集当前目录所属模块或工作区。

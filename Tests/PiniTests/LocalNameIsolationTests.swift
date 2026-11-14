@@ -10,13 +10,13 @@ import PiniSyntax
 struct LocalNameIsolationTests: Sendable {
 
     private static let corpus = #"""
-    narrow|func(q: I32,) -> (I32,):
-        var n = q
+    narrow|func(_q: I32,) -> (I32,):
+        var n = _q
         var i = n - 1
         return i
 
-    wide|func(p: U64,) -> (U64,):
-        var n = p
+    wide|func(_p: U64,) -> (U64,):
+        var n = _p
         return n
 
     main|func() -> ():
@@ -164,8 +164,8 @@ struct LocalNameIsolationTests: Sendable {
     @Test("同名在场时真正的类型不符仍被拒")
     func genuineMismatchIsStillRejected() throws {
         let source = #"""
-        narrow|func(q: I32,) -> (I32,):
-            var n = q
+        narrow|func(_q: I32,) -> (I32,):
+            var n = _q
             var i: U64 = n - 1
             return i
 

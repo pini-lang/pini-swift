@@ -1,0 +1,393 @@
+[body|import]
+_syntax = "../../../syntax"
+_module_loader = "../../../module-loader"
+
+; 函数体检查：函数帧里播种自身与参数，再沿语句树核对返回。
+; 返回类型为空时体不必 return；非空时每条路径都要 return，否则报缺失返回。
+; 体尾按「能否证明落空」判：match 主体类型判不出时按已穷尽处理，与匹配面的待定口径一致。
+
+; 体错误：参数重名、返回缺值、空返回带值、返回类型不符与缺失返回五类。
+[BodyErrorKind]
+bodyParamDuplicated
+bodyReturnValueMissing
+bodyReturnValueForbidden
+bodyReturnValueMismatch
+bodyReturnMissing
+
+; 体错误：类别、文件、源内偏移、相关名字与期望/实得文本。
+(BodyError)
+kind: BodyErrorKind = .bodyParamDuplicated
+file: String = ""
+offset: I32 = 0
+name: String = ""
+expected: String = ""
+got: String = ""
+
+; 体检查结果：池、播种后的作用域、返回类型、错误与返回读数。
+(BodyCheck)
+pool: TypePool = TypePool()
+scope: ScopeStack = ScopeStack()
+returnType: I32 = -1
+errors: Array<BodyError> = []
+returns: I32 = 0
+guarantees: Bool = false
+deferred: Bool = false
+failed: Bool = false
+
+; 错误类别名：诊断、测试与回执共用一份拼写。
+bodyErrorName|func(_kind: BodyErrorKind,) -> (String,):
+    match _kind:
+        case bodyParamDuplicated:
+            return "参数重名"
+        case bodyReturnValueMissing:
+            return "返回缺值"
+        case bodyReturnValueForbidden:
+            return "空返回带值"
+        case bodyReturnValueMismatch:
+            return "返回类型不符"
+        case bodyReturnMissing:
+            return "缺少返回路径"
+    return "体错误"
+
+; 同一类别判定：枚举相等比较不可用，按名称比。
+isBodyError|func(error: BodyError, kind: BodyErrorKind,) -> (Bool,):
+    return bodyErrorName(error.kind) == bodyErrorName(kind)
+
+; 诊断码：复用宿主已登记的码，不新增码表条目。
+bodyErrorCode|func(_kind: BodyErrorKind,) -> (String,):
+    match _kind:
+        case bodyParamDuplicated:
+            return "E3-004"
+        case bodyReturnValueMissing:
+            return "E4-001"
+        case bodyReturnValueForbidden:
+            return "E4-001"
+        case bodyReturnValueMismatch:
+            return "E4-001"
+        case bodyReturnMissing:
+            return "E4-001"
+    return "E4-001"
+
+; 造错误：位置取语句或声明头的字节偏移。
+makeBodyError|func(kind: BodyErrorKind, file: String, offset: I32, name: String, expected: String, got: String,) -> (BodyError,):
+    var out = BodyError()
+    out.kind = kind
+    out.file = file
+    out.offset = offset
+    out.name = name
+    out.expected = expected
+    out.got = got
+    return out
+
+; 追加错误：结果其余字段原样保留，错误不中断后续语句。
+appendBodyError|func(out: BodyCheck, unit: CompilationUnit, offset: I32, kind: BodyErrorKind, name: String, expected: String, got: String,) -> (BodyCheck,):
+    var done = out
+    done.errors = done.errors.append(makeBodyError(kind = kind, file = unit.path, offset = offset, name = name, expected = expected, got = got))
+    return done
+
+; 空返回：无标注与零元元组都算；下标越界按空处理。
+isVoidReturn|func(pool: TypePool, id: I32,) -> (Bool,):
+    if id < 0 || id >= len(pool.entries):
+        return true
+    let entry = pool.entries[id]
+    if !isTypeClass(kind = entry.kind, expected = typeClassTuple):
+        return false
+    return len(entry.kids) == 0
+
+; 子项包含：按声明下标逐项比。
+containsDeclKid|func(kids: Array<I32>, id: I32,) -> (Bool,):
+    var i = 0
+    while i < len(kids):
+        if kids[i] == id:
+            return true
+        i = i + 1
+    return false
+
+; 带成员的类型声明：结构、对象、枚举与扩展块四类，方法都挂在它们的 kids 上。
+isOwnerDeclCode|func(_code: I32,) -> (Bool,):
+    if isStructDeclCode(_code) || isObjectDeclCode(_code):
+        return true
+    if isEnumDeclCode(_code) || isExtensionDeclCode(_code):
+        return true
+    return false
+
+; 所属类型：按父声明的 kids 找方法所在块，再按名字查名义类型；找不到答 -1。
+ownerTypeOf|func(world: MemberWorld, unitIndex: I32, declId: I32,) -> (I32,):
+    let unit = world.units[unitIndex]
+    let bytes = tempUtf8Bytes(unit.text)
+    var i = 0
+    while i < unit.ast.declCount():
+        let decl = unit.ast.decls[i]
+        if isOwnerDeclCode(decl.kind) && containsDeclKid(kids = decl.kids, id = declId):
+            let owner = decodeRange(bytes = bytes, start = decl.nameStart, end = decl.nameEnd)
+            return nominalTypeId(world = world, name = owner)
+        i = i + 1
+    return -1
+
+; 值文本：类型未定时答占位，诊断不因未定而空着。
+bodyValueText|func(unit: CompilationUnit, unitIndex: I32, node: I32, types: ExprTypes, pool: TypePool,) -> (String,):
+    let valueType = exprTypeAt(table = types, unit = unitIndex, node = node)
+    if valueType < 0 || valueType >= len(pool.entries):
+        return "<未定>"
+    return typeText(pool = pool, id = valueType)
+
+; 单条返回：空返回类型不许带值，非空必须带值且可赋值。
+checkReturnValue|func(unit: CompilationUnit, unitIndex: I32, stmtId: I32, types: ExprTypes, out: BodyCheck,) -> (BodyCheck,):
+    let value = unit.ast.stmtChild(id = stmtId, index = 0)
+    let offset = unit.ast.stmtAt(stmtId).start
+    if isVoidReturn(pool = out.pool, id = out.returnType):
+        if value >= 0:
+            let got = bodyValueText(unit = unit, unitIndex = unitIndex, node = value, types = types, pool = out.pool)
+            return appendBodyError(out = out, unit = unit, offset = offset, kind = bodyReturnValueForbidden, name = "", expected = "()", got = got)
+        return out
+    if value < 0:
+        return appendBodyError(out = out, unit = unit, offset = offset, kind = bodyReturnValueMissing, name = "", expected = typeText(pool = out.pool, id = out.returnType), got = "()")
+    let valueType = exprTypeAt(table = types, unit = unitIndex, node = value)
+    if valueType < 0 || valueType >= len(out.pool.entries):
+        return out
+    if isAssignable(pool = out.pool, from = valueType, to = out.returnType):
+        return out
+    return appendBodyError(out = out, unit = unit, offset = offset, kind = bodyReturnValueMismatch, name = "", expected = typeText(pool = out.pool, id = out.returnType), got = typeText(pool = out.pool, id = valueType))
+
+; 走一条语句：只查 return 的值，不声明局部；控制流节点逐个下钻到块。
+walkBodyStmt|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmtId: I32, scope: ScopeStack, known: Bool, types: ExprTypes, out: BodyCheck,) -> (BodyCheck,):
+    if stmtId < 0 || stmtId >= unit.ast.stmtCount():
+        return out
+    let ast = unit.ast
+    if ast.isReturnStmt(stmtId):
+        var done = out
+        done.returns = done.returns + 1
+        if known:
+            done = checkReturnValue(unit = unit, unitIndex = unitIndex, stmtId = stmtId, types = types, out = done)
+        return done
+    if ast.isBlockStmt(stmtId):
+        return walkBodyBlock(world = world, unit = unit, unitIndex = unitIndex, blockId = stmtId, scope = scope, known = known, types = types, out = out)
+    if ast.isIfStmt(stmtId):
+        var done = out
+        let kids = ast.stmtAt(stmtId).kids
+        let count = len(kids)
+        if count > 1:
+            done = walkBodyStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = kids[1], scope = scope, known = known, types = types, out = done)
+        var i = 2
+        while i < count:
+            if i + 1 < count:
+                done = walkBodyStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = kids[i + 1], scope = scope, known = known, types = types, out = done)
+                i = i + 2
+            else:
+                done = walkBodyStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = kids[i], scope = scope, known = known, types = types, out = done)
+                i = i + 1
+        return done
+    if ast.isWhileStmt(stmtId):
+        var done = out
+        let kids = ast.stmtAt(stmtId).kids
+        var i = 1
+        while i < len(kids):
+            done = walkBodyStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = kids[i], scope = scope, known = known, types = types, out = done)
+            i = i + 1
+        return done
+    if ast.isForStmt(stmtId):
+        var done = out
+        let kids = ast.stmtAt(stmtId).kids
+        var i = 2
+        while i < len(kids):
+            done = walkBodyStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = kids[i], scope = scope, known = known, types = types, out = done)
+            i = i + 1
+        return done
+    if ast.isMatchStmt(stmtId):
+        var done = out
+        let kids = ast.stmtAt(stmtId).kids
+        var i = 2
+        while i < len(kids):
+            done = walkBodyStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = kids[i], scope = scope, known = known, types = types, out = done)
+            i = i + 2
+        return done
+    if ast.isDeferStmt(stmtId):
+        return walkBodyStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = ast.stmtChild(id = stmtId, index = 0), scope = scope, known = known, types = types, out = out)
+    return out
+
+; 走一块：按源序逐条，错误累积不中断。
+walkBodyBlock|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, blockId: I32, scope: ScopeStack, known: Bool, types: ExprTypes, out: BodyCheck,) -> (BodyCheck,):
+    var done = out
+    let kids = unit.ast.stmtAt(blockId).kids
+    var i = 0
+    while i < len(kids):
+        done = walkBodyStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = kids[i], scope = scope, known = known, types = types, out = done)
+        i = i + 1
+    return done
+
+; 记覆盖：同名只记一次，条件写清避免半表达式当条件。
+bodyAddName|func(names: Array<String>, name: String,) -> (Array<String>,):
+    if containsName(names = names, name = name):
+        return names
+    var out = names
+    out = out.append(name)
+    return out
+
+; 匹配全覆盖：通配即全覆盖；枚举看缺项，可选看 some 与 none；主体判不出按全覆盖处理。
+matchCoversAll|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmtId: I32, scope: ScopeStack, types: ExprTypes,) -> (Bool,):
+    let kids = unit.ast.stmtAt(stmtId).kids
+    if len(kids) < 1:
+        return true
+    let subjectType = typeOfExprNode(unit = unit, unitIndex = unitIndex, node = kids[0], scope = scope, types = types, pool = world.types.pool)
+    if subjectType < 0:
+        return true
+    var covered: Array<String> = []
+    var hasWildcard = false
+    var i = 1
+    while i + 1 < len(kids):
+        let info = classifyPattern(unit = unit, node = kids[i])
+        if isPatternForm(form = info.form, expected = patternWildcard):
+            hasWildcard = true
+        elif isPatternForm(form = info.form, expected = patternEnumCase):
+            covered = bodyAddName(names = covered, name = info.name)
+        elif isPatternForm(form = info.form, expected = patternNil):
+            covered = bodyAddName(names = covered, name = "none")
+        i = i + 2
+    if hasWildcard:
+        return true
+    let enumName = enumNameOf(pool = world.types.pool, id = subjectType)
+    if len(enumName) > 0:
+        let all = enumVariantNames(world = world, enumName = enumName)
+        return len(missingCases(all = all, covered = covered)) == 0
+    if isOptionalType(pool = world.types.pool, id = subjectType):
+        return containsName(names = covered, name = "some") && containsName(names = covered, name = "none")
+    return false
+
+; 匹配保证返回：每个臂块都要保证返回，且匹配本身覆盖全部取值。
+matchAlwaysReturns|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmtId: I32, scope: ScopeStack, types: ExprTypes,) -> (Bool,):
+    let kids = unit.ast.stmtAt(stmtId).kids
+    if len(kids) < 3:
+        return false
+    var i = 2
+    while i < len(kids):
+        if !stmtAlwaysReturns(world = world, unit = unit, unitIndex = unitIndex, stmtId = kids[i], scope = scope, types = types):
+            return false
+        i = i + 2
+    return matchCoversAll(world = world, unit = unit, unitIndex = unitIndex, stmtId = stmtId, scope = scope, types = types)
+
+; 如果保证返回：then 与每个 elif 分支都返回，且有 else。
+ifAlwaysReturns|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmtId: I32, scope: ScopeStack, types: ExprTypes,) -> (Bool,):
+    let kids = unit.ast.stmtAt(stmtId).kids
+    let count = len(kids)
+    if count < 2:
+        return false
+    if !stmtAlwaysReturns(world = world, unit = unit, unitIndex = unitIndex, stmtId = kids[1], scope = scope, types = types):
+        return false
+    var hasElse = false
+    var i = 2
+    while i < count:
+        if i + 1 < count:
+            if !stmtAlwaysReturns(world = world, unit = unit, unitIndex = unitIndex, stmtId = kids[i + 1], scope = scope, types = types):
+                return false
+            i = i + 2
+        else:
+            if !stmtAlwaysReturns(world = world, unit = unit, unitIndex = unitIndex, stmtId = kids[i], scope = scope, types = types):
+                return false
+            hasElse = true
+            i = i + 1
+    return hasElse
+
+; 块保证返回：只要有一条语句保证返回，块就不再落空。
+blockAlwaysReturns|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, blockId: I32, scope: ScopeStack, types: ExprTypes,) -> (Bool,):
+    let kids = unit.ast.stmtAt(blockId).kids
+    var i = 0
+    while i < len(kids):
+        if stmtAlwaysReturns(world = world, unit = unit, unitIndex = unitIndex, stmtId = kids[i], scope = scope, types = types):
+            return true
+        i = i + 1
+    return false
+
+; 语句保证返回：return 与全覆盖的分支；循环、延迟与非控制流语句都不保证。
+stmtAlwaysReturns|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmtId: I32, scope: ScopeStack, types: ExprTypes,) -> (Bool,):
+    if stmtId < 0 || stmtId >= unit.ast.stmtCount():
+        return false
+    let ast = unit.ast
+    if ast.isReturnStmt(stmtId):
+        return true
+    if ast.isBlockStmt(stmtId):
+        return blockAlwaysReturns(world = world, unit = unit, unitIndex = unitIndex, blockId = stmtId, scope = scope, types = types)
+    if ast.isIfStmt(stmtId):
+        return ifAlwaysReturns(world = world, unit = unit, unitIndex = unitIndex, stmtId = stmtId, scope = scope, types = types)
+    if ast.isMatchStmt(stmtId):
+        return matchAlwaysReturns(world = world, unit = unit, unitIndex = unitIndex, stmtId = stmtId, scope = scope, types = types)
+    return false
+
+; 播种结果：函数帧、返回类型与播种期错误；valid 为假表示不是可检查的函数声明。
+(BodySeed)
+pool: TypePool = TypePool()
+scope: ScopeStack = ScopeStack()
+returnType: I32 = -1
+known: Bool = true
+errors: Array<BodyError> = []
+valid: Bool = false
+
+; 播种函数帧：`|self` 方法先放自身，再逐个放参数；返回类型一并定好，无标注按空元组。
+seedFunctionScope|func(world: MemberWorld, unitIndex: I32, declId: I32,) -> (BodySeed,):
+    var out = BodySeed()
+    out.pool = world.types.pool
+    if unitIndex < 0 || unitIndex >= len(world.units):
+        return out
+    let unit = world.units[unitIndex]
+    if declId < 0 || declId >= unit.ast.declCount():
+        return out
+    let decl = unit.ast.decls[declId]
+    if !isFunctionDeclCode(decl.kind) || decl.isForeign:
+        return out
+    out.valid = true
+    let bytes = tempUtf8Bytes(unit.text)
+    var stack = enterScope(stack = ScopeStack(), kind = scopeFunction, file = unit.path, offset = decl.start)
+    if decl.isSelf:
+        let ownerId = ownerTypeOf(world = world, unitIndex = unitIndex, declId = declId)
+        if ownerId >= 0:
+            let selfDecl = declareSelf(stack = stack, spelling = "self", typeId = ownerId, file = unit.path, offset = decl.start)
+            if selfDecl.failed:
+                out.errors = out.errors.append(makeBodyError(kind = bodyParamDuplicated, file = unit.path, offset = selfDecl.error.offset, name = selfDecl.error.spelling, expected = "", got = ""))
+            else:
+                stack = selfDecl.stack
+    var i = 0
+    while i < len(decl.kids):
+        let kid = decl.kids[i]
+        if isParamDeclCode(unit.ast.decls[kid].kind):
+            let typeId = world.types.typeOf(unit = unitIndex, decl = kid)
+            let declared = declareParam(stack = stack, decl = unit.ast.decls[kid], declId = kid, typeId = typeId, file = unit.path, bytes = bytes)
+            if declared.failed:
+                out.errors = out.errors.append(makeBodyError(kind = bodyParamDuplicated, file = unit.path, offset = declared.error.offset, name = declared.error.spelling, expected = "", got = ""))
+            else:
+                stack = declared.stack
+        i = i + 1
+    out.scope = stack
+    if decl.typeId >= 0:
+        out.returnType = world.types.typeOf(unit = unitIndex, decl = declId)
+        if out.returnType < 0:
+            out.known = false
+    else:
+        let empty = intern(pool = out.pool, kind = typeClassTuple, name = "", kids = [], ret = -1)
+        out.pool = empty.pool
+        out.returnType = empty.id
+    return out
+
+; 检查入口：播种函数帧，走一遍体，最后按返回路径补缺失返回。
+checkFunctionBody|func(world: MemberWorld, unitIndex: I32, declId: I32, types: ExprTypes,) -> (BodyCheck,):
+    let seed = seedFunctionScope(world = world, unitIndex = unitIndex, declId = declId)
+    var out = BodyCheck()
+    out.pool = seed.pool
+    if !seed.valid:
+        return out
+    out.scope = seed.scope
+    out.returnType = seed.returnType
+    out.errors = seed.errors
+    let known = seed.known
+    if !known:
+        out.deferred = true
+    let unit = world.units[unitIndex]
+    let decl = unit.ast.decls[declId]
+    if decl.body < 0:
+        out.failed = len(out.errors) > 0
+        return out
+    out = walkBodyStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = decl.body, scope = seed.scope, known = known, types = types, out = out)
+    out.guarantees = stmtAlwaysReturns(world = world, unit = unit, unitIndex = unitIndex, stmtId = decl.body, scope = seed.scope, types = types)
+    if known && !isVoidReturn(pool = out.pool, id = out.returnType) && !out.guarantees:
+        let name = decodeRange(bytes = tempUtf8Bytes(unit.text), start = decl.nameStart, end = decl.nameEnd)
+        out = appendBodyError(out = out, unit = unit, offset = decl.start, kind = bodyReturnMissing, name = name, expected = typeText(pool = out.pool, id = out.returnType), got = "()")
+    out.failed = len(out.errors) > 0
+    return out

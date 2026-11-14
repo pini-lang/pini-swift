@@ -1,0 +1,30 @@
+; 标识符查找键：NFC 等价的两种拼写必须给出同一串字节。
+等价拼写同键|test() -> ():
+    let 预组合 = bytesOf([0xAC01])
+    let 拆写 = bytesOf([0x1100, 0x1161, 0x11A8])
+    let 左 = identifierKeyBytes(bytes = 预组合, start = 0, end = len(预组合))
+    let 右 = identifierKeyBytes(bytes = 拆写, start = 0, end = len(拆写))
+    assert(sameBytes(left = 左, right = 右), "NFC 等价写法应给出同一键")
+    return
+
+; 中文标识符本身已是 NFC，键与原文逐字节相同。
+中文键不变|test() -> ():
+    let 原文 = bytesOf([0x8BA1, 0x6570])
+    let 键 = identifierKeyBytes(bytes = 原文, start = 0, end = len(原文))
+    assert(sameBytes(left = 键, right = 原文), "中文标识符的键应与原文相同")
+    return
+
+; 键只覆盖给定区间：前后各多一字节时结果仍等于区间本身。
+区间限定|test() -> ():
+    let 带前后缀 = bytesOf([0x61, 0xAC01, 0x62])
+    let 键 = identifierKeyBytes(bytes = 带前后缀, start = 1, end = 4)
+    let 期望 = bytesOf([0xAC01])
+    assert(sameBytes(left = 键, right = 期望), "键必须只覆盖区间内的字节")
+    return
+
+; 越界区间夹紧到有效范围，不触发下标陷阱。
+越界夹紧|test() -> ():
+    let 原文 = bytesOf([0x61, 0x62])
+    let 键 = identifierKeyBytes(bytes = 原文, start = -5, end = 99)
+    assert(sameBytes(left = 键, right = 原文), "负起点与超尾应夹紧到整段")
+    return

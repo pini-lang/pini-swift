@@ -1,0 +1,144 @@
+; 测试助手：一个 target 声明。
+造目标|func(name: String, kind: TargetKind, entry: String,) -> (TargetSpec,):
+    var out = TargetSpec()
+    out.name = name
+    out.kind = kind
+    out.entry = entry
+    return out
+
+; 测试助手：库 target 用统一入口形状，判据只关心名字与产物路径。
+库目标|func(_name: String,) -> (TargetSpec,):
+    return 造目标(name = _name, kind = targetLibrary, entry = "src/api/" + _name + ".pini")
+
+; 测试助手：空依赖表；直接写 `[]` 会被推成 I32 元素。
+空依赖|func() -> (Array<String>,):
+    var out: Array<String> = []
+    return out
+
+; 测试助手：一个包的解析结果；成员路径与包名分开给，重名用例需要两者不同。
+造包|func(rootPath: String, name: String, requires: Array<String>, targets: Array<TargetSpec>,) -> (PackageParse,):
+    var out = PackageParse()
+    out.manifest.rootPath = rootPath
+    out.manifest.name = name
+    out.manifest.requires = requires
+    out.manifest.targets = targets
+    return out
+
+; 测试助手：工作区解析结果；根固定为 `.`，profile 取 debug。
+造工作区|func(_members: Array<String>,) -> (WorkspaceParse,):
+    var out = WorkspaceParse()
+    out.manifest.rootPath = "."
+    out.manifest.profile = "debug"
+    out.manifest.members = _members
+    return out
+
+; 六包依赖图：拓扑序固定；同一份输入两次装配逐字相同。
+拓扑序固定|test() -> ():
+    let 工作区 = 造工作区(["packages/diagnostics", "packages/driver", "packages/package", "packages/support", "packages/syntax", "packages/unicode"])
+    var 解析表: Array<PackageParse> = []
+    解析表 = 解析表.append(造包(rootPath = "packages/support", name = "support", requires = 空依赖(), targets = [库目标("support"), 造目标(name = "support-tests", kind = targetTest, entry = "tests")]))
+    解析表 = 解析表.append(造包(rootPath = "packages/unicode", name = "unicode", requires = ["support"], targets = [库目标("unicode")]))
+    解析表 = 解析表.append(造包(rootPath = "packages/diagnostics", name = "diagnostics", requires = ["support"], targets = [库目标("diagnostics")]))
+    解析表 = 解析表.append(造包(rootPath = "packages/syntax", name = "syntax", requires = ["support", "unicode", "diagnostics"], targets = [库目标("syntax")]))
+    解析表 = 解析表.append(造包(rootPath = "packages/package", name = "package", requires = 空依赖(), targets = [库目标("package")]))
+    解析表 = 解析表.append(造包(rootPath = "packages/driver", name = "driver", requires = ["support", "package"], targets = [造目标(name = "pini-bootstrap", kind = targetExecutable, entry = "src/api/main.pini")]))
+    let 计划 = assemblePlan(workspace = 工作区, parses = 解析表)
+    assert(计划.isOK(), "不应有错误：" + planText(计划))
+    assert(计划.packageCount() == 6, "六个包")
+    let 期望 = ["support", "diagnostics", "package", "driver", "unicode", "syntax"]
+    var i = 0
+    while i < len(期望):
+        assert(计划.packageAt(i).name == 期望[i], "第 " + "\(i)" + " 位应为 " + 期望[i])
+        i = i + 1
+    assert(planText(计划) == planText(assemblePlan(workspace = 工作区, parses = 解析表)), "两次装配逐字相同")
+    return
+
+; 成员声明顺序不影响拓扑序：倒序给成员，结果与正序一致。
+成员顺序无关|test() -> ():
+    let 正序 = 造工作区(["a", "b"])
+    var 正表: Array<PackageParse> = []
+    正表 = 正表.append(造包(rootPath = "a", name = "a", requires = 空依赖(), targets = [库目标("a")]))
+    正表 = 正表.append(造包(rootPath = "b", name = "b", requires = ["a"], targets = [库目标("b")]))
+    let 倒序 = 造工作区(["b", "a"])
+    let 正计划 = assemblePlan(workspace = 正序, parses = 正表)
+    let 倒计划 = assemblePlan(workspace = 倒序, parses = 正表)
+    assert(正计划.isOK(), "正序不应有错")
+    assert(倒计划.isOK(), "倒序不应有错")
+    assert(正计划.packageAt(0).name == "a", "依赖在前")
+    assert(倒计划.packageAt(0).name == "a", "倒序声明也依赖在前")
+    return
+
+; 产物路径按 profile 定：库给 ll 与接口，可执行另给 bin 路径，测试目标不默认构建。
+产物路径|test() -> ():
+    let 工作区 = 造工作区(["p"])
+    var 解析表: Array<PackageParse> = []
+    let 目标 = [库目标("p"), 造目标(name = "tool", kind = targetExecutable, entry = "src/main.pini"), 造目标(name = "p-tests", kind = targetTest, entry = "tests")]
+    解析表 = 解析表.append(造包(rootPath = "p", name = "p", requires = 空依赖(), targets = 目标))
+    let 计划 = assemblePlan(workspace = 工作区, parses = 解析表)
+    assert(计划.isOK(), "不应有错误：" + planText(计划))
+    let 包 = 计划.packageAt(0)
+    assert(包.targets[0].irPath == "./.build/debug/packages/p/p.ll", "库产物")
+    assert(包.targets[0].sourceRoot == "src", "库从 src 取生产源码")
+    assert(包.targets[1].executablePath == "./.build/debug/bin/tool", "可执行产物")
+    assert(包.targets[1].interfacePath == "./.build/debug/packages/p/interface.txt", "接口路径")
+    assert(包.targets[2].sourceRoot == "tests", "测试目标从入口目录取源码")
+    assert(包.targets[2].isBuiltByDefault == false, "测试目标不默认构建")
+    return
+
+; 重复包名：两个成员声明同一个包名，计划不可用并报专用错误。
+重复包名|test() -> ():
+    var 解析表: Array<PackageParse> = []
+    解析表 = 解析表.append(造包(rootPath = "a", name = "same", requires = 空依赖(), targets = [库目标("same")]))
+    解析表 = 解析表.append(造包(rootPath = "b", name = "same", requires = 空依赖(), targets = [库目标("same")]))
+    let 计划 = assemblePlan(workspace = 造工作区(["a", "b"]), parses = 解析表)
+    assert(!计划.isOK(), "应报错")
+    assert(isErrorKind(e = 计划.errorAt(0), kind = .errorDuplicatePackage), "包名重复")
+    return
+
+; 成环：两条反向依赖报一条环错误，链上带两个包名。
+成环|test() -> ():
+    var 解析表: Array<PackageParse> = []
+    解析表 = 解析表.append(造包(rootPath = "a", name = "a", requires = ["b"], targets = [库目标("a")]))
+    解析表 = 解析表.append(造包(rootPath = "b", name = "b", requires = ["a"], targets = [库目标("b")]))
+    let 计划 = assemblePlan(workspace = 造工作区(["a", "b"]), parses = 解析表)
+    assert(!计划.isOK(), "应报错")
+    assert(isErrorKind(e = 计划.errorAt(0), kind = .errorDependencyCycle), "应报成环")
+    assert(计划.errorAt(0).detail.contains("a -> b -> a"), "环链应完整")
+    return
+
+; 可执行产物重名：两个包各声明同名 bin，建产物前就报错。
+可执行重名|test() -> ():
+    var 解析表: Array<PackageParse> = []
+    解析表 = 解析表.append(造包(rootPath = "a", name = "a", requires = 空依赖(), targets = [造目标(name = "tool", kind = targetExecutable, entry = "src/main.pini")]))
+    解析表 = 解析表.append(造包(rootPath = "b", name = "b", requires = 空依赖(), targets = [造目标(name = "tool", kind = targetExecutable, entry = "src/main.pini")]))
+    let 计划 = assemblePlan(workspace = 造工作区(["a", "b"]), parses = 解析表)
+    assert(isErrorKind(e = 计划.errorAt(0), kind = .errorExecutableCollision), "产物重名")
+    return
+
+; 成员越界与重复登记：`..` 弹空栈即越界，同一目录重复登记单独报。
+成员路径|test() -> ():
+    let 越界 = assemblePlan(workspace = 造工作区(["../x"]), parses = 解析表空())
+    assert(isErrorKind(e = 越界.errorAt(0), kind = .errorMemberPath), "越界成员")
+    let 重复 = assemblePlan(workspace = 造工作区(["a", "a"]), parses = 解析表空())
+    assert(有计划错误(plan = 重复, kind = .errorMemberDuplicated), "重复成员应有一条专用错误")
+    return
+
+; 测试助手：计划里是否存在某类错误；错误顺序不参与判据。
+有计划错误|func(plan: BuildPlan, kind: ManifestErrorKind,) -> (Bool,):
+    var i = 0
+    while i < len(plan.errors):
+        if isErrorKind(e = plan.errors[i], kind = kind):
+            return true
+        i = i + 1
+    return false
+
+; 测试助手：空解析表。
+解析表空|func() -> (Array<PackageParse>,):
+    var out: Array<PackageParse> = []
+    return out
+
+; 成员缺清单：成员目录没有任何解析结果，报缺清单而不是静默跳过。
+成员缺清单|test() -> ():
+    let 计划 = assemblePlan(workspace = 造工作区(["a"]), parses = 解析表空())
+    assert(isErrorKind(e = 计划.errorAt(0), kind = .errorManifestMissing), "缺清单")
+    return

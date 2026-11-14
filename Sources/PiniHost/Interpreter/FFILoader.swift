@@ -1,46 +1,68 @@
 import Foundation
 import PiniSyntax
 
-/// 库名 → 路径解析 + 句柄缓存 + 符号查找。解析顺序：`libc` 保留名直连进程已加载的系统 C 库，
-/// 含 `/` 的当路径加载，否则按 `search_paths` 搜 `lib<名称>.{dylib,so}`（子模块 → 根 → 系统默认）。
-/// 句柄按库名缓存，避免重复 `dlopen`。
+/// 库句柄缓存 + 符号解析。解析面只有两条：`[ffi].libs` 预加载的句柄，与进程已加载映像。
+/// 块名不再是加载键 —— 生成模块只能按头文件命名，按块名找库会去找一个不存在的库。
 final class FFILoader {
-    private var handles: [String: UnsafeMutableRawPointer] = [:]
-    private let lock = NSLock()
-
-    /// 解析 foreign 函数符号为裸地址（库句柄按名缓存）。
-    /// - library：块名（库绑定键）。
-    /// - searchPaths：合并后的 `FFIConfig.searchPaths`（`FFIConfig.default` 兜底系统路径）。
-    func resolve(library: String, symbol: String, searchPaths: [String], location: SourceLocation) throws -> UnsafeMutableRawPointer {
-        let handle = try openLibrary(library, searchPaths: searchPaths, location: location)
-        guard let sym = SystemDL.symbol(handle, symbol) else {
-            throw RuntimeError.symbolNotFound(library: library, symbol: symbol, location: location)
-        }
-        return sym
+    private struct Handle {
+        /// 报错与「已查」清单里显示的名字，与 `[ffi].libs` 的写法一致。
+        let label: String
+        let handle: UnsafeMutableRawPointer
     }
 
-    private func openLibrary(_ library: String, searchPaths: [String], location: SourceLocation) throws -> UnsafeMutableRawPointer {
-        lock.lock(); defer { lock.unlock() }
-        if let cached = handles[library] { return cached }
+    /// 按声明次序保存：先声明的库优先，解析顺序对用户是可预期的。
+    private var preloaded: [Handle] = []
+    private var preloadedLibraries: Set<String> = []
+    /// 进程映像句柄：`libc` 的符号就在主可执行体的搜索域里，不必显式加载。
+    private var processImage: UnsafeMutableRawPointer?
+    private let lock = NSLock()
 
-        let handle: UnsafeMutableRawPointer?
-        let searched: [String]
-        if library == "libc" {
-            handle = SystemDL.openDefault()
-            searched = ["（libc 保留名：进程已加载映像）"]
-        } else if library.contains("/") {
-            handle = SystemDL.open(library)
-            searched = [library]
-        } else {
-            handle = openBySearch(name: library, searchPaths: searchPaths)
-            searched = searchPaths
+    /// 预加载 `[ffi].libs` 并打开进程映像；重复调用只补新库，可以逐次 `prepare` 共用一份。
+    /// 声明了要用的库却加载不到，就地报错 —— 符号解析失败只是它的下游症状。
+    func preload(libraries: [String], searchPaths: [String], location: SourceLocation) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        if processImage == nil { processImage = SystemDL.openDefault() }
+        for library in libraries where !preloadedLibraries.contains(library) {
+            let opened = open(library, searchPaths: searchPaths)
+            guard let handle = opened.handle else {
+                throw RuntimeError.libraryNotFound(
+                    library: library, searched: opened.searched, location: location)
+            }
+            preloadedLibraries.insert(library)
+            preloaded.append(Handle(label: library, handle: handle))
         }
+    }
 
-        guard let h = handle else {
-            throw RuntimeError.libraryNotFound(library: library, searched: searched, location: location)
+    /// 解析符号：先按声明次序查预加载的库，再查进程映像。
+    /// 进程映像垫底，系统库因此不需要写进 `[ffi].libs`。
+    func resolve(symbol: String, location: SourceLocation) throws -> UnsafeMutableRawPointer {
+        lock.lock()
+        defer { lock.unlock() }
+        if processImage == nil { processImage = SystemDL.openDefault() }
+        for entry in preloaded {
+            if let address = SystemDL.symbol(entry.handle, symbol) { return address }
         }
-        handles[library] = h
-        return h
+        if let address = SystemDL.symbol(processImage, symbol) { return address }
+        throw RuntimeError.symbolNotFound(
+            symbol: symbol, searched: preloaded.map(\.label) + ["进程映像"], location: location)
+    }
+
+    /// 开一个库：含 `/` 的按路径，否则先按 `search_paths` 找 `lib<名>.{dylib,so}`，
+    /// 再退回系统搜索路径（`libm` 这类不落在项目目录里的库由 dyld / ld.so 找）。
+    private func open(
+        _ library: String, searchPaths: [String]
+    ) -> (handle: UnsafeMutableRawPointer?, searched: [String]) {
+        if library.contains("/") {
+            return (SystemDL.open(library), [library])
+        }
+        if let handle = openBySearch(name: library, searchPaths: searchPaths) {
+            return (handle, searchPaths)
+        }
+        for ext in ["dylib", "so"] {
+            if let handle = SystemDL.open("lib\(library).\(ext)") { return (handle, []) }
+        }
+        return (nil, searchPaths + ["系统默认路径"])
     }
 
     /// 按 `search_paths` 搜索 `lib<名称>.{dylib,so}`；找到即 `dlopen` 返回句柄。

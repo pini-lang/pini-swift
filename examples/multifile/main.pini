@@ -3,7 +3,7 @@
 ; 预期：5 / 25 / 0
 main|func() -> ():
     var v = 向量()
-    print(add(2, 3))
-    print(square(add(2, 3)))
+    print(add(a = 2, b = 3))
+    print(square(add(a = 2, b = 3)))
     print(v.x)
     return

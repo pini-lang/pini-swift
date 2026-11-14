@@ -136,7 +136,7 @@ struct StringHandleTests: Sendable, PiniSourceLowering {
             _ = try typeChecked(
                 """
                 [libc|foreign]
-                版本: StringHandle
+                version: StringHandle
 
                 main|func() -> (I32,):
                     return 0

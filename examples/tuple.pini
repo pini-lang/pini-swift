@@ -5,6 +5,6 @@
     return (a / b, a % b,)
 
 main|func() -> ():
-    let r = 除余(17, 5)
+    let r = 除余(a = 17, b = 5)
     print(r)
     return
