@@ -721,3 +721,73 @@ segmentCount|self() -> (I32,):
     return len(self.segments)
 segmentAt|self(index: I32,) -> (Segment,):
     return self.segments[index]
+
+; 运算符拼写：按类别码回符号本身，非运算符答空串；诊断与语义判定共用这一条。
+opSymbol|func(tag: I32,) -> (String,):
+    if tag == kindTag(opAdd):
+        return "+"
+    if tag == kindTag(opSub):
+        return "-"
+    if tag == kindTag(opMul):
+        return "*"
+    if tag == kindTag(opDiv):
+        return "/"
+    if tag == kindTag(opMod):
+        return "%"
+    if tag == kindTag(opInc):
+        return "++"
+    if tag == kindTag(opDec):
+        return "--"
+    if tag == kindTag(opAnd):
+        return "&&"
+    if tag == kindTag(opOr):
+        return "||"
+    if tag == kindTag(opNot):
+        return "!"
+    if tag == kindTag(opEq):
+        return "=="
+    if tag == kindTag(opNe):
+        return "!="
+    if tag == kindTag(opLe):
+        return "<="
+    if tag == kindTag(opGe):
+        return ">="
+    if tag == kindTag(opLt):
+        return "<"
+    if tag == kindTag(opGt):
+        return ">"
+    if tag == kindTag(opBitAnd):
+        return "&"
+    if tag == kindTag(opBitOr):
+        return "|"
+    if tag == kindTag(opBitXor):
+        return "^"
+    if tag == kindTag(opBitNot):
+        return "~"
+    if tag == kindTag(opShl):
+        return "<<"
+    if tag == kindTag(opShr):
+        return ">>"
+    if tag == kindTag(opAssign):
+        return "="
+    if tag == kindTag(opAssignAdd):
+        return "+="
+    if tag == kindTag(opAssignSub):
+        return "-="
+    if tag == kindTag(opAssignMul):
+        return "*="
+    if tag == kindTag(opAssignDiv):
+        return "/="
+    if tag == kindTag(opAssignMod):
+        return "%="
+    if tag == kindTag(opAssignBitAnd):
+        return "&="
+    if tag == kindTag(opAssignBitOr):
+        return "|="
+    if tag == kindTag(opAssignBitXor):
+        return "^="
+    if tag == kindTag(opAssignShl):
+        return "<<="
+    if tag == kindTag(opAssignShr):
+        return ">>="
+    return ""

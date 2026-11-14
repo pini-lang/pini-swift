@@ -333,3 +333,12 @@ CRLF归一化|test() -> ():
     断言记号(lexed.tokenAt(1), .falseLiteral, 5, 10)
     断言记号(lexed.tokenAt(2), .newline, 10, 11)
     return
+
+; 运算符拼写：常见符号逐个对上，非运算符答空串。
+运算符拼写|test() -> ():
+    assert(opSymbol(kindTag(opAdd)) == "+", "加")
+    assert(opSymbol(kindTag(opShl)) == "<<", "左移")
+    assert(opSymbol(kindTag(opAssignShr)) == ">>=", "右移赋值")
+    assert(opSymbol(kindTag(opEq)) == "==", "相等")
+    assert(opSymbol(kindTag(identifier)) == "", "非运算符答空串")
+    return
