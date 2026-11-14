@@ -98,23 +98,10 @@ public enum ForeignMacroEvaluator {
         return String(decoding: outData, as: UTF8.self)
     }
 
-    /// 预处理器：`PINI_CC` 优先，其次 PATH 里的 `cc`、`clang`，末位落回 `/usr/bin/cc`。
-    /// 只有 `cc` 一处兜底会把只装了 clang 的镜像挡在门外，而 clang 本身就是 C 预处理器。
+    /// 预处理器路径与头文件翻译共用一处解析（`CTool`）：各找各的迟早分叉，
+    /// 表现为「宏求值找得到 cc、bind 找不到」。
     private static func preprocessorPath() -> String {
-        let environment = ProcessInfo.processInfo.environment
-        if let override = environment["PINI_CC"], !override.isEmpty,
-            FileManager.default.isExecutableFile(atPath: override)
-        {
-            return override
-        }
-        let directories = (environment["PATH"] ?? "").split(separator: ":").map(String.init)
-        for tool in ["cc", "clang"] {
-            for directory in directories {
-                let candidate = (directory as NSString).appendingPathComponent(tool)
-                if FileManager.default.isExecutableFile(atPath: candidate) { return candidate }
-            }
-        }
-        return "/usr/bin/cc"
+        CTool.compilerPath()
     }
 
     /// 按标记切段：每段从标记之后到下一个标记之前，跨行展开一并收进来。
@@ -199,7 +186,7 @@ public enum ForeignMacroEvaluator {
 
 /// 常量表达式求值：整数四则与位运算按 Int64 精确算；浮点只认字面量。
 /// 自己算而不是交给 C，是因为「报错时能给出展开原文」需要知道表达式长什么样。
-private struct MacroExpressionParser {
+struct MacroExpressionParser {
     private enum Token: Equatable {
         case integer(String)
         case floating(String)

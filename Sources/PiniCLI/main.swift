@@ -637,6 +637,71 @@ func describeAST(_ module: Module) -> String {
 
 // MARK: - CLI Commands
 
+/// `pini bind <header>`：头文件 → `[名称|foreign]` 块。跳过项打到 stderr，
+/// 生成文本默认写 stdout，`-o` 落文件。翻译只读头文件与 C 工具链，不碰构建状态。
+func runBindCommand(_ arguments: [String]) {
+    var header: String?
+    var includePaths: [String] = []
+    var defines: [String] = []
+    var blockName: String?
+    var outputPath: String?
+    var cursor = 0
+    func usage() -> Never {
+        printError("用法：pini bind <header.h> [-I <dir>]... [-D <name>]... [--block <name>] [-o <path>]")
+        exit(1)
+    }
+    while cursor < arguments.count {
+        let argument = arguments[cursor]
+        switch argument {
+        case "-I", "--include":
+            guard cursor + 1 < arguments.count else { usage() }
+            includePaths.append(arguments[cursor + 1])
+            cursor += 2
+        case "-D", "--define":
+            guard cursor + 1 < arguments.count else { usage() }
+            defines.append(arguments[cursor + 1])
+            cursor += 2
+        case "--block":
+            guard cursor + 1 < arguments.count else { usage() }
+            blockName = arguments[cursor + 1]
+            cursor += 2
+        case "-o", "--output":
+            guard cursor + 1 < arguments.count else { usage() }
+            outputPath = arguments[cursor + 1]
+            cursor += 2
+        case "-h", "--help":
+            printHelp()
+            return
+        default:
+            guard !argument.hasPrefix("-"), header == nil else { usage() }
+            header = argument
+            cursor += 1
+        }
+    }
+    guard let header = header else { usage() }
+    do {
+        let result = try CHeaderTranslator.translate(
+            CHeaderTranslator.Options(
+                header: header, includePaths: includePaths, defines: defines,
+                blockName: blockName))
+        if let outputPath = outputPath {
+            try result.text.write(toFile: outputPath, atomically: true, encoding: .utf8)
+            print("已写入 \(outputPath)（块 \(result.blockName)，跳过 \(result.skipped.count) 条）")
+        } else {
+            print(result.text, terminator: "")
+        }
+        for skip in result.skipped {
+            printError("跳过 \(skip.name)：\(skip.reason)")
+        }
+        if result.fromIncludedHeaders > 0 {
+            printError("其中 \(result.fromIncludedHeaders) 条声明来自被包含的头文件")
+        }
+    } catch {
+        printError("Error: \(error)")
+        exit(1)
+    }
+}
+
 func printHelp() {
     print("Pini - A programming language")
     print("")
@@ -655,6 +720,7 @@ func printHelp() {
     print(" expand <file.pini> Print the source after constant folding and unroll expansion (comments dropped)")
     print(" tokens <file.pini> Print tokens from lexical analysis")
     print(" emit <file.pini> [-o <out>] [--backend <name>] Emit a target listing to stdout or the given file")
+    print(" bind <header.h> [-I <dir>]... [-D <name>]... [--block <name>] [-o <out>] Translate a C header into a [name|foreign] block")
     print(" backends [--tsv] Print the backend capability matrix (family x channel)")
     print(" compile <file.pini> Compile via clang and run (needs LLVM; set PINI_LLVM_BIN if not on PATH)")
     print(" run-llvm <file.pini> Run via LLVM JIT (lli) (needs LLVM; set PINI_LLVM_BIN if not on PATH)")
@@ -2500,6 +2566,8 @@ case "check":
         exit(1)
     }
     runCheckPath(path)
+case "bind":
+    runBindCommand(Array(args.dropFirst(2)))
 case "build":
     var shared = false
     var outputPath: String?
