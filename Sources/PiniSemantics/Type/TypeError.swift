@@ -62,7 +62,7 @@ public enum TypeError: Error, Equatable {
     /// 被 `|c` 引用的函数签名里成立。普通变量 / 字段 / 方法收下它，就等于开出第四条字符串路径。
     case stringHandleOutsideCFace(type: String, location: SourceLocation)
     /// 调用点缺标签：形参没写 `_`，实参却按位置给。`callee` 与 `param` 进诊断文案；
-    /// `paramIndex` 与声明位置供迁移工具按声明聚合，不进模板。
+    /// `paramIndex` 与声明位置随诊断携带，供调用方定位形参；消息模板不展开这两项。
     case missingArgumentLabel(
         callee: String, param: String, paramIndex: Int,
         declFile: String, declLine: Int, location: SourceLocation)

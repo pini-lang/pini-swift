@@ -11,7 +11,7 @@ public final class TypeEnvironment {
     }
 
     /// 形参的调用面信息：名字、是否要求标签与声明位置。
-    /// 声明位置只服务迁移工具按声明聚合；内建与函数值没有声明，留空串与 0。
+    /// 声明位置随诊断带出，供调用方定位形参；内建与函数值没有声明，留空串与 0。
     public struct ParamCallInfo: Equatable, Sendable {
         public let name: String
         public let takesLabel: Bool

@@ -761,7 +761,7 @@ public final class TypeChecker {
     }
 
     /// 整包收集模式：与 `check(package:)` 同一套注册与上下文，逐条捕获而不首错即停。
-    /// 目录检查与迁移普查用它；单文件包委托 `checkCollecting(module:)`。
+    /// 供一次收全诊断的调用方使用；单文件包委托 `checkCollecting(module:)`。
     public func checkCollecting(package: Package) -> [TypeError] {
         if package.fileUnits.count <= 1 {
             let module =
