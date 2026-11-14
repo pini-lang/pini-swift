@@ -711,6 +711,7 @@ func printHelp() {
     print(" run <path> Run a Pini program (single .pini file or a directory/module)")
     print(" check <path> Type check a Pini program (file or directory/module)")
     print(" build <path> Check a package, or build a workspace's targets in dependency order")
+    print(" build <path> --print-plan Print the build plan without running any translation")
     print(" build --shared <path> [-o out] Link the export block's |c entries into lib<file>.{dylib,so}")
     print(" test [path] [--filter <text>] Run |test blocks; a workspace root runs every [[test]] target")
     print(" test-llvm [path] [--filter <text>] Same collection and report as `test`, emitted as a native binary (single module)")
@@ -1138,7 +1139,7 @@ func runRunPath(_ path: String, argv: [String] = []) {
         exit(1)
     }
     let pkg: Package
-    do { pkg = try FileLoader.loadDirectory(path: path, manifest: manifest) } catch {
+    do { pkg = try loadPackageWithGenerated(path: path, manifest: manifest) } catch {
         printError(formatCLIError(error: error, source: nil)); exit(1)
     }
     emitLexerWarnings(pkg.warnings)
@@ -1174,7 +1175,7 @@ func runRunPath(_ path: String, argv: [String] = []) {
         try runIRPackageEngine(
             package: pkg, moduleRoot: path,
             typeInference: checker.typeInference,
-            ffiConfig: manifest.ffi ?? .default, argv: argv)
+            ffiConfig: foreignConfigFor(root: path, manifest: manifest), argv: argv)
     } catch {
         printError(formatCLIError(error: error, source: nil)); exit(1)
     }
@@ -1275,32 +1276,35 @@ private func runDebugFile(_ path: String) {
 // 目录/模块调试：用 FileLoader 载入包，按 `unit.fileName` 收集各文件源码，供 SourceMap 跨文件
 // 展示断点上下文；运行时 `SourceLocation.fileName` 为全路径，由 `Debugger.breakpointMatches` 容差匹配。
 private func runDebugDirectory(_ path: String) {
-    let pkg: Package
-    do { pkg = try FileLoader.loadDirectory(path: path) } catch {
-        printError("Error: \(error.localizedDescription)"); exit(1)
-    }
-    var sources: [String: String] = [:]
-    for unit in pkg.fileUnits {
-        if let src = try? readFile(unit.fileName) {
-            sources[unit.fileName] = src
+    let manifest: ModuleManifest?
+    do {
+        manifest = try FileLoader.loadManifest(directory: path)
+        let pkg = try loadPackageWithGenerated(path: path, manifest: manifest)
+        var sources: [String: String] = [:]
+        for unit in pkg.fileUnits {
+            if let src = try? readFile(unit.fileName) {
+                sources[unit.fileName] = src
+            }
         }
-    }
-    let checker = TypeChecker()
-    do { try checker.check(package: pkg) } catch {
+        let checker = TypeChecker()
+        try checker.check(package: pkg)
+        checker.typeInference.environment?.persistAcrossScopesForCodegen = true
+        let executor = IRExecutor(
+            programBase: absoluteProgramBase(path),
+            ffiConfig: foreignConfigFor(root: path, manifest: manifest))
+        startDebugger(
+            run: DebugRun(host: executor) {
+                let ir = try IRLowerer.lower(
+                    package: pkg, typeInference: checker.typeInference,
+                    foreignConstants: try evaluateForeignMacros(
+                        symbols: pkg.fileUnits.flatMap { foreignSymbols(in: $0.module) },
+                        config: foreignConfigFor(root: path, manifest: manifest)))
+                try executor.run(module: ir)
+            }, sources: sources, primaryName: sources.keys.first ?? path)
+    } catch {
         printError(formatCLIError(error: error, source: nil))
         exit(1)
     }
-    checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-    let executor = IRExecutor(programBase: absoluteProgramBase(path))
-    startDebugger(
-        run: DebugRun(host: executor) {
-            let ir = try IRLowerer.lower(
-                package: pkg, typeInference: checker.typeInference,
-                foreignConstants: try evaluateForeignMacros(
-                    symbols: pkg.fileUnits.flatMap { foreignSymbols(in: $0.module) },
-                    config: .default))
-            try executor.run(module: ir)
-        }, sources: sources, primaryName: sources.keys.first ?? path)
 }
 
 // 装配一次调试会话：入参是 `DebugRun` 而非具体引擎，装配只认协议面与「开始跑」的动作，
@@ -1537,7 +1541,7 @@ private func runModuleTests(
     moduleRoot: String, scopePath: String?, filter: String?, channel: TestChannel
 ) throws {
     let manifest = try FileLoader.loadManifest(directory: moduleRoot)
-    var pkg = try FileLoader.loadDirectory(path: moduleRoot, manifest: manifest)
+    var pkg = try loadPackageWithGenerated(path: moduleRoot, manifest: manifest)
 
     var scope: ((String) -> Bool)? = nil
     var scopeLabel: String? = nil
@@ -1567,7 +1571,7 @@ private func runModuleTests(
 
     try gateAndRunTests(
         pkg: pkg, scope: scope, scopeLabel: scopeLabel,
-        ffiConfig: manifest?.ffi ?? .default,
+        ffiConfig: foreignConfigFor(root: moduleRoot, manifest: manifest),
         programBase: absoluteProgramBase(moduleRoot), filter: filter, channel: channel)
 }
 
@@ -1798,7 +1802,7 @@ func runCheckPath(_ path: String) {
     if let manifest = manifest {
         // 显式多文件模块
         let pkg: Package
-        do { pkg = try FileLoader.loadDirectory(path: path, manifest: manifest) } catch {
+        do { pkg = try loadPackageWithGenerated(path: path, manifest: manifest) } catch {
             printError(formatCLIError(error: error, source: nil)); exit(1)
         }
         // build 漂移检查（run 同款；仅对采用依赖通道的清单生效）。
@@ -1827,7 +1831,7 @@ func runCheckPath(_ path: String) {
             /// 宏常量在检查阶段就求值：值展不开是声明或配置的问题，不该等到运行才显形。
             _ = try evaluateForeignMacros(
                 symbols: pkg.fileUnits.flatMap { foreignSymbols(in: $0.module) },
-                config: manifest.ffi ?? .default)
+                config: foreignConfigFor(root: path, manifest: manifest))
             for warning in givenCycleWarnings(package: pkg, checker: checker) {
                 emitSemanticWarning(warning)
             }
@@ -2001,7 +2005,7 @@ private func loadOwningPackageIfModule(path: String) throws -> (package: Package
     else { return nil }
     guard let moduleRoot = try FileLoader.locateModuleRoot(for: path) else { return nil }
     let manifest = try FileLoader.loadManifest(directory: moduleRoot)
-    return try (FileLoader.loadDirectory(path: moduleRoot, manifest: manifest), moduleRoot)
+    return try (loadPackageWithGenerated(path: moduleRoot, manifest: manifest), moduleRoot)
 }
 
 // Package-level IR emit: package semantic + type-check, then `IRLowerer.lower(package:)` ->
@@ -2038,21 +2042,70 @@ private func lowerPackage(
         package: package, typeInference: checker.typeInference,
         foreignConstants: try evaluateForeignMacros(
             symbols: package.fileUnits.flatMap { foreignSymbols(in: $0.module) },
-            config: (try? FileLoader.loadManifest(directory: moduleRoot))?.ffi ?? .default),
+            config: foreignConfigFor(
+                root: moduleRoot,
+                manifest: try? FileLoader.loadManifest(directory: moduleRoot))),
         requiresMain: policy.requiresMain(
             hasCSurface: package.fileUnits.contains { hasCSurface($0.module.exports) }))
     try IRValidator.check(irModule)
     return irModule
 }
 
-/// 普通单包沿用 check；工作区根则按计划产出接口、IR 和可执行文件。
-func runBuildPath(_ path: String) {
+/// 装载包并接上计划里的生成模块。需要看见生成声明的命令都走这里：
+/// `.build` 路径只在生成模块装载器里拼一份，命令层不自行拼。
+func loadPackageWithGenerated(path: String, manifest: ModuleManifest?) throws -> Package {
+    let package = try FileLoader.loadDirectory(path: path, manifest: manifest)
+    return try GeneratedModules.attach(to: package, packageRoot: path)
+}
+
+/// 宏求值用的 FFI 配置：清单 `[ffi]` 加上计划里翻译步声明的头文件、包含路径与定义。
+/// 生成的 `|macro` 条目值只能来自声明它的那个头文件；两处各抄一份就会各算一套值。
+func foreignConfigFor(root: String, manifest: ModuleManifest?) -> FFIConfig {
+    let base = manifest?.ffi ?? .default
+    guard let layout = try? BuildLayout.locate(packageRoot: root),
+        let plan = try? BuildPlan.read(at: layout.planPath, layout: layout),
+        let name = manifest?.name
+    else { return base }
+    return plan.ffiConfig(for: name, base: base)
+}
+
+/// `pini build`：先配置（登记翻译步，出计划），再执行（翻译），最后才是发射与链接。
+/// 单包在翻译之后仍走 check，工作区根则按计划产出接口、IR 和可执行文件。
+func runBuildPath(_ path: String, printPlan: Bool = false) {
     do {
-        guard let plan = try WorkspaceBuilder.plan(rootDirectory: path) else {
+        let configured = try BuildRunner.configure(rootDirectory: path)
+        if printPlan {
+            guard let configured = configured else {
+                print("\(path) 不是包或工作区，没有构建计划")
+                return
+            }
+            print(try configured.plan.render(layout: configured.layout), terminator: "")
+            return
+        }
+        if let configured = configured {
+            let report = try BuildRunner.execute(configured)
+            for outcome in report.outcomes {
+                let output = configured.layout.relativeToRoot(outcome.step.planned.output)
+                if outcome.translated {
+                    print("已翻译 \(output)（跳过 \(outcome.skipped.count) 条）")
+                    for skip in outcome.skipped {
+                        printError("  跳过 \(skip.name)：\(skip.reason)")
+                    }
+                } else {
+                    print("未变 \(output)")
+                }
+            }
+            if !report.plan.steps.isEmpty {
+                print(
+                    "构建计划 \(configured.layout.relativeToRoot(report.planPath))："
+                        + "\(report.plan.steps.count) 条翻译步")
+            }
+        }
+        guard let workspace = try WorkspaceBuilder.plan(rootDirectory: path) else {
             runCheckPath(path)
             return
         }
-        try buildWorkspace(plan)
+        try buildWorkspace(workspace)
         CommentStyleHint.emit()
     } catch {
         printError(formatCLIError(error: error, source: nil))
@@ -2302,7 +2355,7 @@ private func lowerForShared(path: String) throws -> (module: IRModule, programBa
             throw SharedBuildError(
                 message: "目录里没有 pini.toml：共享库要一个模块，散放的多份文件各是独立程序")
         }
-        let package = try FileLoader.loadDirectory(path: path, manifest: manifest)
+        let package = try loadPackageWithGenerated(path: path, manifest: manifest)
         return (
             try lowerPackage(package: package, moduleRoot: path, policy: .notRequired),
             absoluteProgramBase(path)
@@ -2570,6 +2623,7 @@ case "bind":
     runBindCommand(Array(args.dropFirst(2)))
 case "build":
     var shared = false
+    var printPlan = false
     var outputPath: String?
     var positional: [String] = []
     var cursor = 2
@@ -2577,6 +2631,9 @@ case "build":
         switch args[cursor] {
         case "--shared":
             shared = true
+            cursor += 1
+        case "--print-plan":
+            printPlan = true
             cursor += 1
         case "-o":
             guard cursor + 1 < args.count else {
@@ -2600,13 +2657,17 @@ case "build":
         exit(1)
     }
     if shared {
+        guard !printPlan else {
+            printError("Error: --print-plan 只用于普通构建，不与 --shared 同用")
+            exit(1)
+        }
         runBuildShared(path: path, outputPath: outputPath)
     } else {
         guard outputPath == nil else {
             printError("Error: -o 只跟 --shared 一起用")
             exit(1)
         }
-        runBuildPath(path)
+        runBuildPath(path, printPlan: printPlan)
     }
 case "test":
     // 测试子命令：path 可选；无参 = 收集当前目录所属模块或工作区。

@@ -74,7 +74,9 @@ public enum ForeignMacroEvaluator {
 
         /// `Process` 只认可执行文件的绝对路径，不查 PATH，故这里自己按 PATH 找。
         let compiler = preprocessorPath()
-        let arguments = ["-E", "-P"] + config.includePaths.map { "-I\($0)" } + [file.path]
+        let arguments =
+            ["-E", "-P"] + config.includePaths.map { "-I\($0)" } + config.defines.map { "-D\($0)" }
+            + [file.path]
         let process = Process()
         process.executableURL = URL(fileURLWithPath: compiler)
         process.arguments = arguments

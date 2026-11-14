@@ -6,7 +6,7 @@ import PiniSyntax
 /// `SemanticAnalyzer` / `TypeChecker` 消费 `Package` 时落地。
 public struct FileLoader {
 
-    /// 解析单个文件为 `Package`（单文件模式，向后兼容）。
+    /// 解析单个源文件为 `Package`（单文件模式，向后兼容）。
     /// - 模块名：目录名兜底（后续阶段优先取 `pini.toml` 的 `name`）。
     public static func loadFile(path: String) throws -> Package {
         let source = try String(contentsOfFile: path, encoding: .utf8)
@@ -14,6 +14,13 @@ public struct FileLoader {
         let dirName = (path as NSString).deletingLastPathComponent
         let name = dirName.components(separatedBy: "/").last ?? "main"
         return Package(name: name, fileUnits: [unit])
+    }
+
+    /// 解析目录外的单个源文件为 `FileUnit`：生成模块落在构建目录里，扫描器按点前缀跳过它们，
+    /// 只能由计划显式登记后逐个读入。后缀不参与判定——路径由计划给出，不靠猜。
+    public static func loadUnit(path: String) throws -> FileUnit {
+        let source = try String(contentsOfFile: path, encoding: .utf8)
+        return try parseUnit(fileName: path, source: source)
     }
 
     /// 解析目录为 `Package`：递归扫描 `LangConfig.sourceSuffix` 源文件。模块名优先取目录内 `pini.toml`
@@ -164,16 +171,20 @@ public struct FFIConfig: Equatable, Sendable {
     public let libs: [String]
     public let headers: [String]
     public let includePaths: [String]
+    /// 预处理宏定义，形如 `NAME` 或 `NAME=VALUE`。头文件集合与宏定义必须成对：
+    /// 只看头文件不看定义，同一份头文件在不同配置下会算出不同的宏值。
+    public let defines: [String]
 
     public init(
         abi: String = "C", searchPaths: [String] = [], libs: [String] = [],
-        headers: [String] = [], includePaths: [String] = []
+        headers: [String] = [], includePaths: [String] = [], defines: [String] = []
     ) {
         self.abi = abi
         self.searchPaths = searchPaths
         self.libs = libs
         self.headers = headers
         self.includePaths = includePaths
+        self.defines = defines
     }
 
     /// 系统默认搜索路径（libc 等系统库无需显式 `[ffi].search_paths`）。
@@ -188,7 +199,8 @@ public struct FFIConfig: Equatable, Sendable {
         FFIConfig(
             abi: self.abi, searchPaths: self.searchPaths + other.searchPaths,
             libs: self.libs + other.libs, headers: self.headers + other.headers,
-            includePaths: self.includePaths + other.includePaths)
+            includePaths: self.includePaths + other.includePaths,
+            defines: self.defines + other.defines)
     }
 }
 
@@ -297,13 +309,15 @@ private func parseManifest(_ text: String, path: String) throws -> ModuleManifes
     let ffiRaw = doc.plain("ffi")
     let ffi: FFIConfig? =
         (ffiRaw["abi"] != nil || !(ffiRaw["search_paths"] ?? "").isEmpty || !(ffiRaw["libs"] ?? "").isEmpty
-            || !(ffiRaw["headers"] ?? "").isEmpty || !(ffiRaw["include_paths"] ?? "").isEmpty)
+            || !(ffiRaw["headers"] ?? "").isEmpty || !(ffiRaw["include_paths"] ?? "").isEmpty
+            || !(ffiRaw["defines"] ?? "").isEmpty)
         ? FFIConfig(
             abi: ffiRaw["abi"] ?? "C",
             searchPaths: MiniTOML.parseArray(ffiRaw["search_paths"] ?? "[]"),
             libs: MiniTOML.parseArray(ffiRaw["libs"] ?? "[]"),
             headers: MiniTOML.parseArray(ffiRaw["headers"] ?? "[]"),
-            includePaths: MiniTOML.parseArray(ffiRaw["include_paths"] ?? "[]"))
+            includePaths: MiniTOML.parseArray(ffiRaw["include_paths"] ?? "[]"),
+            defines: MiniTOML.parseArray(ffiRaw["defines"] ?? "[]"))
         : nil
     // [tap.X] 子表：取其（单一）值的键值并入 taps（X → spec）；[tap] 平表条目同名优先。
     var taps = doc.plain("tap")

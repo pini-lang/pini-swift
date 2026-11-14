@@ -68,6 +68,24 @@ public enum CHeaderTranslator {
         }
     }
 
+    /// 输入指纹：整棵包含树的预处理结果、宏定义、目标宽度与翻译器版本。
+    /// 只按头文件字节算是不够的：宏定义与被包含的文件都能改产物，漏掉任一项都会静默沿用旧块。
+    public static func inputDigest(_ options: Options) throws -> String {
+        let header = URL(fileURLWithPath: options.header).standardizedFileURL.path
+        guard FileManager.default.fileExists(atPath: header) else {
+            throw CHeaderTranslationError.headerNotFound(path: header)
+        }
+        guard let clang = CTool.clangPath() else { throw CHeaderTranslationError.clangNotFound }
+        let target = try CTarget.probe(clang: clang)
+        let arguments =
+            ["-E", "-dD", "-P"] + options.includePaths.map { "-I\($0)" }
+            + options.defines.map { "-D\($0)" } + [header]
+        let text = try CTool.run(clang, arguments)
+        let widths = "\(target.intWidth)/\(target.longWidth)/\(target.longLongWidth)/\(target.pointerWidth)"
+        let key = [BuildPlan.translator, widths, text].joined(separator: "\u{0}")
+        return SHA256.hexDigest(Data(key.utf8))
+    }
+
     public static func translate(_ options: Options) throws -> CHeaderTranslation {
         let header = URL(fileURLWithPath: options.header).standardizedFileURL.path
         guard FileManager.default.fileExists(atPath: header) else {

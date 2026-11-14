@@ -145,7 +145,10 @@ public final class DAPServer: @unchecked Sendable {
         var isDir: ObjCBool = false
         if FileManager.default.fileExists(atPath: program, isDirectory: &isDir), isDir.boolValue {
             do {
-                package = try FileLoader.loadDirectory(path: program)
+                let manifest = try FileLoader.loadManifest(directory: program)
+                package = try GeneratedModules.attach(
+                    to: try FileLoader.loadDirectory(path: program, manifest: manifest),
+                    packageRoot: program)
             } catch {
                 sendOutput(category: "stderr", output: "Error loading module: \(error)\n")
                 sendResponse(to: msg, success: false, body: [:])

@@ -2870,11 +2870,12 @@ libs = ["m", "pthread"]
 |---|---|
 | `abi` | 全局唯一，默认 `"C"`，子模块不可覆盖 |
 | `search_paths` | 库搜索路径，分层追加；相对项按模块目录解析 |
-| `libs` | 需链接的库列表，名字不带 `-l`：LLVM 通道拼成 `-l<名>`，解释器不使用它 |
+| `libs` | 需链接与需加载的库列表，名字不带 `-l`：LLVM 通道拼成 `-l<名>`，解释器按此清单预加载 |
 | `headers` | `\|macro` 条目要 `#include` 的头文件；声明了宏的模块，`check` 与 `run` 需要 C 编译器 |
 | `include_paths` | 头文件搜索路径 |
+| `defines` | 预处理宏定义（`NAME` 或 `NAME=VALUE`）；宏值随定义变化，故与 `headers` 成对使用 |
 
-`libs` 与 foreign 块名允许脱钩：块名只决定解释器默认 `dlopen` 哪个 `lib<块名>`，链接什么库由 `libs` 说。
+`libs` 与 foreign 块名无关：块名只是标签，加载与链接的库一律由 `libs` 说。
 `compile`、`run-llvm`、`test-llvm`、`build --shared` 读同一份清单。
 
 注意 清单只影响编译器发的链接参数，不改 dylib 自身的 install name。
