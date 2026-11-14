@@ -22,12 +22,13 @@ file: String = ""
 offset: I32 = 0
 types: Array<I32> = []
 
-; 解析上下文：源文本、语法树与文件路径在一次单元解析内固定。
+; 解析上下文：源文本、语法树与文件路径在一次单元解析内固定；外部面额外放开句柄类型。
 (TypeCursor)
 world: TypeWorld = TypeWorld()
 file: String = ""
 ast: Ast = Ast()
 bytes: Array<U8> = []
+foreignFace: Bool = false
 
 ; 单次解析结果：池与根下标；根为 -1 表示这次解析失败。
 (TypeResolution)
@@ -225,9 +226,16 @@ resolveFunction|func(cursor: TypeCursor, pool: TypePool, node: TypeNode,) -> (Ty
     return out
 
 ; 具名类型：内建表、容器名、符号表依次判；容器不带实参即报个数不符。
+; `StringHandle` 只在不透明句柄面上成立：外部符号走这一路，`|c` 条目待导出面接入同一个开关。
+; 普通声明走到这里即报「名字只在外部面成立」，不静默放行。
 resolveNamed|func(cursor: TypeCursor, pool: TypePool, node: TypeNode, name: String,) -> (TypeResolution,):
     var out = TypeResolution()
     out.pool = pool
+    if name == "StringHandle":
+        if !cursor.foreignFace:
+            out.pool = addTypeError(pool = pool, error = makeTypeError(kind = typeErrorForeignOnlyName, file = cursor.file, offset = node.start, name = name))
+            return out
+        return internNamed(pool = pool, kind = typeClassOpaque, name = name)
     if isBuiltinType(name):
         let inserted = intern(pool = pool, kind = typeClassScalar, name = name, kids = [], ret = -1)
         out.pool = inserted.pool
@@ -251,7 +259,7 @@ resolveNamed|func(cursor: TypeCursor, pool: TypePool, node: TypeNode, name: Stri
     out.pool = addTypeError(pool = pool, error = makeTypeError(kind = typeErrorNotTypeName, file = cursor.file, offset = node.start, name = name))
     return out
 
-; 具名条目驻留：结构、对象与枚举共用一条。
+; 具名条目驻留：结构、对象、枚举与不透明句柄共用一条。
 internNamed|func(pool: TypePool, kind: TypeClass, name: String,) -> (TypeResolution,):
     var out = TypeResolution()
     let inserted = intern(pool = pool, kind = kind, name = name, kids = [], ret = -1)
@@ -329,6 +337,8 @@ resolveDecl|func(stage: TypePass, cursor: TypeCursor, unitIndex: I32, declId: I3
         return resolveSignature(stage = out, cursor = cursor, unitIndex = unitIndex, decl = decl)
     if isVariableDeclCode(decl.kind):
         return resolveOne(stage = out, cursor = cursor, unitIndex = unitIndex, declId = declId, typeId = decl.typeId)
+    if isForeignDeclCode(decl.kind):
+        return resolveForeignBlock(stage = out, cursor = cursor, unitIndex = unitIndex, decl = decl)
     if isExtensionDeclCode(decl.kind):
         var i = 0
         while i < len(decl.kids):
@@ -338,6 +348,19 @@ resolveDecl|func(stage: TypePass, cursor: TypeCursor, unitIndex: I32, declId: I3
                 out = resolveSignature(stage = out, cursor = cursor, unitIndex = unitIndex, decl = member)
             i = i + 1
         return out
+    return out
+
+; 外部块：逐条解析符号类型；这一路放开句柄类型，条目按声明序留绑定。
+resolveForeignBlock|func(stage: TypePass, cursor: TypeCursor, unitIndex: I32, decl: DeclNode,) -> (TypePass,):
+    var out = stage
+    var inner = cursor
+    inner.foreignFace = true
+    var i = 0
+    while i < len(decl.kids):
+        let symbol = cursor.ast.decls[decl.kids[i]]
+        if isForeignSymbolCode(symbol.kind):
+            out = resolveOne(stage = out, cursor = inner, unitIndex = unitIndex, declId = decl.kids[i], typeId = symbol.typeId)
+        i = i + 1
     return out
 
 ; 开一条成员记录：类型声明每出现一次建一条，字段与载荷随后往里追加。
@@ -511,6 +534,9 @@ walkAggregate|func(pool: TypePool, members: Array<TypeMember>, id: I32, state: A
         return out
     let entry = pool.entries[id]
     if isTypeClass(kind = entry.kind, expected = typeClassScalar) || isTypeClass(kind = entry.kind, expected = typeClassPointer):
+        out.state[id] = 2
+        return out
+    if isTypeClass(kind = entry.kind, expected = typeClassOpaque):
         out.state[id] = 2
         return out
     if isTypeClass(kind = entry.kind, expected = typeClassObject) || isTypeClass(kind = entry.kind, expected = typeClassCollection):

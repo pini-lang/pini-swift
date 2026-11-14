@@ -1,7 +1,8 @@
-; 类型类别：标量、指针、结构、对象、枚举、元组、集合、可选、结果、函数与泛型实例各成一类。
+; 类型类别：标量、不透明句柄、指针、结构、对象、枚举、元组、集合、可选、结果、函数与泛型实例各成一类。
 [TypeClass]
 typeClassInvalid
 typeClassScalar
+typeClassOpaque
 typeClassPointer
 typeClassStruct
 typeClassObject
@@ -38,6 +39,8 @@ typeClassName|func(_kind: TypeClass,) -> (String,):
             return "无效类型"
         case typeClassScalar:
             return "标量"
+        case typeClassOpaque:
+            return "不透明句柄"
         case typeClassPointer:
             return "指针"
         case typeClassStruct:
@@ -149,6 +152,8 @@ typeText|func(pool: TypePool, id: I32,) -> (String,):
         return "<无效>"
     let entry = pool.entries[id]
     if isTypeClass(kind = entry.kind, expected = typeClassScalar):
+        return entry.name
+    if isTypeClass(kind = entry.kind, expected = typeClassOpaque):
         return entry.name
     if isTypeClass(kind = entry.kind, expected = typeClassStruct) || isTypeClass(kind = entry.kind, expected = typeClassObject):
         return entry.name

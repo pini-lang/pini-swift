@@ -40,7 +40,24 @@ foreignFlagTexts|func(ast: Ast, bytes: Array<U8>, decl: DeclNode,) -> (Array<Str
         let flag = ast.decls[decl.kids[i]]
         out = out.append(decodeRange(bytes = bytes, start = flag.nameStart, end = flag.nameEnd))
         i = i + 1
-    return sortedFlagTexts(out)
+    return normalizeFlagTexts(out)
+
+; 标志规范化：`macro` 蕴含 `readonly`，构建期常量本身不可写；两种写法合并成同一组。
+normalizeFlagTexts|func(_items: Array<String>,) -> (Array<String>,):
+    var out = sortedFlagTexts(_items)
+    if containsFlagText(items = out, name = "macro") && !containsFlagText(items = out, name = "readonly"):
+        out = out.append("readonly")
+        out = sortedFlagTexts(out)
+    return out
+
+; 标志命中：整串相等即命中。
+containsFlagText|func(items: Array<String>, name: String,) -> (Bool,):
+    var i = 0
+    while i < len(items):
+        if items[i] == name:
+            return true
+        i = i + 1
+    return false
 
 ; 标志排序：插入排序，ASCII 标志的字节序与声明序无关。
 sortedFlagTexts|func(_items: Array<String>,) -> (Array<String>,):
