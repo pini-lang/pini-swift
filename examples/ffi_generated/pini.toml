@@ -1,0 +1,7 @@
+[package]
+name = "ffi_generated"
+version = "0.1.0"
+
+[[bin]]
+name = "ffi_generated"
+entry = "src/main.pini"

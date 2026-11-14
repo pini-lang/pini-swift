@@ -8,6 +8,10 @@ baseline can only shrink. An unlisted failure is a regression.
 The golden leg compares `run` stdout against examples/golden/<example>.out
 byte for byte. Examples that cannot be compared that way are listed with a
 reason in examples/golden/EXEMPT.tsv; everything else must carry a golden file.
+
+A package carrying `build.pini` is built before its check leg: generated foreign
+blocks live under `.build`, which is neither copied nor scanned, so the build is
+what makes the package checkable at all.
 """
 
 import argparse
@@ -207,7 +211,9 @@ def main():
 
     scratch = tempfile.mkdtemp(prefix="pini-examples-gate-")
     try:
-        shutil.copytree(EXAMPLES, os.path.join(scratch, "examples"), symlinks=True)
+        shutil.copytree(
+            EXAMPLES, os.path.join(scratch, "examples"), symlinks=True,
+            ignore=shutil.ignore_patterns(".build"))
         if not args.quiet:
             print(f"示例门禁：{sum(1 for _, _, p in found if not p)} 个文件 + "
                   f"{sum(1 for _, _, p in found if p)} 个包")
@@ -246,6 +252,16 @@ def main():
             for label, _, is_package in found:
                 if is_package and leg != "check":
                     continue
+                # 生成物在 `.build` 里，拷贝与扫描都看不见它：先构建，包才有东西可检查。
+                if is_package and leg == "check" and os.path.isfile(
+                        os.path.join(scratch, "examples", label, "build.pini")):
+                    ok, detail, _ = execute(
+                        [path, "build", f"examples/{label}"], scratch, child_env)
+                    if not ok:
+                        failures[label] = f"构建失败：{detail}"
+                        if (label, leg) not in known:
+                            regression.append((label, leg, failures[label]))
+                        continue
                 ok, detail, _ = execute([path, leg, f"examples/{label}"], scratch, child_env)
                 if ok:
                     passed += 1

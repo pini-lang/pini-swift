@@ -49,9 +49,8 @@ public enum BuildRunner {
             layout = BuildLayout(root: workspace.rootPath, profile: workspace.profile)
         } else if let manifest = try FileLoader.loadManifest(directory: root) {
             members = [(manifest.name, root)]
-            layout = BuildLayout(
-                root: root,
-                profile: (try WorkspaceManifest.load(directory: root))?.profile ?? "debug")
+            /// 成员单独构建时计划仍落工作区根：布局只有一处定义，装载器按同一处去找。
+            layout = try BuildLayout.locate(packageRoot: root)
         } else {
             return nil
         }
@@ -112,7 +111,11 @@ public enum BuildRunner {
             }
             steps.append(step.planned.with(inputHash: digest))
         }
-        let plan = BuildPlan(packages: configured.packages, steps: steps)
+        /// 只构建一个成员时，计划里别的包必须原样留住：覆盖写会让它们的检查凭空要求重跑。
+        let owned = Set(configured.packages.map(\.name))
+        let keptPackages = previous?.packages.filter { !owned.contains($0.name) } ?? []
+        let keptSteps = previous?.steps.filter { !owned.contains($0.package) } ?? []
+        let plan = BuildPlan(packages: keptPackages + configured.packages, steps: keptSteps + steps)
         /// 没有翻译步也不曾有计划时不落盘：没构建面的包不该多个空文件。
         if !steps.isEmpty || previous != nil {
             try write(try plan.render(layout: configured.layout), to: configured.layout.planPath)

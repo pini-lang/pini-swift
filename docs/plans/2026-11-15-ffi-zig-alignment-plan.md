@@ -230,6 +230,14 @@ clang 取声明、映射成 Pini、跳过报告、确定性。
 
 验收：三个示例在两通道上同结果；同名同型合并与同名异型报错各一条用例；`examples/README.md` 说明改写。
 
+已落地三个示例，口径与上文措辞有两处偏差，按实情记：
+
+- `examples/ffi_generated/`（包）：`build.pini` 一条翻译步把 `include/cstr.h` 翻成 `[cstr|foreign]`，源码调 `strlen` / `atoi` 与头文件里的宏。门禁里包只跑 `check`，所以这条腿是「先 `pini build` 再 `check`」；两通道一致由 `BuildSurfaceTests` 的用例保证——解释器跑一次，再把同一包放进临时工作区构建出可执行文件跑一次，逐字节比对。
+- `examples/ffi-handwritten.pini`：**不是按值结构体**，而是 `unsigned int` 形参（IR 无 U32，生成器整条跳过，手写块按 I32 声明）。按值结构体连手写面也接不住：Pini 的签名里没有按值聚合，那类接口只能改 C 侧签名再声明。
+- `examples/ffi-handle.pini`：给定块收 `FILE*`（`*U8` 字段），默认实例是打开的空流，方法包 `fread` / `fclose`。**带值构造走不通**：`文件(句柄 = h)` 能过检查，在 IRGen 被拒（构造实参本期不支持），所以示例用「默认实例 + 字段赋值」拿到第二个句柄。
+
+`examples/README.md` 新增「FFI 声明的三个来源」表（生成物 / 手写块 / 给定块，各接得住什么、同名即冲突），示例总表补三行，包数从三个改为四个。示例门禁同步加一条：带 `build.pini` 的包先跑 `pini build`，拷贝时排除 `.build`。
+
 ### 收口面
 
 - 参考手册 9.4 从「foreign 块」改写成「三个来源」，订正 9.4 里「跨文件引用报 E5-017」这处事实错误。
@@ -317,5 +325,6 @@ clang 取声明、映射成 Pini、跳过报告、确定性。
 - 前置面已落地：外部符号进模块符号表（跨文件可见、同名同型合并、与本地符号和导出名同名及各条目非 C 名的冲突都在声明处拒），库绑定归 `[ffi].libs`（块名退为标签，`libc` 保留名消失）。取证在 `ForeignSymbolScopeTests` 与 `ForeignLibraryBindingTests`。
 - 翻译面已落地：`pini bind` 出 `[名称|foreign]` 块，跳过项带理由进报告，同一输入两次生成一致。取证在 `CHeaderTranslationTests`。
 - 构建面已落地：`build.pini` 解析成计划、`plan.toml` 落构建目录、生成物落 `.build`、`--print-plan` 只打计划、装载面归一、缺产物与过期脚本各有定向诊断。取证在 `BuildSurfaceTests`。
-- 下次回来做什么：零散面 —— 三个示例（生成模块 / 手写块补按值结构体 / given 块包句柄）与 `examples/README.md` 说明。
-- 需带来的材料：本件、`examples/ffi_module` 现状、一份真实头文件的跳过报告。
+- 零散面已落地：三个示例 + 载体分工表，门禁对带 `build.pini` 的包先构建。取证在 `examples-gate.py` 与 `BuildSurfaceTests` 的两通道用例。
+- 下次回来做什么：收口面 —— 参考手册 9.4 改写成三个来源、订正 E5-017 那处事实错误、`docs/spec/c-interop-design.md` 的导入面重述。
+- 需带来的材料：本件、`examples/` 三份新示例、参考手册 9.4 与互操作设计件的现状。

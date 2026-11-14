@@ -248,6 +248,42 @@ struct BuildSurfaceTests {
         #expect(check.err.contains("pini build"), "诊断没指向 build：\(check.err)")
     }
 
+    @Test("生成模块示例：解释器与 LLVM 通道输出一致")
+    func generatedExampleMatchesOnBothChannels() throws {
+        guard PiniTestEnvironment.requireToolchain(["PINI_CLI_BIN", "PINI_LLVM_BIN"]) else { return }
+        let source = PiniTestEnvironment.repositoryRoot
+            .appendingPathComponent("examples/ffi_generated")
+        let workspace = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pini-example-ws-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        let member = workspace.appendingPathComponent("ffi_generated")
+        try FileManager.default.copyItem(at: source, to: member)
+        try? FileManager.default.removeItem(at: member.appendingPathComponent(".build"))
+        try "[workspace]\nmembers = [\"ffi_generated\"]\nprofile = \"debug\"\n".write(
+            to: workspace.appendingPathComponent("pini.toml"), atomically: true, encoding: .utf8)
+
+        let build = try runCLI(["build", member.path])
+        #expect(build.status == 0, "stderr：\(build.err)")
+        let run = try runCLI(["run", member.path])
+        #expect(run.status == 0, "stderr：\(run.err)")
+        #expect(!run.out.isEmpty, "示例没有输出")
+
+        /// 工作区构建走另一条通道：发射 IR、链接可执行文件，再直接跑产物。
+        let built = try runCLI(["build", workspace.path])
+        #expect(built.status == 0, "stderr：\(built.err)")
+        let binary = workspace.appendingPathComponent(".build/debug/bin/ffi_generated")
+        let process = Process()
+        process.executableURL = binary
+        let out = Pipe()
+        process.standardOutput = out
+        try process.run()
+        process.waitUntilExit()
+        let linked = String(decoding: out.fileHandleForReading.readAllData(), as: UTF8.self)
+        #expect(process.terminationStatus == 0, "LLVM 产物退出码 \(process.terminationStatus)")
+        #expect(linked == run.out, "两通道输出不同：解释器 \(run.out) / LLVM \(linked)")
+    }
+
     @Test("输入不变则复用，头文件一改就重翻，计划逐字节稳定")
     func reusesUntilInputChanges() throws {
         guard PiniTestEnvironment.requireToolchain(["PINI_CLI_BIN"]) else { return }

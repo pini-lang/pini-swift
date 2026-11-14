@@ -1,0 +1,6 @@
+; 构建配置：每个给定块是一条 C 头文件翻译步，块名即步骤名。
+; 生成物落在 .build/<profile>/packages/ffi_generated/generated/cstr.pini，不进源码树。
+[cstr|given]
+头文件: String = "include/cstr.h"
+包含路径: Array<String> = ["include"]
+定义: Array<String> = []

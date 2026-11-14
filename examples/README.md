@@ -4,7 +4,7 @@
 > 且**必须真实可运行、真实触发它所声明的特性**（不得只 `print("X 运行成功")`）。
 >
 > 自动化护栏（`tools/examples-gate.py`，CI 与本地同一条命令）：
-> - **合规门**：全部示例零错误通过 `check`（解析+语义+类型）；三个包按包级 `check`。
+> - **合规门**：全部示例零错误通过 `check`（解析+语义+类型）；四个包按包级 `check`，带 `build.pini` 的先跑 `build`。
 > - **运行门**：全部顶层示例经 `run` 与 `run-llvm` 跑通，退出码为 0、不超时。
 > - **黄金输出门**：`run` 的 stdout 与 `examples/golden/<示例>.out` 逐字节相同；
 >   无法逐字节比对的示例登记在 `examples/golden/EXEMPT.tsv`，其余示例缺期望文件即红。
@@ -91,6 +91,9 @@
 | `ffi.pini` | FFI 与 unsafe（`[libc|foreign]` 块 / `unsafe` 消耗点 / `&x` 取地址 / `load`·`store`·`addressof`） | 见文件 | Provisional |
 | `ffi-string-callback.pini` | FFI 边界（一）：`String` 形参借出成 `const char*`、内建 `fromCString` 取回、Pini 顶层函数当 C 回调；两条通道都成立 | `6 / ba / ab` | Provisional |
 | `ffi-varargs-handle.pini` | FFI 边界（二）：C 变参调用与字符串句柄；只在 LLVM 通道与 `build --shared` 上成立，`run` 腿按 E5-019 / E5-020 登记为已知失败 | `句柄 的字节数 = 6` | Provisional |
+| `ffi-handwritten.pini` | FFI 边界（三）：手写块承接生成面接不住的声明（`unsigned int` 在 IR 无宽度；按值结构体两处都接不住） | `取消闹钟后剩余 = 0` / `微睡零微秒返回 = 0` | Provisional |
+| `ffi-handle.pini` | FFI 边界（四）：给定块包不透明句柄（`FILE*` 存 `*U8` 字段，方法读写关闭，默认实例是打开的空流） | `默认实例读到 = 0` / `换成零流读到 = 8` | Provisional |
+| `ffi_generated/`（目录） | 构建期翻译：`build.pini` 把 C 头文件翻成 `[cstr|foreign]` 块，生成物只落 `.build`，源码树不出现声明 | 先 `pini build`，再 `run`：`长度 = 9` / `数值 = 2048` / `宏值 = 3` | Provisional |
 | `multifile/`（目录） | 多文件模块（跨文件共享命名空间） | `5 / 25 / 0` | Provisional |
 | `package-demo/`（目录） | 可见性 / 模块化（4 级约定制） | 见目录 | Provisional |
 | `own-method.pini` | `|own` 本型方法：类型名作接收者，覆盖结构体 / 对象体 / 给定体 / 枚举体 | `7 / 2 / 9 / 3` | Provisional |
@@ -105,6 +108,20 @@
   - `[名称|import]` —— 绑定包路径到用例标识符（全导入）。
   - `[类型名称|export]` —— 显式覆盖默认导出：`_StructB = StructB` 提升私有为公开，`_C = StructC` 降为不导出。
 - **状态**：跨包依赖解析属 P6+ 范畴（见各 `pini.toml` 的 `# 依赖解析属 P6+ 范畴` 注释），当前 CLI 以目录为入口运行多文件模块；真正的跨包加载尚未实现，故未提供可运行示例。
+
+### FFI 声明的三个来源
+
+外部符号按来源分三处写，三者同名即冲突（同名同型合并、异型在声明处报 E3-019）：
+
+| 来源 | 写在哪 | 接得住什么 | 示例 |
+|---|---|---|---|
+| 生成物 | `build.pini` 的 `[名称\|given]` 翻译步，`pini build` 翻成 `[名称\|foreign]` | 标量、指针、`const char*` 形参、变参、回调形参、数值宏 | `ffi_generated/` |
+| 手写块 | 源码里的 `[名称\|foreign]`，块名只是标签 | 生成面跳过但签名装得下的：`unsigned int` 按 I32、枚举按底层宽度、生成器认不出的 typedef | `ffi-handwritten.pini` |
+| 给定块 | `[名称\|given]` 收字段，`[[名称]]` 挂方法 | 不透明句柄与默认实例：`FILE*` 存 `*U8`，方法包 C 调用 | `ffi-handle.pini` |
+
+- 生成面接不住的按值结构体、函数指针返回、位域、函数式宏、枚举常量一律跳过并进报告；生成物只在 `.build/<profile>/packages/<包>/generated/` 里，源码树看不到，评审看的是翻译步声明。
+- 库由 `[ffi].libs` 决定（解释器预加载，LLVM 通道拼 `-l`）；块名不参与库解析。
+- 生成模块要先 `pini build` 才可见：`check` / `run` 遇缺计划、脚本改过、产物缺失都报「先跑 `pini build`」。
 
 ### LLVM 后端用法
 解释器之外，提供 LLVM IR 后端（需本机 `clang`/`lli` 在 PATH，或设置 `PINI_LLVM_BIN`）：
