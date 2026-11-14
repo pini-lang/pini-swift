@@ -12,12 +12,13 @@ label: String = ""
 typeId: I32 = -1
 offset: I32 = 0
 
-; 形参：名字、类型下标、是否有默认值与是否取用参数。
+; 形参：名字、类型下标、是否有默认值、是否取用参数与是否有长度约束。
 (CallParam)
 name: String = ""
 typeId: I32 = -1
 hasDefault: Bool = false
 isUsing: Bool = false
+sized: Bool = false
 
 ; 调用点：符号下标、内建函数下标、函数值类型、实参与诊断位置。
 (CallSite)
@@ -164,9 +165,15 @@ deferCall|func(out: CallResult,) -> (CallResult,):
     done.typeId = unsetTypeId()
     return done
 
-; 单实参比对：任一类型未定即跳过；不可赋值报 E4-001。
+; 单实参比对：实参未定即跳过；有长度约束时只认可取长的类型；其余按可赋值。
 checkArg|func(out: CallResult, site: CallSite, arg: CallArg, param: CallParam,) -> (CallResult,):
-    if arg.typeId < 0 || param.typeId < 0:
+    if arg.typeId < 0:
+        return out
+    if param.sized:
+        if isSizedType(out.pool, arg.typeId):
+            return out
+        return failCall(out, site, arg.offset, callArgType, "数组、字典、集合或字符串", typeText(out.pool, arg.typeId))
+    if param.typeId < 0:
         return out
     if isAssignable(out.pool, arg.typeId, param.typeId):
         return out
@@ -261,6 +268,7 @@ builtinParams|func(pool: TypePool, params: Array<BuiltinParam>,) -> (BuiltinArgs
         var param = CallParam()
         param.name = params[i].name
         param.typeId = inserted.id
+        param.sized = params[i].sized
         out.params = out.params.append(param)
         i = i + 1
     return out

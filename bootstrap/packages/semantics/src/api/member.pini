@@ -307,12 +307,12 @@ checkTupleMember|func(world: MemberWorld, out: MemberResult, entry: TypeEntry, a
     done.typeId = entry.kids[label]
     return done
 
-; 内建成员：按所有者与名字查表，实参按接收者类型实参回填。
+; 内建成员：按所有者与名字查表，成员值按接收者实参定成函数类型；无形参就是零参函数。
 checkBuiltinMember|func(world: MemberWorld, out: MemberResult, owner: String, kids: Array<I32>, access: MemberAccess,) -> (MemberResult,):
     let at = findBuiltin(world.builtins, owner, access.spelling)
     if at < 0:
         return failMember(out, access, memberUnknown, typeText(out.pool, access.receiver))
-    let typed = builtinShapeType(out.pool, world.builtins[at].ret, kids)
+    let typed = builtinMemberSignature(out.pool, world.builtins[at], kids)
     if typed.id < 0:
         return deferMember(out, access.receiver)
     var done = out

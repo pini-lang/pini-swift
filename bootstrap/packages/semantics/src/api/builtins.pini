@@ -13,6 +13,7 @@ builtinChar
 builtinU8
 builtinF64
 builtinOptionalChar
+builtinOptionalI32
 builtinSameElem
 builtinOptionalElem
 builtinArrayElem
@@ -27,10 +28,11 @@ builtinResultString
 builtinResultVoid
 builtinPointerU8
 
-; 内建形参：名字服务标签与诊断，形状决定类型。
+; 内建形参：名字服务标签与诊断，形状决定类型；sized 表示实参须是可取长的类型。
 (BuiltinParam)
 name: String = ""
 shape: BuiltinShape = .builtinAny
+sized: Bool = false
 
 ; 内建成员：所有者、成员名、形参与返回形状。
 (BuiltinMember)
@@ -67,6 +69,8 @@ builtinShapeName|func(shape: BuiltinShape,) -> (String,):
             return "浮点"
         case builtinOptionalChar:
             return "字符可选"
+        case builtinOptionalI32:
+            return "整数可选"
         case builtinSameElem:
             return "元素本身"
         case builtinOptionalElem:
@@ -117,6 +121,19 @@ oneParam|func(name: String, shape: BuiltinShape,) -> (Array<BuiltinParam>,):
     out = out.append(makeParam(name, shape))
     return out
 
+; 有长度形参：具体类型由实参决定，调用侧只要求可取长。
+makeSizedParam|func(name: String,) -> (BuiltinParam,):
+    var out = BuiltinParam()
+    out.name = name
+    out.sized = true
+    return out
+
+; 单形参（带长度约束）：`len` 与将来的同类内建共用。
+oneSizedParam|func(name: String,) -> (Array<BuiltinParam>,):
+    var out: Array<BuiltinParam> = []
+    out = out.append(makeSizedParam(name))
+    return out
+
 ; 双形参。
 twoParams|func(first: String, firstShape: BuiltinShape, second: String, secondShape: BuiltinShape,) -> (Array<BuiltinParam>,):
     var out: Array<BuiltinParam> = []
@@ -151,14 +168,14 @@ builtinMemberTable|func() -> (Array<BuiltinMember>,):
     out = out.append(makeBuiltin("String", "trimRight", noParams(), builtinString))
     out = out.append(makeBuiltin("String", "contains", oneParam("sub", builtinString), builtinBool))
     out = out.append(makeBuiltin("String", "substring", twoParams("start", builtinI32, "end", builtinI32), builtinString))
-    out = out.append(makeBuiltin("String", "slice", twoParams("start", builtinAny, "end", builtinAny), builtinString))
+    out = out.append(makeBuiltin("String", "slice", twoParams("start", builtinOptionalI32, "end", builtinOptionalI32), builtinString))
     out = out.append(makeBuiltin("String", "split", oneParam("sep", builtinString), builtinArrayString))
     out = out.append(makeBuiltin("String", "indexOf", oneParam("needle", builtinString), builtinI32))
     out = out.append(makeBuiltin("String", "get", oneParam("index", builtinI32), builtinOptionalChar))
     out = out.append(makeBuiltin("String", "getUnchecked", oneParam("index", builtinI32), builtinChar))
     out = out.append(makeBuiltin("Array", "join", oneParam("sep", builtinString), builtinString))
     out = out.append(makeBuiltin("Array", "append", oneParam("value", builtinSameElem), builtinArrayElem))
-    out = out.append(makeBuiltin("Array", "slice", twoParams("start", builtinAny, "end", builtinAny), builtinArrayElem))
+    out = out.append(makeBuiltin("Array", "slice", twoParams("start", builtinOptionalI32, "end", builtinOptionalI32), builtinArrayElem))
     out = out.append(makeBuiltin("Array", "last", noParams(), builtinSameElem))
     out = out.append(makeBuiltin("Array", "pop", noParams(), builtinPopTuple))
     out = out.append(makeBuiltin("Array", "get", oneParam("index", builtinI32), builtinOptionalElem))
@@ -170,7 +187,7 @@ builtinMemberTable|func() -> (Array<BuiltinMember>,):
 ; 函数表：按收集、值、字符、读写、数学、并发、C 边界的次序排。
 builtinFunctionTable|func() -> (Array<BuiltinFunction>,):
     var out: Array<BuiltinFunction> = []
-    out = out.append(makeFunction("len", oneParam("value", builtinAny), builtinI32, false))
+    out = out.append(makeFunction("len", oneSizedParam("value"), builtinI32, false))
     out = out.append(makeFunction("print", oneParam("value", builtinAny), builtinVoid, true))
     out = out.append(makeFunction("assert", twoParams("条件", builtinBool, "消息", builtinString), builtinVoid, true))
     out = out.append(makeFunction("F64", oneParam("value", builtinAny), builtinF64, false))
@@ -314,6 +331,9 @@ builtinShapeType|func(pool: TypePool, shape: BuiltinShape, kids: Array<I32>,) ->
     if isBuiltinShape(shape, builtinOptionalChar):
         let charType = scalarType(pool, "Char")
         return wrapArg(charType.pool, typeClassOptional, "", charType.id)
+    if isBuiltinShape(shape, builtinOptionalI32):
+        let numberType = scalarType(pool, "I32")
+        return wrapArg(numberType.pool, typeClassOptional, "", numberType.id)
     if isBuiltinShape(shape, builtinSameElem):
         return hitType(pool, firstArg(kids))
     if isBuiltinShape(shape, builtinOptionalElem):
@@ -342,3 +362,20 @@ builtinShapeType|func(pool: TypePool, shape: BuiltinShape, kids: Array<I32>,) ->
     if isBuiltinShape(shape, builtinPointerU8):
         return pointerU8(pool)
     return hitType(pool, -1)
+
+; 成员签名：形参与返回各按形状定型，占位取接收者实参；无形参时给零参函数类型。
+builtinMemberSignature|func(pool: TypePool, member: BuiltinMember, kids: Array<I32>,) -> (TypeInsert,):
+    var working = pool
+    var params: Array<I32> = []
+    var i = 0
+    while i < len(member.params):
+        let param = builtinShapeType(working, member.params[i].shape, kids)
+        working = param.pool
+        if param.id < 0:
+            return hitType(working, -1)
+        params = params.append(param.id)
+        i = i + 1
+    let ret = builtinShapeType(working, member.ret, kids)
+    if ret.id < 0:
+        return hitType(ret.pool, -1)
+    return intern(ret.pool, typeClassFunction, "", params, ret.id)
