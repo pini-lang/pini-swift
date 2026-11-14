@@ -1,4 +1,5 @@
 import Foundation
+import PiniCore
 import Testing
 import PiniHost
 
@@ -37,6 +38,15 @@ struct ForeignLibraryBindingTests {
             .appendingPathComponent("pini-ffi-\(tag)-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
+    }
+
+    /// C 编译器：CI 镜像里 clang 不在 `/usr/bin`，故由工具链解析兜底。
+    private func cCompiler() -> String? {
+        for candidate in ["/usr/bin/cc", "/usr/bin/clang"]
+        where FileManager.default.isExecutableFile(atPath: candidate) {
+            return candidate
+        }
+        return LLVMToolchain.clangPath
     }
 
     @Test("块名只是标签：没写 [ffi].libs 也能解析进程映像里的符号")
@@ -100,7 +110,9 @@ struct ForeignLibraryBindingTests {
         let ccArguments = ["-shared", "-fPIC", "-o", libName, "ffilib.c"]
         #endif
         let cc = Process()
-        cc.executableURL = URL(fileURLWithPath: "/usr/bin/cc")
+        cc.executableURL = URL(
+            fileURLWithPath: try #require(
+                cCompiler(), "找不到 C 编译器：/usr/bin/cc、/usr/bin/clang 与 LLVM 工具链都没有"))
         cc.arguments = ccArguments
         cc.currentDirectoryURL = libDir
         try cc.run()
