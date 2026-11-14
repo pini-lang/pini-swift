@@ -361,8 +361,32 @@ isLiteralExpr|self(id: I32,) -> (Bool,):
 isStmt|self(id: I32, kind: StmtKind,) -> (Bool,):
     return self.stmts[id].kind == stmtKindTag(kind)
 ; 跨包谓词：枚举值不能跨包引用，语句类别只经这里分流。
+isBlockStmt|self(id: I32,) -> (Bool,):
+    return self.stmts[id].kind == stmtKindTag(stmtBlock)
+isVariableStmt|self(id: I32,) -> (Bool,):
+    return self.stmts[id].kind == stmtKindTag(stmtVariable)
+isAssignStmt|self(id: I32,) -> (Bool,):
+    return self.stmts[id].kind == stmtKindTag(stmtAssign)
+isExpressionStmt|self(id: I32,) -> (Bool,):
+    return self.stmts[id].kind == stmtKindTag(stmtExpression)
+isIfStmt|self(id: I32,) -> (Bool,):
+    return self.stmts[id].kind == stmtKindTag(stmtIf)
+isWhileStmt|self(id: I32,) -> (Bool,):
+    return self.stmts[id].kind == stmtKindTag(stmtWhile)
+isForStmt|self(id: I32,) -> (Bool,):
+    return self.stmts[id].kind == stmtKindTag(stmtFor)
 isMatchStmt|self(id: I32,) -> (Bool,):
     return self.stmts[id].kind == stmtKindTag(stmtMatch)
+isReturnStmt|self(id: I32,) -> (Bool,):
+    return self.stmts[id].kind == stmtKindTag(stmtReturn)
+isBreakStmt|self(id: I32,) -> (Bool,):
+    return self.stmts[id].kind == stmtKindTag(stmtBreak)
+isContinueStmt|self(id: I32,) -> (Bool,):
+    return self.stmts[id].kind == stmtKindTag(stmtContinue)
+isPassStmt|self(id: I32,) -> (Bool,):
+    return self.stmts[id].kind == stmtKindTag(stmtPass)
+isDeferStmt|self(id: I32,) -> (Bool,):
+    return self.stmts[id].kind == stmtKindTag(stmtDefer)
 isDecl|self(id: I32, kind: DeclKind,) -> (Bool,):
     return self.decls[id].kind == declKindTag(kind)
 ; 子节点读取：越界答 -1，调用方按 -1 表示缺省。
