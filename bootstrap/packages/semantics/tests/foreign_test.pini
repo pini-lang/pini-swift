@@ -1,0 +1,86 @@
+[foreign_test|import]
+_module_loader = "../../module-loader"
+
+; 造外部单元：从源码字符串建；路径决定可见性推导的输入。
+造外部单元|func(path: String, text: String,) -> (CompilationUnit,):
+    let loaded = loadUnit(path = path, text = text)
+    assert(!loaded.failed, "样例应可解析：" + path)
+    return loaded.unit
+
+; 外部符号：一个文件声明、另一个文件注册不报错；条目是包级可见的函数符号。
+跨文件可见|test() -> ():
+    let 甲 = 造外部单元(path = "packages/p/src/api/a.pini", text = "[libc|foreign]\nmalloc: (I64,) -> (*I8,)\n")
+    let 乙 = 造外部单元(path = "packages/p/src/api/b.pini", text = "用|func() -> ():\n    return\n")
+    let 表 = registerPackage([甲, 乙])
+    assert(表.isOK(), "跨文件不应有错")
+    assert(表.symbolCount() == 2, "外部符号与函数各一条")
+    let 符号 = 表.symbolAt(0)
+    assert(符号.spelling == "malloc", "外部符号名")
+    assert(符号.isForeign, "标记为外部符号")
+    assert(isVisibility(level = 符号.visibility, expected = visibilityPackage), "包级可见")
+    assert(isSymbolKind(kind = 符号.kind, expected = symbolFunction), "函数条目")
+    return
+
+; 同名同型：两个文件各声明同一符号，签名与标志一致即合并，符号只留一份。
+同名同型合并|test() -> ():
+    let 甲 = 造外部单元(path = "packages/p/src/api/a.pini", text = "[libc|foreign]\nstrlen: (String,) -> (U64,)\n")
+    let 乙 = 造外部单元(path = "packages/p/src/api/b.pini", text = "[libc|foreign]\nstrlen: (String,) -> (U64,)\n")
+    let 表 = registerPackage([甲, 乙])
+    assert(表.isOK(), "同型应合并")
+    assert(表.symbolCount() == 1, "只留一份")
+    return
+
+; 同名异型：签名不同即报，消息带首次声明所在文件；位置指向第二次声明。
+同名异型|test() -> ():
+    let 甲 = 造外部单元(path = "packages/p/src/api/a.pini", text = "[libc|foreign]\nmalloc: (I64,) -> (*I8,)\n")
+    let 乙 = 造外部单元(path = "packages/p/src/api/b.pini", text = "[libc|foreign]\nmalloc: (I32,) -> (*I8,)\n")
+    let 表 = registerPackage([甲, 乙])
+    assert(!表.isOK(), "异型应报错")
+    assert(isSymbolError(error = 表.errorAt(0), kind = symbolForeignMismatch), "类别为同名异型")
+    assert(表.errorAt(0).name == "malloc", "带名字")
+    assert(表.errorAt(0).detail == "packages/p/src/api/a.pini", "带首次声明文件")
+    assert(表.symbolCount() == 1, "保留先声明者")
+    return
+
+; 与本地同名：本地函数先声明，外部块后声明同名符号，报相撞而不是覆盖。
+与本地相撞|test() -> ():
+    let 单元 = 造外部单元(path = "packages/p/src/api/a.pini", text = "len|func() -> ():\n    return\n\n[libc|foreign]\nlen: (String,) -> (U64,)\n")
+    let 表 = registerPackage([单元])
+    assert(!表.isOK(), "撞名应报错")
+    assert(isSymbolError(error = 表.errorAt(0), kind = symbolForeignClash), "类别为相撞")
+    assert(表.errorAt(0).detail == "packages/p/src/api/a.pini", "带本地声明文件")
+    return
+
+; 非 C 名：条目名含中文即报，名字原文进诊断。
+非C名|test() -> ():
+    let 单元 = 造外部单元(path = "packages/p/src/api/a.pini", text = "[libc|foreign]\n名字: I32\n")
+    let 表 = registerPackage([单元])
+    assert(!表.isOK(), "非 C 名应报错")
+    assert(isSymbolError(error = 表.errorAt(0), kind = symbolForeignName), "类别为非 C 名")
+    assert(表.errorAt(0).name == "名字", "带原文")
+    return
+
+; 块名只是标签：两个同名块并存，符号按名字裁决，不按块名。
+块名只是标签|test() -> ():
+    let 单元 = 造外部单元(path = "packages/p/src/api/a.pini", text = "[libc|foreign]\nfree: (*I8,) -> ()\n\n[libc|foreign]\nmalloc: (I64,) -> (*I8,)\n")
+    let 表 = registerPackage([单元])
+    assert(表.isOK(), "同名块不构成冲突")
+    assert(表.symbolCount() == 2, "两条符号")
+    return
+
+; 标志顺序无关：`readonly|macro` 与 `macro|readonly` 是同一组，合并而不报异型。
+标志顺序无关|test() -> ():
+    let 甲 = 造外部单元(path = "packages/p/src/api/a.pini", text = "[libc|foreign]\nLIMIT|readonly|macro: I32\n")
+    let 乙 = 造外部单元(path = "packages/p/src/api/b.pini", text = "[libc|foreign]\nLIMIT|macro|readonly: I32\n")
+    let 表 = registerPackage([甲, 乙])
+    assert(表.isOK(), "同一组标志应合并")
+    assert(表.symbolCount() == 1, "只留一份")
+    return
+
+; 下划线起头：外部符号不受 `_` 私有规则收紧，仍按包级可见。
+下划线包级|test() -> ():
+    let 单元 = 造外部单元(path = "packages/p/src/api/_internal/a.pini", text = "[libc|foreign]\n_exit: (I32,) -> ()\n")
+    let 表 = registerPackage([单元])
+    assert(表.isOK(), "不应有错")
+    assert(isVisibility(level = 表.symbolAt(0).visibility, expected = visibilityPackage), "包级可见")
+    return

@@ -193,6 +193,9 @@ parseBracketDecl|self() -> ():
     if self.isKindAt(offset = 1, kind = identifier) && self.isKindAt(offset = 2, kind = opBitOr) && self.isKindAt(offset = 3, kind = kwImport):
         self.parseImportBlock(start)
         return
+    if self.isKindAt(offset = 1, kind = identifier) && self.isKindAt(offset = 2, kind = opBitOr) && self.isKindAt(offset = 3, kind = kwForeign):
+        self.parseForeignBlock(start)
+        return
     if self.isKindAt(offset = 1, kind = leftBracket):
         self.advance()
         self.advance()
@@ -252,6 +255,73 @@ parseImportBlock|self(_start: I32,) -> ():
         self.skipNewlines()
     self.setDeclKids(id = id, kids = entries)
     return
+; 外部块：`[名称|foreign]`；块名只是标签，条目按书写顺序进 kids。
+parseForeignBlock|self(_start: I32,) -> ():
+    self.advance()
+    let nameStart: I32 = self.current().nameStart
+    let nameEnd: I32 = self.current().nameEnd
+    self.advance()
+    self.advance()
+    self.expect(kind = kwForeign, what = "`foreign`")
+    self.expect(kind = rightBracket, what = "`]`")
+    let id: I32 = self.newDecl(kind = declForeign, start = _start, end = self.previousEnd())
+    self.setDeclName(id = id, start = nameStart, end = nameEnd)
+    self.setDeclKids(id = id, kids = self.parseForeignLines())
+    return
+; 外部块体：`名{|标志}: 类型` 逐行读取；行内出现 `=` 即下一条顶层变量声明。
+parseForeignLines|self() -> (Array<I32>,):
+    var symbols: Array<I32> = []
+    self.skipNewlines()
+    while self.at(identifier):
+        let afterColon: Bool = self.isKindAt(offset = 1, kind = colon)
+        let afterFlag: Bool = self.isKindAt(offset = 1, kind = opBitOr) && self.isKindAt(offset = 2, kind = identifier)
+        if !afterColon && !afterFlag:
+            break
+        if afterColon && self.lineHasAssign():
+            break
+        let symbol: I32 = self.parseForeignSymbol()
+        if symbol < 0:
+            break
+        symbols = symbols.append(symbol)
+        self.skipNewlines()
+    return symbols
+; 外部符号条目：名字、零到多个标志、类型；标志只登记区间，白名单归语义层。
+parseForeignSymbol|self() -> (I32,):
+    let start: I32 = self.current().start
+    let nameStart: I32 = self.current().nameStart
+    let nameEnd: I32 = self.current().nameEnd
+    self.advance()
+    var flags: Array<I32> = []
+    while self.at(opBitOr):
+        self.advance()
+        let flagStart: I32 = self.current().nameStart
+        let flagEnd: I32 = self.current().nameEnd
+        if !self.expect(kind = identifier, what = "外部符号标志"):
+            self.recover()
+            return -1
+        let flag: I32 = self.newDecl(kind = declForeignFlag, start = flagStart, end = flagEnd)
+        self.setDeclName(id = flag, start = flagStart, end = flagEnd)
+        flags = flags.append(flag)
+    if !self.expect(kind = colon, what = "`:`"):
+        self.recover()
+        return -1
+    let typeId: I32 = self.parseType()
+    let id: I32 = self.newDecl(kind = declForeignSymbol, start = start, end = self.previousEnd())
+    self.setDeclName(id = id, start = nameStart, end = nameEnd)
+    self.setDeclType(id = id, typeId = typeId)
+    self.setDeclKids(id = id, kids = flags)
+    return id
+; 行内赋值判定：外部符号条目不含 `=`，同一行出现它即块已到下一个顶级声明。
+lineHasAssign|self() -> (Bool,):
+    var i = self.pos
+    while i < self.total:
+        let tag: I32 = self.tokens[i].tag
+        if tag == kindTag(newline) || tag == kindTag(eof) || tag == kindTag(dedent):
+            return false
+        if tag == kindTag(opAssign):
+            return true
+        i = i + 1
+    return false
 ; 圆括号声明：`(名)` 结构块与 `((名))` 结构扩展。
 parseParenDecl|self() -> ():
     let start: I32 = self.current().start

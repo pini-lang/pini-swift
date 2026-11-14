@@ -122,6 +122,9 @@ registerTopDecl|func(table: SymbolTable, unit: CompilationUnit, bytes: Array<U8>
     if isExtensionDeclCode(decl.kind):
         out = registerExtension(table = out, unit = unit, bytes = bytes, decl = decl)
         return out
+    if isForeignDeclCode(decl.kind):
+        out = registerForeign(table = out, unit = unit, bytes = bytes, decl = decl)
+        return out
     return out
 
 ; 类型成员：字段与类型自身的方法报同名，参数归到所属方法名下。

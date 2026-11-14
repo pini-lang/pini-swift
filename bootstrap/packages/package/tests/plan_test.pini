@@ -142,3 +142,29 @@
     let 计划 = assemblePlan(workspace = 造工作区(["a"]), parses = 解析表空())
     assert(isErrorKind(e = 计划.errorAt(0), kind = .errorManifestMissing), "缺清单")
     return
+
+; FFI 进计划：字段序固定、数组按清单顺序；全默认的包不占 FFI 行。
+FFI进计划|test() -> ():
+    var 带表: Array<PackageParse> = []
+    var 带 = PackageParse()
+    带.manifest.rootPath = "p"
+    带.manifest.name = "p"
+    带.manifest.targets = [库目标("p")]
+    带.manifest.ffi.libs = ["m", "pthread"]
+    带.manifest.ffi.searchPaths = ["/opt/lib"]
+    带.manifest.ffi.defines = ["_GNU_SOURCE"]
+    带表 = 带表.append(带)
+    let 计划 = assemblePlan(workspace = 造工作区(["p"]), parses = 带表)
+    assert(计划.isOK(), "不应有错误：" + planText(计划))
+    let 文本 = planText(计划)
+    assert(文本.contains("ffi abi=C search_paths=/opt/lib libs=m,pthread defines=_GNU_SOURCE"), "FFI 行按字段序")
+    assert(计划.packageAt(0).ffi.libs[1] == "pthread", "计划带库")
+    var 空表: Array<PackageParse> = []
+    var 空 = PackageParse()
+    空.manifest.rootPath = "q"
+    空.manifest.name = "q"
+    空.manifest.targets = [库目标("q")]
+    空表 = 空表.append(空)
+    let 空计划 = assemblePlan(workspace = 造工作区(["q"]), parses = 空表)
+    assert(!planText(空计划).contains("ffi "), "全默认不印 FFI 行")
+    return

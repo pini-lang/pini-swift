@@ -256,3 +256,31 @@
     let named = ast.stmtChild(id = id, index = 3)
     assert(len(ast.exprAt(named).kids) == 1, "具名绑定只留变量名")
     return
+
+; 外部块：`[名|foreign]` 的条目与标志；块在下一裸函数声明处收尾。
+外部块|test() -> ():
+    let 文本 = "[libc|foreign]\nmalloc: (I64,) -> (*I8,)\nerrno|readonly: I32\nfree: (*I8,) -> ()\n\nf|func() -> ():\n    return\n"
+    let 结果 = parseText(文本)
+    var 诊断 = ""
+    if len(结果.diagnostics) > 0:
+        诊断 = 结果.diagnostics[0].message
+    assert(len(结果.diagnostics) == 0, "不应有语法诊断：" + 诊断)
+    let ast = 结果.ast
+    assert(ast.itemCount() == 2, "外部块与函数两条")
+    let 块 = ast.declAt(ast.itemAt(0))
+    assert(ast.isDecl(id = ast.itemAt(0), kind = declForeign), "外部块")
+    assert(块.nameEnd - 块.nameStart == 4, "块名 libc")
+    assert(len(块.kids) == 3, "三个符号")
+    let 函数项 = ast.declAt(块.kids[0])
+    assert(ast.isDecl(id = 块.kids[0], kind = declForeignSymbol), "符号条目")
+    assert(函数项.typeId >= 0, "符号有类型")
+    assert(ast.isType(id = 函数项.typeId, kind = typeFunction), "函数类型")
+    assert(len(函数项.kids) == 0, "函数条目无标志")
+    let 数据项 = ast.declAt(块.kids[1])
+    assert(ast.isType(id = 数据项.typeId, kind = typeNamed), "数据项是具名类型")
+    assert(len(数据项.kids) == 1, "一个标志")
+    assert(ast.isDecl(id = 数据项.kids[0], kind = declForeignFlag), "标志节点")
+    let 标志 = ast.declAt(数据项.kids[0])
+    assert(标志.nameEnd - 标志.nameStart == 8, "readonly 长度")
+    assert(ast.isDecl(id = ast.itemAt(1), kind = declFunction), "函数未被吞进块")
+    return

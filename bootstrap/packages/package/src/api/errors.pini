@@ -18,6 +18,8 @@ errorDuplicateTarget
 errorDuplicatePackage
 errorExecutableCollision
 errorDependencyCycle
+errorFFIABI
+errorFFILibrary
 
 ; 清单错误：类别、出错清单路径与细节；细节带具体包名、target 名或成员路径。
 (ManifestError)
@@ -72,6 +74,10 @@ manifestErrorKindName|func(_kind: ManifestErrorKind,) -> (String,):
             return "可执行产物重名"
         case errorDependencyCycle:
             return "工作区依赖成环"
+        case errorFFIABI:
+            return "ffi.abi 只认 C"
+        case errorFFILibrary:
+            return "ffi.libs 的名字不带 -l"
     return "清单错误"
 
 ; 同类别判定：枚举相等比较不可用，按名称比。
