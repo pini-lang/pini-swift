@@ -61,6 +61,10 @@ visibilityName|func(level: Visibility,) -> (String,):
             return "public"
     return "public"
 
+; 同一可见性判定：枚举相等比较不可用，按名称比。
+isVisibility|func(level: Visibility, expected: Visibility,) -> (Bool,):
+    return visibilityName(level) == visibilityName(expected)
+
 ; 可见性次序：private 最严 0，public 最宽 3；收紧时取小值。
 visibilityRank|func(level: Visibility,) -> (I32,):
     match level:

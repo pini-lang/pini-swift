@@ -1,0 +1,79 @@
+; 标量结果：驻留后的池与下标一起带回；容器用例从它起步。
+(标量结果)
+pool: TypePool = TypePool()
+id: I32 = -1
+
+; 造标量：按名字驻留，池只增不改。
+造标量|func(pool: TypePool, name: String,) -> (标量结果,):
+    let inserted = intern(pool, typeClassScalar, name, [], -1)
+    var out = 标量结果()
+    out.pool = inserted.pool
+    out.id = inserted.id
+    return out
+
+; 表项齐全：三类所有者各有条目，未知名字一律未命中。
+内建表齐全|test() -> ():
+    let members = builtinMemberTable()
+    assert(len(members) >= 20, "条目数应覆盖全部成员，实得 \(len(members))")
+    assert(findBuiltin(members, "String", "contains") >= 0, "String.contains 应在表内")
+    assert(findBuiltin(members, "String", "getUnchecked") >= 0, "String.getUnchecked 应在表内")
+    assert(findBuiltin(members, "Array", "append") >= 0, "Array.append 应在表内")
+    assert(findBuiltin(members, "Array", "pop") >= 0, "Array.pop 应在表内")
+    assert(findBuiltin(members, "Dictionary", "get") >= 0, "Dictionary.get 应在表内")
+    assert(findBuiltin(members, "Set", "get") < 0, "集没有成员面")
+    assert(findBuiltin(members, "Array", "shuffle") < 0, "未登记的名字不命中")
+    return
+
+; 字符串成员：返回类型固定，拆分得到字符串数组。
+字符串成员类型|test() -> ():
+    var pool = TypePool()
+    let text = 造标量(pool, "String")
+    let members = builtinMemberTable()
+    let contains = findBuiltin(members, "String", "contains")
+    let containsType = builtinMemberType(text.pool, members[contains], [])
+    assert(typeText(containsType.pool, containsType.id) == "Bool", "contains 应回 Bool")
+    let split = findBuiltin(members, "String", "split")
+    let splitType = builtinMemberType(text.pool, members[split], [])
+    assert(typeText(splitType.pool, splitType.id) == "Array<String>", "split 应回 Array<String>")
+    let get = findBuiltin(members, "String", "get")
+    let getType = builtinMemberType(text.pool, members[get], [])
+    assert(typeText(getType.pool, getType.id) == "Char?", "get 应回 Char?")
+    return
+
+; 数组成员：元素类型按接收者实参回填，弹出得到数组与元素组成的元组。
+数组成员类型|test() -> ():
+    var pool = TypePool()
+    let elem = 造标量(pool, "I32")
+    let array = intern(elem.pool, typeClassCollection, "Array", [elem.id], -1)
+    let members = builtinMemberTable()
+    let append = findBuiltin(members, "Array", "append")
+    let appended = builtinMemberType(array.pool, members[append], [elem.id])
+    assert(typeText(appended.pool, appended.id) == "Array<I32>", "append 应回 Array<I32>")
+    let get = findBuiltin(members, "Array", "get")
+    let got = builtinMemberType(appended.pool, members[get], [elem.id])
+    assert(typeText(got.pool, got.id) == "I32?", "get 应回 I32?")
+    let pop = findBuiltin(members, "Array", "pop")
+    let popped = builtinMemberType(got.pool, members[pop], [elem.id])
+    assert(typeText(popped.pool, popped.id) == "(Array<I32>, I32,)", "pop 应回元组")
+    return
+
+; 字典成员：值类型按第二个实参回填，取缺失键走可选。
+字典成员类型|test() -> ():
+    var pool = TypePool()
+    let key = 造标量(pool, "String")
+    let value = 造标量(key.pool, "I32")
+    let dict = intern(value.pool, typeClassCollection, "Dictionary", [key.id, value.id], -1)
+    let members = builtinMemberTable()
+    let get = findBuiltin(members, "Dictionary", "get")
+    let got = builtinMemberType(dict.pool, members[get], [key.id, value.id])
+    assert(typeText(got.pool, got.id) == "I32?", "字典 get 应回 I32?")
+    let unchecked = findBuiltin(members, "Dictionary", "getUnchecked")
+    let raw = builtinMemberType(got.pool, members[unchecked], [key.id, value.id])
+    assert(typeText(raw.pool, raw.id) == "I32", "getUnchecked 应回 I32")
+    return
+
+; 形状名：诊断与回执共用一份拼写。
+形状名|test() -> ():
+    assert(builtinShapeName(builtinPopTuple) == "数组弹出元组", "实得 " + builtinShapeName(builtinPopTuple))
+    assert(builtinShapeName(builtinOptionalElem) == "元素可选", "实得 " + builtinShapeName(builtinOptionalElem))
+    return

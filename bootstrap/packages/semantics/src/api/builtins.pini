@@ -1,0 +1,170 @@
+; 内建成员表：`String`、`Array`、`Dictionary` 的成员面，全语言唯一来源。
+; 条目只登记所有者、名字与返回形状；形参类型由调用判定面另表给出，故这里不管实参。
+; 占位以形状表达：元素取自接收者实参，字典值取第二个实参，其余为固定标量。
+
+; 返回形状：固定标量、元素本身、元素可选、数组、弹出元组与字典值各一类。
+[BuiltinShape]
+builtinString
+builtinBool
+builtinI32
+builtinChar
+builtinOptionalChar
+builtinSameElem
+builtinOptionalElem
+builtinArrayElem
+builtinArrayString
+builtinPopTuple
+builtinDictValue
+builtinOptionalValue
+
+; 内建成员：所有者名、成员名与返回形状。
+(BuiltinMember)
+owner: String = ""
+name: String = ""
+shape: BuiltinShape = .builtinString
+
+; 形状名：诊断、测试与回执共用一份拼写。
+builtinShapeName|func(shape: BuiltinShape,) -> (String,):
+    match shape:
+        case builtinString:
+            return "字符串"
+        case builtinBool:
+            return "布尔"
+        case builtinI32:
+            return "整数"
+        case builtinChar:
+            return "字符"
+        case builtinOptionalChar:
+            return "字符可选"
+        case builtinSameElem:
+            return "元素本身"
+        case builtinOptionalElem:
+            return "元素可选"
+        case builtinArrayElem:
+            return "元素数组"
+        case builtinArrayString:
+            return "字符串数组"
+        case builtinPopTuple:
+            return "数组弹出元组"
+        case builtinDictValue:
+            return "字典值"
+        case builtinOptionalValue:
+            return "字典值可选"
+    return "未知形状"
+
+; 同一形状判定：枚举相等比较不可用，按名称比。
+isBuiltinShape|func(shape: BuiltinShape, expected: BuiltinShape,) -> (Bool,):
+    return builtinShapeName(shape) == builtinShapeName(expected)
+
+; 造一条成员：三件套逐项写全，缺一不可。
+makeBuiltin|func(owner: String, name: String, shape: BuiltinShape,) -> (BuiltinMember,):
+    var out = BuiltinMember()
+    out.owner = owner
+    out.name = name
+    out.shape = shape
+    return out
+
+; 成员表：三类所有者按字符串、数组、字典顺序排，条目内同名不同形状不合并。
+builtinMemberTable|func() -> (Array<BuiltinMember>,):
+    var out: Array<BuiltinMember> = []
+    out = out.append(makeBuiltin("String", "upper", builtinString))
+    out = out.append(makeBuiltin("String", "lower", builtinString))
+    out = out.append(makeBuiltin("String", "trimLeft", builtinString))
+    out = out.append(makeBuiltin("String", "trimRight", builtinString))
+    out = out.append(makeBuiltin("String", "contains", builtinBool))
+    out = out.append(makeBuiltin("String", "substring", builtinString))
+    out = out.append(makeBuiltin("String", "slice", builtinString))
+    out = out.append(makeBuiltin("String", "split", builtinArrayString))
+    out = out.append(makeBuiltin("String", "indexOf", builtinI32))
+    out = out.append(makeBuiltin("String", "get", builtinOptionalChar))
+    out = out.append(makeBuiltin("String", "getUnchecked", builtinChar))
+    out = out.append(makeBuiltin("Array", "join", builtinString))
+    out = out.append(makeBuiltin("Array", "append", builtinArrayElem))
+    out = out.append(makeBuiltin("Array", "slice", builtinArrayElem))
+    out = out.append(makeBuiltin("Array", "last", builtinSameElem))
+    out = out.append(makeBuiltin("Array", "pop", builtinPopTuple))
+    out = out.append(makeBuiltin("Array", "get", builtinOptionalElem))
+    out = out.append(makeBuiltin("Array", "getUnchecked", builtinSameElem))
+    out = out.append(makeBuiltin("Dictionary", "get", builtinOptionalValue))
+    out = out.append(makeBuiltin("Dictionary", "getUnchecked", builtinDictValue))
+    return out
+
+; 查表：所有者与成员名都按整串比；未命中答 -1。
+findBuiltin|func(members: Array<BuiltinMember>, owner: String, name: String,) -> (I32,):
+    var i = 0
+    while i < len(members):
+        if members[i].owner == owner && members[i].name == name:
+            return i
+        i = i + 1
+    return -1
+
+; 原样带回：类型已在池里，只把下标装进结果。
+hitType|func(pool: TypePool, id: I32,) -> (TypeInsert,):
+    var out = TypeInsert()
+    out.pool = pool
+    out.id = id
+    return out
+
+; 首实参：空表答 -1，调用方按待定处理。
+firstArg|func(kids: Array<I32>,) -> (I32,):
+    if len(kids) == 0:
+        return -1
+    return kids[0]
+
+; 次实参：不足两个答 -1。
+secondArg|func(kids: Array<I32>,) -> (I32,):
+    if len(kids) < 2:
+        return -1
+    return kids[1]
+
+; 单实参容器：实参缺失答 -1，否则驻留名为 name 的容器类。
+wrapArg|func(pool: TypePool, kind: TypeClass, name: String, child: I32,) -> (TypeInsert,):
+    if child < 0:
+        return hitType(pool, -1)
+    var kids: Array<I32> = []
+    kids = kids.append(child)
+    return intern(pool, kind, name, kids, -1)
+
+; 标量返回：内建名逐个驻留，同形复用已有下标。
+scalarType|func(pool: TypePool, name: String,) -> (TypeInsert,):
+    return intern(pool, typeClassScalar, name, [], -1)
+
+; 成员类型：按形状回填占位，池随结果带回；形状要求的实参缺失时答 -1。
+builtinMemberType|func(pool: TypePool, member: BuiltinMember, kids: Array<I32>,) -> (TypeInsert,):
+    if isBuiltinShape(member.shape, builtinString):
+        return scalarType(pool, "String")
+    if isBuiltinShape(member.shape, builtinBool):
+        return scalarType(pool, "Bool")
+    if isBuiltinShape(member.shape, builtinI32):
+        return scalarType(pool, "I32")
+    if isBuiltinShape(member.shape, builtinChar):
+        return scalarType(pool, "Char")
+    if isBuiltinShape(member.shape, builtinOptionalChar):
+        let ch = scalarType(pool, "Char")
+        return wrapArg(ch.pool, typeClassOptional, "", ch.id)
+    if isBuiltinShape(member.shape, builtinSameElem):
+        return hitType(pool, firstArg(kids))
+    if isBuiltinShape(member.shape, builtinOptionalElem):
+        return wrapArg(pool, typeClassOptional, "", firstArg(kids))
+    if isBuiltinShape(member.shape, builtinArrayElem):
+        return wrapArg(pool, typeClassCollection, "Array", firstArg(kids))
+    if isBuiltinShape(member.shape, builtinArrayString):
+        let text = scalarType(pool, "String")
+        return wrapArg(text.pool, typeClassCollection, "Array", text.id)
+    if isBuiltinShape(member.shape, builtinPopTuple):
+        return popTupleType(pool, firstArg(kids))
+    if isBuiltinShape(member.shape, builtinDictValue):
+        return hitType(pool, secondArg(kids))
+    if isBuiltinShape(member.shape, builtinOptionalValue):
+        return wrapArg(pool, typeClassOptional, "", secondArg(kids))
+    return hitType(pool, -1)
+
+; 弹出元组：数组与其元素各占一位，顺序与运行时返回值一致。
+popTupleType|func(pool: TypePool, elem: I32,) -> (TypeInsert,):
+    if elem < 0:
+        return hitType(pool, -1)
+    let array = wrapArg(pool, typeClassCollection, "Array", elem)
+    var kids: Array<I32> = []
+    kids = kids.append(array.id)
+    kids = kids.append(elem)
+    return intern(array.pool, typeClassTuple, "", kids, -1)
