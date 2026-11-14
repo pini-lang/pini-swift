@@ -1,0 +1,454 @@
+[pattern|import]
+_syntax = "../../../syntax"
+_module_loader = "../../../module-loader"
+
+; 匹配模式判定：先按语法树认模式形态，再按被匹配值的类型解析枚举项、判绑定数与穷尽性。
+; 裸名按被匹配值的枚举解析，跨枚举同名不全局反查；被匹配值类型判不出时整条 match 按待定放过。
+; 可选匹配只认 some / none / nil，规范未定其穷尽性，本层只校验名字与绑定数，不门禁缺臂。
+
+; 模式形态：通配、枚举项、字面量、空值与无法识别五类。
+[PatternForm]
+patternWildcard
+patternEnumCase
+patternLiteral
+patternNil
+patternUnknown
+
+; 模式：形态、限定类型名、枚举项名、逐位绑定名（`_` 为占位）与源内偏移。
+(PatternInfo)
+form: PatternForm = .patternUnknown
+owner: String = ""
+name: String = ""
+bindings: Array<String> = []
+offset: I32 = 0
+
+; 匹配错误：未知用例、未穷尽、绑定数、字面量臂、坏模式、重名与空值七类。
+[MatchErrorKind]
+matchUnknownCase
+matchNotExhaustive
+matchBindingCount
+matchLiteralOnEnum
+matchBadPattern
+matchBindingDuplicated
+matchNilOnNonNullable
+
+; 匹配错误：类别、文件、偏移、用例名与补充说明。
+(MatchError)
+kind: MatchErrorKind = .matchUnknownCase
+file: String = ""
+offset: I32 = 0
+caseName: String = ""
+detail: String = ""
+
+; 匹配结果：错误表、已覆盖项、缺项、通配标记与待定标记。
+(MatchResult)
+errors: Array<MatchError> = []
+covered: Array<String> = []
+missing: Array<String> = []
+hasWildcard: Bool = false
+deferred: Bool = false
+
+; 绑定结果：进臂后的作用域栈、错误与绑定个数。
+(ArmBinding)
+scope: ScopeStack = ScopeStack()
+errors: Array<MatchError> = []
+boundCount: I32 = 0
+
+; 形态名：诊断、测试与回执共用一份拼写。
+patternFormName|func(form: PatternForm,) -> (String,):
+    match form:
+        case patternWildcard:
+            return "通配"
+        case patternEnumCase:
+            return "枚举项"
+        case patternLiteral:
+            return "字面量"
+        case patternNil:
+            return "空值"
+        case patternUnknown:
+            return "无法识别"
+    return "无法识别"
+
+; 同一形态判定：枚举相等比较不可用，按名称比。
+isPatternForm|func(form: PatternForm, expected: PatternForm,) -> (Bool,):
+    return patternFormName(form) == patternFormName(expected)
+
+; 错误类别名：诊断与测试共用一份拼写。
+matchErrorName|func(kind: MatchErrorKind,) -> (String,):
+    match kind:
+        case matchUnknownCase:
+            return "未知用例"
+        case matchNotExhaustive:
+            return "未穷尽"
+        case matchBindingCount:
+            return "绑定数不匹配"
+        case matchLiteralOnEnum:
+            return "枚举上的字面量臂"
+        case matchBadPattern:
+            return "无法识别的模式"
+        case matchBindingDuplicated:
+            return "绑定重名"
+        case matchNilOnNonNullable:
+            return "空值用在不可空类型"
+    return "匹配错误"
+
+; 同一错误类别判定：与 isPatternForm 同规。
+isMatchError|func(error: MatchError, kind: MatchErrorKind,) -> (Bool,):
+    return matchErrorName(error.kind) == matchErrorName(kind)
+
+; 诊断码：复用宿主已登记的码，不新增码表条目。
+matchErrorCode|func(kind: MatchErrorKind,) -> (String,):
+    match kind:
+        case matchUnknownCase:
+            return "E3-006"
+        case matchNotExhaustive:
+            return "E3-007"
+        case matchBindingCount:
+            return "E4-005"
+        case matchLiteralOnEnum:
+            return "E3-006"
+        case matchBadPattern:
+            return "E3-006"
+        case matchBindingDuplicated:
+            return "E3-004"
+        case matchNilOnNonNullable:
+            return "E4-001"
+    return "E3-006"
+
+; 造错误：用例名与补充说明由调用方给。
+makeMatchError|func(kind: MatchErrorKind, file: String, offset: I32, caseName: String, detail: String,) -> (MatchError,):
+    var out = MatchError()
+    out.kind = kind
+    out.file = file
+    out.offset = offset
+    out.caseName = caseName
+    out.detail = detail
+    return out
+
+; 追加错误：结果其余字段原样保留。
+appendMatchError|func(out: MatchResult, unit: CompilationUnit, offset: I32, kind: MatchErrorKind, caseName: String, detail: String,) -> (MatchResult,):
+    var done = out
+    done.errors = done.errors.append(makeMatchError(kind, unit.path, offset, caseName, detail))
+    return done
+
+; 枚举名：只有枚举类型有条目名，其余答空串。
+enumNameOf|func(pool: TypePool, id: I32,) -> (String,):
+    if id < 0 || id >= len(pool.entries):
+        return ""
+    let entry = pool.entries[id]
+    if !isTypeClass(entry.kind, typeClassEnum):
+        return ""
+    return entry.name
+
+; 可选判定：包装类里只有可选走匹配的 some / none 通道。
+isOptionalType|func(pool: TypePool, id: I32,) -> (Bool,):
+    if id < 0 || id >= len(pool.entries):
+        return false
+    return isTypeClass(pool.entries[id].kind, typeClassOptional)
+
+; 可选内层：非可选或实参缺失答 -1。
+optionalInner|func(pool: TypePool, id: I32,) -> (I32,):
+    if !isOptionalType(pool, id):
+        return -1
+    let entry = pool.entries[id]
+    if len(entry.kids) == 0:
+        return -1
+    return entry.kids[0]
+
+; 枚举声明：按名字在全部单元里找顶层枚举；未命中答空引用。
+findEnumDecl|func(world: MemberWorld, name: String,) -> (DeclRef,):
+    var out = DeclRef()
+    var u = 0
+    while u < len(world.units):
+        let unit = world.units[u]
+        let bytes = tempUtf8Bytes(unit.text)
+        var i = 0
+        while i < len(unit.ast.items):
+            let id = unit.ast.items[i]
+            let decl = unit.ast.decls[id]
+            if isEnumDeclCode(decl.kind) && decodeRange(bytes, decl.nameStart, decl.nameEnd) == name:
+                out.unit = u
+                out.decl = id
+                return out
+            i = i + 1
+        u = u + 1
+    return out
+
+; 枚举项名：按声明顺序给出全部变体名；非枚举答空表。
+enumVariantNames|func(world: MemberWorld, enumName: String,) -> (Array<String>,):
+    var out: Array<String> = []
+    if len(enumName) == 0:
+        return out
+    let ref = findEnumDecl(world, enumName)
+    if ref.unit < 0:
+        return out
+    let unit = world.units[ref.unit]
+    let bytes = tempUtf8Bytes(unit.text)
+    let decl = unit.ast.decls[ref.decl]
+    var i = 0
+    while i < len(decl.kids):
+        let variant = unit.ast.decls[decl.kids[i]]
+        out = out.append(decodeRange(bytes, variant.nameStart, variant.nameEnd))
+        i = i + 1
+    return out
+
+; 枚举项：按名字找变体声明；未命中答空引用。
+findVariant|func(world: MemberWorld, enumName: String, caseName: String,) -> (DeclRef,):
+    var out = DeclRef()
+    let ref = findEnumDecl(world, enumName)
+    if ref.unit < 0:
+        return out
+    let unit = world.units[ref.unit]
+    let bytes = tempUtf8Bytes(unit.text)
+    let decl = unit.ast.decls[ref.decl]
+    var i = 0
+    while i < len(decl.kids):
+        let variant = unit.ast.decls[decl.kids[i]]
+        if decodeRange(bytes, variant.nameStart, variant.nameEnd) == caseName:
+            out.unit = ref.unit
+            out.decl = decl.kids[i]
+            return out
+        i = i + 1
+    return out
+
+; 绑定槽数：变体的形参个数；非枚举或缺项答 -1。
+variantSlotCount|func(world: MemberWorld, enumName: String, caseName: String,) -> (I32,):
+    let ref = findVariant(world, enumName, caseName)
+    if ref.unit < 0:
+        return -1
+    let unit = world.units[ref.unit]
+    let decl = unit.ast.decls[ref.decl]
+    var total = 0
+    var i = 0
+    while i < len(decl.kids):
+        if isParamDeclCode(unit.ast.decls[decl.kids[i]].kind):
+            total = total + 1
+        i = i + 1
+    return total
+
+; 绑定类型表：变体形参逐个回表，缺项留 -1 占位。
+variantParamTypes|func(world: MemberWorld, enumName: String, caseName: String,) -> (Array<I32>,):
+    var out: Array<I32> = []
+    let ref = findVariant(world, enumName, caseName)
+    if ref.unit < 0:
+        return out
+    let unit = world.units[ref.unit]
+    let decl = unit.ast.decls[ref.decl]
+    var i = 0
+    while i < len(decl.kids):
+        let kid = decl.kids[i]
+        if isParamDeclCode(unit.ast.decls[kid].kind):
+            out = out.append(world.types.typeOf(ref.unit, kid))
+        i = i + 1
+    return out
+
+; 绑定名：调用节点的实参逐位读成名字；非标识符的位留空串，调用方按坏模式处理。
+bindingNames|func(ast: Ast, bytes: Array<U8>, first: I32, node: I32,) -> (Array<String>,):
+    var out: Array<String> = []
+    let kids = ast.exprAt(node).kids
+    var i = first
+    while i < len(kids):
+        let kid = kids[i]
+        if ast.isIdentifierExpr(kid):
+            let bind = ast.exprAt(kid)
+            out = out.append(decodeRange(bytes, bind.nameStart, bind.nameEnd))
+        else:
+            out = out.append("")
+        i = i + 1
+    return out
+
+; 模式识别：按语法树形态分流；限定枚举项走成员与调用，裸枚举项走枚举项节点。
+classifyPattern|func(unit: CompilationUnit, node: I32,) -> (PatternInfo,):
+    var out = PatternInfo()
+    if node < 0 || node >= unit.ast.exprCount():
+        return out
+    let ast = unit.ast
+    let expr = ast.exprAt(node)
+    let bytes = tempUtf8Bytes(unit.text)
+    out.offset = expr.start
+    out.name = decodeRange(bytes, expr.start, expr.end)
+    if ast.isIdentifierExpr(node):
+        let name = decodeRange(bytes, expr.nameStart, expr.nameEnd)
+        out.name = name
+        if name == "_":
+            out.form = .patternWildcard
+            return out
+        out.form = .patternEnumCase
+        return out
+    if ast.isNilExpr(node):
+        out.form = .patternNil
+        return out
+    if ast.isIntegerExpr(node) || ast.isFloatExpr(node):
+        out.form = .patternLiteral
+        return out
+    if ast.isStringExpr(node) || ast.isInterpolatedExpr(node) || ast.isBoolExpr(node):
+        out.form = .patternLiteral
+        return out
+    if ast.isCaseExpr(node):
+        out.form = .patternEnumCase
+        out.name = decodeRange(bytes, expr.nameStart, expr.nameEnd)
+        out.bindings = bindingNames(ast, bytes, 0, node)
+        return out
+    if ast.isMemberExpr(node):
+        out.form = .patternEnumCase
+        out.name = decodeRange(bytes, expr.nameStart, expr.nameEnd)
+        let ownerNode = ast.childOf(node, 0)
+        if ast.isIdentifierExpr(ownerNode):
+            let ownerExpr = ast.exprAt(ownerNode)
+            out.owner = decodeRange(bytes, ownerExpr.nameStart, ownerExpr.nameEnd)
+        return out
+    if ast.isCallExpr(node):
+        let callee = ast.childOf(node, 0)
+        if ast.isMemberExpr(callee):
+            let member = ast.exprAt(callee)
+            out.form = .patternEnumCase
+            out.name = decodeRange(bytes, member.nameStart, member.nameEnd)
+            let ownerNode = ast.childOf(callee, 0)
+            if ast.isIdentifierExpr(ownerNode):
+                let ownerExpr = ast.exprAt(ownerNode)
+                out.owner = decodeRange(bytes, ownerExpr.nameStart, ownerExpr.nameEnd)
+            out.bindings = bindingNames(ast, bytes, 1, node)
+            return out
+        if ast.isCaseExpr(callee):
+            let calleeExpr = ast.exprAt(callee)
+            out.form = .patternEnumCase
+            out.name = decodeRange(bytes, calleeExpr.nameStart, calleeExpr.nameEnd)
+            out.bindings = bindingNames(ast, bytes, 1, node)
+            return out
+    return out
+
+; 重名绑定：跳过 `_` 与空位，返回首个重复的名字；没有答空串。
+duplicateBinding|func(info: PatternInfo,) -> (String,):
+    var i = 0
+    while i < len(info.bindings):
+        let name = info.bindings[i]
+        if len(name) > 0 && name != "_":
+            var j = i + 1
+            while j < len(info.bindings):
+                if info.bindings[j] == name:
+                    return name
+                j = j + 1
+        i = i + 1
+    return ""
+
+; 名字在表内：整串相等即命中。
+containsName|func(names: Array<String>, name: String,) -> (Bool,):
+    var i = 0
+    while i < len(names):
+        if names[i] == name:
+            return true
+        i = i + 1
+    return false
+
+; 记覆盖：同名只记一次，顺序按出现次序。
+addCovered|func(out: MatchResult, name: String,) -> (MatchResult,):
+    if containsName(out.covered, name):
+        return out
+    var done = out
+    done.covered = done.covered.append(name)
+    return done
+
+; 缺项：按声明顺序给出未覆盖的枚举项。
+missingCases|func(all: Array<String>, covered: Array<String>,) -> (Array<String>,):
+    var out: Array<String> = []
+    var i = 0
+    while i < len(all):
+        if !containsName(covered, all[i]):
+            out = out.append(all[i])
+        i = i + 1
+    return out
+
+; 单臂判定：按主体类别分流，返回累积后的结果；错误不中断后续臂。
+checkOneArm|func(world: MemberWorld, unit: CompilationUnit, enumName: String, subjectType: I32, info: PatternInfo, out: MatchResult,) -> (MatchResult,):
+    if isPatternForm(info.form, patternWildcard):
+        var wild = out
+        wild.hasWildcard = true
+        return wild
+    if isPatternForm(info.form, patternLiteral):
+        if len(enumName) > 0:
+            return appendMatchError(out, unit, info.offset, matchLiteralOnEnum, info.name, enumName)
+        return out
+    if isPatternForm(info.form, patternNil):
+        if !isNullableType(world.types.pool, subjectType):
+            return appendMatchError(out, unit, info.offset, matchNilOnNonNullable, info.name, typeText(world.types.pool, subjectType))
+        return addCovered(out, "none")
+    if !isPatternForm(info.form, patternEnumCase):
+        return appendMatchError(out, unit, info.offset, matchBadPattern, info.name, "")
+    if len(enumName) > 0:
+        if len(info.owner) > 0 && info.owner != enumName:
+            return appendMatchError(out, unit, info.offset, matchUnknownCase, info.name, info.owner)
+        let slots = variantSlotCount(world, enumName, info.name)
+        if slots < 0:
+            return appendMatchError(out, unit, info.offset, matchUnknownCase, info.name, enumName)
+        if len(info.bindings) != slots:
+            return appendMatchError(out, unit, info.offset, matchBindingCount, info.name, countText(slots) + " / " + countText(len(info.bindings)))
+        let dup = duplicateBinding(info)
+        if len(dup) > 0:
+            return appendMatchError(out, unit, info.offset, matchBindingDuplicated, dup, info.name)
+        return addCovered(out, info.name)
+    if isOptionalType(world.types.pool, subjectType):
+        if info.name == "some" || info.name == "none":
+            var slots = 0
+            if info.name == "some":
+                slots = 1
+            if len(info.bindings) != slots:
+                return appendMatchError(out, unit, info.offset, matchBindingCount, info.name, countText(slots) + " / " + countText(len(info.bindings)))
+            return addCovered(out, info.name)
+        return appendMatchError(out, unit, info.offset, matchUnknownCase, info.name, "可选")
+    return appendMatchError(out, unit, info.offset, matchUnknownCase, info.name, typeText(world.types.pool, subjectType))
+
+; 判定入口：主体类型未定即待定；枚举主体在收尾处补穷尽性。
+checkMatch|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmt: I32, types: ExprTypes,) -> (MatchResult,):
+    var out = MatchResult()
+    if stmt < 0 || stmt >= unit.ast.stmtCount():
+        return out
+    let kids = unit.ast.stmtAt(stmt).kids
+    if len(kids) < 1:
+        return out
+    let subjectType = exprTypeAt(types, unitIndex, kids[0])
+    if subjectType == errorTypeId() || subjectType < 0 || subjectType >= len(world.types.pool.entries):
+        out.deferred = true
+        return out
+    let enumName = enumNameOf(world.types.pool, subjectType)
+    let all = enumVariantNames(world, enumName)
+    var i = 1
+    while i + 1 < len(kids):
+        let info = classifyPattern(unit, kids[i])
+        out = checkOneArm(world, unit, enumName, subjectType, info, out)
+        i = i + 2
+    if len(enumName) > 0 && !out.hasWildcard:
+        out.missing = missingCases(all, out.covered)
+        if len(out.missing) > 0:
+            var offset = 0
+            offset = unit.ast.stmtAt(stmt).start
+            out = appendMatchError(out, unit, offset, matchNotExhaustive, "", typeText(world.types.pool, subjectType))
+    return out
+
+; 绑定入臂：进匹配臂帧后逐位声明，`_` 与空位不占局部，类型取变体形参。
+bindArm|func(world: MemberWorld, unit: CompilationUnit, subjectType: I32, patternNode: I32, scope: ScopeStack,) -> (ArmBinding,):
+    var out = ArmBinding()
+    let info = classifyPattern(unit, patternNode)
+    out.scope = enterScope(scope, scopeArm, unit.path, info.offset)
+    if !isPatternForm(info.form, patternEnumCase):
+        return out
+    var paramTypes: Array<I32> = []
+    let enumName = enumNameOf(world.types.pool, subjectType)
+    if len(enumName) > 0:
+        paramTypes = variantParamTypes(world, enumName, info.name)
+    elif isOptionalType(world.types.pool, subjectType) && info.name == "some":
+        paramTypes = paramTypes.append(optionalInner(world.types.pool, subjectType))
+    var slot = 0
+    while slot < len(info.bindings):
+        let name = info.bindings[slot]
+        if len(name) > 0 && name != "_":
+            var typeId = -1
+            if slot < len(paramTypes):
+                typeId = paramTypes[slot]
+            let declared = declareLocal(out.scope, localBinding, name, typeId, false, unit.path, info.offset, -1)
+            if declared.failed:
+                out.errors = out.errors.append(makeMatchError(matchBindingDuplicated, declared.error.file, declared.error.offset, declared.error.spelling, ""))
+            else:
+                out.scope = declared.stack
+                out.boundCount = out.boundCount + 1
+        slot = slot + 1
+    return out
