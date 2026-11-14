@@ -66,6 +66,25 @@ unitTypeCount|func(table: ExprTypes, unit: I32,) -> (I32,):
         return 0
     return len(table.units[unit].types)
 
+; 表达式类型：先读表；未写时标识符回查作用域里的局部，其余一律答未写。
+typeOfExprNode|func(unit: CompilationUnit, unitIndex: I32, node: I32, scope: ScopeStack, types: ExprTypes, pool: TypePool,) -> (I32,):
+    let known = exprTypeAt(types, unitIndex, node)
+    if known >= 0 && known < len(pool.entries):
+        return known
+    if node < 0 || node >= unit.ast.exprCount():
+        return unsetTypeId()
+    if !unit.ast.isIdentifierExpr(node):
+        return unsetTypeId()
+    let expr = unit.ast.exprAt(node)
+    let name = decodeRange(tempUtf8Bytes(unit.text), expr.nameStart, expr.nameEnd)
+    let at = lookupName(scope, name)
+    if at < 0:
+        return unsetTypeId()
+    let typeId = scope.locals[at].typeId
+    if typeId < 0 || typeId >= len(pool.entries):
+        return unsetTypeId()
+    return typeId
+
 ; 已判定数：含错误标记，只排除未写。
 settledCount|func(table: ExprTypes, unit: I32,) -> (I32,):
     if unit < 0 || unit >= len(table.units):

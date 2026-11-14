@@ -215,25 +215,6 @@ walkBodyBlock|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, bl
         i = i + 1
     return done
 
-; 主体类型：先读表达式类型表，未写时按标识符回查作用域里的局部。
-bodySubjectType|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, scope: ScopeStack, types: ExprTypes,) -> (I32,):
-    let known = exprTypeAt(types, unitIndex, node)
-    if known >= 0 && known < len(world.types.pool.entries):
-        return known
-    if node < 0 || node >= unit.ast.exprCount():
-        return -1
-    if !unit.ast.isIdentifierExpr(node):
-        return -1
-    let expr = unit.ast.exprAt(node)
-    let name = decodeRange(tempUtf8Bytes(unit.text), expr.nameStart, expr.nameEnd)
-    let at = lookupName(scope, name)
-    if at < 0:
-        return -1
-    let typeId = scope.locals[at].typeId
-    if typeId < 0 || typeId >= len(world.types.pool.entries):
-        return -1
-    return typeId
-
 ; 记覆盖：同名只记一次，条件写清避免半表达式当条件。
 bodyAddName|func(names: Array<String>, name: String,) -> (Array<String>,):
     if containsName(names, name):
@@ -247,7 +228,7 @@ matchCoversAll|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, s
     let kids = unit.ast.stmtAt(stmtId).kids
     if len(kids) < 1:
         return true
-    let subjectType = bodySubjectType(world, unit, unitIndex, kids[0], scope, types)
+    let subjectType = typeOfExprNode(unit, unitIndex, kids[0], scope, types, world.types.pool)
     if subjectType < 0:
         return true
     var covered: Array<String> = []
@@ -331,9 +312,18 @@ stmtAlwaysReturns|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32
         return matchAlwaysReturns(world, unit, unitIndex, stmtId, scope, types)
     return false
 
-; 检查入口：播种函数帧，走一遍体，最后按返回路径补缺失返回。
-checkFunctionBody|func(world: MemberWorld, unitIndex: I32, declId: I32, types: ExprTypes,) -> (BodyCheck,):
-    var out = BodyCheck()
+; 播种结果：函数帧、返回类型与播种期错误；valid 为假表示不是可检查的函数声明。
+(BodySeed)
+pool: TypePool = TypePool()
+scope: ScopeStack = ScopeStack()
+returnType: I32 = -1
+known: Bool = true
+errors: Array<BodyError> = []
+valid: Bool = false
+
+; 播种函数帧：`|self` 方法先放自身，再逐个放参数；返回类型一并定好，无标注按空元组。
+seedFunctionScope|func(world: MemberWorld, unitIndex: I32, declId: I32,) -> (BodySeed,):
+    var out = BodySeed()
     out.pool = world.types.pool
     if unitIndex < 0 || unitIndex >= len(world.units):
         return out
@@ -341,10 +331,9 @@ checkFunctionBody|func(world: MemberWorld, unitIndex: I32, declId: I32, types: E
     if declId < 0 || declId >= unit.ast.declCount():
         return out
     let decl = unit.ast.decls[declId]
-    if !isFunctionDeclCode(decl.kind):
+    if !isFunctionDeclCode(decl.kind) || decl.isForeign:
         return out
-    if decl.isForeign:
-        return out
+    out.valid = true
     let bytes = tempUtf8Bytes(unit.text)
     var stack = enterScope(ScopeStack(), scopeFunction, unit.path, decl.start)
     if decl.isSelf:
@@ -352,7 +341,7 @@ checkFunctionBody|func(world: MemberWorld, unitIndex: I32, declId: I32, types: E
         if ownerId >= 0:
             let selfDecl = declareSelf(stack, "self", ownerId, unit.path, decl.start)
             if selfDecl.failed:
-                out = appendBodyError(out, unit, selfDecl.error.offset, bodyParamDuplicated, selfDecl.error.spelling, "", "")
+                out.errors = out.errors.append(makeBodyError(bodyParamDuplicated, unit.path, selfDecl.error.offset, selfDecl.error.spelling, "", ""))
             else:
                 stack = selfDecl.stack
     var i = 0
@@ -362,28 +351,43 @@ checkFunctionBody|func(world: MemberWorld, unitIndex: I32, declId: I32, types: E
             let typeId = world.types.typeOf(unitIndex, kid)
             let declared = declareParam(stack, unit.ast.decls[kid], kid, typeId, unit.path, bytes)
             if declared.failed:
-                out = appendBodyError(out, unit, declared.error.offset, bodyParamDuplicated, declared.error.spelling, "", "")
+                out.errors = out.errors.append(makeBodyError(bodyParamDuplicated, unit.path, declared.error.offset, declared.error.spelling, "", ""))
             else:
                 stack = declared.stack
         i = i + 1
     out.scope = stack
-    var known = true
     if decl.typeId >= 0:
         out.returnType = world.types.typeOf(unitIndex, declId)
         if out.returnType < 0:
-            known = false
-            out.deferred = true
+            out.known = false
     else:
         let empty = intern(out.pool, typeClassTuple, "", [], -1)
         out.pool = empty.pool
         out.returnType = empty.id
+    return out
+
+; 检查入口：播种函数帧，走一遍体，最后按返回路径补缺失返回。
+checkFunctionBody|func(world: MemberWorld, unitIndex: I32, declId: I32, types: ExprTypes,) -> (BodyCheck,):
+    let seed = seedFunctionScope(world, unitIndex, declId)
+    var out = BodyCheck()
+    out.pool = seed.pool
+    if !seed.valid:
+        return out
+    out.scope = seed.scope
+    out.returnType = seed.returnType
+    out.errors = seed.errors
+    let known = seed.known
+    if !known:
+        out.deferred = true
+    let unit = world.units[unitIndex]
+    let decl = unit.ast.decls[declId]
     if decl.body < 0:
         out.failed = len(out.errors) > 0
         return out
-    out = walkBodyStmt(world, unit, unitIndex, decl.body, stack, known, types, out)
-    out.guarantees = stmtAlwaysReturns(world, unit, unitIndex, decl.body, stack, types)
+    out = walkBodyStmt(world, unit, unitIndex, decl.body, seed.scope, known, types, out)
+    out.guarantees = stmtAlwaysReturns(world, unit, unitIndex, decl.body, seed.scope, types)
     if known && !isVoidReturn(out.pool, out.returnType) && !out.guarantees:
-        let name = decodeRange(bytes, decl.nameStart, decl.nameEnd)
+        let name = decodeRange(tempUtf8Bytes(unit.text), decl.nameStart, decl.nameEnd)
         out = appendBodyError(out, unit, decl.start, bodyReturnMissing, name, typeText(out.pool, out.returnType), "()")
     out.failed = len(out.errors) > 0
     return out

@@ -1,0 +1,370 @@
+[variable|import]
+_syntax = "../../../syntax"
+_module_loader = "../../../module-loader"
+
+; 变量与赋值：声明按标注与初值定型并入作用域，赋值按目标与值判左值、可变性与类型。
+; 标注是期望的起点：字面量初值按标注定型（`let x: F64 = 1` 取 F64），再判可赋值。
+; 未在作用域登记的名字不在此层报错，名字解析归解析表；成员与下标目标的类型由调用方写入类型表。
+
+; 存储错误：值类型不符、初值无解、let 不可变、目标非左值、解构个数、坏模式、复合运算与重名八类。
+[StoreErrorKind]
+storeValueMismatch
+storeValueUnknown
+storeLetImmutable
+storeBadTarget
+storeDestructureArity
+storeBadPattern
+storeCompoundOperand
+storeDuplicateName
+
+; 存储错误：类别、文件、源内偏移、相关名字、运算符与期望/实得文本。
+(StoreError)
+kind: StoreErrorKind = .storeValueMismatch
+file: String = ""
+offset: I32 = 0
+name: String = ""
+op: String = ""
+expected: String = ""
+got: String = ""
+
+; 存储检查结果：池、表达式类型表、走到末尾的作用域、错误与本轮声明清单。
+(StoreCheck)
+pool: TypePool = TypePool()
+types: ExprTypes = ExprTypes()
+scope: ScopeStack = ScopeStack()
+errors: Array<StoreError> = []
+declared: Array<LocalSymbol> = []
+failed: Bool = false
+
+; 初值定型结果：检查状态与类型下标；-2 表示已判错。
+(TypedValue)
+check: StoreCheck = StoreCheck()
+typeId: I32 = -1
+
+; 错误类别名：诊断、测试与回执共用一份拼写。
+storeErrorName|func(kind: StoreErrorKind,) -> (String,):
+    match kind:
+        case storeValueMismatch:
+            return "值类型不符"
+        case storeValueUnknown:
+            return "初值无法定型"
+        case storeLetImmutable:
+            return "不可变变量被赋值"
+        case storeBadTarget:
+            return "赋值目标不是左值"
+        case storeDestructureArity:
+            return "解构个数不匹配"
+        case storeBadPattern:
+            return "解构模式不合法"
+        case storeCompoundOperand:
+            return "复合赋值操作数不合"
+        case storeDuplicateName:
+            return "同块名字重复"
+    return "存储错误"
+
+; 同一类别判定：枚举相等比较不可用，按名称比。
+isStoreError|func(error: StoreError, kind: StoreErrorKind,) -> (Bool,):
+    return storeErrorName(error.kind) == storeErrorName(kind)
+
+; 诊断码：复用宿主已登记的码，不新增码表条目。
+storeErrorCode|func(kind: StoreErrorKind,) -> (String,):
+    match kind:
+        case storeValueMismatch:
+            return "E4-001"
+        case storeValueUnknown:
+            return "E4-003"
+        case storeLetImmutable:
+            return "E4-010"
+        case storeBadTarget:
+            return "E4-004"
+        case storeDestructureArity:
+            return "E4-005"
+        case storeBadPattern:
+            return "E4-001"
+        case storeCompoundOperand:
+            return "E4-004"
+        case storeDuplicateName:
+            return "E3-004"
+    return "E4-001"
+
+; 造错误：位置取语句或初值起点，运算符只对赋值类错误填。
+makeStoreError|func(kind: StoreErrorKind, file: String, offset: I32, name: String, op: String, expected: String, got: String,) -> (StoreError,):
+    var out = StoreError()
+    out.kind = kind
+    out.file = file
+    out.offset = offset
+    out.name = name
+    out.op = op
+    out.expected = expected
+    out.got = got
+    return out
+
+; 追加错误：结果其余字段原样保留，错误不中断后续语句。
+appendStoreError|func(out: StoreCheck, unit: CompilationUnit, offset: I32, kind: StoreErrorKind, name: String, op: String, expected: String, got: String,) -> (StoreCheck,):
+    var done = out
+    done.errors = done.errors.append(makeStoreError(kind, unit.path, offset, name, op, expected, got))
+    return done
+
+; 类型文本：下标越界答占位，诊断不因未定而空着。
+storeTypeText|func(pool: TypePool, id: I32,) -> (String,):
+    if id < 0 || id >= len(pool.entries):
+        return "<未定>"
+    return typeText(pool, id)
+
+; 标注解析：语句上的类型标注不在类型池的绑定表里，就地解析并按新池带回。
+resolveAnnotation|func(world: MemberWorld, unit: CompilationUnit, node: I32, out: StoreCheck,) -> (TypeInsert,):
+    var result = hitType(out.pool, -1)
+    if node < 0:
+        return result
+    var cursor = TypeCursor()
+    var types = TypeWorld()
+    types.units = world.units
+    types.table = world.table
+    cursor.world = types
+    cursor.file = unit.path
+    cursor.ast = unit.ast
+    cursor.bytes = tempUtf8Bytes(unit.text)
+    let resolved = resolveNode(cursor, out.pool, node)
+    return hitType(resolved.pool, resolved.root)
+
+; 初值定型：先读类型表；未写且是基本字面量时按期望补判，失败按无解或类型不符记账。
+checkInitializer|func(unit: CompilationUnit, unitIndex: I32, node: I32, expected: I32, name: String, out: StoreCheck,) -> (TypedValue,):
+    var working = out
+    var typeId = typeOfExprNode(unit, unitIndex, node, working.scope, working.types, working.pool)
+    if typeId < 0 && node >= 0 && node < unit.ast.exprCount() && unit.ast.isLiteralExpr(node):
+        var expectation = noExpectation()
+        if expected >= 0:
+            expectation = expectType(expected)
+        let typed = checkLiteral(unit, unitIndex, node, expectation, working.pool, working.types)
+        working.pool = typed.pool
+        working.types = typed.types
+        if typed.failed:
+            if isLiteralError(typed.error, literalNeedsExpectation):
+                working = appendStoreError(working, unit, typed.error.offset, storeValueUnknown, name, "", "", "")
+            else:
+                working = appendStoreError(working, unit, typed.error.offset, storeValueMismatch, name, "", typed.error.expected, typed.error.got)
+            typeId = errorTypeId()
+        else:
+            typeId = typed.typeId
+    var done = TypedValue()
+    done.check = working
+    done.typeId = typeId
+    return done
+
+; 声明一个局部：同块重名照原样报错，成功则记入声明清单。
+declareStore|func(out: StoreCheck, unit: CompilationUnit, name: String, typeId: I32, mutable: Bool, offset: I32,) -> (StoreCheck,):
+    let declared = declareLocal(out.scope, localVariable, name, typeId, mutable, unit.path, offset, -1)
+    if declared.failed:
+        return appendStoreError(out, unit, declared.error.offset, storeDuplicateName, name, "", "", "")
+    var done = out
+    done.scope = declared.stack
+    done.declared = done.declared.append(declared.stack.localAt(declared.index))
+    return done
+
+; 元组解构：按初值元组的分量逐位声明；个数不符报一条，非名字位各报一条。
+checkDestructure|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, pattern: I32, init: I32, mutable: Bool, offset: I32, out: StoreCheck,) -> (StoreCheck,):
+    let kids = unit.ast.exprAt(pattern).kids
+    let bytes = tempUtf8Bytes(unit.text)
+    var working = out
+    var components: Array<I32> = []
+    var knownTuple = false
+    if init >= 0:
+        let typed = checkInitializer(unit, unitIndex, init, -1, "", working)
+        working = typed.check
+        if typed.typeId >= 0 && typed.typeId < len(working.pool.entries):
+            let entry = working.pool.entries[typed.typeId]
+            if isTypeClass(entry.kind, typeClassTuple):
+                knownTuple = true
+                components = entry.kids
+            else:
+                let got = typeText(working.pool, typed.typeId)
+                working = appendStoreError(working, unit, offset, storeDestructureArity, "", "", "元组", got)
+    if knownTuple && len(components) != len(kids):
+        let expected = countText(len(components))
+        let got = countText(len(kids))
+        working = appendStoreError(working, unit, offset, storeDestructureArity, "", "", expected, got)
+    var i = 0
+    while i < len(kids):
+        let kid = kids[i]
+        if unit.ast.isIdentifierExpr(kid):
+            let expr = unit.ast.exprAt(kid)
+            let name = decodeRange(bytes, expr.nameStart, expr.nameEnd)
+            if name != "_":
+                var typeId = -1
+                if knownTuple && i < len(components):
+                    typeId = components[i]
+                working = declareStore(working, unit, name, typeId, mutable, expr.start)
+        else:
+            working = appendStoreError(working, unit, unit.ast.exprAt(kid).start, storeBadPattern, "", "", "名字", "其他形态")
+        i = i + 1
+    return working
+
+; 变量声明：单名或元组解构，标注与初值先判一致再入作用域。
+checkVariableDecl|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmtId: I32, out: StoreCheck,) -> (StoreCheck,):
+    let stmt = unit.ast.stmtAt(stmtId)
+    let mutable = unit.ast.isMutableVariableStmt(stmtId)
+    let pattern = unit.ast.stmtChild(stmtId, 0)
+    let init = unit.ast.stmtChild(stmtId, 1)
+    var working = out
+    var annotation = -1
+    if stmt.typeId >= 0:
+        let resolved = resolveAnnotation(world, unit, stmt.typeId, working)
+        working.pool = resolved.pool
+        annotation = resolved.id
+    if pattern < 0:
+        return working
+    if unit.ast.isTupleExpr(pattern):
+        return checkDestructure(world, unit, unitIndex, pattern, init, mutable, stmt.start, working)
+    if !unit.ast.isIdentifierExpr(pattern):
+        return appendStoreError(working, unit, stmt.start, storeBadPattern, "", "", "名字或元组", "其他形态")
+    let expr = unit.ast.exprAt(pattern)
+    let name = decodeRange(tempUtf8Bytes(unit.text), expr.nameStart, expr.nameEnd)
+    var initType = -1
+    if init >= 0:
+        let typed = checkInitializer(unit, unitIndex, init, annotation, name, working)
+        working = typed.check
+        initType = typed.typeId
+        if annotation >= 0 && initType >= 0 && !isAssignable(working.pool, initType, annotation):
+            let expected = storeTypeText(working.pool, annotation)
+            let got = storeTypeText(working.pool, initType)
+            working = appendStoreError(working, unit, unit.ast.exprAt(init).start, storeValueMismatch, name, "", expected, got)
+    if name == "_":
+        return working
+    var declaredType = annotation
+    if declaredType < 0 && initType >= 0:
+        declaredType = initType
+    return declareStore(working, unit, name, declaredType, mutable, stmt.start)
+
+; 赋值目标：名字查作用域并判可变性，成员与下标只认类型表；其余形态不是左值。
+checkAssignStmt|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmtId: I32, out: StoreCheck,) -> (StoreCheck,):
+    let stmt = unit.ast.stmtAt(stmtId)
+    let target = unit.ast.stmtChild(stmtId, 0)
+    let value = unit.ast.stmtChild(stmtId, 1)
+    if target < 0 || value < 0:
+        return out
+    let offset = unit.ast.exprAt(target).start
+    var working = out
+    var targetType = -1
+    var name = ""
+    if unit.ast.isIdentifierExpr(target):
+        let expr = unit.ast.exprAt(target)
+        name = decodeRange(tempUtf8Bytes(unit.text), expr.nameStart, expr.nameEnd)
+        let at = lookupName(working.scope, name)
+        if at >= 0:
+            let local = working.scope.localAt(at)
+            targetType = local.typeId
+            if !local.mutable:
+                return appendStoreError(working, unit, offset, storeLetImmutable, name, "=", "", "")
+    elif unit.ast.isMemberExpr(target) || unit.ast.isSubscriptExpr(target):
+        targetType = exprTypeAt(working.types, unitIndex, target)
+    else:
+        let got = storeTypeText(working.pool, typeOfExprNode(unit, unitIndex, target, working.scope, working.types, working.pool))
+        return appendStoreError(working, unit, offset, storeBadTarget, "", "=", "", got)
+    let compound = compoundBinaryTag(stmt.op)
+    if compound == 0:
+        let typed = checkInitializer(unit, unitIndex, value, targetType, name, working)
+        working = typed.check
+        if targetType >= 0 && typed.typeId >= 0 && !isAssignable(working.pool, typed.typeId, targetType):
+            let expected = storeTypeText(working.pool, targetType)
+            let got = storeTypeText(working.pool, typed.typeId)
+            working = appendStoreError(working, unit, unit.ast.exprAt(value).start, storeValueMismatch, name, "=", expected, got)
+        return working
+    let typed = checkInitializer(unit, unitIndex, value, targetType, name, working)
+    working = typed.check
+    if targetType < 0 || typed.typeId < 0:
+        return working
+    let symbol = opSymbol(compound)
+    let result = checkBinary(working.pool, symbol, targetType, typed.typeId, unit.path, offset)
+    working.pool = result.pool
+    if result.failed:
+        return appendStoreError(working, unit, offset, storeCompoundOperand, name, symbol, result.error.expected, result.error.got)
+    if !isAssignable(working.pool, result.typeId, targetType):
+        let expected = storeTypeText(working.pool, targetType)
+        let got = storeTypeText(working.pool, result.typeId)
+        return appendStoreError(working, unit, offset, storeValueMismatch, name, symbol, expected, got)
+    return working
+
+; 走一块：进块帧后按源序逐条，退出时截断局部，槽位留给同一函数的后续块。
+walkStoreBlock|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, blockId: I32, out: StoreCheck,) -> (StoreCheck,):
+    if blockId < 0 || blockId >= unit.ast.stmtCount():
+        return out
+    var inner = out
+    inner.scope = enterScope(out.scope, scopeBlock, unit.path, unit.ast.stmtAt(blockId).start)
+    let kids = unit.ast.stmtAt(blockId).kids
+    var i = 0
+    while i < len(kids):
+        inner = walkStoreStmt(world, unit, unitIndex, kids[i], inner)
+        i = i + 1
+    inner.scope = leaveScope(inner.scope)
+    return inner
+
+; 走一条语句：声明与赋值就地判，控制流逐个下钻到块，其余语句不归本层。
+walkStoreStmt|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmtId: I32, out: StoreCheck,) -> (StoreCheck,):
+    if stmtId < 0 || stmtId >= unit.ast.stmtCount():
+        return out
+    let ast = unit.ast
+    if ast.isVariableStmt(stmtId):
+        return checkVariableDecl(world, unit, unitIndex, stmtId, out)
+    if ast.isAssignStmt(stmtId):
+        return checkAssignStmt(world, unit, unitIndex, stmtId, out)
+    if ast.isBlockStmt(stmtId):
+        return walkStoreBlock(world, unit, unitIndex, stmtId, out)
+    if ast.isIfStmt(stmtId):
+        var done = out
+        let kids = ast.stmtAt(stmtId).kids
+        let count = len(kids)
+        if count > 1:
+            done = walkStoreStmt(world, unit, unitIndex, kids[1], done)
+        var i = 2
+        while i < count:
+            if i + 1 < count:
+                done = walkStoreStmt(world, unit, unitIndex, kids[i + 1], done)
+                i = i + 2
+            else:
+                done = walkStoreStmt(world, unit, unitIndex, kids[i], done)
+                i = i + 1
+        return done
+    if ast.isWhileStmt(stmtId):
+        var done = out
+        let kids = ast.stmtAt(stmtId).kids
+        var i = 1
+        while i < len(kids):
+            done = walkStoreStmt(world, unit, unitIndex, kids[i], done)
+            i = i + 1
+        return done
+    if ast.isForStmt(stmtId):
+        var done = out
+        let kids = ast.stmtAt(stmtId).kids
+        var i = 2
+        while i < len(kids):
+            done = walkStoreStmt(world, unit, unitIndex, kids[i], done)
+            i = i + 1
+        return done
+    if ast.isMatchStmt(stmtId):
+        var done = out
+        let kids = ast.stmtAt(stmtId).kids
+        var i = 2
+        while i < len(kids):
+            done = walkStoreStmt(world, unit, unitIndex, kids[i], done)
+            i = i + 2
+        return done
+    if ast.isDeferStmt(stmtId):
+        return walkStoreStmt(world, unit, unitIndex, ast.stmtChild(stmtId, 0), out)
+    return out
+
+; 检查入口：播种函数帧后走一遍体；块帧退出，作用域回到参数层，声明清单留全量记录。
+checkFunctionStores|func(world: MemberWorld, unitIndex: I32, declId: I32, types: ExprTypes,) -> (StoreCheck,):
+    let seed = seedFunctionScope(world, unitIndex, declId)
+    var out = StoreCheck()
+    out.pool = seed.pool
+    out.types = types
+    if !seed.valid:
+        return out
+    out.scope = seed.scope
+    let unit = world.units[unitIndex]
+    let decl = unit.ast.decls[declId]
+    if decl.body < 0:
+        return out
+    out = walkStoreBlock(world, unit, unitIndex, decl.body, out)
+    out.failed = len(out.errors) > 0
+    return out
