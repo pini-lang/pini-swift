@@ -203,14 +203,23 @@ exprDiagnostics|func(_check: ExprCheck,) -> (Array<Diagnostic>,):
         i = i + 1
     return out
 
-; 表达式装配：按单元建类型表，逐单元跑表达式检查。
-; 主检查入口不调它：全工作区跑不动是已登记的吞吐缺口，执行时机归调用方。
+; 表达式装配：先逐单元推导填表，再逐单元跑表达式检查。
+; 推导只推能唯一确定类型的节点；推不出的按未定处理，不阻断检查。
 exprPackageDiagnostics|func(world: MemberWorld, units: Array<CompilationUnit>,) -> (Array<Diagnostic>,):
-    let types = makeExprTypes(units)
-    var out: Array<Diagnostic> = []
+    var types = makeExprTypes(units)
+    var enriched = world
     var u = 0
     while u < len(units):
-        var one = exprDiagnostics(checkUnitExprs(world = world, unitIndex = u, types = types))
+        let inferred = inferUnitExprs(world = enriched, unitIndex = u, types = types)
+        types = inferred.types
+        var table = enriched.types
+        table.pool = inferred.pool
+        enriched.types = table
+        u = u + 1
+    var out: Array<Diagnostic> = []
+    u = 0
+    while u < len(units):
+        var one = exprDiagnostics(checkUnitExprs(world = enriched, unitIndex = u, types = types))
         var i = 0
         while i < len(one):
             out = out.append(one[i])

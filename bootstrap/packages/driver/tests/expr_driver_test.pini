@@ -41,5 +41,24 @@ _semantics = "../../semantics"
     var all: Array<CompilationUnit> = [unit]
     let units = sortedUnits(all)
     let 诊断 = exprPackageDiagnostics(world = 建世界(units = units), units = units)
-    assert(len(诊断) == 0, "合法单元不该有诊断，实得 " + "\(len(诊断))")
+    assert(len(诊断) == 0, "合法单元不该有诊断，实得 " + 诊断串(诊断))
     return
+
+; 实参类型：推导填表后，标签实参的类型不符被调用面拦下。
+实参类型不匹配|test() -> ():
+    let unit = 造单元(path = "packages/p/src/api/p.pini", src = "甲|func(a: I32,) -> ():\n    pass\n\nf|func() -> ():\n    甲(a = \"x\")\n")
+    var all: Array<CompilationUnit> = [unit]
+    let units = sortedUnits(all)
+    let 诊断 = exprPackageDiagnostics(world = 建世界(units = units), units = units)
+    assert(len(诊断) == 1, "应有一条诊断，实得 " + "\(len(诊断))")
+    assert(诊断[0].code == "E4-001", "实得 " + 诊断[0].code)
+    return
+
+; 诊断串：断言失败时给出码与消息。
+诊断串|func(_items: Array<Diagnostic>,) -> (String,):
+    var out = ""
+    var i = 0
+    while i < len(_items):
+        out = out + _items[i].code + ":" + _items[i].message + " "
+        i = i + 1
+    return out
