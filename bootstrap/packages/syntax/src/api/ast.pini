@@ -38,7 +38,8 @@ op: I32 = 0
 typeId: I32 = -1
 kids: Array<I32> = []
 
-; 声明节点：参数、字段、变体与导入项同池，`typeId` 与 `body` 按需填写。
+; 声明节点：参数、字段、变体与导入项同池，`typeId` 与 `body` 按需填写；
+; `generic` 是类型形参表，只有可带泛型的声明用它。
 (DeclNode)
 kind: I32 = 0
 start: I32 = 0
@@ -54,6 +55,7 @@ isOwn: Bool = false
 isUsing: Bool = false
 isSelf: Bool = false
 kids: Array<I32> = []
+generic: Array<I32> = []
 
 ; 表达式类别：前缀避开记号类别名，包内枚举项名不得重名。
 [ExprKind]
@@ -80,6 +82,7 @@ exprSet
 exprFunction
 exprCast
 exprTry
+exprUnsafe
 
 ; 语句类别：`stmtIf` 的 `kids` 是条件、体、否则如果对与否则体，缺省体答 -1。
 [StmtKind]
@@ -115,6 +118,12 @@ declVariant
 declForeign
 declForeignSymbol
 declForeignFlag
+declTrait
+declTraitExtension
+declExportBlock
+declExportEntry
+declExportTarget
+declGiven
 
 ; 类型类别：`typeGeneric` 的 `kids` 是实参，`typeFunction` 的 `kids` 是形参、`ret` 是返回。
 ; 容器四类是类型位的写法糖，`kids` 即组件类型：数组与集合一个，字典两个，结果为被包裹者。
@@ -180,6 +189,8 @@ exprKindTag|func(_kind: ExprKind,) -> (I32,):
             return 21
         case exprTry:
             return 22
+        case exprUnsafe:
+            return 23
     return 0
 
 ; 语句类别码。
@@ -248,6 +259,18 @@ declKindTag|func(_kind: DeclKind,) -> (I32,):
             return 13
         case declForeignFlag:
             return 14
+        case declTrait:
+            return 15
+        case declTraitExtension:
+            return 16
+        case declExportBlock:
+            return 17
+        case declExportEntry:
+            return 18
+        case declExportTarget:
+            return 19
+        case declGiven:
+            return 20
     return 0
 
 ; 类型类别码。
@@ -388,6 +411,9 @@ isCastExpr|self(_id: I32,) -> (Bool,):
 ; 错误处理：操作数是唯一子节点，错误名在名字区间，处理器块在 `body`；`body` 为 -1 即 `^` 解包糖。
 isTryExpr|self(_id: I32,) -> (Bool,):
     return self.exprs[_id].kind == exprKindTag(exprTry)
+; 不安全前缀：操作数是唯一子节点。
+isUnsafeExpr|self(_id: I32,) -> (Bool,):
+    return self.exprs[_id].kind == exprKindTag(exprUnsafe)
 ; 字面量：六类基本字面量合判，容器补判元素类型时用来分流。
 isLiteralExpr|self(_id: I32,) -> (Bool,):
     if self.isIntegerExpr(_id) || self.isFloatExpr(_id):
@@ -494,6 +520,21 @@ isForeignSymbolCode|func(_code: I32,) -> (Bool,):
 
 isForeignFlagCode|func(_code: I32,) -> (Bool,):
     return _code == declKindTag(declForeignFlag)
+
+isTraitDeclCode|func(_code: I32,) -> (Bool,):
+    return _code == declKindTag(declTrait)
+
+isTraitExtensionCode|func(_code: I32,) -> (Bool,):
+    return _code == declKindTag(declTraitExtension)
+
+isExportBlockCode|func(_code: I32,) -> (Bool,):
+    return _code == declKindTag(declExportBlock)
+
+isExportEntryCode|func(_code: I32,) -> (Bool,):
+    return _code == declKindTag(declExportEntry)
+
+isGivenDeclCode|func(_code: I32,) -> (Bool,):
+    return _code == declKindTag(declGiven)
 
 ; 类型类别判定：语义层按同一组入口分流，不自己认识类别码。
 isNamedTypeCode|func(_code: I32,) -> (Bool,):

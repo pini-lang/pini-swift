@@ -415,3 +415,85 @@ try处理器白名单|test() -> ():
     let 结果 = parseText(src)
     assert(len(结果.diagnostics) > 0, "非控制流处理器应报错")
     return
+
+; 特征声明：`<名>` 体收抽象签名与变量签名；`<<名>>` 体收带默认实现的方法。
+特征块|test() -> ():
+    let src = "<可比较>\n比较|self(其他: own,) -> I32\n名字: String\n\n<<可比较>>\n默认比较|self(其他: own,) -> I32:\n    return 0\n\nf|func() -> ():\n    return\n"
+    let 结果 = parseText(src)
+    var 诊断 = ""
+    if len(结果.diagnostics) > 0:
+        诊断 = 结果.diagnostics[0].message
+    assert(len(结果.diagnostics) == 0, "不应有语法诊断：" + 诊断)
+    let ast = 结果.ast
+    assert(ast.itemCount() == 3, "特征声明、特征扩展与函数三条")
+    let 声明 = ast.declAt(ast.itemAt(0))
+    assert(ast.isDecl(id = ast.itemAt(0), kind = declTrait), "特征声明")
+    assert(声明.nameEnd - 声明.nameStart == 9, "特征名占三字节的三倍：可比较")
+    assert(len(声明.kids) == 2, "两条签名")
+    let 方法 = ast.declAt(声明.kids[0])
+    assert(isFunctionDeclCode(方法.kind), "抽象方法用函数声明承载")
+    assert(方法.isSelf, "带自身修饰")
+    assert(方法.body < 0, "抽象方法无体")
+    assert(len(方法.kids) == 1, "一个形参")
+    let 形参 = ast.declAt(方法.kids[0])
+    assert(ast.typeAt(形参.typeId).nameEnd - ast.typeAt(形参.typeId).nameStart == 3, "形参类型是本型 own")
+    let 变量 = ast.declAt(声明.kids[1])
+    assert(isFieldDeclCode(变量.kind), "变量签名用字段承载")
+    let 扩展 = ast.declAt(ast.itemAt(1))
+    assert(ast.isDecl(id = ast.itemAt(1), kind = declTraitExtension), "特征扩展")
+    assert(len(扩展.kids) == 1, "一条默认实现")
+    assert(ast.declAt(扩展.kids[0]).body >= 0, "默认实现带体")
+    assert(ast.isDecl(id = ast.itemAt(2), kind = declFunction), "顶层函数未被吞入特征体")
+    return
+
+; 导出块：条目可省目标；带目标时目标名单独成节点，符号是无修饰名。
+导出块|test() -> ():
+    let src = "[a|export]\n加 = 原加\n输出|c = 原输出\n\nf|func() -> ():\n    return\n"
+    let 结果 = parseText(src)
+    var 诊断 = ""
+    if len(结果.diagnostics) > 0:
+        诊断 = 结果.diagnostics[0].message
+    assert(len(结果.diagnostics) == 0, "不应有语法诊断：" + 诊断)
+    let ast = 结果.ast
+    assert(ast.itemCount() == 2, "导出块与函数两条")
+    let 块 = ast.declAt(ast.itemAt(0))
+    assert(ast.isDecl(id = ast.itemAt(0), kind = declExportBlock), "导出块")
+    assert(len(块.kids) == 2, "两条导出项")
+    let 首 = ast.declAt(块.kids[0])
+    assert(isExportEntryCode(首.kind), "导出项")
+    assert(len(首.kids) == 1, "缺省目标不落节点")
+    assert(ast.isIdentifierExpr(首.kids[0]), "符号是标识符")
+    let 次 = ast.declAt(块.kids[1])
+    assert(len(次.kids) == 2, "带目标多一个节点")
+    assert(ast.isDecl(id = 次.kids[1], kind = declExportTarget), "目标节点")
+    return
+
+; 给定块：`[名|given]` 与对象体同规，字段可带初值。
+给定块|test() -> ():
+    let src = "[默认|given]\n名字: String = \"x\"\n次数: I32 = 0\n"
+    let 结果 = parseText(src)
+    var 诊断 = ""
+    if len(结果.diagnostics) > 0:
+        诊断 = 结果.diagnostics[0].message
+    assert(len(结果.diagnostics) == 0, "不应有语法诊断：" + 诊断)
+    let ast = 结果.ast
+    let 块 = ast.declAt(ast.itemAt(0))
+    assert(ast.isDecl(id = ast.itemAt(0), kind = declGiven), "给定块")
+    assert(len(块.kids) == 2, "两个字段")
+    let 首 = ast.declAt(块.kids[0])
+    assert(isFieldDeclCode(首.kind), "字段节点")
+    assert(len(首.kids) == 1, "带初值")
+    return
+
+; 不安全前缀：`unsafe 调用()` 成专用前缀节点，操作数保持调用子树。
+不安全前缀|test() -> ():
+    let src = "f|func() -> ():\n    let p = unsafe 取()\n    return\n"
+    let 结果 = parseText(src)
+    assert(len(结果.diagnostics) == 0, "不应有语法诊断")
+    let ast = 结果.ast
+    let 体 = ast.declAt(ast.itemAt(0)).body
+    let 语句 = ast.stmtAt(体).kids
+    let 初值 = ast.stmtChild(id = 语句[0], index = 1)
+    assert(ast.isUnsafeExpr(初值), "前缀是专用节点")
+    assert(ast.isCallExpr(ast.exprAt(初值).kids[0]), "操作数是调用")
+    return
