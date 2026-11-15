@@ -56,6 +56,7 @@ isUsing: Bool = false
 isSelf: Bool = false
 kids: Array<I32> = []
 generic: Array<I32> = []
+composed: Bool = false
 
 ; 表达式类别：前缀避开记号类别名，包内枚举项名不得重名。
 [ExprKind]
@@ -124,6 +125,7 @@ declExportBlock
 declExportEntry
 declExportTarget
 declGiven
+declImplements
 
 ; 类型类别：`typeGeneric` 的 `kids` 是实参，`typeFunction` 的 `kids` 是形参、`ret` 是返回。
 ; 容器四类是类型位的写法糖，`kids` 即组件类型：数组与集合一个，字典两个，结果为被包裹者。
@@ -271,6 +273,8 @@ declKindTag|func(_kind: DeclKind,) -> (I32,):
             return 19
         case declGiven:
             return 20
+        case declImplements:
+            return 21
     return 0
 
 ; 类型类别码。
@@ -535,6 +539,9 @@ isExportEntryCode|func(_code: I32,) -> (Bool,):
 
 isGivenDeclCode|func(_code: I32,) -> (Bool,):
     return _code == declKindTag(declGiven)
+
+isImplementsDeclCode|func(_code: I32,) -> (Bool,):
+    return _code == declKindTag(declImplements)
 
 ; 类型类别判定：语义层按同一组入口分流，不自己认识类别码。
 isNamedTypeCode|func(_code: I32,) -> (Bool,):

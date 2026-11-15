@@ -497,3 +497,72 @@ try处理器白名单|test() -> ():
     assert(ast.isUnsafeExpr(初值), "前缀是专用节点")
     assert(ast.isCallExpr(ast.exprAt(初值).kids[0]), "操作数是调用")
     return
+
+; 声明头泛型：结构、对象、枚举、给定与特征的名字后都可带形参表，一件不落。
+泛型头|test() -> ():
+    let src = "(盒<T>)\nx: T\n\n[列<T>]\n无\n\n{物<T>}\nx: T\n\n[给<T>|given]\nx: T = 0\n\n<特<T>>\n取得|self() -> T\n\n<<特<T>>>\n取得|self() -> T:\n    return 0\n"
+    let 结果 = parseText(src)
+    var 诊断 = ""
+    if len(结果.diagnostics) > 0:
+        诊断 = 结果.diagnostics[0].message
+    assert(len(结果.diagnostics) == 0, "不应有语法诊断：" + 诊断)
+    let ast = 结果.ast
+    assert(ast.itemCount() == 6, "六条声明")
+    assert(len(ast.declAt(ast.itemAt(0)).generic) == 1, "结构头泛型")
+    assert(len(ast.declAt(ast.itemAt(1)).generic) == 1, "枚举头泛型")
+    assert(len(ast.declAt(ast.itemAt(2)).generic) == 1, "对象头泛型")
+    assert(len(ast.declAt(ast.itemAt(3)).generic) == 1, "给定头泛型")
+    assert(len(ast.declAt(ast.itemAt(4)).generic) == 1, "特征头泛型")
+    assert(len(ast.declAt(ast.itemAt(5)).generic) == 1, "特征扩展头泛型")
+    let 形参 = ast.declAt(ast.declAt(ast.itemAt(0)).generic[0])
+    assert(ast.isDecl(id = ast.declAt(ast.itemAt(0)).generic[0], kind = declParam), "形参用参数节点承载")
+    assert(形参.nameEnd - 形参.nameStart == 1, "形参名一字节")
+    return
+
+; 内嵌组合：结构体首行裸类型名成一条字段，标为组合位；后续字段照常。
+内嵌组合|test() -> ():
+    let src = "(子)\n父\nx: I32\n"
+    let 结果 = parseText(src)
+    assert(len(结果.diagnostics) == 0, "不应有语法诊断")
+    let ast = 结果.ast
+    let 结构 = ast.declAt(ast.itemAt(0))
+    assert(len(结构.kids) == 2, "组合字段加一个普通字段")
+    let 组合 = ast.declAt(结构.kids[0])
+    assert(组合.composed, "首行标组合位")
+    assert(ast.isType(id = 组合.typeId, kind = typeNamed), "组合字段的类型具名")
+    assert(ast.typeAt(组合.typeId).nameEnd - ast.typeAt(组合.typeId).nameStart == 3, "类型名与字段名同宽：父")
+    assert(!ast.declAt(结构.kids[1]).composed, "普通字段不标组合位")
+    return
+
+; 实现行：结构、对象与枚举体里的 `实现: 特征` 各成一条声明，不混入字段或用例。
+实现行|test() -> ():
+    let src = "(P)\n实现: 可打印\nx: I32\n\n{Q}\n实现: 相等\n\n[R]\n甲\n实现: 错误\n"
+    let 结果 = parseText(src)
+    var 诊断 = ""
+    if len(结果.diagnostics) > 0:
+        诊断 = 结果.diagnostics[0].message
+    assert(len(结果.diagnostics) == 0, "不应有语法诊断：" + 诊断)
+    let ast = 结果.ast
+    let 结构 = ast.declAt(ast.itemAt(0))
+    assert(isImplementsDeclCode(ast.declAt(结构.kids[0]).kind), "结构体首条是实现行")
+    assert(ast.isType(id = ast.declAt(结构.kids[0]).typeId, kind = typeNamed), "特征名是具名类型")
+    assert(isFieldDeclCode(ast.declAt(结构.kids[1]).kind), "字段照常")
+    let 对象 = ast.declAt(ast.itemAt(1))
+    assert(isImplementsDeclCode(ast.declAt(对象.kids[0]).kind), "对象体实现行")
+    let 枚举 = ast.declAt(ast.itemAt(2))
+    assert(isVariantDeclCode(ast.declAt(枚举.kids[0]).kind), "枚举首条是用例")
+    assert(isImplementsDeclCode(ast.declAt(枚举.kids[1]).kind), "枚举实现行在后")
+    return
+
+; 结构头泛型：单条声明也把形参表挂在声明上，不混进顶层登记。
+结构头泛型|test() -> ():
+    let 结果 = parseText("(盒<T>)\nx: T\n")
+    var 诊断 = ""
+    if len(结果.diagnostics) > 0:
+        诊断 = 结果.diagnostics[0].message
+    assert(len(结果.diagnostics) == 0, "不应有诊断：" + 诊断)
+    let ast = 结果.ast
+    assert(ast.itemCount() == 1, "一条声明")
+    let 结构 = ast.declAt(ast.itemAt(0))
+    assert(len(结构.generic) == 1, "一个形参")
+    return
