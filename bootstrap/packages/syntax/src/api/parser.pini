@@ -2,12 +2,14 @@
 _diagnostics = "../../../diagnostics"
 
 ; 解析状态：记号游标、节点池与诊断序列；所有推进都经由本文件的方法。
-; `bytes` 与词法共用同一份归一化源，上下文关键字比对与插值取段都读它。
+; `bytes` 与词法共用同一份归一化源，上下文关键字比对与插值取段都读它；
+; `language` 只供插值段补扫时沿用同一套关键字表。
 (Parser)
 tokens: Array<Token> = []
 pos: I32 = 0
 total: I32 = 0
 file: String = ""
+language: KeywordLanguage = .langEnglish
 bytes: Array<U8> = []
 ast: Ast = Ast()
 diagnostics: Array<Diagnostic> = []
@@ -37,6 +39,7 @@ parseFileIn|func(language: KeywordLanguage, text: String, file: String,) -> (Par
     p.tokens = lexed.tokens
     p.total = len(lexed.tokens)
     p.file = file
+    p.language = language
     p.bytes = lexed.bytes
     p.parseModule()
     var out = ParseResult()
@@ -733,7 +736,8 @@ parseMethodLines|self() -> (Array<I32>,):
             methods = methods.append(id)
         self.skipNewlines()
     return methods
-; 函数声明：`名字|func|test|self|foreign(params,) -> (返回,)` 后接块体或同行语句。
+; 函数声明：`名字|func|test|self|foreign(params,) -> (返回,)` 后接块体或同行语句；
+; 返回箭头写 `=>` 即异步函数，`isAsync` 置位，其余形状不变。
 parseFunctionDecl|self() -> (I32,):
     let start: I32 = self.current().start
     let nameStart: I32 = self.current().nameStart
@@ -770,7 +774,12 @@ parseFunctionDecl|self() -> (I32,):
         return -1
     let params = self.parseParams()
     var returnType = -1
-    if self.at(arrow):
+    var isAsync = false
+    if self.at(fatArrow):
+        isAsync = true
+        self.advance()
+        returnType = self.collapseReturn(self.parseType())
+    elif self.at(arrow):
         self.advance()
         returnType = self.collapseReturn(self.parseType())
     if !self.expect(kind = colon, what = "`:`"):
@@ -787,6 +796,7 @@ parseFunctionDecl|self() -> (I32,):
     self.setDeclType(id = id, typeId = returnType)
     self.setDeclBody(id = id, body = body)
     self.setFunctionMarks(id = id, isTest = isTest, isSelf = isSelf, isOwn = isOwn, isForeign = isForeign)
+    self.setDeclAsync(id = id, value = isAsync)
     return id
 ; 参数表：`(` 到 `)`，每项可带 own / using / self 前缀与默认值。
 parseParams|self() -> (Array<I32>,):
@@ -1007,6 +1017,15 @@ parseUnary|self() -> (I32,):
         return self.parseTryExpr()
     if self.at(opBitXor):
         return self.parseUnwrapExpr()
+    if self.at(kwAwait) || self.at(kwWait):
+        let start: I32 = self.current().start
+        let op: TokenKind = self.current().kind
+        self.advance()
+        let operand: I32 = self.parseUnary()
+        let id: I32 = self.newExpr(kind = exprJoin, start = start, end = self.previousEnd())
+        self.setExprOp(id = id, op = op)
+        self.pushExprKid(id = id, kid = operand)
+        return id
     if self.at(kwUnsafe):
         let start: I32 = self.current().start
         self.advance()
@@ -1182,8 +1201,7 @@ parsePrimary|self() -> (I32,):
         self.advance()
         return self.newExpr(kind = exprString, start = start, end = token.end)
     if isKind(token = token, kind = interpolatedString):
-        self.advance()
-        return self.newExpr(kind = exprInterpolated, start = start, end = token.end)
+        return self.parseInterpolated(token = token)
     if isKind(token = token, kind = trueLiteral):
         self.advance()
         return self.newExpr(kind = exprTrue, start = start, end = token.end)
@@ -1217,6 +1235,44 @@ parsePrimary|self() -> (I32,):
         return self.parseLambda()
     self.report(code = "E2-006", message = "无效的表达式，实际得到" + kindName(token.kind))
     return -1
+; 插值串：整条串一个节点，`kids` 按段序只收插值段的子表达式，字面段不落节点。
+parseInterpolated|self(token: Token,) -> (I32,):
+    self.advance()
+    let id: I32 = self.newExpr(kind = exprInterpolated, start = token.start, end = token.end)
+    var kids: Array<I32> = []
+    var i = 0
+    while i < token.segmentCount():
+        let segment: Segment = token.segmentAt(i)
+        var isCode = false
+        match segment.kind:
+            case segmentInterpolation:
+                isCode = true
+            case segmentLiteral:
+                isCode = false
+        if isCode:
+            let inner: I32 = self.parseFragment(start = segment.start, end = segment.end)
+            if inner >= 0:
+                kids = kids.append(inner)
+        i = i + 1
+    self.setExprKids(id = id, kids = kids)
+    return id
+; 片段解析：只把游标临时换到段内记号上，节点池与诊断共用；
+; 段内记号本就用源内绝对偏移，故子节点跨度无需平移。
+parseFragment|self(start: I32, end: I32,) -> (I32,):
+    let fragment: LexResult = scanFragment(language = self.language, bytes = self.bytes, start = start, end = end)
+    let savedTokens = self.tokens
+    let savedTotal = self.total
+    let savedPos = self.pos
+    self.tokens = fragment.tokens
+    self.total = len(fragment.tokens)
+    self.pos = 0
+    let expr: I32 = self.parseExpression(1)
+    if !self.atEnd():
+        self.report(code = "E2-001", message = "插值段只收一条表达式")
+    self.tokens = savedTokens
+    self.total = savedTotal
+    self.pos = savedPos
+    return expr
 ; 括号表达式：单个元素是分组，多个元素构成元组；尾随逗号是元组标记。
 parseParenExpr|self() -> (I32,):
     let start: I32 = self.current().start
@@ -1264,7 +1320,7 @@ parseArrayLiteral|self() -> (I32,):
     let id: I32 = self.newExpr(kind = exprArray, start = start, end = self.previousEnd())
     self.setExprKids(id = id, kids = items)
     return id
-; 花括号字面量：首项后跟 `=` 即字典，否则是集合；空括号恒为空集合，字典没有空字面量形态。
+; 花括号字面量：首项后跟 `=` 或 `:` 即字典，否则是集合；空括号恒为空集合，字典没有空字面量形态。
 parseBraceLiteral|self() -> (I32,):
     let start: I32 = self.current().start
     self.advance()
@@ -1273,25 +1329,8 @@ parseBraceLiteral|self() -> (I32,):
         self.advance()
         return self.newExpr(kind = exprSet, start = start, end = self.previousEnd())
     let first: I32 = self.parseExpression(1)
-    if self.at(opAssign):
-        self.advance()
-        let value: I32 = self.parseExpression(1)
-        var items: Array<I32> = []
-        items = items.append(first)
-        items = items.append(value)
-        while self.at(comma):
-            self.advance()
-            self.skipNewlines()
-            if !self.at(rightBrace):
-                let key: I32 = self.parseExpression(1)
-                self.expect(kind = opAssign, what = "`=`")
-                let item: I32 = self.parseExpression(1)
-                items = items.append(key)
-                items = items.append(item)
-        self.expect(kind = rightBrace, what = "`}`")
-        let id: I32 = self.newExpr(kind = exprDictionary, start = start, end = self.previousEnd())
-        self.setExprKids(id = id, kids = items)
-        return id
+    if self.at(opAssign) || self.at(colon):
+        return self.parseDictionaryBody(start = start, first = first)
     var items: Array<I32> = []
     items = items.append(first)
     while self.at(comma):
@@ -1305,7 +1344,43 @@ parseBraceLiteral|self() -> (I32,):
     let id: I32 = self.newExpr(kind = exprSet, start = start, end = self.previousEnd())
     self.setExprKids(id = id, kids = items)
     return id
-; 函数字面量：`func (参数,) -> (返回,):` 后接缩进块或同行语句。
+; 字典条目串：首键已读，逐条收 `键 = 值` 或 `键: 类型 = 值`，尾逗号可省；
+; 条目成 `exprDictEntry`，`kids` 是键与值，类型标注落在条目的 `typeId`。
+parseDictionaryBody|self(start: I32, first: I32,) -> (I32,):
+    var entries: Array<I32> = []
+    var key = first
+    var reading = true
+    while reading:
+        var annotation = -1
+        if self.at(colon):
+            self.advance()
+            annotation = self.parseType()
+        if !self.at(opAssign):
+            self.report(code = "E2-001", message = "字典条目缺少 `=`")
+            self.recover()
+            reading = false
+        else:
+            self.advance()
+            let value: I32 = self.parseExpression(1)
+            let entry: I32 = self.newExpr(kind = exprDictEntry, start = self.ast.exprAt(key).start, end = self.previousEnd())
+            self.setExprType(id = entry, typeId = annotation)
+            self.pushExprKid(id = entry, kid = key)
+            self.pushExprKid(id = entry, kid = value)
+            entries = entries.append(entry)
+            if self.at(comma):
+                self.advance()
+                self.skipNewlines()
+                if self.at(rightBrace):
+                    reading = false
+                else:
+                    key = self.parseExpression(1)
+            else:
+                reading = false
+    self.expect(kind = rightBrace, what = "`}`")
+    let id: I32 = self.newExpr(kind = exprDictionary, start = start, end = self.previousEnd())
+    self.setExprKids(id = id, kids = entries)
+    return id
+; 函数字面量：`func (参数,) -> (返回,):` 后接缩进块或同行语句；返回箭头写 `=>` 即异步。
 parseLambda|self() -> (I32,):
     let start: I32 = self.current().start
     self.advance()
@@ -1314,7 +1389,12 @@ parseLambda|self() -> (I32,):
         return -1
     let params = self.parseParams()
     var returnType = -1
-    if self.at(arrow):
+    var isAsync = false
+    if self.at(fatArrow):
+        isAsync = true
+        self.advance()
+        returnType = self.collapseReturn(self.parseType())
+    elif self.at(arrow):
         self.advance()
         returnType = self.collapseReturn(self.parseType())
     if !self.expect(kind = colon, what = "`:`"):
@@ -1335,6 +1415,7 @@ parseLambda|self() -> (I32,):
     self.setExprKids(id = id, kids = kids)
     var node = self.ast.exprs[id]
     node.op = returnType
+    node.isAsync = isAsync
     self.ast.exprs[id] = node
     return id
 ; 缩进块：换行 + 缩进开启，逐条语句读到反缩进；空块报缺少块体。
@@ -1404,7 +1485,17 @@ parseStatement|self() -> (I32,):
         return self.parseUnroll()
     if self.at(kwDefer):
         return self.parseDefer()
+    if self.at(kwDetach):
+        return self.parseDetach()
     return self.parseExprStatement()
+; 分离语句：`detach 表达式` 派发非结构化任务，表达式是唯一子节点。
+parseDetach|self() -> (I32,):
+    let start: I32 = self.current().start
+    self.advance()
+    let operand: I32 = self.parseExpression(1)
+    let id: I32 = self.newStmt(kind = stmtDetach, start = start, end = self.previousEnd())
+    self.pushStmtKid(id = id, kid = operand)
+    return id
 ; 带标签控制流：标签名先记下，再交对应控制流解析；标签不进 kids。
 parseLabelled|self(what: TokenKind,) -> (I32,):
     let labelStart: I32 = self.current().nameStart
@@ -1485,10 +1576,23 @@ parseDefer|self() -> (I32,):
         self.pushStmtKid(id = id, kid = body)
     return id
 ; 变量语句：`var|let` 后接名字或元组模式，可选类型与初值。
+; 变量声明：`var` / `let` 开头是块内与顶层的常规形态；顶层省关键字即裸变量 `名: 类型 = 值`，
+; 这种写法恒不可变，名字直接落在声明上，不另造解构。
 parseVariableDecl|self(_topLevel: Bool,) -> (I32,):
     let start: I32 = self.current().start
-    let keyword: TokenKind = self.current().kind
-    self.advance()
+    var keyword: TokenKind = kwLet
+    var mutable = false
+    var bare = false
+    if self.at(kwVar) || self.at(kwLet):
+        keyword = self.current().kind
+        mutable = self.at(kwVar)
+        self.advance()
+    elif _topLevel && self.at(identifier):
+        bare = true
+    else:
+        self.report(code = "E2-007", message = "缺少 `var` 或 `let`")
+        self.recover()
+        return -1
     var pattern = -1
     if self.at(leftParen):
         pattern = self.parseParenExpr()
@@ -1509,13 +1613,13 @@ parseVariableDecl|self(_topLevel: Bool,) -> (I32,):
     if self.at(opAssign):
         self.advance()
         init = self.parseExpression(1)
-    if _topLevel:
+    if _topLevel || bare:
         let id: I32 = self.newDecl(kind = declVariable, start = start, end = self.previousEnd())
         self.setDeclName(id = id, start = self.ast.exprAt(pattern).nameStart, end = self.ast.exprAt(pattern).nameEnd)
         self.setDeclType(id = id, typeId = typeId)
         if init >= 0:
             self.pushDeclKid(id = id, kid = init)
-        self.setDeclMutable(id = id, value = kindTag(keyword) == kindTag(kwVar))
+        self.setDeclMutable(id = id, value = mutable)
         return id
     let id: I32 = self.newStmt(kind = stmtVariable, start = start, end = self.previousEnd())
     self.setStmtOp(id = id, op = keyword)
@@ -1864,6 +1968,17 @@ setDeclMutable|self(id: I32, value: Bool,) -> ():
     var node = self.ast.decls[id]
     node.mutable = value
     self.ast.decls[id] = node
+    return
+; 异步位写回：只由 `=>` 置位，函数声明与函数字面量各走一条。
+setDeclAsync|self(id: I32, value: Bool,) -> ():
+    var node = self.ast.decls[id]
+    node.isAsync = value
+    self.ast.decls[id] = node
+    return
+setExprAsync|self(id: I32, value: Bool,) -> ():
+    var node = self.ast.exprs[id]
+    node.isAsync = value
+    self.ast.exprs[id] = node
     return
 setDeclGeneric|self(id: I32, kids: Array<I32>,) -> ():
     var node = self.ast.decls[id]

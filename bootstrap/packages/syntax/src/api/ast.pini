@@ -16,8 +16,8 @@ nameEnd: I32 = -1
 kids: Array<I32> = []
 ret: I32 = -1
 
-; 表达式节点：`op` 是运算符记号码，`typeId` 是转换节点的目标类型，`body` 是 try 的处理器块；
-; `kids` 按源序排列。
+; 表达式节点：`op` 是运算符记号码，`typeId` 是转换节点的目标类型与字典条目的值标注，
+; `body` 是 try 的处理器块；`isAsync` 只对函数字面量成立，`kids` 按源序排列。
 (ExprNode)
 kind: I32 = 0
 start: I32 = 0
@@ -27,6 +27,7 @@ nameEnd: I32 = -1
 op: I32 = 0
 typeId: I32 = -1
 body: I32 = -1
+isAsync: Bool = false
 kids: Array<I32> = []
 
 ; 语句节点：块与分支体都是语句池下标，`kids` 的排布由类别码决定；
@@ -42,7 +43,7 @@ nameEnd: I32 = -1
 kids: Array<I32> = []
 
 ; 声明节点：参数、字段、变体与导入项同池，`typeId` 与 `body` 按需填写；
-; `generic` 是类型形参表，只有可带泛型的声明用它。
+; `generic` 是类型形参表，只有可带泛型的声明用它；`isAsync` 由 `=>` 置位。
 (DeclNode)
 kind: I32 = 0
 start: I32 = 0
@@ -57,6 +58,7 @@ isForeign: Bool = false
 isOwn: Bool = false
 isUsing: Bool = false
 isSelf: Bool = false
+isAsync: Bool = false
 kids: Array<I32> = []
 generic: Array<I32> = []
 composed: Bool = false
@@ -87,6 +89,8 @@ exprFunction
 exprCast
 exprTry
 exprUnsafe
+exprJoin
+exprDictEntry
 
 ; 语句类别：`stmtIf` 的 `kids` 是条件、体、否则如果对与否则体，缺省体答 -1。
 [StmtKind]
@@ -106,6 +110,7 @@ stmtPass
 stmtDefer
 stmtCapture
 stmtUnroll
+stmtDetach
 
 ; 声明类别：函数、测试与方法同形，差别在 `isTest` 与 `isSelf`。
 [DeclKind]
@@ -198,6 +203,10 @@ exprKindTag|func(_kind: ExprKind,) -> (I32,):
             return 22
         case exprUnsafe:
             return 23
+        case exprJoin:
+            return 24
+        case exprDictEntry:
+            return 25
     return 0
 
 ; 语句类别码。
@@ -235,6 +244,8 @@ stmtKindTag|func(_kind: StmtKind,) -> (I32,):
             return 14
         case stmtUnroll:
             return 15
+        case stmtDetach:
+            return 16
     return 0
 
 ; 声明类别码。
@@ -427,6 +438,12 @@ isTryExpr|self(_id: I32,) -> (Bool,):
 ; 不安全前缀：操作数是唯一子节点。
 isUnsafeExpr|self(_id: I32,) -> (Bool,):
     return self.exprs[_id].kind == exprKindTag(exprUnsafe)
+; 等待前缀：`await` 与 `wait` 同形，`op` 记关键字类别码以区分让出与占用。
+isJoinExpr|self(_id: I32,) -> (Bool,):
+    return self.exprs[_id].kind == exprKindTag(exprJoin)
+; 字典条目：`kids` 是键与值，`typeId` 是值类型标注，缺省答 -1。
+isDictEntryExpr|self(_id: I32,) -> (Bool,):
+    return self.exprs[_id].kind == exprKindTag(exprDictEntry)
 ; 字面量：六类基本字面量合判，容器补判元素类型时用来分流。
 isLiteralExpr|self(_id: I32,) -> (Bool,):
     if self.isIntegerExpr(_id) || self.isFloatExpr(_id):
@@ -472,6 +489,8 @@ isCaptureStmt|self(_id: I32,) -> (Bool,):
     return self.stmts[_id].kind == stmtKindTag(stmtCapture)
 isUnrollStmt|self(_id: I32,) -> (Bool,):
     return self.stmts[_id].kind == stmtKindTag(stmtUnroll)
+isDetachStmt|self(_id: I32,) -> (Bool,):
+    return self.stmts[_id].kind == stmtKindTag(stmtDetach)
 isDecl|self(id: I32, kind: DeclKind,) -> (Bool,):
     return self.decls[id].kind == declKindTag(kind)
 ; 子节点读取：越界答 -1，调用方按 -1 表示缺省。

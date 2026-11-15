@@ -263,12 +263,17 @@ checkDictionaryLiteral|func(unit: CompilationUnit, unitIndex: I32, node: I32, ex
         expectedResult = expectation.typeId
         expectedKey = keyTypeOf(pool = pool, id = expectation.typeId)
         expectedValue = valueTypeOf(pool = pool, id = expectation.typeId)
-    let kids = unit.ast.exprAt(node).kids
+    let entries = unit.ast.exprAt(node).kids
     var mergedKey = -1
     var mergedValue = -1
     var i = 0
-    while i + 1 < len(kids):
-        let keyStep = elementTypeAt(unit = unit, unitIndex = unitIndex, node = kids[i], expected = expectedKey, pool = out.pool, types = out.types)
+    while i < len(entries):
+        let entry = unit.ast.exprAt(entries[i])
+        if len(entry.kids) < 2:
+            return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = containerElementMismatch, expected = "键值成对", got = "条目缺项")
+        let keyNode = entry.kids[0]
+        let valueNode = entry.kids[1]
+        let keyStep = elementTypeAt(unit = unit, unitIndex = unitIndex, node = keyNode, expected = expectedKey, pool = out.pool, types = out.types)
         out.pool = keyStep.pool
         out.types = keyStep.types
         if keyStep.typeId == errorTypeId():
@@ -283,7 +288,7 @@ checkDictionaryLiteral|func(unit: CompilationUnit, unitIndex: I32, node: I32, ex
             if joined < 0:
                 return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = containerElementMismatch, expected = typeText(pool = out.pool, id = mergedKey), got = typeText(pool = out.pool, id = keyStep.typeId))
             mergedKey = joined
-        let valueStep = elementTypeAt(unit = unit, unitIndex = unitIndex, node = kids[i + 1], expected = expectedValue, pool = out.pool, types = out.types)
+        let valueStep = elementTypeAt(unit = unit, unitIndex = unitIndex, node = valueNode, expected = expectedValue, pool = out.pool, types = out.types)
         out.pool = valueStep.pool
         out.types = valueStep.types
         if valueStep.typeId == errorTypeId():
@@ -298,7 +303,7 @@ checkDictionaryLiteral|func(unit: CompilationUnit, unitIndex: I32, node: I32, ex
             if joinedValue < 0:
                 return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = containerElementMismatch, expected = typeText(pool = out.pool, id = mergedValue), got = typeText(pool = out.pool, id = valueStep.typeId))
             mergedValue = joinedValue
-        i = i + 2
+        i = i + 1
     if expectedResult >= 0:
         return finishContainer(out = out, unitIndex = unitIndex, node = node, typeId = expectedResult)
     if mergedKey < 0 || mergedValue < 0:

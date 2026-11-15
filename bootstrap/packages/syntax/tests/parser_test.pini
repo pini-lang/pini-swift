@@ -649,3 +649,123 @@ defer单行|test() -> ():
     let 块 = ast.stmtAt(体).kids[1]
     assert(ast.isDeferStmt(块), "块延迟")
     return
+
+; 异步面：`=>` 置异步位，函数声明与函数字面量各一处；返回表与 `->` 同形。
+异步箭头|test() -> ():
+    let src = "取|func() => (I32,):\n    return 0\n\nf|func() -> ():\n    let g = func() => (I32,):\n        return 0\n    return\n"
+    let 结果 = parseText(src)
+    var 诊断 = ""
+    if len(结果.diagnostics) > 0:
+        诊断 = 结果.diagnostics[0].message
+    assert(len(结果.diagnostics) == 0, "不应有语法诊断：" + 诊断)
+    let ast = 结果.ast
+    let 声明 = ast.declAt(ast.itemAt(0))
+    assert(声明.isAsync, "`=>` 声明异步")
+    assert(ast.isType(id = 声明.typeId, kind = typeNamed), "返回表按单元素折叠")
+    assert(!ast.declAt(ast.itemAt(1)).isAsync, "`->` 声明不同步")
+    let 体 = ast.declAt(ast.itemAt(1)).body
+    let 变量 = ast.stmtAt(体).kids[0]
+    let 字面量 = ast.stmtChild(id = 变量, index = 1)
+    assert(ast.isExpr(id = 字面量, kind = exprFunction), "右值是函数字面量")
+    assert(ast.exprAt(字面量).isAsync, "`=>` 字面量异步")
+    return
+
+; 等待前缀：`await` 与 `wait` 同形不同类别码，操作数是整条后缀链。
+等待前缀|test() -> ():
+    let src = "f|func() => (I32,):\n    let a = await 取()\n    let b = wait 取()\n    return a + b\n"
+    let 结果 = parseText(src)
+    var 诊断 = ""
+    if len(结果.diagnostics) > 0:
+        诊断 = 结果.diagnostics[0].message
+    assert(len(结果.diagnostics) == 0, "不应有语法诊断：" + 诊断)
+    let ast = 结果.ast
+    let 体 = ast.declAt(ast.itemAt(0)).body
+    let 首语句 = ast.stmtAt(体).kids[0]
+    let 让出 = ast.stmtChild(id = 首语句, index = 1)
+    assert(ast.isJoinExpr(让出), "await 是等待节点")
+    assert(ast.exprAt(让出).op == kindTag(kwAwait), "让出式记 await")
+    assert(ast.isCallExpr(ast.exprAt(让出).kids[0]), "操作数是调用")
+    let 次语句 = ast.stmtAt(体).kids[1]
+    let 占用 = ast.stmtChild(id = 次语句, index = 1)
+    assert(ast.isJoinExpr(占用), "wait 是等待节点")
+    assert(ast.exprAt(占用).op == kindTag(kwWait), "占用式记 wait")
+    return
+
+; 分离语句：`detach 表达式` 单条语句，表达式是唯一子节点。
+分离语句|test() -> ():
+    let src = "f|func() -> ():\n    detach 子任务(1)\n    return\n"
+    let 结果 = parseText(src)
+    var 诊断 = ""
+    if len(结果.diagnostics) > 0:
+        诊断 = 结果.diagnostics[0].message
+    assert(len(结果.diagnostics) == 0, "不应有语法诊断：" + 诊断)
+    let ast = 结果.ast
+    let 体 = ast.declAt(ast.itemAt(0)).body
+    let 语句 = ast.stmtAt(体).kids[0]
+    assert(ast.isDetachStmt(语句), "分离语句")
+    let 调用 = ast.stmtChild(id = 语句, index = 0)
+    assert(ast.isCallExpr(调用), "子节点是调用")
+    return
+
+; 插值段：整条串一个节点，插值段内的表达式进池；字面段不落节点。
+插值段|test() -> ():
+    let src = "f|func(x: I32,) -> (String,):\n    return \"值=\\(x + 1) 完\"\n"
+    let 结果 = parseText(src)
+    var 诊断 = ""
+    if len(结果.diagnostics) > 0:
+        诊断 = 结果.diagnostics[0].message
+    assert(len(结果.diagnostics) == 0, "不应有语法诊断：" + 诊断)
+    let ast = 结果.ast
+    let 体 = ast.declAt(ast.itemAt(0)).body
+    let 语句 = ast.stmtAt(体).kids[0]
+    let 串 = ast.stmtChild(id = 语句, index = 0)
+    assert(ast.isInterpolatedExpr(串), "插值串节点")
+    let 段内 = ast.exprAt(串).kids
+    assert(len(段内) == 1, "一个插值段")
+    assert(ast.isExpr(id = 段内[0], kind = exprBinary), "段内是二元表达式")
+    assert(ast.exprAt(段内[0]).op == kindTag(opAdd), "段内是加法")
+    return
+
+; 字典条目：条目成专用节点，键值各占一个 kid；`键: 类型 = 值` 的标注落在条目的 typeId。
+字典条目|test() -> ():
+    let src = "f|func() -> ():\n    let a = {\"k\" = 1,}\n    let b = {\"k\": I32 = 1,}\n    return\n"
+    let 结果 = parseText(src)
+    var 诊断 = ""
+    if len(结果.diagnostics) > 0:
+        诊断 = 结果.diagnostics[0].message
+    assert(len(结果.diagnostics) == 0, "不应有语法诊断：" + 诊断)
+    let ast = 结果.ast
+    let 体 = ast.declAt(ast.itemAt(0)).body
+    let 无标注 = ast.stmtChild(id = ast.stmtAt(体).kids[0], index = 1)
+    assert(ast.isDictionaryExpr(无标注), "无标注仍是字典")
+    let 条 = ast.exprAt(无标注).kids[0]
+    assert(ast.isDictEntryExpr(条), "条目专用节点")
+    assert(len(ast.exprAt(条).kids) == 2, "键与值")
+    assert(ast.exprAt(条).typeId < 0, "无标注答 -1")
+    let 有标注 = ast.stmtChild(id = ast.stmtAt(体).kids[1], index = 1)
+    let 带类 = ast.exprAt(有标注).kids[0]
+    assert(ast.isDictEntryExpr(带类), "带标注也是条目节点")
+    assert(ast.isType(id = ast.exprAt(带类).typeId, kind = typeNamed), "标注是具名类型")
+    assert(ast.typeAt(ast.exprAt(带类).typeId).nameEnd - ast.typeAt(ast.exprAt(带类).typeId).nameStart == 3, "标注名 I32")
+    return
+
+; 顶层裸变量：`名: 类型 = 值` 不写关键字，名字落在声明上且恒不可变。
+顶层裸变量|test() -> ():
+    let src = "x: I32 = 0\n\ny: String = \"s\"\n\nf|func() -> ():\n    return\n"
+    let 结果 = parseText(src)
+    var 诊断 = ""
+    if len(结果.diagnostics) > 0:
+        诊断 = 结果.diagnostics[0].message
+    assert(len(结果.diagnostics) == 0, "不应有语法诊断：" + 诊断)
+    let ast = 结果.ast
+    assert(ast.itemCount() == 3, "两条变量与一条函数")
+    let 首 = ast.declAt(ast.itemAt(0))
+    assert(ast.isDecl(id = ast.itemAt(0), kind = declVariable), "裸变量是变量声明")
+    assert(!首.mutable, "裸变量不可变")
+    assert(首.nameEnd - 首.nameStart == 1, "名字一字节")
+    assert(ast.isType(id = 首.typeId, kind = typeNamed), "类型具名")
+    assert(ast.isExpr(id = 首.kids[0], kind = exprInteger), "初值是整数")
+    let 次 = ast.declAt(ast.itemAt(1))
+    assert(ast.isDecl(id = ast.itemAt(1), kind = declVariable), "第二条也是变量")
+    assert(ast.isExpr(id = 次.kids[0], kind = exprString), "初值是字符串")
+    return
