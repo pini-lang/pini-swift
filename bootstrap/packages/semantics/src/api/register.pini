@@ -17,6 +17,28 @@ registerInto|func(table: SymbolTable, units: Array<CompilationUnit>,) -> (Symbol
         i = i + 1
     return out
 
+; 按包注册：包内判重，跨包只并表；两个包各写同名助手不构成冲突。
+; 跨包同名只经限定访问，不做全局唯一裁决。
+registerPackages|func(_groups: Array<PackageUnits>,) -> (SymbolTable,):
+    var out = SymbolTable()
+    var p = 0
+    while p < len(_groups):
+        let one = registerPackage(_groups[p].units)
+        var i = 0
+        while i < len(one.symbols):
+            out.symbols = out.symbols.append(one.symbols[i])
+            i = i + 1
+        i = 0
+        while i < len(one.imports):
+            out.imports = out.imports.append(one.imports[i])
+            i = i + 1
+        i = 0
+        while i < len(one.errors):
+            out.errors = out.errors.append(one.errors[i])
+            i = i + 1
+        p = p + 1
+    return out
+
 ; 注册整个工作区：按计划的拓扑序逐包装载并追加，顶层名字全局唯一。
 registerWorkspace|func(plan: BuildPlan, root: String,) -> (SymbolTable,):
     var out = SymbolTable()

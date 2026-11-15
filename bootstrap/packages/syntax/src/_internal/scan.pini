@@ -2,13 +2,16 @@
 _unicode = "../../../unicode"
 
 ; 扫描状态：字节游标、缩进栈与括号栈；括号栈的顶层为普通括号时抑制布局记号。
+; 关键字表随状态携带，整段只建一次。
 (LexState)
 bytes: Array<U8> = []
 pos: I32 = 0
 language: KeywordLanguage = .langEnglish
+keywords: KeywordTable = KeywordTable()
 indents: Array<I32> = []
 brackets: Array<Bool> = []
 tokens: Array<Token> = []
+segments: Array<Segment> = []
 issues: Array<LexIssue> = []
 warnings: Array<LexWarning> = []
 atLineStart: Bool = true
@@ -19,6 +22,7 @@ scanAll|func(language: KeywordLanguage, bytes: Array<U8>, start: I32, issues: Ar
     state.bytes = bytes
     state.pos = start
     state.language = language
+    state.keywords = makeKeywordTable(language)
     state.issues = issues
     state.indents = state.indents.append(0)
     let total = len(bytes)
@@ -37,6 +41,7 @@ scanAll|func(language: KeywordLanguage, bytes: Array<U8>, start: I32, issues: Ar
     state = emitToken(state = state, kind = eof, start = state.pos, end = state.pos)
     var out = LexResult()
     out.tokens = state.tokens
+    out.segments = state.segments
     out.issues = state.issues
     out.warnings = state.warnings
     out.bytes = bytes
@@ -59,6 +64,7 @@ scanFragment|func(language: KeywordLanguage, bytes: Array<U8>, start: I32, end: 
     state = emitToken(state = state, kind = eof, start = state.pos, end = state.pos)
     var out = LexResult()
     out.tokens = state.tokens
+    out.segments = state.segments
     out.issues = state.issues
     out.warnings = state.warnings
     out.bytes = bytes
@@ -229,7 +235,7 @@ scanIdentifier|func(_state: LexState,) -> (LexState,):
     if end == start:
         return scanWideByte(out)
     out.pos = end
-    let kind = keywordKind(language = out.language, bytes = out.bytes, start = start, end = end)
+    let kind = keywordKindIn(table = out.keywords, bytes = out.bytes, start = start, end = end)
     return emitToken(state = out, kind = kind, start = start, end = end)
 
 ; 标识符词界：起点不是标识符首字节时答原位置；否则按 ASCII 快路与标量分类推进到词尾。
@@ -602,7 +608,7 @@ scanPunctuation|func(_state: LexState,) -> (LexState,):
     if c == 126:
         return emitAscii(state = out, kind = opBitNot, width = 1)
     if c == 40:
-        out = pushBracket(state = out, carrying = isBlockCarryingParen(language = out.language, bytes = out.bytes, openAt = start))
+        out = pushBracket(state = out, carrying = isBlockCarryingParen(table = out.keywords, bytes = out.bytes, openAt = start))
         return emitAscii(state = out, kind = leftParen, width = 1)
     if c == 91:
         out = pushBracket(state = out, carrying = false)
@@ -635,14 +641,14 @@ scanPunctuation|func(_state: LexState,) -> (LexState,):
     return out
 
 ; 块携带判定：`(` 后同行紧跟函数关键字且其后不是标识符续字节；关键字拼写按词表取。
-isBlockCarryingParen|func(language: KeywordLanguage, bytes: Array<U8>, openAt: I32,) -> (Bool,):
+isBlockCarryingParen|func(table: KeywordTable, bytes: Array<U8>, openAt: I32,) -> (Bool,):
     var i = openAt + 1
     while i < len(bytes) && byteAt(bytes = bytes, index = i) == 32:
         i = i + 1
     let end = identifierEnd(bytes = bytes, start = i)
     if end == i:
         return false
-    return kindTag(keywordKind(language = language, bytes = bytes, start = i, end = end)) == kindTag(kwFunc)
+    return kindTag(keywordKindIn(table = table, bytes = bytes, start = i, end = end)) == kindTag(kwFunc)
 
 ; 压括号栈：块携带括号记为真，其内部布局不被抑制。
 pushBracket|func(state: LexState, carrying: Bool,) -> (LexState,):
@@ -688,7 +694,7 @@ emitNamed|func(state: LexState, kind: TokenKind, start: I32, end: I32, nameStart
     out.tokens = out.tokens.append(token)
     return out
 
-; 发字符串记号：段表随记号一起存放，字面段与插值段按源序排列。
+; 发字符串记号：段先进段池，记号只记基址与段数，故记号是定长记录。
 emitString|func(state: LexState, kind: TokenKind, start: I32, end: I32, segments: Array<Segment>,) -> (LexState,):
     var out = state
     var token = Token()
@@ -698,6 +704,11 @@ emitString|func(state: LexState, kind: TokenKind, start: I32, end: I32, segments
     token.end = end
     token.nameStart = start
     token.nameEnd = end
-    token.segments = segments
+    token.segmentBase = len(out.segments)
+    token.segmentLength = len(segments)
+    var i = 0
+    while i < len(segments):
+        out.segments = out.segments.append(segments[i])
+        i = i + 1
     out.tokens = out.tokens.append(token)
     return out

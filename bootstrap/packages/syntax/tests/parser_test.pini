@@ -775,3 +775,23 @@ defer单行|test() -> ():
     assert(len(结果.diagnostics) > 0, "段内多表达式应报错")
     assert(结果.diagnostics[0].code == "E2-001", "错误码 E2-001")
     return
+
+; 块名与关键字同形：导入块头名取文件名，`[foreign|import]` 应照常建块。
+关键字块名|test() -> ():
+    let 结果 = parseText("[foreign|import]\nx = \"../x\"\n")
+    assert(len(结果.diagnostics) == 0, "不应有语法诊断")
+    assert(结果.ast.itemCount() == 1, "一条导入块")
+    assert(结果.ast.isDecl(id = 结果.ast.itemAt(0), kind = declImportBlock), "导入块")
+    return
+
+; 扩展块闭合：成员只收 `|self` 与 `|own`，其后的 `|func` 回到顶层。
+扩展块遇函数闭合|test() -> ():
+    let src = "((盒))\n取|self() -> (I32,):\n    return 1\n\n自由|func() -> (I32,):\n    return 2\n"
+    let 结果 = parseText(src)
+    assert(len(结果.diagnostics) == 0, "不应有语法诊断")
+    assert(结果.ast.itemCount() == 2, "扩展块与函数各一条")
+    assert(结果.ast.isDecl(id = 结果.ast.itemAt(0), kind = declExtension), "首条是扩展块")
+    assert(结果.ast.isDecl(id = 结果.ast.itemAt(1), kind = declFunction), "次条是顶层函数")
+    let 扩展 = 结果.ast.declAt(结果.ast.itemAt(0))
+    assert(len(扩展.kids) == 1, "扩展块只收一个方法")
+    return

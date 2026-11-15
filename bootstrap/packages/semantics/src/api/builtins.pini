@@ -201,6 +201,7 @@ builtinFunctionTable|func() -> (Array<BuiltinFunction>,):
     out = out.append(makeFunction(name = "ord", params = oneParam(name = "value", shape = builtinChar), ret = builtinI32, variadic = false))
     out = out.append(makeFunction(name = "chr", params = oneParam(name = "code", shape = builtinI32), ret = builtinChar, variadic = false))
     out = out.append(makeFunction(name = "moduleRoot", params = noParams(), ret = builtinString, variadic = false))
+    out = out.append(makeFunction(name = "argv", params = noParams(), ret = builtinArrayString, variadic = false))
     out = out.append(makeFunction(name = "readFile", params = oneParam(name = "path", shape = builtinString), ret = builtinString, variadic = false))
     out = out.append(makeFunction(name = "writeFile", params = twoParams(first = "path", firstShape = builtinString, second = "content", secondShape = builtinString), ret = builtinVoid, variadic = false))
     out = out.append(makeFunction(name = "appendFile", params = twoParams(first = "path", firstShape = builtinString, second = "content", secondShape = builtinString), ret = builtinVoid, variadic = false))

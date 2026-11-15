@@ -79,6 +79,9 @@ public final class IREmitter {
 
     private var builder = IRBuilder()
     private var bodyIR = ""
+    /// 本函数局部槽的 `alloca`：统一收在入口块。发在声明点会让循环体内的槽每轮叠栈，
+    /// 长循环因此按迭代次数吃栈（栈上不收，函数返回才还）。
+    private var slotAllocas = ""
 
     /// Nominal type declarations of the module being emitted (G3) — field
     /// layouts for constructor / field-access GEPs.
@@ -458,6 +461,7 @@ public final class IREmitter {
         header += "\n"
 
         bodyIR = ""
+        slotAllocas = ""
         stringConstantDefs = []
         stringConstants = [:]
         errorCodeConstantDefs = []
@@ -876,6 +880,7 @@ public final class IREmitter {
         /// `bodyIR` 是模块级累积缓冲，本函数那段必须单独攒再接回，直接清空会抹掉先前已发射的函数。
         let emittedFunctions = bodyIR
         bodyIR = ""
+        slotAllocas = ""
 
         // 程序基准的注入点：入口函数体最前，早于任何 Pini 语句。
         //  注意  判据只看 `programBase`， 行不通  不看 `usesProcessShims` —— 入口可能先于 IO 调用点发射，
@@ -926,9 +931,9 @@ public final class IREmitter {
 
         let statements = bodyIR
         if frameMode == .resumable {
-            bodyIR = emittedFunctions + header + emitFramePrologue() + "de6b.body:\n" + statements + "}\n\n"
+            bodyIR = emittedFunctions + header + emitFramePrologue() + "de6b.body:\n" + slotAllocas + statements + "}\n\n"
         } else {
-            bodyIR = emittedFunctions + header + statements + "}\n\n"
+            bodyIR = emittedFunctions + header + slotAllocas + statements + "}\n\n"
         }
         frameMode = .none
         // N76：还原上一个函数的字符串账本（与函数头的压栈配对）。
@@ -1154,7 +1159,7 @@ public final class IREmitter {
     /// 地址名由槽名派生而非 `freshTemp()`：取槽代码与引用它的体代码分处两个 buffer，匿名名会前向引用。
     private func declareLocalSlot(named slot: String, spelling: String) -> String {
         guard frameMode == .resumable else {
-            bodyIR += builder.fmtAlloca(name: slot, type: spelling) + "\n"
+            slotAllocas += builder.fmtAlloca(name: slot, type: spelling) + "\n"
             return slot
         }
         let address = "%de6b." + slot.dropFirst()
@@ -2307,7 +2312,7 @@ public final class IREmitter {
             let loaded = builder.freshTemp()
             bodyIR += builder.fmtLoad(name: loaded, type: spelling, ptr: box) + "\n"
             let slot = freshSlot(for: name)
-            bodyIR += " \(slot) = alloca \(spelling)\n"
+            slotAllocas += " \(slot) = alloca \(spelling)\n"
             bodyIR += builder.fmtStore(value: loaded, type: spelling, ptr: slot) + "\n"
             scopes[scopes.count - 1][name] = slot
             if Self.collectionDestroySymbol(for: elementType) != nil {
@@ -6530,6 +6535,7 @@ public final class IREmitter {
         let savedReturnType = currentReturnType
         let savedIsMain = currentIsMain
         let savedBodyIR = bodyIR
+        let savedSlotAllocas = slotAllocas
         let savedBuilder = builder
         let savedCaptureSlots = captureSlots
         let savedCapturedNames = capturedNamesInFunction
@@ -6556,6 +6562,7 @@ public final class IREmitter {
         currentIsMain = false
         builder = IRBuilder()
         bodyIR = ""
+        slotAllocas = ""
         captureSlots = [:]
         pendingCleanup = []
         /// 闭包体重建 `IRBuilder` ⇒ SSA 名从 `%t1` 重新编号，账本必须换新的，否则同名条目指向外层的值。
@@ -6609,7 +6616,7 @@ public final class IREmitter {
         }
         let returnSpelling = returnType?.llvmSpelling ?? "void"
         closureDefs.append("define \(returnSpelling) \(mangled)(\(paramsIR.joined(separator: ", "))) {\n")
-        closureDefs.append(bodyIR)
+        closureDefs.append(slotAllocas + bodyIR)
         closureDefs.append("}\n\n")
 
         scopes = savedScopes
@@ -6621,6 +6628,7 @@ public final class IREmitter {
         currentReturnType = savedReturnType
         currentIsMain = savedIsMain
         bodyIR = savedBodyIR
+        slotAllocas = savedSlotAllocas
         builder = savedBuilder
         captureSlots = savedCaptureSlots
         pendingCleanup = savedPendingCleanup

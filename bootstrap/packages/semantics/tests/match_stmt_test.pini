@@ -41,7 +41,7 @@ types: ExprTypes = ExprTypes()
 查语句|func(sample: 语句样例, name: String,) -> (StoreCheck,):
     let id = 找语句函数(sample = sample, name = name)
     assert(id >= 0, "应找到函数 " + name)
-    return checkFunctionStores(world = sample.world, unitIndex = 0, declId = id, types = sample.types)
+    return checkFunctionStores(world = sample.world, unitIndex = 0, declId = id, types = sample.types, bytes = tempUtf8Bytes(sample.world.units[0].text))
 
 ; 找语句声明：按名字在声明清单里找局部，找不到答 -1。
 找语句声明|func(check: StoreCheck, name: String,) -> (I32,):

@@ -94,19 +94,58 @@ keywordWords|func(_language: KeywordLanguage,) -> (Array<String>,):
         "unroll",
     ]
 
-; 关键字匹配：先认真假字面量（不属关键字表），再与词表逐条比整词。
+; 关键字表：按语言把词表摊平成一块字节池；第 i 个词落在 starts[i] 起、宽 widths[i] 处。
+; 词法入口建一次并随状态传递，比对只读字节，不再逐词物化字符串。
+(KeywordTable)
+bytes: Array<U8> = []
+starts: Array<I32> = []
+widths: Array<I32> = []
+
+makeKeywordTable|func(_language: KeywordLanguage,) -> (KeywordTable,):
+    let words = keywordWords(_language)
+    var table = KeywordTable()
+    var i = 0
+    while i < len(words):
+        let word = tempUtf8Bytes(words[i])
+        table.starts = table.starts.append(len(table.bytes))
+        table.widths = table.widths.append(len(word))
+        var j = 0
+        while j < len(word):
+            table.bytes = table.bytes.append(word[j])
+            j = j + 1
+        i = i + 1
+    return table
+
+; 关键字匹配：按语言建表再判；逐词法入口复用已建好的表。
 keywordKind|func(language: KeywordLanguage, bytes: Array<U8>, start: I32, end: I32,) -> (TokenKind,):
-    if matchesWord(bytes = bytes, start = start, end = end, word = "true"):
+    return keywordKindIn(table = makeKeywordTable(language), bytes = bytes, start = start, end = end)
+
+; 关键字判定：真假字面量按字长先行剪枝，其余按词表序比对，命中即得类别码。
+keywordKindIn|func(table: KeywordTable, bytes: Array<U8>, start: I32, end: I32,) -> (TokenKind,):
+    let width = end - start
+    if width == 4 && matchesWord(bytes = bytes, start = start, end = end, word = "true"):
         return trueLiteral
-    if matchesWord(bytes = bytes, start = start, end = end, word = "false"):
+    if width == 5 && matchesWord(bytes = bytes, start = start, end = end, word = "false"):
         return falseLiteral
-    let words = keywordWords(language)
     var index = 0
-    while index < len(words):
-        if matchesWord(bytes = bytes, start = start, end = end, word = words[index]):
+    while index < len(table.widths):
+        if matchesTableWord(table = table, index = index, bytes = bytes, start = start, end = end):
             return kindFromTag(8 + index)
         index = index + 1
     return identifier
+
+; 整词比对：宽度不等先剪掉，再逐字节比。
+matchesTableWord|func(table: KeywordTable, index: I32, bytes: Array<U8>, start: I32, end: I32,) -> (Bool,):
+    let width = table.widths[index]
+    if width != end - start:
+        return false
+    let base = table.starts[index]
+    var i = 0
+    while i < width:
+        if table.bytes[base + i] != bytes[start + i]:
+            return false
+        i = i + 1
+    return true
 
 ; 整词比对：先比字节宽度再逐字节比；词表里的词都是字面量，宽度即其 UTF-8 字节数。
 matchesWord|func(bytes: Array<U8>, start: I32, end: I32, word: String,) -> (Bool,):

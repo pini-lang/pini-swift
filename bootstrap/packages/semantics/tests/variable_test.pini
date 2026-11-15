@@ -57,13 +57,13 @@ types: ExprTypes = ExprTypes()
 查存|func(sample: 存样例, name: String,) -> (StoreCheck,):
     let id = 找存函数(sample = sample, name = name)
     assert(id >= 0, "应找到函数 " + name)
-    return checkFunctionStores(world = sample.world, unitIndex = 0, declId = id, types = sample.types)
+    return checkFunctionStores(world = sample.world, unitIndex = 0, declId = id, types = sample.types, bytes = tempUtf8Bytes(sample.world.units[0].text))
 
 ; 查存方法：扩展块方法按目标名与方法名检查。
 查存方法|func(sample: 存样例, owner: String, name: String,) -> (StoreCheck,):
     let id = 找存方法(sample = sample, owner = owner, name = name)
     assert(id >= 0, "应找到方法 " + name)
-    return checkFunctionStores(world = sample.world, unitIndex = 0, declId = id, types = sample.types)
+    return checkFunctionStores(world = sample.world, unitIndex = 0, declId = id, types = sample.types, bytes = tempUtf8Bytes(sample.world.units[0].text))
 
 ; 首个赋值：返回第一个赋值语句的下标，没有答 -1。
 首个赋值|func(_ast: Ast,) -> (I32,):

@@ -58,6 +58,7 @@ importIndex|self(file: String, key: Array<U8>,) -> (I32,):
     return -1
 
 ; 定义顶层符号：同键已存在时报重复并保留先声明者，先到者即接口。
+; 判重粒度为包级，与宿主 `analyze(package:)` 一张符号表覆盖整包一致；跨包由注册入口分组隔离。
 defineTop|func(table: SymbolTable, symbol: Symbol,) -> (SymbolTable,):
     var out = table
     if table.topIndex(symbol.key) >= 0:

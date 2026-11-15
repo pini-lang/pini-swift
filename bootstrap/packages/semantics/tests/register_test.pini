@@ -28,7 +28,7 @@ package = "../../package"
 
 ; 扩展块内同名：同一块里两个同名方法按成员同名报错。
 扩展块内同名|test() -> ():
-    let 单元 = 造单元(path = "packages/p/src/api/a.pini", text = "(Point)\nx: I32 = 0\n\n((Point))\ndup|func() -> ():\n    return\ndup|func() -> ():\n    return\n")
+    let 单元 = 造单元(path = "packages/p/src/api/a.pini", text = "(Point)\nx: I32 = 0\n\n((Point))\ndup|self() -> ():\n    return\ndup|self() -> ():\n    return\n")
     let 表 = registerPackage([单元])
     assert(!表.isOK(), "块内同名应报错")
     assert(isSymbolError(error = 表.errorAt(0), kind = symbolMemberDuplicated), "类别应为成员同名")
@@ -36,7 +36,7 @@ package = "../../package"
 
 ; 扩展跨块同名：按「后声明者覆盖」，不报错，符号数不增。
 扩展跨块覆盖|test() -> ():
-    let 单元 = 造单元(path = "packages/p/src/api/a.pini", text = "(Point)\nx: I32 = 0\n\n((Point))\ndup|func() -> ():\n    return\n\n((Point))\ndup|func() -> ():\n    return\n")
+    let 单元 = 造单元(path = "packages/p/src/api/a.pini", text = "(Point)\nx: I32 = 0\n\n((Point))\ndup|self() -> ():\n    return\n\n((Point))\ndup|self() -> ():\n    return\n")
     let 表 = registerPackage([单元])
     assert(表.isOK(), "跨块同名不报错")
     var 方法数 = 0
@@ -132,4 +132,21 @@ package = "../../package"
         let 首 = 表.errorAt(0)
         assert(false, "注册应零错误，实得 " + 首.file + " " + symbolErrorName(首.kind) + " " + 首.name)
     assert(表.symbolCount() > 0, "应注册出符号")
+    return
+
+; 跨包同名：两个包各写同名助手，按包注册互不冲突，判重粒度是包而不是全工作区。
+跨包同名不冲突|test() -> ():
+    let 甲 = 造单元(path = "packages/甲/src/api/a.pini", text = "助手|func() -> ():\n    return\n")
+    let 乙 = 造单元(path = "packages/乙/src/api/b.pini", text = "助手|func() -> ():\n    return\n")
+    var 组甲 = PackageUnits()
+    组甲.name = "甲"
+    组甲.rootPath = "packages/甲"
+    组甲.units = [甲]
+    var 组乙 = PackageUnits()
+    组乙.name = "乙"
+    组乙.rootPath = "packages/乙"
+    组乙.units = [乙]
+    let 表 = registerPackages([组甲, 组乙])
+    assert(表.isOK(), "跨包同名不该报错")
+    assert(表.symbolCount() == 2, "两份符号各归各包")
     return

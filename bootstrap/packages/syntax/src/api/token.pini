@@ -1,4 +1,6 @@
 ; 记号：类别、类别码、源内字节区间与名字区间；码在构造点算好，判定不再重算。
+; 段表不进记号：记号是定长记录，追加整张记号表才不会退化成整表复制。
+; `segmentBase` 与 `segmentLength` 指向词法结果里的段池，插值串之外的记号为长度零。
 (Token)
 kind: TokenKind = .unknown
 tag: I32 = 0
@@ -6,7 +8,8 @@ start: I32 = 0
 end: I32 = 0
 nameStart: I32 = 0
 nameEnd: I32 = 0
-segments: Array<Segment> = []
+segmentBase: I32 = 0
+segmentLength: I32 = 0
 
 ; 字符串段：字面段的范围含转义原文，插值段的范围是括号内的表达式，都不含两侧定界。
 (Segment)
@@ -717,10 +720,9 @@ consumed|self() -> (I32,):
 ; 名字跨度是否非空：反引号名去掉引号后才是名字。
 hasName|self() -> (Bool,):
     return self.nameEnd > self.nameStart
+; 段数：只有插值串与字符串带段，其余记号为 0。
 segmentCount|self() -> (I32,):
-    return len(self.segments)
-segmentAt|self(_index: I32,) -> (Segment,):
-    return self.segments[_index]
+    return self.segmentLength
 
 ; 运算符拼写：按类别码回符号本身，非运算符答空串；诊断与语义判定共用这一条。
 opSymbol|func(_tag: I32,) -> (String,):

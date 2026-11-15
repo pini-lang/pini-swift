@@ -370,8 +370,8 @@ walkStoreStmt|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, st
     return out
 
 ; 检查入口：播种函数帧后走一遍体；块帧退出，作用域回到参数层，声明清单留全量记录。
-checkFunctionStores|func(world: MemberWorld, unitIndex: I32, declId: I32, types: ExprTypes,) -> (StoreCheck,):
-    let seed = seedFunctionScope(world = world, unitIndex = unitIndex, declId = declId)
+checkFunctionStores|func(world: MemberWorld, unitIndex: I32, declId: I32, types: ExprTypes, bytes: Array<U8>,) -> (StoreCheck,):
+    let seed = seedFunctionScope(world = world, unitIndex = unitIndex, declId = declId, bytes = bytes)
     var out = StoreCheck()
     out.pool = seed.pool
     out.types = types

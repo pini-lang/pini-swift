@@ -205,7 +205,7 @@ id: I32 = -1
     let 样例 = 造外调样例(样例源())
     let id = 找外调函数(sample = 样例, name = "写只读")
     assert(id >= 0, "应有 写只读")
-    let check = checkFunctionStores(world = 样例.world, unitIndex = 0, declId = id, types = 样例.types)
+    let check = checkFunctionStores(world = 样例.world, unitIndex = 0, declId = id, types = 样例.types, bytes = tempUtf8Bytes(样例.world.units[0].text))
     assert(len(check.errors) == 1, "应报一条，实得 " + "\(len(check.errors))")
     assert(isStoreError(error = check.errors[0], kind = storeForeignReadonly), "实得 " + storeErrorName(check.errors[0].kind))
     assert(storeErrorCode(storeForeignReadonly) == "E4-039", "只读用 E4-039")
