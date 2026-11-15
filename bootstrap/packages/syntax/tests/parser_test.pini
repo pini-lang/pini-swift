@@ -284,3 +284,45 @@
     assert(标志.nameEnd - 标志.nameStart == 8, "readonly 长度")
     assert(ast.isDecl(id = ast.itemAt(1), kind = declFunction), "函数未被吞进块")
     return
+
+; 转换：`as` 比二元紧、比前缀一元松，可连写左结合；目标类型落在节点的 typeId。
+转换形状|test() -> ():
+    let src = "f|func(a: I32, b: I32,) -> ():\n    x = a * b as I64\n    y = -a as U8\n    z = a as I64 as F64\n"
+    let 结果 = parseText(src)
+    var 诊断 = ""
+    if len(结果.diagnostics) > 0:
+        诊断 = 结果.diagnostics[0].message
+    assert(len(结果.diagnostics) == 0, "不应有语法诊断：" + 诊断)
+    let ast = 结果.ast
+    let 乘法 = ast.stmtChild(id = 0, index = 1)
+    assert(ast.isExpr(id = 乘法, kind = exprBinary), "顶层是乘法")
+    let 右 = ast.childOf(id = 乘法, index = 1)
+    assert(ast.isCastExpr(右), "右操作数是转换")
+    assert(ast.isType(id = ast.exprAt(右).typeId, kind = typeNamed), "目标类型是具名")
+    assert(ast.typeAt(ast.exprAt(右).typeId).nameEnd - ast.typeAt(ast.exprAt(右).typeId).nameStart == 3, "目标名 I64")
+    assert(ast.isIdentifierExpr(ast.exprAt(右).kids[0]), "转换的操作数是标识符")
+    let 一元转换 = ast.stmtChild(id = 1, index = 1)
+    assert(ast.isCastExpr(一元转换), "`-a as U8` 的顶层是转换")
+    assert(ast.isExpr(id = ast.exprAt(一元转换).kids[0], kind = exprUnary), "操作数是前缀一元")
+    let 连写 = ast.stmtChild(id = 2, index = 1)
+    assert(ast.isCastExpr(连写), "连写的外层是转换")
+    assert(ast.typeAt(ast.exprAt(连写).typeId).nameEnd - ast.typeAt(ast.exprAt(连写).typeId).nameStart == 3, "外层目标 F64")
+    let 内层 = ast.exprAt(连写).kids[0]
+    assert(ast.isCastExpr(内层), "内层也是转换")
+    assert(ast.typeAt(ast.exprAt(内层).typeId).nameEnd - ast.typeAt(ast.exprAt(内层).typeId).nameStart == 3, "内层目标 I64")
+    return
+
+; 上下文关键字：`as` 不在关键字表内，作变量名与右值时都是标识符。
+转换作名字|test() -> ():
+    let src = "f|func(a: I32,) -> (I32,):\n    as = a\n    return as\n"
+    let 结果 = parseText(src)
+    assert(len(结果.diagnostics) == 0, "不应有语法诊断")
+    let ast = 结果.ast
+    let 赋值 = ast.stmtChild(id = 0, index = 0)
+    assert(ast.isAssignStmt(0), "首条是赋值语句")
+    assert(ast.isIdentifierExpr(赋值), "左端是标识符")
+    assert(ast.exprAt(赋值).nameEnd - ast.exprAt(赋值).nameStart == 2, "名字就是 as")
+    assert(ast.isReturnStmt(1), "次条是返回")
+    let 值 = ast.stmtChild(id = 1, index = 0)
+    assert(ast.isIdentifierExpr(值), "右值标识符未被当成转换")
+    return

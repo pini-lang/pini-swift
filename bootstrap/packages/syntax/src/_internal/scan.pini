@@ -39,6 +39,7 @@ scanAll|func(language: KeywordLanguage, bytes: Array<U8>, start: I32, issues: Ar
     out.tokens = state.tokens
     out.issues = state.issues
     out.warnings = state.warnings
+    out.bytes = bytes
     return out
 
 ; 取字节：越界答 0，调用方先判界；负值不参与读取。

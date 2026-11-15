@@ -2,11 +2,13 @@
 _diagnostics = "../../../diagnostics"
 
 ; 解析状态：记号游标、节点池与诊断序列；所有推进都经由本文件的方法。
+; `bytes` 与词法共用同一份归一化源，上下文关键字比对与插值取段都读它。
 (Parser)
 tokens: Array<Token> = []
 pos: I32 = 0
 total: I32 = 0
 file: String = ""
+bytes: Array<U8> = []
 ast: Ast = Ast()
 diagnostics: Array<Diagnostic> = []
 
@@ -35,6 +37,7 @@ parseFileIn|func(language: KeywordLanguage, text: String, file: String,) -> (Par
     p.tokens = lexed.tokens
     p.total = len(lexed.tokens)
     p.file = file
+    p.bytes = lexed.bytes
     p.parseModule()
     var out = ParseResult()
     out.ast = p.ast
@@ -108,6 +111,12 @@ advance|self() -> ():
     if self.pos < self.total:
         self.pos = self.pos + 1
     return
+; 上下文关键字：当前记号是标识符且拼写等于给定词；不查关键字表，故它仍可作名字。
+isIdentifierWord|self(_word: String,) -> (Bool,):
+    let token = self.current()
+    if !isKind(token = token, kind = identifier):
+        return false
+    return matchesWord(bytes = self.bytes, start = token.start, end = token.end, word = _word)
 ; 跳过行尾：块内语句之间只允许换行。
 skipNewlines|self() -> ():
     while self.pos < self.total && self.tokens[self.pos].tag == kindTag(newline):
@@ -613,7 +622,7 @@ parseParenType|self() -> (I32,):
     return id
 ; 表达式：按二元优先级爬升，一元与后缀在更低层解析。
 parseExpression|self(_minPrecedence: I32,) -> (I32,):
-    var left: I32 = self.parseUnary()
+    var left: I32 = self.parseCast()
     var climbing = true
     while climbing && left >= 0:
         let precedence: I32 = binaryPrecedence(self.current().kind)
@@ -628,6 +637,18 @@ parseExpression|self(_minPrecedence: I32,) -> (I32,):
             self.pushExprKid(id = id, kid = left)
             self.pushExprKid(id = id, kid = right)
             left = id
+    return left
+; 转换：`操作数 as 目标类型`，比二元紧、比前缀一元松，可连写左结合。
+; `as` 是上下文关键字：只在操作数已完整的位置按转换解释，其余位置是普通标识符。
+parseCast|self() -> (I32,):
+    var left: I32 = self.parseUnary()
+    while left >= 0 && self.isIdentifierWord("as"):
+        self.advance()
+        let target: I32 = self.parseType()
+        let id: I32 = self.newExpr(kind = exprCast, start = self.ast.exprAt(left).start, end = self.previousEnd())
+        self.setExprType(id = id, typeId = target)
+        self.pushExprKid(id = id, kid = left)
+        left = id
     return left
 parseUnary|self() -> (I32,):
     let kind: TokenKind = self.current().kind
@@ -1241,6 +1262,12 @@ setExprName|self(id: I32, start: I32, end: I32,) -> ():
 setExprOp|self(id: I32, op: TokenKind,) -> ():
     var node = self.ast.exprs[id]
     node.op = kindTag(op)
+    self.ast.exprs[id] = node
+    return
+; 表达式类型位：转换节点写目标类型，其余节点用不到。
+setExprType|self(id: I32, typeId: I32,) -> ():
+    var node = self.ast.exprs[id]
+    node.typeId = typeId
     self.ast.exprs[id] = node
     return
 setExprKids|self(id: I32, kids: Array<I32>,) -> ():

@@ -1,0 +1,90 @@
+; 显式转换判定：`值 as 类型` 只在数值标量之间成立，结果类型即目标类型。
+; 与隐式提升分工：提升只做同族加宽且不改变运算面，转换按目标宽度重解释，两侧不互相替代。
+; 指针与整数互转按规范只在 `unsafe` 上下文成立，本层未接该上下文，故一律按不可转拒绝。
+
+; 转换错误：目标不是数值标量、操作数不是数值标量两类。
+[CastErrorKind]
+castTargetNotNumeric
+castOperandNotNumeric
+
+; 转换错误：类别、位置与期望/实得文本。
+(CastError)
+kind: CastErrorKind = .castTargetNotNumeric
+file: String = ""
+offset: I32 = 0
+expected: String = ""
+got: String = ""
+
+; 转换结果：池、结果类型、错误与待定标记。
+(CastResult)
+pool: TypePool = TypePool()
+typeId: I32 = -1
+error: CastError = CastError()
+failed: Bool = false
+deferred: Bool = false
+
+; 错误类别名：诊断、测试与回执共用一份拼写。
+castErrorName|func(_kind: CastErrorKind,) -> (String,):
+    match _kind:
+        case castTargetNotNumeric:
+            return "转换目标不是数值标量"
+        case castOperandNotNumeric:
+            return "转换操作数不是数值标量"
+    return "转换错误"
+
+; 同一类别判定：枚举相等比较不可用，按名称比。
+isCastError|func(error: CastError, kind: CastErrorKind,) -> (Bool,):
+    return castErrorName(error.kind) == castErrorName(kind)
+
+; 诊断码：与宿主一致，两类都报 E4-001。
+castErrorCode|func(_kind: CastErrorKind,) -> (String,):
+    return "E4-001"
+
+; 造错误：位置指 `as` 或目标类型起点，期望与实得是类型文本。
+makeCastError|func(kind: CastErrorKind, file: String, offset: I32, expected: String, got: String,) -> (CastError,):
+    var out = CastError()
+    out.kind = kind
+    out.file = file
+    out.offset = offset
+    out.expected = expected
+    out.got = got
+    return out
+
+; 数值标量名：可转类型对就是这十个名字，其他标量（Bool、Char）不在其中。
+isNumericScalarName|func(_name: String,) -> (Bool,):
+    if _name == "I8" || _name == "I16" || _name == "I32" || _name == "I64":
+        return true
+    if _name == "U8" || _name == "U16" || _name == "U32" || _name == "U64":
+        return true
+    return _name == "F32" || _name == "F64"
+
+; 数值标量：类别是标量且名字在可转名单内。
+isNumericScalarType|func(pool: TypePool, id: I32,) -> (Bool,):
+    if id < 0 || id >= len(pool.entries):
+        return false
+    let entry = pool.entries[id]
+    if !isTypeClass(kind = entry.kind, expected = typeClassScalar):
+        return false
+    return isNumericScalarName(entry.name)
+
+; 转换判定：目标先判，操作数能判出时再判；源未判定时留待定，不当失败。
+checkCast|func(pool: TypePool, source: I32, target: I32, file: String, offset: I32,) -> (CastResult,):
+    var out = CastResult()
+    out.pool = pool
+    if target < 0:
+        out.deferred = true
+        return out
+    if !isNumericScalarType(pool = pool, id = target):
+        out.error = makeCastError(kind = castTargetNotNumeric, file = file, offset = offset, expected = "数值标量", got = typeText(pool = pool, id = target))
+        out.failed = true
+        return out
+    if source < 0:
+        out.deferred = true
+        out.typeId = target
+        return out
+    if !isNumericScalarType(pool = pool, id = source):
+        out.error = makeCastError(kind = castOperandNotNumeric, file = file, offset = offset, expected = "数值标量", got = typeText(pool = pool, id = source))
+        out.failed = true
+        return out
+    out.typeId = target
+    return out
