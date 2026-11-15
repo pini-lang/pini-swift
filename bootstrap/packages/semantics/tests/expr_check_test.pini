@@ -1,0 +1,71 @@
+[expr_check_test|import]
+_syntax = "../../syntax"
+_module_loader = "../../module-loader"
+
+; 表达式检查：逐单元跑名字、成员与调用三类判据，不读文件系统。
+; 样例只走装载、注册、解析类型与建世界四步，与接口样例同一套顺序。
+
+; 表达式样例：世界与表达式类型表；类型表全未写，实参类型一律待定。
+(表达式样例)
+world: MemberWorld = MemberWorld()
+types: ExprTypes = ExprTypes()
+
+; 造表达式样例：装载、排序、注册、解析类型、建世界、铺类型表。
+造表达式样例|func(files: Array<String>, texts: Array<String>,) -> (表达式样例,):
+    var loaded: Array<CompilationUnit> = []
+    var i = 0
+    while i < len(files):
+        let one = loadUnit(path = files[i], text = texts[i])
+        assert(!one.failed, "样例应可加载：" + files[i])
+        loaded = loaded.append(one.unit)
+        i = i + 1
+    let units = sortedUnits(loaded)
+    let table = registerPackage(units)
+    let types = resolvePackage(units = units, table = table)
+    var out = 表达式样例()
+    out.world = makeMemberWorld(units = units, table = table, types = types)
+    out.types = makeExprTypes(units)
+    return out
+
+; 未定义调用：文件里没有这个名字，调用点报一条未定义。
+未定义调用|test() -> ():
+    let 样例 = 造表达式样例(files = ["packages/p/src/api/p.pini"], texts = ["f|func() -> ():\n    没有这个()\n"])
+    let check = checkUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
+    assert(len(check.errors) == 1, "应报一条，实得 " + "\(len(check.errors))")
+    assert(isExprError(error = check.errors[0], kind = exprUndefined), "实得 " + exprErrorName(check.errors[0].kind))
+    assert(check.errors[0].name == "没有这个", "实得 " + check.errors[0].name)
+    assert(check.errors[0].code == "E3-003", "实得 " + check.errors[0].code)
+    return
+
+; 已知名字放行：顶层函数、内建、局部与参数都不报。
+已知名字放行|test() -> ():
+    let 样例 = 造表达式样例(files = ["packages/p/src/api/p.pini"], texts = ["甲|func() -> ():\n    pass\n\nf|func(参数: I32,) -> ():\n    let 局部 = 甲\n    局部()\n    参数\n    len(\"x\")\n"])
+    let check = checkUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
+    assert(len(check.errors) == 0, "合法名字不该报，实得 " + exprError串(check))
+    return
+
+; 成员缺失：接收者是顶层类型名时按名义成员判，类型名位不暴露字段。
+成员缺失|test() -> ():
+    let 样例 = 造表达式样例(files = ["packages/p/src/api/p.pini"], texts = ["(点)\nx: I32 = 0\n\nf|func() -> ():\n    点.缺失\n"])
+    let check = checkUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
+    assert(len(check.errors) == 1, "应报一条，实得 " + exprError串(check))
+    assert(isExprError(error = check.errors[0], kind = exprMemberFailed), "实得 " + exprErrorName(check.errors[0].kind))
+    assert(check.errors[0].name == "缺失", "实得 " + check.errors[0].name)
+    return
+
+; 调用个数：被调是顶层函数而实参少一个，按调用形状报。
+调用个数不匹配|test() -> ():
+    let 样例 = 造表达式样例(files = ["packages/p/src/api/p.pini"], texts = ["甲|func(a: I32,) -> ():\n    pass\n\nf|func() -> ():\n    甲()\n"])
+    let check = checkUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
+    assert(len(check.errors) == 1, "应报一条，实得 " + exprError串(check))
+    assert(isExprError(error = check.errors[0], kind = exprCallFailed), "实得 " + exprErrorName(check.errors[0].kind))
+    return
+
+; 收齐错误串：测试断言失败时给出可读内容。
+exprError串|func(_check: ExprCheck,) -> (String,):
+    var out = ""
+    var i = 0
+    while i < len(_check.errors):
+        out = out + exprErrorName(_check.errors[i].kind) + ":" + _check.errors[i].name + " "
+        i = i + 1
+    return out

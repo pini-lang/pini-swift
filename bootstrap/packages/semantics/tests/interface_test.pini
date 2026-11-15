@@ -36,7 +36,7 @@ units: Array<CompilationUnit> = []
     ]
     )
     let text = interfaceText(name = "p", units = 样例.units, world = 样例.world)
-    let 期望 = "package=p\n公开函数\n点\nlayout 点 结构 slots=6 fields=x,y\n"
+    let 期望 = "package=p\n公开函数\n点\nsig 公开函数() -> ()\nlayout 点 结构 slots=6 fields=x,y\n"
     assert(text == 期望, "实得：" + text)
     return
 
@@ -57,11 +57,11 @@ units: Array<CompilationUnit> = []
     assert(前文本 == 后文本, "内部实现改动不应改变接口：" + 前文本 + " / " + 后文本)
     return
 
-; 名字排序：公开名按 UTF-8 字节序，与声明序无关。
+; 名字排序：公开名按 UTF-8 字节序，签名行随名字同序，与声明序无关。
 接口名字有序|test() -> ():
     let 样例 = 造接口样例(files = ["packages/p/src/api/p.pini"], texts = ["丙|func() -> ():\n    pass\n\n甲|func() -> ():\n    pass\n\n乙|func() -> ():\n    pass\n"])
     let text = interfaceText(name = "p", units = 样例.units, world = 样例.world)
-    assert(text == "package=p\n丙\n乙\n甲\n", "实得：" + text)
+    assert(text == "package=p\n丙\n乙\n甲\nsig 丙() -> ()\nsig 乙() -> ()\nsig 甲() -> ()\n", "实得：" + text)
     return
 
 ; 漂移未变：两份文本逐行相同即判未变。
@@ -83,7 +83,30 @@ units: Array<CompilationUnit> = []
     assert(len(drift.missing) == 0, "不应有缺失行")
     return
 
-; 漂移错误：包级诊断带专用码，描述带行号与两侧行数。
+; 签名变化：参数类型改了，名字段不变而签名段变，漂移必须判出来。
+签名变则文本变|test() -> ():
+    let 前 = 造接口样例(files = ["packages/p/src/api/p.pini"], texts = ["公开函数|func(_a: I32,) -> (I32,):\n    return a\n"])
+    let 后 = 造接口样例(files = ["packages/p/src/api/p.pini"], texts = ["公开函数|func(_a: F64,) -> (I32,):\n    return a\n"])
+    let 前文本 = interfaceText(name = "p", units = 前.units, world = 前.world)
+    let 后文本 = interfaceText(name = "p", units = 后.units, world = 后.world)
+    assert(前文本 != 后文本, "参数类型变化应使接口文本变：" + 前文本)
+    assert(interfaceDrift(recorded = 前文本, current = 后文本).changed, "应判漂移")
+    return
+
+; 包面排除：外部块与扩展块的块名不是符号，测试函数也不进接口。
+块名与测试不进接口|test() -> ():
+    let 样例 = 造接口样例(files = ["packages/p/src/api/p.pini", "packages/p/src/api/q.pini"], texts = [
+            "[libc|foreign]\nmalloc: (I64,) -> (*I8,)\n\n真函数|func() -> ():\n    pass\n\n用例|test() -> ():\n    assert(true, \"\")\n",
+            "(点)\nx: I32 = 0\n\n[[幽灵]]\n方法|func() -> ():\n    pass\n",
+    ]
+    )
+    let text = interfaceText(name = "p", units = 样例.units, world = 样例.world)
+    assert(text.contains("真函数"), "公开函数应进：" + text)
+    assert(!text.contains("libc"), "外部块名不是符号：" + text)
+    assert(!text.contains("用例"), "测试函数不进包面：" + text)
+    assert(!text.contains("幽灵"), "扩展块名不是符号：" + text)
+    return
+
 接口漂移错误|test() -> ():
     var 记录 = InterfaceRecord()
     记录.name = "p"

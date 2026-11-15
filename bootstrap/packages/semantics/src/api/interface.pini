@@ -27,10 +27,20 @@ extra: Array<String> = []
 name: String = ""
 text: String = ""
 
+; 声明是否进包面：块头名与扩展块名不是包级符号，测试函数不进接口。
+; 四类块名只是标签；扩展块名是已有类型名，重复列出会让同名行出现两次。
+isInterfaceDecl|func(_decl: DeclNode,) -> (Bool,):
+    if isImportBlockCode(_decl.kind) || isExportBlockCode(_decl.kind):
+        return false
+    if isForeignDeclCode(_decl.kind) || isGivenDeclCode(_decl.kind):
+        return false
+    if isExtensionDeclCode(_decl.kind):
+        return false
+    return !_decl.isTest
+
 ; 公开名：顶层声明名按名字与路径推可见性，非 public 答空串。
-; 导入与导出块不引入包级名字，块头名不进接口。
 publicNameOf|func(unit: CompilationUnit, bytes: Array<U8>, decl: DeclNode,) -> (String,):
-    if isImportBlockCode(decl.kind) || isExportBlockCode(decl.kind):
+    if !isInterfaceDecl(decl):
         return ""
     let name = decodeRange(bytes = bytes, start = decl.nameStart, end = decl.nameEnd)
     if len(name) == 0:
@@ -69,7 +79,70 @@ sortedNames|func(_items: Array<String>,) -> (Array<String>,):
         i = i + 1
     return out
 
-; 字段序：结构、对象的字段槽名按槽位序，逗号连接；空表答空串。
+; 压空白：连续空白折成一个空格，首尾不留；类型写法里的换行不进接口行。
+squashSpace|func(_text: String,) -> (String,):
+    var out = ""
+    var pending = false
+    var i = 0
+    while i < len(_text):
+        let ch = _text[i]
+        if ch == " " || ch == "\t" || ch == "\n" || ch == "\r":
+            if len(out) > 0:
+                pending = true
+        else:
+            if pending:
+                out = out + " "
+                pending = false
+            out = out + "\(ch)"
+        i = i + 1
+    return out
+
+; 类型文本：取类型节点的源内区间原文；没有类型节点答空元组。
+; 只压空白不重排，等价写法仍算不同——接口判失效宁严不漏。
+typeTextOf|func(unit: CompilationUnit, bytes: Array<U8>, node: I32,) -> (String,):
+    if node < 0 || node >= unit.ast.typeCount():
+        return "()"
+    let type = unit.ast.typeAt(node)
+    return squashSpace(decodeRange(bytes = bytes, start = type.start, end = type.end))
+
+; 签名行：函数名、参数名与类型、返回类型；非函数答空串。
+; 参数名是调用点标签的一部分，改标签同样使下游失效。
+signatureLine|func(unit: CompilationUnit, bytes: Array<U8>, decl: DeclNode,) -> (String,):
+    if !isFunctionDeclCode(decl.kind):
+        return ""
+    let name = decodeRange(bytes = bytes, start = decl.nameStart, end = decl.nameEnd)
+    var text = "sig " + name + "("
+    var written = 0
+    var i = 0
+    while i < len(decl.kids):
+        let param = unit.ast.decls[decl.kids[i]]
+        if isParamDeclCode(param.kind):
+            if written > 0:
+                text = text + ", "
+            let paramName = decodeRange(bytes = bytes, start = param.nameStart, end = param.nameEnd)
+            text = text + paramName + ": " + typeTextOf(unit = unit, bytes = bytes, node = param.typeId)
+            written = written + 1
+        i = i + 1
+    return text + ") -> " + typeTextOf(unit = unit, bytes = bytes, node = decl.typeId)
+
+; 逐单元收集签名行：公开名先过同一判据，再拼签名；结果另行排序。
+collectSignatures|func(_units: Array<CompilationUnit>,) -> (Array<String>,):
+    var out: Array<String> = []
+    var u = 0
+    while u < len(_units):
+        let unit = _units[u]
+        let bytes = tempUtf8Bytes(unit.text)
+        var i = 0
+        while i < len(unit.ast.items):
+            let decl = unit.ast.decls[unit.ast.items[i]]
+            if len(publicNameOf(unit = unit, bytes = bytes, decl = decl)) > 0:
+                let line = signatureLine(unit = unit, bytes = bytes, decl = decl)
+                if len(line) > 0:
+                    out = out.append(line)
+            i = i + 1
+        u = u + 1
+    return out
+
 fieldSlotText|func(_layout: LayoutEntry,) -> (String,):
     var text = ""
     var written = 0
@@ -114,13 +187,19 @@ interfaceLayoutLine|func(world: MemberWorld, shapes: ShapeTable, name: String,) 
         text = text + " fields=" + fieldSlotText(layout)
     return text
 
-; 接口文本：头行、公开名行、布局行三段；名字与布局各自排序，段序固定。
+; 接口文本：头行、公开名行、签名行与布局行四段；各段自行排序，段序固定。
+; 名字段认声明存在，签名段认调用契约，布局段认槽位；改签名或改槽位都会使文本变。
 interfaceText|func(name: String, units: Array<CompilationUnit>, world: MemberWorld,) -> (String,):
     var text = "package=" + name + "\n"
     let names = sortedNames(collectPublicNames(units))
     var i = 0
     while i < len(names):
         text = text + names[i] + "\n"
+        i = i + 1
+    let signatures = sortedNames(collectSignatures(units))
+    i = 0
+    while i < len(signatures):
+        text = text + signatures[i] + "\n"
         i = i + 1
     let shapes = makeShapeTable(world)
     var j = 0

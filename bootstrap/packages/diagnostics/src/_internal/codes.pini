@@ -3,7 +3,7 @@
 
 ; 已登记的诊断码数量，供门禁核对表规模。
 diagnosticCodeCount|func() -> (I32,):
-    return 111
+    return 112
 
 ; 码的消息模板；未登记答空串。占位符由调用方按诊断负载填充。
 diagnosticMessage|func(_code: String,) -> (String,):
@@ -99,6 +99,8 @@ diagnosticMessage|func(_code: String,) -> (String,):
         return "外部符号名 '{name}' 不是合法 C 标识符"
     if _code == "E3-021":
         return "包 '{name}' 的接口与下游记录的接口不一致：{detail}"
+    if _code == "E3-022":
+        return "包 '{name}' 没有公开名 '{detail}'"
     if _code == "E4-001":
         return "类型不匹配：期望 {expected}，实际得到 {got}"
     if _code == "E4-002":
@@ -263,6 +265,8 @@ diagnosticSuggestion|func(_code: String,) -> (String,):
         return "名字就是 C 符号名，只能用 ASCII 字母、数字与下划线，且不以数字开头"
     if _code == "E3-021":
         return "确认这次接口变化是有意的；有意则更新下游记录，无意说明包内公开面被意外改动"
+    if _code == "E3-022":
+        return "跨包只能引用目标包导出的名字；确认拼写，或让目标包导出它"
     if _code == "E4-028":
         return "C 边界只收 I8 / U8 / I32 / I64 / U64 / F64 / Bool / *T，以及形参位的 String"
     if _code == "E4-029":

@@ -1,0 +1,45 @@
+[expr_driver_test|import]
+_support = "../../support"
+_syntax = "../../syntax"
+_diagnostics = "../../diagnostics"
+_module_loader = "../../module-loader"
+_semantics = "../../semantics"
+
+; 表达式装配：单文件单元走注册、类型解析与建世界，再逐单元跑表达式检查。
+; 只验装配与诊断转换，不跑全工作区：吞吐缺口已登记，判据在抽样单元上成立。
+
+; 造单元：只走装载，不注册；路径决定可见性推导的输入。
+造单元|func(path: String, src: String,) -> (CompilationUnit,):
+    let loaded = loadUnit(path = path, text = src)
+    assert(!loaded.failed, "样例应可加载：" + path)
+    return loaded.unit
+
+; 建世界：单元排序后一次注册，再解析类型与铺表达式类型表。
+建世界|func(units: Array<CompilationUnit>,) -> (MemberWorld,):
+    let ordered = sortedUnits(units)
+    let table = registerPackage(ordered)
+    let types = resolvePackage(units = ordered, table = table)
+    return makeMemberWorld(units = ordered, table = table, types = types)
+
+; 未定义调用：转成一条诊断，码、位置与渲染文本都在。
+表达式诊断成文|test() -> ():
+    let unit = 造单元(path = "packages/p/src/api/p.pini", src = "f|func() -> ():\n    没有这个()\n")
+    var all: Array<CompilationUnit> = [unit]
+    let units = sortedUnits(all)
+    let 诊断 = exprPackageDiagnostics(world = 建世界(units = units), units = units)
+    assert(len(诊断) == 1, "应有一条诊断，实得 " + "\(len(诊断))")
+    assert(诊断[0].code == "E3-003", "实得 " + 诊断[0].code)
+    var files: Array<String> = ["packages/p/src/api/p.pini"]
+    var texts: Array<SourceText> = [makeSourceText(unit.text)]
+    let text = renderAll(items = 诊断, files = files, texts = texts)
+    assert(text.contains("E3-003"), "渲染应带码，实得：" + text)
+    return
+
+; 合法单元：顶层函数与内建各调一次，诊断为空；这是防恒真的反向判据。
+表达式合法零诊断|test() -> ():
+    let unit = 造单元(path = "packages/p/src/api/p.pini", src = "甲|func() -> ():\n    pass\n\nf|func() -> ():\n    甲()\n    len(\"x\")\n")
+    var all: Array<CompilationUnit> = [unit]
+    let units = sortedUnits(all)
+    let 诊断 = exprPackageDiagnostics(world = 建世界(units = units), units = units)
+    assert(len(诊断) == 0, "合法单元不该有诊断，实得 " + "\(len(诊断))")
+    return

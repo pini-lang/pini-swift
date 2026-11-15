@@ -6,10 +6,11 @@ _module_loader = "../../../module-loader"
 ; 包归属来自单元到包的映射，不靠路径前缀猜；只判命名空间，不判实参。
 ; 诊断按文件与偏移排序后返回，包图次序变化不改变序列。
 
-; 跨包错误：非 public 与注入遮蔽两类，各有一枚诊断码。
+; 跨包错误：目标包没有该名、非 public 与注入遮蔽三类，各有一枚诊断码。
 [CrossRefKind]
 crossNotPublic
 crossInjectedShadow
+crossMissing
 
 ; 跨包错误：类别、文件、偏移、相关名字与承接位置；位置指向引用点或导入条目。
 (CrossRefError)
@@ -38,6 +39,63 @@ offset: I32 = 0
 name: String = ""
 publics: Array<String> = []
 
+; 包符号：包名与该包的顶层符号；引用判定按包归属查，不查全局名表。
+(PackageSymbols)
+name: String = ""
+symbols: Array<Symbol> = []
+
+; 查符号结果：命中标记与符号本身；未命中时符号是默认值。
+(SymbolLookup)
+found: Bool = false
+symbol: Symbol = Symbol()
+
+; 包符号表：按单元到包的映射把顶层符号归包；成员与参数有 owner，不进这张表。
+buildPackageSymbols|func(_ws: WorkspaceUnits, world: MemberWorld,) -> (Array<PackageSymbols>,):
+    var out: Array<PackageSymbols> = []
+    var p = 0
+    while p < len(_ws.packages):
+        var row = PackageSymbols()
+        row.name = _ws.packages[p].name
+        out = out.append(row)
+        p = p + 1
+    var s = 0
+    while s < world.table.symbolCount():
+        let symbol = world.table.symbolAt(s)
+        if len(symbol.owner) == 0:
+            let owner = _ws.packageOf(symbol.file)
+            if len(owner) > 0:
+                out = appendPackageSymbol(rows = out, owner = owner, symbol = symbol)
+        s = s + 1
+    return out
+
+; 归包：包名命中即追加；未命中原样返回（工作区外的文件不归任何包）。
+appendPackageSymbol|func(rows: Array<PackageSymbols>, owner: String, symbol: Symbol,) -> (Array<PackageSymbols>,):
+    var out = rows
+    var i = 0
+    while i < len(out):
+        if out[i].name == owner:
+            out[i].symbols = out[i].symbols.append(symbol)
+            return out
+        i = i + 1
+    return out
+
+; 按包查顶层符号：包名与 NFC 键都比；成员不在表内，命中即目标包自己的名字。
+lookupPackageSymbol|func(rows: Array<PackageSymbols>, packageName: String, key: Array<U8>,) -> (SymbolLookup,):
+    var out = SymbolLookup()
+    var i = 0
+    while i < len(rows):
+        if rows[i].name == packageName:
+            var s = 0
+            while s < len(rows[i].symbols):
+                if sameKey(first = rows[i].symbols[s].key, second = key):
+                    out.found = true
+                    out.symbol = rows[i].symbols[s]
+                    return out
+                s = s + 1
+            return out
+        i = i + 1
+    return out
+
 ; 类别名：诊断、测试与回执共用一份拼写。
 crossKindName|func(_kind: CrossRefKind,) -> (String,):
     match _kind:
@@ -45,19 +103,23 @@ crossKindName|func(_kind: CrossRefKind,) -> (String,):
             return "跨包引用非公开名"
         case crossInjectedShadow:
             return "注入名与本文件名字相撞"
+        case crossMissing:
+            return "目标包没有这个名字"
     return "跨包错误"
 
 ; 同一类别判定：枚举相等比较不可用，按名称比。
 isCrossRef|func(error: CrossRefError, kind: CrossRefKind,) -> (Bool,):
     return crossKindName(error.kind) == crossKindName(kind)
 
-; 诊断码：非 public 用 public 门槛码，遮蔽用注入歧义码；两枚都在码表里。
+; 诊断码：非 public 用 public 门槛码，遮蔽用注入歧义码，缺席用包面缺席码。
 crossErrorCode|func(_kind: CrossRefKind,) -> (String,):
     match _kind:
         case crossNotPublic:
             return "E3-012"
         case crossInjectedShadow:
             return "E3-013"
+        case crossMissing:
+            return "E3-022"
     return "E3-012"
 
 ; 造错误：位置取引用点或导入条目，名字取引用到的符号或注入名。
@@ -137,9 +199,9 @@ aliasTargetOf|func(bindings: Array<ImportBinding>, alias: String,) -> (String,):
         i = i + 1
     return ""
 
-; 引用判定：接收者是本文件导入别名、目标在别的包、成员命中包级符号，三者齐备才判。
-; 同包别名与本地变量接收者不在这里判；名字未命中归解析面。
-checkUnitRefs|func(world: MemberWorld, group: PackageUnits, bindings: Array<ImportBinding>, unit: CompilationUnit, out: CrossRefCheck,) -> (CrossRefCheck,):
+; 引用判定：接收者是本文件导入别名、目标在别的包、名字按目标包归属查，三者齐备才判。
+; 同包别名与本地变量接收者不在这里判；目标包没有该名同样报，不静默放行。
+checkUnitRefs|func(symbols: Array<PackageSymbols>, group: PackageUnits, bindings: Array<ImportBinding>, unit: CompilationUnit, out: CrossRefCheck,) -> (CrossRefCheck,):
     let bytes = tempUtf8Bytes(unit.text)
     var working = out
     var i = 0
@@ -153,11 +215,11 @@ checkUnitRefs|func(world: MemberWorld, group: PackageUnits, bindings: Array<Impo
                 let target = aliasTargetOf(bindings = bindings, alias = alias)
                 if len(target) > 0 && target != group.name:
                     let memberName = decodeRange(bytes = bytes, start = member.nameStart, end = member.nameEnd)
-                    let symbol = world.table.topIndex(keyOfText(memberName))
-                    if symbol >= 0:
-                        let entry = world.table.symbolAt(symbol)
-                        if !isExported(entry.visibility):
-                            working = appendCrossRef(out = working, unit = unit, offset = member.start, kind = crossNotPublic, name = memberName, detail = target + " 只导出 public 声明")
+                    let lookup = lookupPackageSymbol(rows = symbols, packageName = target, key = keyOfText(memberName))
+                    if !lookup.found:
+                        working = appendCrossRef(out = working, unit = unit, offset = member.start, kind = crossMissing, name = memberName, detail = target + " 没有导出该名")
+                    elif !isExported(lookup.symbol.visibility):
+                        working = appendCrossRef(out = working, unit = unit, offset = member.start, kind = crossNotPublic, name = memberName, detail = target + " 只导出 public 声明")
         i = i + 1
     return working
 
@@ -349,11 +411,12 @@ sortCrossRefs|func(_values: Array<CrossRefError>,) -> (Array<CrossRefError>,):
     let right = sortCrossRefs(takeCrossRefs(values = _values, from = mid, to = len(_values)))
     return mergeCrossRefs(left = left, right = right)
 
-; 对账入口：导入表与公开名表各建一次，再逐包逐单元判引用与遮蔽，收齐后统一排序。
+; 对账入口：导入表、公开名表与包符号表各建一次，再逐包逐单元判引用与遮蔽。
 checkWorkspaceCrossRefs|func(_ws: WorkspaceUnits, world: MemberWorld,) -> (CrossRefCheck,):
     var out = CrossRefCheck()
     let bindings = buildImportBindings(_ws)
     let publics = packagePublicTable(_ws)
+    let symbols = buildPackageSymbols(_ws, world = world)
     var p = 0
     while p < len(_ws.packages):
         let group = _ws.packages[p]
@@ -361,7 +424,7 @@ checkWorkspaceCrossRefs|func(_ws: WorkspaceUnits, world: MemberWorld,) -> (Cross
         while u < len(group.units):
             let unit = group.units[u]
             let fileBindings = bindingsOfFile(bindings = bindings, file = unit.path)
-            out = checkUnitRefs(world = world, group = group, bindings = fileBindings, unit = unit, out = out)
+            out = checkUnitRefs(symbols = symbols, group = group, bindings = fileBindings, unit = unit, out = out)
             out = checkUnitShadows(table = publics, bindings = fileBindings, unit = unit, out = out)
             u = u + 1
         p = p + 1

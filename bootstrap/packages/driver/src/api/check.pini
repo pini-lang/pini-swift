@@ -188,6 +188,36 @@ crossDiagnostics|func(_check: CrossRefCheck,) -> (Array<Diagnostic>,):
         i = i + 1
     return out
 
+; 表达式诊断：三类错误各自带码，位置取标识符、成员或调用点。
+exprDiagnostics|func(_check: ExprCheck,) -> (Array<Diagnostic>,):
+    var out: Array<Diagnostic> = []
+    var i = 0
+    while i < len(_check.errors):
+        let error = _check.errors[i]
+        var message = exprErrorName(error.kind)
+        if len(error.name) > 0:
+            message = message + "：" + error.name
+        if len(error.detail) > 0:
+            message = message + "（" + error.detail + "）"
+        out = out.append(makeCheckDiagnostic(file = error.file, category = semanticCategory(), code = error.code, message = message, offset = error.offset))
+        i = i + 1
+    return out
+
+; 表达式装配：按单元建类型表，逐单元跑表达式检查。
+; 主检查入口不调它：全工作区跑不动是已登记的吞吐缺口，执行时机归调用方。
+exprPackageDiagnostics|func(world: MemberWorld, units: Array<CompilationUnit>,) -> (Array<Diagnostic>,):
+    let types = makeExprTypes(units)
+    var out: Array<Diagnostic> = []
+    var u = 0
+    while u < len(units):
+        var one = exprDiagnostics(checkUnitExprs(world = world, unitIndex = u, types = types))
+        var i = 0
+        while i < len(one):
+            out = out.append(one[i])
+            i = i + 1
+        u = u + 1
+    return out
+
 ; 体诊断：返回路径与参数重名，码取体面自己的表。
 bodyDiagnostics|func(_check: BodyCheck,) -> (Array<Diagnostic>,):
     var out: Array<Diagnostic> = []

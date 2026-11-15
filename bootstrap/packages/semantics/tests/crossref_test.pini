@@ -140,3 +140,26 @@ _module_loader = "../../module-loader"
     let 后 = checkWorkspaceCrossRefs(反序, world = 建跨包世界(反序))
     assert(跨包错误串(前) == 跨包错误串(后), "实得 " + 跨包错误串(前) + " / " + 跨包错误串(后))
     return
+
+; 目标包没有该名：不再落到全局表找同名，直接报缺席，位置在引用点。
+跨包引用不存在|test() -> ():
+    let app = 造跨包单元(path = "packages/app/src/api/app.pini", src = "[app|import]\nb = \"../../../base\"\n\nf|func() -> ():\n    b.没有这个()\n")
+    let base = 造跨包单元(path = "packages/base/src/api/base.pini", src = "公开函数|func() -> ():\n    pass\n")
+    let ws = 跨包工作区([组跨包(name = "app", root = "packages/app", requires = ["base"], units = [app]), 组跨包(name = "base", root = "packages/base", requires = [], units = [base])])
+    let check = checkWorkspaceCrossRefs(ws, world = 建跨包世界(ws))
+    assert(len(check.errors) == 1, "应报一条，实得 " + 跨包错误串(check))
+    assert(isCrossRef(error = check.errors[0], kind = crossMissing), "实得 " + crossKindName(check.errors[0].kind))
+    assert(check.errors[0].name == "没有这个", "实得 " + check.errors[0].name)
+    assert(crossErrorCode(crossMissing) == "E3-022", "缺席用包面缺席码")
+    return
+
+; 第三包同名：目标包里没有的名字，别包有同名 public 也不放行。
+跨包缺席不被同名遮蔽|test() -> ():
+    let app = 造跨包单元(path = "packages/app/src/api/app.pini", src = "[app|import]\nb = \"../../../base\"\n\nf|func() -> ():\n    b.共享()\n")
+    let base = 造跨包单元(path = "packages/base/src/api/base.pini", src = "自家函数|func() -> ():\n    pass\n")
+    let third = 造跨包单元(path = "packages/third/src/api/third.pini", src = "共享|func() -> ():\n    pass\n")
+    let ws = 跨包工作区([组跨包(name = "app", root = "packages/app", requires = ["base"], units = [app]), 组跨包(name = "base", root = "packages/base", requires = [], units = [base]), 组跨包(name = "third", root = "packages/third", requires = [], units = [third])])
+    let check = checkWorkspaceCrossRefs(ws, world = 建跨包世界(ws))
+    assert(len(check.errors) == 1, "应报一条，实得 " + 跨包错误串(check))
+    assert(isCrossRef(error = check.errors[0], kind = crossMissing), "实得 " + crossKindName(check.errors[0].kind))
+    return
