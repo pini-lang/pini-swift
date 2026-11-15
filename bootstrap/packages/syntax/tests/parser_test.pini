@@ -769,3 +769,19 @@ defer单行|test() -> ():
     assert(ast.isDecl(id = ast.itemAt(1), kind = declVariable), "第二条也是变量")
     assert(ast.isExpr(id = 次.kids[0], kind = exprString), "初值是字符串")
     return
+
+; 字典条目缺 `=`：带标注也须写赋值，缺了报专用诊断而不静默吞成集合。
+字典条目缺赋值|test() -> ():
+    let src = "f|func() -> ():\n    let a = {\"k\": I32 1,}\n    return\n"
+    let 结果 = parseText(src)
+    assert(len(结果.diagnostics) > 0, "缺赋值应报错")
+    assert(结果.diagnostics[0].code == "E2-001", "错误码 E2-001")
+    return
+
+; 插值段多表达式：段内只收一条表达式，多写的部分报错而不静默丢弃。
+插值段多表达式|test() -> ():
+    let src = "f|func(a: I32, b: I32,) -> (String,):\n    return \"\\(a b)\"\n"
+    let 结果 = parseText(src)
+    assert(len(结果.diagnostics) > 0, "段内多表达式应报错")
+    assert(结果.diagnostics[0].code == "E2-001", "错误码 E2-001")
+    return

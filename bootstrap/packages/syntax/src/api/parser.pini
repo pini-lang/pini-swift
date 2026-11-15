@@ -1351,31 +1351,35 @@ parseDictionaryBody|self(start: I32, first: I32,) -> (I32,):
     var key = first
     var reading = true
     while reading:
-        var annotation = -1
-        if self.at(colon):
-            self.advance()
-            annotation = self.parseType()
-        if !self.at(opAssign):
-            self.report(code = "E2-001", message = "字典条目缺少 `=`")
+        if key < 0:
             self.recover()
             reading = false
         else:
-            self.advance()
-            let value: I32 = self.parseExpression(1)
-            let entry: I32 = self.newExpr(kind = exprDictEntry, start = self.ast.exprAt(key).start, end = self.previousEnd())
-            self.setExprType(id = entry, typeId = annotation)
-            self.pushExprKid(id = entry, kid = key)
-            self.pushExprKid(id = entry, kid = value)
-            entries = entries.append(entry)
-            if self.at(comma):
+            var annotation = -1
+            if self.at(colon):
                 self.advance()
-                self.skipNewlines()
-                if self.at(rightBrace):
-                    reading = false
-                else:
-                    key = self.parseExpression(1)
-            else:
+                annotation = self.parseType()
+            if !self.at(opAssign):
+                self.report(code = "E2-001", message = "字典条目缺少 `=`")
+                self.recover()
                 reading = false
+            else:
+                self.advance()
+                let value: I32 = self.parseExpression(1)
+                let entry: I32 = self.newExpr(kind = exprDictEntry, start = self.ast.exprAt(key).start, end = self.previousEnd())
+                self.setExprType(id = entry, typeId = annotation)
+                self.pushExprKid(id = entry, kid = key)
+                self.pushExprKid(id = entry, kid = value)
+                entries = entries.append(entry)
+                if self.at(comma):
+                    self.advance()
+                    self.skipNewlines()
+                    if self.at(rightBrace):
+                        reading = false
+                    else:
+                        key = self.parseExpression(1)
+                else:
+                    reading = false
     self.expect(kind = rightBrace, what = "`}`")
     let id: I32 = self.newExpr(kind = exprDictionary, start = start, end = self.previousEnd())
     self.setExprKids(id = id, kids = entries)
