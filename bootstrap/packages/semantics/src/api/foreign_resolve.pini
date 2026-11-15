@@ -1,0 +1,317 @@
+[foreign_resolve|import]
+_syntax = "../../../syntax"
+_module_loader = "../../../module-loader"
+
+; 外部符号的解析顺序：运行时 shim 白名单 → `[ffi].libs` 预加载库 → 进程映像。
+; 名字与形状都命中才走 shim；命中库即止，不落到映像；三层都未命中在注册期报错。
+; 三类来源以数据传入，本层只判次序与命中，不打开库、不查进程。
+
+; 解析来源：shim、预加载库、进程映像与未命中；下标指 shim 表或库表的位置。
+[ForeignSource]
+foreignSourceShim
+foreignSourceLibrary
+foreignSourceImage
+foreignSourceMissing
+
+; shim 形状：指针、借出串、整数、布尔与浮点各一类；整数不含 Bool 与 F64。
+[ShimShape]
+shimPointer
+shimString
+shimInteger
+shimBoolean
+shimFloating
+
+; 一条 shim：名字与形参形状；返回不参与命中，与宿主运行时的判据一致。
+(ShimEntry)
+name: String = ""
+params: Array<ShimShape> = []
+
+; 一个已打开的库：清单名与它导出的符号名；顺序即预加载次序。
+(LibrarySymbols)
+name: String = ""
+symbols: Array<String> = []
+
+; 解析环境：`[ffi].libs` 的声明清单、已打开库、进程映像符号与 shim 表。
+(ForeignEnvironment)
+requiredLibraries: Array<String> = []
+libraries: Array<LibrarySymbols> = []
+imageSymbols: Array<String> = []
+shims: Array<ShimEntry> = []
+
+; 单条解析：符号、声明位置、来源与来源下标；未命中时来源为 missing。
+(ForeignResolution)
+symbol: String = ""
+file: String = ""
+offset: I32 = 0
+source: ForeignSource = .foreignSourceMissing
+sourceIndex: I32 = -1
+
+; 解析错误类别：声明了库却打不开、符号三层都未命中。
+[ForeignResolutionErrorKind]
+foreignResolutionLibraryMissing
+foreignResolutionSymbolMissing
+
+; 解析错误：类别、文件、源内偏移、名字与已查清单。
+(ForeignResolutionError)
+kind: ForeignResolutionErrorKind = .foreignResolutionLibraryMissing
+file: String = ""
+offset: I32 = 0
+name: String = ""
+detail: String = ""
+
+; 解析结果：逐条记录与错误表；解析按声明序，错误按包与条目序。
+(ForeignResolutionCheck)
+resolutions: Array<ForeignResolution> = []
+errors: Array<ForeignResolutionError> = []
+failed: Bool = false
+
+((ForeignResolutionCheck))
+; 可用：没有任何解析错误。
+isOK|self() -> (Bool,):
+    return len(self.errors) == 0
+; 解析条数：与外部符号条数一致。
+resolutionCount|self() -> (I32,):
+    return len(self.resolutions)
+resolutionAt|self(_index: I32,) -> (ForeignResolution,):
+    return self.resolutions[_index]
+; 错误数：诊断与测试共用这一条。
+errorCount|self() -> (I32,):
+    return len(self.errors)
+errorAt|self(_index: I32,) -> (ForeignResolutionError,):
+    return self.errors[_index]
+; 按来源计数：测试用它核对某一层命中了几条。
+countBy|self(_source: ForeignSource,) -> (I32,):
+    var total = 0
+    var i = 0
+    while i < len(self.resolutions):
+        if foreignSourceName(self.resolutions[i].source) == foreignSourceName(_source):
+            total = total + 1
+        i = i + 1
+    return total
+
+; 来源名：诊断、测试与回执共用一份拼写。
+foreignSourceName|func(_source: ForeignSource,) -> (String,):
+    match _source:
+        case foreignSourceShim:
+            return "运行时 shim"
+        case foreignSourceLibrary:
+            return "预加载库"
+        case foreignSourceImage:
+            return "进程映像"
+        case foreignSourceMissing:
+            return "未命中"
+    return "未命中"
+
+; 同一来源判定：枚举相等比较不可用，按名称比。
+isForeignSource|func(source: ForeignSource, expected: ForeignSource,) -> (Bool,):
+    return foreignSourceName(source) == foreignSourceName(expected)
+
+; 形状名：错误理由与测试断言共用。
+shimShapeName|func(_shape: ShimShape,) -> (String,):
+    match _shape:
+        case shimPointer:
+            return "指针"
+        case shimString:
+            return "串"
+        case shimInteger:
+            return "整数"
+        case shimBoolean:
+            return "布尔"
+        case shimFloating:
+            return "浮点"
+    return "未知形状"
+
+; 同一形状判定：枚举相等比较不可用，按名称比。
+isShimShape|func(shape: ShimShape, expected: ShimShape,) -> (Bool,):
+    return shimShapeName(shape) == shimShapeName(expected)
+
+; 错误类别名：诊断、测试与回执共用一份拼写。
+foreignResolutionErrorName|func(_kind: ForeignResolutionErrorKind,) -> (String,):
+    match _kind:
+        case foreignResolutionLibraryMissing:
+            return "FFI 库未找到"
+        case foreignResolutionSymbolMissing:
+            return "外部符号未找到"
+    return "解析错误"
+
+; 同一类别判定：枚举相等比较不可用，按名称比。
+isForeignResolutionError|func(error: ForeignResolutionError, kind: ForeignResolutionErrorKind,) -> (Bool,):
+    return foreignResolutionErrorName(error.kind) == foreignResolutionErrorName(kind)
+
+; 诊断码：沿用宿主的库与符号缺失码，不新增码表条目。
+foreignResolutionErrorCode|func(_kind: ForeignResolutionErrorKind,) -> (String,):
+    match _kind:
+        case foreignResolutionLibraryMissing:
+            return "E5-016"
+        case foreignResolutionSymbolMissing:
+            return "E5-017"
+    return "E5-017"
+
+; 造错误：位置取符号条目起点；库错误没有源码位置，文件与偏移留空。
+makeResolutionError|func(kind: ForeignResolutionErrorKind, file: String, offset: I32, name: String, detail: String,) -> (ForeignResolutionError,):
+    var out = ForeignResolutionError()
+    out.kind = kind
+    out.file = file
+    out.offset = offset
+    out.name = name
+    out.detail = detail
+    return out
+
+; 追加错误：结果其余字段原样保留，错误不中断后续条目。
+appendResolutionError|func(out: ForeignResolutionCheck, kind: ForeignResolutionErrorKind, file: String, offset: I32, name: String, detail: String,) -> (ForeignResolutionCheck,):
+    var done = out
+    done.errors = done.errors.append(makeResolutionError(kind = kind, file = file, offset = offset, name = name, detail = detail))
+    return done
+
+; 已查清单：库名按预加载次序，最后一项是进程映像；诊断原样带出。
+searchedText|func(_env: ForeignEnvironment,) -> (String,):
+    var out = ""
+    var i = 0
+    while i < len(_env.libraries):
+        if i > 0:
+            out = out + ", "
+        out = out + _env.libraries[i].name
+        i = i + 1
+    if len(out) > 0:
+        out = out + ", "
+    return out + "进程映像"
+
+; 形状命中：一条 shim 形状认一个类型，认不出即不命中。
+shimAccepts|func(shape: ShimShape, pool: TypePool, id: I32,) -> (Bool,):
+    if id < 0 || id >= len(pool.entries):
+        return false
+    let entry = pool.entries[id]
+    if isShimShape(shape = shape, expected = shimPointer):
+        return isTypeClass(kind = entry.kind, expected = typeClassPointer)
+    if !isTypeClass(kind = entry.kind, expected = typeClassScalar):
+        return false
+    if isShimShape(shape = shape, expected = shimString):
+        return entry.name == "String"
+    if isShimShape(shape = shape, expected = shimInteger):
+        if entry.name == "I8" || entry.name == "U8":
+            return true
+        return entry.name == "I32" || entry.name == "I64" || entry.name == "U64"
+    if isShimShape(shape = shape, expected = shimBoolean):
+        return entry.name == "Bool"
+    return entry.name == "F64"
+
+; 一条 shim 是否服务这个签名：个数与逐位形状都相同才命中。
+shimServes|func(entry: ShimEntry, pool: TypePool, paramIds: Array<I32>,) -> (Bool,):
+    if len(entry.params) != len(paramIds):
+        return false
+    var i = 0
+    while i < len(entry.params):
+        if !shimAccepts(shape = entry.params[i], pool = pool, id = paramIds[i]):
+            return false
+        i = i + 1
+    return true
+
+; 找 shim：按表序取第一条名字与形状都命中的；未命中答 -1。
+shimForSymbol|func(env: ForeignEnvironment, pool: TypePool, name: String, paramIds: Array<I32>,) -> (I32,):
+    var i = 0
+    while i < len(env.shims):
+        if env.shims[i].name == name && shimServes(entry = env.shims[i], pool = pool, paramIds = paramIds):
+            return i
+        i = i + 1
+    return -1
+
+; 库内查名：整串相等即命中。
+libraryHasSymbol|func(entry: LibrarySymbols, name: String,) -> (Bool,):
+    return containsName(names = entry.symbols, name = name)
+
+; 库表查名：未命中答 -1；用于声明清单与已打开库对账。
+libraryIndexOf|func(libraries: Array<LibrarySymbols>, name: String,) -> (I32,):
+    var i = 0
+    while i < len(libraries):
+        if libraries[i].name == name:
+            return i
+        i = i + 1
+    return -1
+
+; 单条查询结果：命中的记录，或未命中的错误。
+(ForeignLookup)
+resolution: ForeignResolution = ForeignResolution()
+error: ForeignResolutionError = ForeignResolutionError()
+failed: Bool = false
+
+; 解析一条符号：函数先问 shim，再按库序查名，最后落到进程映像。
+resolveOneForeign|func(env: ForeignEnvironment, pool: TypePool, name: String, paramIds: Array<I32>, isFunction: Bool, file: String, offset: I32,) -> (ForeignLookup,):
+    var out = ForeignLookup()
+    out.resolution.symbol = name
+    out.resolution.file = file
+    out.resolution.offset = offset
+    if isFunction:
+        let shim = shimForSymbol(env = env, pool = pool, name = name, paramIds = paramIds)
+        if shim >= 0:
+            out.resolution.source = foreignSourceShim
+            out.resolution.sourceIndex = shim
+            return out
+    var i = 0
+    while i < len(env.libraries):
+        if libraryHasSymbol(entry = env.libraries[i], name = name):
+            out.resolution.source = foreignSourceLibrary
+            out.resolution.sourceIndex = i
+            return out
+        i = i + 1
+    if containsName(names = env.imageSymbols, name = name):
+        out.resolution.source = foreignSourceImage
+        return out
+    out.failed = true
+    out.error = makeResolutionError(kind = foreignResolutionSymbolMissing, file = file, offset = offset, name = name, detail = searchedText(env))
+    return out
+
+; 一个外部块：逐条解析；块名不参与，条目序即记录序。
+resolveBlockSymbols|func(env: ForeignEnvironment, unit: CompilationUnit, unitIndex: I32, types: TypeTable, decl: DeclNode, out: ForeignResolutionCheck,) -> (ForeignResolutionCheck,):
+    var working = out
+    let bytes = tempUtf8Bytes(unit.text)
+    var i = 0
+    while i < len(decl.kids):
+        let symbol = unit.ast.decls[decl.kids[i]]
+        if isForeignSymbolCode(symbol.kind):
+            let name = decodeRange(bytes = bytes, start = symbol.nameStart, end = symbol.nameEnd)
+            var isFunction = false
+            if symbol.typeId >= 0 && symbol.typeId < unit.ast.typeCount() && isFunctionTypeCode(unit.ast.types[symbol.typeId].kind):
+                isFunction = true
+            var paramIds: Array<I32> = []
+            if isFunction:
+                let typeId = types.typeOf(unit = unitIndex, decl = decl.kids[i])
+                if typeId >= 0:
+                    paramIds = types.pool.entries[typeId].kids
+            let found = resolveOneForeign(env = env, pool = types.pool, name = name, paramIds = paramIds, isFunction = isFunction, file = unit.path, offset = symbol.start)
+            working.resolutions = working.resolutions.append(found.resolution)
+            if found.failed:
+                working.errors = working.errors.append(found.error)
+        i = i + 1
+    return working
+
+; 库对账：声明了却打不开的库先报一条，符号解析随后仍可落到映像；重复声明只报一次。
+checkRequiredLibraries|func(env: ForeignEnvironment, out: ForeignResolutionCheck,) -> (ForeignResolutionCheck,):
+    var working = out
+    var seen: Array<String> = []
+    var i = 0
+    while i < len(env.requiredLibraries):
+        let name = env.requiredLibraries[i]
+        if !containsName(names = seen, name = name):
+            seen = seen.append(name)
+            if libraryIndexOf(libraries = env.libraries, name = name) < 0:
+                working = appendResolutionError(out = working, kind = foreignResolutionLibraryMissing, file = "", offset = 0, name = name, detail = name)
+        i = i + 1
+    return working
+
+; 解析入口：先对账库，再逐单元走顶层外部块；单元按路径排好，与类型面共用同一序。
+resolveForeignPackage|func(units: Array<CompilationUnit>, types: TypeTable, env: ForeignEnvironment,) -> (ForeignResolutionCheck,):
+    var out = ForeignResolutionCheck()
+    out = checkRequiredLibraries(env = env, out = out)
+    let sorted = sortedUnits(units)
+    var u = 0
+    while u < len(sorted):
+        let unit = sorted[u]
+        var i = 0
+        while i < len(unit.ast.items):
+            let decl = unit.ast.decls[unit.ast.items[i]]
+            if isForeignDeclCode(decl.kind):
+                out = resolveBlockSymbols(env = env, unit = unit, unitIndex = u, types = types, decl = decl, out = out)
+            i = i + 1
+        u = u + 1
+    out.failed = len(out.errors) > 0
+    return out

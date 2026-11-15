@@ -1,0 +1,165 @@
+[crossref_test|import]
+_syntax = "../../syntax"
+_module_loader = "../../module-loader"
+
+; 跨包引用：别名限定的成员访问按目标包判门槛，注入名与可裸引用名对撞按歧义判。
+; 期望值手写：错误类别、名字与排序后的序列；样例不读文件系统。
+
+; 造单元：只走装载，不注册。
+造跨包单元|func(path: String, src: String,) -> (CompilationUnit,):
+    let loaded = loadUnit(path = path, text = src)
+    assert(!loaded.failed, "样例应可加载：" + path)
+    return loaded.unit
+
+; 组包：包名、包根、声明依赖与单元。
+组跨包|func(name: String, root: String, requires: Array<String>, units: Array<CompilationUnit>,) -> (PackageUnits,):
+    var out = PackageUnits()
+    out.name = name
+    out.rootPath = root
+    out.requires = requires
+    out.units = units
+    return out
+
+; 工作区：按给定次序装包；判据不依赖这个次序。
+跨包工作区|func(_groups: Array<PackageUnits>,) -> (WorkspaceUnits,):
+    var out = WorkspaceUnits()
+    out.packages = _groups
+    return out
+
+; 建世界：全部单元排序后一次注册，再解析类型；跨包符号因此同在一张表里。
+建跨包世界|func(_ws: WorkspaceUnits,) -> (MemberWorld,):
+    var all: Array<CompilationUnit> = []
+    var p = 0
+    while p < len(_ws.packages):
+        var u = 0
+        while u < len(_ws.packages[p].units):
+            all = all.append(_ws.packages[p].units[u])
+            u = u + 1
+        p = p + 1
+    let units = sortedUnits(all)
+    let table = registerPackage(units)
+    let types = resolvePackage(units = units, table = table)
+    return makeMemberWorld(units = units, table = table, types = types)
+
+; 错误串：类别与名字拼成一行，用于整串比对。
+跨包错误串|func(_check: CrossRefCheck,) -> (String,):
+    var out = ""
+    var i = 0
+    while i < len(_check.errors):
+        if i > 0:
+            out = out + ";"
+        out = out + crossKindName(_check.errors[i].kind) + ":" + _check.errors[i].name
+        i = i + 1
+    return out
+
+; 公开调用：目标包导出的 public 函数按别名限定调用放行。
+跨包公开调用|test() -> ():
+    let app = 造跨包单元(path = "packages/app/src/api/app.pini", src = "[app|import]\nb = \"../../../base\"\n\nf|func() -> ():\n    b.公开函数()\n")
+    let base = 造跨包单元(path = "packages/base/src/api/base.pini", src = "公开函数|func() -> ():\n    pass\n")
+    let ws = 跨包工作区([组跨包(name = "app", root = "packages/app", requires = ["base"], units = [app]), 组跨包(name = "base", root = "packages/base", requires = [], units = [base])])
+    let check = checkWorkspaceCrossRefs(ws, world = 建跨包世界(ws))
+    assert(!check.failed, "公开调用应放行，实得 " + 跨包错误串(check))
+    return
+
+; 非公开：私有名跨包引用报一条，位置在引用点。
+跨包引用私有|test() -> ():
+    let app = 造跨包单元(path = "packages/app/src/api/app.pini", src = "[app|import]\nb = \"../../../base\"\n\nf|func() -> ():\n    b._内部()\n")
+    let base = 造跨包单元(path = "packages/base/src/api/base.pini", src = "_内部|func() -> ():\n    pass\n")
+    let ws = 跨包工作区([组跨包(name = "app", root = "packages/app", requires = ["base"], units = [app]), 组跨包(name = "base", root = "packages/base", requires = [], units = [base])])
+    let check = checkWorkspaceCrossRefs(ws, world = 建跨包世界(ws))
+    assert(len(check.errors) == 1, "应报一条，实得 " + 跨包错误串(check))
+    assert(isCrossRef(error = check.errors[0], kind = crossNotPublic), "实得 " + crossKindName(check.errors[0].kind))
+    assert(check.errors[0].name == "_内部", "实得 " + check.errors[0].name)
+    assert(crossErrorCode(crossNotPublic) == "E3-012", "非 public 用门槛码")
+    return
+
+; 内部目录：只收 `package` 级的名字跨包引用同样报。
+跨包引用内部目录|test() -> ():
+    let app = 造跨包单元(path = "packages/app/src/api/app.pini", src = "[app|import]\nb = \"../../../base\"\n\nf|func() -> ():\n    b.深层()\n")
+    let base = 造跨包单元(path = "packages/base/src/_internal/deep.pini", src = "深层|func() -> ():\n    pass\n")
+    let ws = 跨包工作区([组跨包(name = "app", root = "packages/app", requires = ["base"], units = [app]), 组跨包(name = "base", root = "packages/base", requires = [], units = [base])])
+    let check = checkWorkspaceCrossRefs(ws, world = 建跨包世界(ws))
+    assert(len(check.errors) == 1, "应报一条，实得 " + 跨包错误串(check))
+    assert(isCrossRef(error = check.errors[0], kind = crossNotPublic), "实得 " + crossKindName(check.errors[0].kind))
+    return
+
+; 注入遮蔽：注入导入的公开名与本文件参数同名时报歧义。
+注入名与参数相撞|test() -> ():
+    let app = 造跨包单元(path = "packages/app/src/api/app.pini", src = "[app|import]\n_b = \"../../../base\"\n\nf|func(共享: I32,) -> ():\n    pass\n")
+    let base = 造跨包单元(path = "packages/base/src/api/base.pini", src = "共享|func() -> ():\n    pass\n")
+    let ws = 跨包工作区([组跨包(name = "app", root = "packages/app", requires = ["base"], units = [app]), 组跨包(name = "base", root = "packages/base", requires = [], units = [base])])
+    let check = checkWorkspaceCrossRefs(ws, world = 建跨包世界(ws))
+    assert(len(check.errors) == 1, "应报一条，实得 " + 跨包错误串(check))
+    assert(isCrossRef(error = check.errors[0], kind = crossInjectedShadow), "实得 " + crossKindName(check.errors[0].kind))
+    assert(crossErrorCode(crossInjectedShadow) == "E3-013", "遮蔽用歧义码")
+    return
+
+; 注入遮蔽：局部变量同名同样算可裸引用名相撞。
+注入名与局部相撞|test() -> ():
+    let app = 造跨包单元(path = "packages/app/src/api/app.pini", src = "[app|import]\n_b = \"../../../base\"\n\nf|func() -> ():\n    let 共享 = 1\n    return\n")
+    let base = 造跨包单元(path = "packages/base/src/api/base.pini", src = "共享|func() -> ():\n    pass\n")
+    let ws = 跨包工作区([组跨包(name = "app", root = "packages/app", requires = ["base"], units = [app]), 组跨包(name = "base", root = "packages/base", requires = [], units = [base])])
+    let check = checkWorkspaceCrossRefs(ws, world = 建跨包世界(ws))
+    assert(len(check.errors) == 1, "应报一条，实得 " + 跨包错误串(check))
+    assert(isCrossRef(error = check.errors[0], kind = crossInjectedShadow), "实得 " + crossKindName(check.errors[0].kind))
+    return
+
+; 注入无撞：目标包的公开名与本文件没有交集时放行。
+注入无撞放行|test() -> ():
+    let app = 造跨包单元(path = "packages/app/src/api/app.pini", src = "[app|import]\n_b = \"../../../base\"\n\nf|func() -> ():\n    pass\n")
+    let base = 造跨包单元(path = "packages/base/src/api/base.pini", src = "共享|func() -> ():\n    pass\n")
+    let ws = 跨包工作区([组跨包(name = "app", root = "packages/app", requires = ["base"], units = [app]), 组跨包(name = "base", root = "packages/base", requires = [], units = [base])])
+    let check = checkWorkspaceCrossRefs(ws, world = 建跨包世界(ws))
+    assert(!check.failed, "不应报错，实得 " + 跨包错误串(check))
+    return
+
+; 同包别名：指向本包另一个文件时不算跨包，门槛不在这里判。
+同包别名放行|test() -> ():
+    let app = 造跨包单元(path = "packages/app/src/api/app.pini", src = "[app|import]\n自己 = \"../api/base\"\n\nf|func() -> ():\n    自己.内部函数()\n")
+    let base = 造跨包单元(path = "packages/app/src/api/base.pini", src = "内部函数|func() -> ():\n    pass\n")
+    let ws = 跨包工作区([组跨包(name = "app", root = "packages/app", requires = [], units = [app, base])])
+    let check = checkWorkspaceCrossRefs(ws, world = 建跨包世界(ws))
+    assert(!check.failed, "同包别名不该判跨包，实得 " + 跨包错误串(check))
+    return
+
+; 非别名接收者：局部变量的成员访问不归这一层。
+非别名接收者不判|test() -> ():
+    let app = 造跨包单元(path = "packages/app/src/api/app.pini", src = "f|func(局部: I32,) -> ():\n    局部.字段()\n")
+    let ws = 跨包工作区([组跨包(name = "app", root = "packages/app", requires = [], units = [app])])
+    let check = checkWorkspaceCrossRefs(ws, world = 建跨包世界(ws))
+    assert(!check.failed, "非别名接收者不判，实得 " + 跨包错误串(check))
+    return
+
+; 包序无关：两个包次序颠倒，诊断序列逐字相同。
+跨包包序无关|test() -> ():
+    let app = 造跨包单元(path = "packages/app/src/api/app.pini", src = "[app|import]\nb = \"../../../base\"\n\nf|func() -> ():\n    b._内部()\n")
+    let base = 造跨包单元(path = "packages/base/src/api/base.pini", src = "_内部|func() -> ():\n    pass\n")
+    let 正序 = 跨包工作区([组跨包(name = "app", root = "packages/app", requires = ["base"], units = [app]), 组跨包(name = "base", root = "packages/base", requires = [], units = [base])])
+    let 反序 = 跨包工作区([组跨包(name = "base", root = "packages/base", requires = [], units = [base]), 组跨包(name = "app", root = "packages/app", requires = ["base"], units = [app])])
+    let 前 = checkWorkspaceCrossRefs(正序, world = 建跨包世界(正序))
+    let 后 = checkWorkspaceCrossRefs(反序, world = 建跨包世界(反序))
+    assert(跨包错误串(前) == 跨包错误串(后), "实得 " + 跨包错误串(前) + " / " + 跨包错误串(后))
+    return
+
+; 目标包没有该名：不再落到全局表找同名，直接报缺席，位置在引用点。
+跨包引用不存在|test() -> ():
+    let app = 造跨包单元(path = "packages/app/src/api/app.pini", src = "[app|import]\nb = \"../../../base\"\n\nf|func() -> ():\n    b.没有这个()\n")
+    let base = 造跨包单元(path = "packages/base/src/api/base.pini", src = "公开函数|func() -> ():\n    pass\n")
+    let ws = 跨包工作区([组跨包(name = "app", root = "packages/app", requires = ["base"], units = [app]), 组跨包(name = "base", root = "packages/base", requires = [], units = [base])])
+    let check = checkWorkspaceCrossRefs(ws, world = 建跨包世界(ws))
+    assert(len(check.errors) == 1, "应报一条，实得 " + 跨包错误串(check))
+    assert(isCrossRef(error = check.errors[0], kind = crossMissing), "实得 " + crossKindName(check.errors[0].kind))
+    assert(check.errors[0].name == "没有这个", "实得 " + check.errors[0].name)
+    assert(crossErrorCode(crossMissing) == "E3-022", "缺席用包面缺席码")
+    return
+
+; 第三包同名：目标包里没有的名字，别包有同名 public 也不放行。
+跨包缺席不被同名遮蔽|test() -> ():
+    let app = 造跨包单元(path = "packages/app/src/api/app.pini", src = "[app|import]\nb = \"../../../base\"\n\nf|func() -> ():\n    b.共享()\n")
+    let base = 造跨包单元(path = "packages/base/src/api/base.pini", src = "自家函数|func() -> ():\n    pass\n")
+    let third = 造跨包单元(path = "packages/third/src/api/third.pini", src = "共享|func() -> ():\n    pass\n")
+    let ws = 跨包工作区([组跨包(name = "app", root = "packages/app", requires = ["base"], units = [app]), 组跨包(name = "base", root = "packages/base", requires = [], units = [base]), 组跨包(name = "third", root = "packages/third", requires = [], units = [third])])
+    let check = checkWorkspaceCrossRefs(ws, world = 建跨包世界(ws))
+    assert(len(check.errors) == 1, "应报一条，实得 " + 跨包错误串(check))
+    assert(isCrossRef(error = check.errors[0], kind = crossMissing), "实得 " + crossKindName(check.errors[0].kind))
+    return

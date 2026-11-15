@@ -1,0 +1,83 @@
+[cross_check|import]
+_support = "../../support"
+package = "../../package"
+_syntax = "../../syntax"
+_diagnostics = "../../diagnostics"
+_module_loader = "../../module-loader"
+_semantics = "../../semantics"
+
+; 装配层的诊断转换：跨包错误转成诊断、排序后渲染，位置与码都进文本。
+; 样例只走内存单元，不读文件系统，也不跑全工作区。
+
+; 造单元：只走装载，不注册。
+造诊断单元|func(path: String, src: String,) -> (CompilationUnit,):
+    let loaded = loadUnit(path = path, text = src)
+    assert(!loaded.failed, "样例应可加载：" + path)
+    return loaded.unit
+
+; 组包：包名、包根、声明依赖与单元。
+组诊断包|func(name: String, root: String, units: Array<CompilationUnit>,) -> (PackageUnits,):
+    var out = PackageUnits()
+    out.name = name
+    out.rootPath = root
+    out.units = units
+    return out
+
+; 诊断工作区：按给定次序装包。
+诊断工作区|func(_groups: Array<PackageUnits>,) -> (WorkspaceUnits,):
+    var out = WorkspaceUnits()
+    out.packages = _groups
+    return out
+
+; 建世界：全部单元排序后一次注册，再解析类型。
+建诊断世界|func(_ws: WorkspaceUnits,) -> (MemberWorld,):
+    var all: Array<CompilationUnit> = []
+    var p = 0
+    while p < len(_ws.packages):
+        var u = 0
+        while u < len(_ws.packages[p].units):
+            all = all.append(_ws.packages[p].units[u])
+            u = u + 1
+        p = p + 1
+    let units = sortedUnits(all)
+    let table = registerPackage(units)
+    let types = resolvePackage(units = units, table = table)
+    return makeMemberWorld(units = units, table = table, types = types)
+
+; 公开调用放行：跨包诊断为空，转换后也没有诊断。
+跨包诊断放行|test() -> ():
+    let app = 造诊断单元(path = "packages/app/src/api/app.pini", src = "[app|import]\nb = \"../../../base\"\n\nf|func() -> ():\n    b.公开函数()\n")
+    let base = 造诊断单元(path = "packages/base/src/api/base.pini", src = "公开函数|func() -> ():\n    pass\n")
+    let ws = 诊断工作区([组诊断包(name = "app", root = "packages/app", units = [app]), 组诊断包(name = "base", root = "packages/base", units = [base])])
+    let 诊断 = crossDiagnostics(checkWorkspaceCrossRefs(ws, world = 建诊断世界(ws)))
+    assert(len(诊断) == 0, "公开调用不该有诊断")
+    return
+
+; 非 public 引用：转成一条诊断，码、位置与消息都在，渲染含文件行列与码。
+跨包诊断成文|test() -> ():
+    let app = 造诊断单元(path = "packages/app/src/api/app.pini", src = "[app|import]\nb = \"../../../base\"\n\nf|func() -> ():\n    b._内部()\n")
+    let base = 造诊断单元(path = "packages/base/src/api/base.pini", src = "_内部|func() -> ():\n    pass\n")
+    let ws = 诊断工作区([组诊断包(name = "app", root = "packages/app", units = [app]), 组诊断包(name = "base", root = "packages/base", units = [base])])
+    let 诊断 = crossDiagnostics(checkWorkspaceCrossRefs(ws, world = 建诊断世界(ws)))
+    assert(len(诊断) == 1, "应有一条诊断")
+    assert(诊断[0].code == "E3-012", "实得 " + 诊断[0].code)
+    assert(诊断[0].file == "packages/app/src/api/app.pini", "实得 " + 诊断[0].file)
+    var files: Array<String> = ["packages/app/src/api/app.pini"]
+    var texts: Array<SourceText> = [makeSourceText(app.text)]
+    let text = renderAll(items = 诊断, files = files, texts = texts)
+    assert(text.contains("E3-012"), "渲染应带码，实得：" + text)
+    assert(text.contains("5:5"), "渲染应带行列，实得：" + text)
+    return
+
+; 包接口：每个包一份文本，头行带包名；公开名只收本包的，别包的公开名不进。
+包接口逐包|test() -> ():
+    let app = 造诊断单元(path = "packages/app/src/api/app.pini", src = "应用函数|func() -> ():\n    pass\n")
+    let base = 造诊断单元(path = "packages/base/src/api/base.pini", src = "公开函数|func() -> ():\n    pass\n")
+    let ws = 诊断工作区([组诊断包(name = "app", root = "packages/app", units = [app]), 组诊断包(name = "base", root = "packages/base", units = [base])])
+    let 接口 = packageInterfaces(ws, world = 建诊断世界(ws))
+    assert(len(接口) == 2, "两个包各一份")
+    assert(接口[0].text.contains("package=app"), "实得：" + 接口[0].text)
+    assert(接口[0].text.contains("应用函数"), "本包公开名应进")
+    assert(!接口[0].text.contains("公开函数"), "别包公开名不该进：" + 接口[0].text)
+    assert(接口[1].text.contains("package=base"), "实得：" + 接口[1].text)
+    return

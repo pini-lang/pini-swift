@@ -53,6 +53,18 @@ syntaxCategory|func() -> (Category,):
 lexicalCategory|func() -> (Category,):
     return .categoryLexical
 
+; 语义类别：注册、边界与跨包诊断取它。
+semanticCategory|func() -> (Category,):
+    return .categorySemantic
+
+; 类型类别：标注、调用与体检查诊断取它。
+typeCategory|func() -> (Category,):
+    return .categoryType
+
+; 输入输出类别：清单与装载诊断取它。
+ioCategory|func() -> (Category,):
+    return .categoryIO
+
 ; 严重度名：与宿主诊断标签的后缀一致。
 severityName|func(_severity: Severity,) -> (String,):
     match _severity:

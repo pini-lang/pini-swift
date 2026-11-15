@@ -3,15 +3,18 @@
     assert(hasWorkspace("."), "工作区根必须能被识别")
     return
 
-; 根清单装配：八个成员、固定拓扑序、无错误；两次装配文本逐字相同。
+; 根清单装配：九个成员、固定拓扑序、无错误；两次装配文本逐字相同。
 根计划可装配|test() -> ():
     let 计划 = planWorkspace(".")
     assert(计划.isOK(), "不应有错误：" + planText(计划))
-    assert(计划.packageCount() == 8, "八个包")
+    assert(计划.packageCount() == 9, "九个包")
     assert(计划.packageAt(0).name == "support", "基础包最先")
-    assert(计划.packageAt(5).name == "syntax", "语法包倒数第二")
-    assert(计划.packageAt(6).name == "module_loader", "装载器依赖四包")
-    assert(计划.packageAt(7).name == "semantics", "语义层依赖装载器，排最后")
+    assert(计划.packageAt(1).name == "diagnostics", "诊断包只依赖 support")
+    assert(计划.packageAt(4).name == "syntax", "语法包在装载器之前")
+    assert(计划.packageAt(5).name == "module_loader", "装载器依赖四包")
+    assert(计划.packageAt(6).name == "semantics", "语义层依赖装载器")
+    assert(计划.packageAt(7).name == "driver", "驱动依赖全部前置包")
+    assert(计划.packageAt(8).name == "runtime_api", "运行时段包无依赖，排在最后")
     let 首 = 计划.packageAt(0).targets[0]
     assert(首.irPath == "./.build/debug/packages/support/support.ll", "库产物路径")
     assert(planText(计划) == planText(planWorkspace(".")), "两次装配逐字相同")

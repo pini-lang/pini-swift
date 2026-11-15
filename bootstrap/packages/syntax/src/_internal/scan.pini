@@ -39,6 +39,29 @@ scanAll|func(language: KeywordLanguage, bytes: Array<U8>, start: I32, issues: Ar
     out.tokens = state.tokens
     out.issues = state.issues
     out.warnings = state.warnings
+    out.bytes = bytes
+    return out
+
+; 片段扫描：从 start 扫到 end，只走括号内通道，供插值段子表达式使用；
+; 区间是源内绝对字节，不产布局记号，收尾补结束记号。
+scanFragment|func(language: KeywordLanguage, bytes: Array<U8>, start: I32, end: I32,) -> (LexResult,):
+    var state = LexState()
+    state.bytes = bytes
+    state.pos = start
+    state.language = language
+    state.indents = state.indents.append(0)
+    let total = len(bytes)
+    var limit = end
+    if limit > total:
+        limit = total
+    while state.pos < limit:
+        state = scanInsideBrackets(state)
+    state = emitToken(state = state, kind = eof, start = state.pos, end = state.pos)
+    var out = LexResult()
+    out.tokens = state.tokens
+    out.issues = state.issues
+    out.warnings = state.warnings
+    out.bytes = bytes
     return out
 
 ; 取字节：越界答 0，调用方先判界；负值不参与读取。

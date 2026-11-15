@@ -116,11 +116,11 @@ registerTopDecl|func(table: SymbolTable, unit: CompilationUnit, bytes: Array<U8>
         out = defineTop(table = out, symbol = symbol)
         out = registerParams(table = out, unit = unit, bytes = bytes, decl = decl, owner = symbol.spelling)
         return out
-    if isVariableDeclCode(decl.kind):
-        out = defineTop(table = out, symbol = makeSymbol(unit = unit, bytes = bytes, decl = decl, kind = symbolVariable))
-        return out
     if isExtensionDeclCode(decl.kind):
         out = registerExtension(table = out, unit = unit, bytes = bytes, decl = decl)
+        return out
+    if isForeignDeclCode(decl.kind):
+        out = registerForeign(table = out, unit = unit, bytes = bytes, decl = decl)
         return out
     return out
 

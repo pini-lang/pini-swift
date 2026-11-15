@@ -1,0 +1,177 @@
+; 运行时段 C ABI 的 Pini 声明面：可经外部块表达的 120 个符号，按族分块。
+; 符号清单以运行时 ABI 契约为权威；块名只是标签，不参与符号解析。
+; 宽度不在 IR 的两条（bk_capabilities、bk_ptr_load_f32）走内建，不在这里声明。
+
+; 展示与陷阱族：C 串、浮点展示、落盘消息与打印互斥；退出码归运行时段。
+[display|foreign]
+bk_cstr: (String,) -> (*U8,)
+bk_double_to_string: (F64,) -> (*U8,)
+bk_panic: (String,) -> ()
+bk_print_lock: () -> ()
+bk_print_unlock: () -> ()
+bk_runtime_cleanup: () -> ()
+
+; 句柄与 COW 族：只搬不透明指针，计数由运行时段维护。
+[handles|foreign]
+bk_handle_ensure_unique: (*U8,) -> (*U8,)
+bk_handle_release: (*U8,) -> ()
+bk_handle_retain: (*U8,) -> ()
+bk_handle_shares: (*U8,) -> (I32,)
+
+; 数组族：句柄进出，元素按字节与标签搬运；钩子只在首写前登记。
+[array|foreign]
+bk_array_append: (*U8, *U8, I32, I32,) -> (*U8,)
+bk_array_create: (I32,) -> (*U8,)
+bk_array_destroy: (*U8,) -> ()
+bk_array_ensure_unique_at: (*U8, I32,) -> (*U8,)
+bk_array_get: (*U8, I32,) -> (*U8,)
+bk_array_len: (*U8,) -> (I32,)
+bk_array_set: (*U8, I32, *U8, I32, I32,) -> (*U8,)
+bk_array_set_element_hooks: (*U8, (*U8,) -> (), (*U8,) -> (),) -> ()
+
+; 字典族：键值都按字节与标签搬运，键的相等口径由标签决定。
+[dict|foreign]
+bk_dict_contains: (*U8, *U8, I32, I32,) -> (I32,)
+bk_dict_create: () -> (*U8,)
+bk_dict_destroy: (*U8,) -> ()
+bk_dict_ensure_unique_at: (*U8, *U8, I32, I32,) -> (*U8,)
+bk_dict_get: (*U8, *U8, I32, I32,) -> (*U8,)
+bk_dict_key_at: (*U8, I32,) -> (*U8,)
+bk_dict_len: (*U8,) -> (I32,)
+bk_dict_set: (*U8, *U8, I32, I32, *U8, I32, I32,) -> (*U8,)
+bk_dict_val_at: (*U8, I32,) -> (*U8,)
+
+; 集合族：元素按字节与标签搬运，重复元素由写入方当场归还。
+[set|foreign]
+bk_set_add: (*U8, *U8, I32, I32,) -> (*U8,)
+bk_set_at: (*U8, I32,) -> (*U8,)
+bk_set_create: () -> (*U8,)
+bk_set_destroy: (*U8,) -> ()
+bk_set_len: (*U8,) -> (I32,)
+
+; 懒加载族：包装体、代码与环境三个指针交给运行时段，求值只发生一次。
+[lazyref|foreign]
+bk_lazyref_create: (*U8, *U8, *U8, I32, I32,) -> (*U8,)
+bk_lazyref_destroy: (*U8,) -> ()
+bk_lazyref_value: (*U8,) -> (*U8,)
+
+; 默认实例族：槽位地址与初始化函数同交，首次取用时初始化。
+[given|foreign]
+bk_given_get: (**U8, *U8, I64,) -> (*U8,)
+
+; 指针族：偏移按字节；宽度不在 IR 的 F32 读取走内建，不进本面。
+[pointer|foreign]
+bk_ptr_load_i8: (*U8, I64,) -> (I8,)
+bk_ptr_load_i32: (*U8, I64,) -> (I32,)
+bk_ptr_load_i64: (*U8, I64,) -> (I64,)
+bk_ptr_load_f64: (*U8, I64,) -> (F64,)
+bk_ptr_store: (*U8, I64, *U8, I32,) -> ()
+
+; 字符族：字符值以 I64 装箱，串入参按借出。
+[char|foreign]
+bk_char_equal: (I64, I64,) -> (I32,)
+bk_char_equal_string: (I64, String,) -> (I32,)
+bk_char_release: (I64,) -> ()
+bk_char_retain: (I64,) -> (I64,)
+bk_char_to_heap_string: (I64,) -> (*U8,)
+bk_chars: (String,) -> (*U8,)
+bk_chr: (I32,) -> (I64,)
+bk_is_letter: (I64,) -> (I32,)
+bk_is_number: (I64,) -> (I32,)
+bk_ord: (I64,) -> (I32,)
+bk_temp_byte_to_int: (I8,) -> (I32,)
+bk_temp_int_to_byte: (I32,) -> (I8,)
+bk_temp_utf8_bytes: (String,) -> (*U8,)
+
+; 字符串族：入参 C 串按借出，运行时段持有的串按 *U8 搬运，返回指针归调用方按约定处理。
+[string|foreign]
+bk_str_alloc: (I64,) -> (*U8,)
+bk_str_append_cstr: (*U8, String, I32,) -> (*U8,)
+bk_str_concat: (*U8, *U8, I32,) -> (*U8,)
+bk_str_dup: (String,) -> (*U8,)
+bk_str_from_cstr: (String,) -> (*U8,)
+bk_str_header_bytes: () -> (I32,)
+bk_str_refcount: (*U8,) -> (I32,)
+bk_str_table_min_cap: () -> (I32,)
+bk_str_release: (*U8,) -> ()
+bk_str_retain: (*U8,) -> ()
+bk_string_char_at: (String, I32,) -> (I64,)
+bk_string_contains: (String, String,) -> (I32,)
+bk_string_count: (String,) -> (I32,)
+bk_string_index_of: (String, String,) -> (I32,)
+bk_string_lower: (String,) -> (*U8,)
+bk_string_slice: (String, I32, I32, I32, I32,) -> (*U8,)
+bk_string_split: (String, String,) -> (*U8,)
+bk_string_trim_left: (String,) -> (*U8,)
+bk_string_trim_right: (String,) -> (*U8,)
+bk_string_upper: (String,) -> (*U8,)
+bk_substring: (String, I32, I32,) -> (*U8,)
+
+; 字符串句柄族：句柄是不透明指针，计数归 C 侧；字节视图不以 NUL 为界。
+[strhandle|foreign]
+bk_str_handle_bytes: (StringHandle,) -> (*U8,)
+bk_str_handle_len: (StringHandle,) -> (I64,)
+bk_str_handle_new: (String,) -> (StringHandle,)
+bk_str_handle_release: (StringHandle,) -> ()
+bk_str_handle_retain: (StringHandle,) -> (StringHandle,)
+
+; 名义箱与槽族：头四格由运行时段维护，分配大小与类型标识由发射层给。
+[nominal|foreign]
+bk_nominal_alloc: (I64, I32,) -> (*U8,)
+bk_nominal_release: (*U8,) -> (I32,)
+bk_nominal_retain: (*U8,) -> ()
+bk_slot_alloc: (I64,) -> (*U8,)
+
+; IO 与宿主查询族：路径与内容按借出串传入，读出的缓冲按 *U8 交回。
+[io|foreign]
+bk_append_file: (String, String,) -> ()
+bk_argv: () -> (*U8,)
+bk_exists: (String,) -> (I32,)
+bk_is_dir: (String,) -> (I32,)
+bk_list_dir: (String,) -> (*U8,)
+bk_module_root: () -> (*U8,)
+bk_read_file: (String,) -> (*U8,)
+bk_set_program_base: (String,) -> ()
+bk_try_append_file: (String, String,) -> (I64,)
+bk_try_read_file: (String, *I64,) -> (*U8,)
+bk_try_write_file: (String, String,) -> (I64,)
+bk_write_file: (String, String,) -> ()
+
+; 任务族：句柄进出，状态码以 I32 回报；能力位查询宽度不在 IR，走内建。
+[task|foreign]
+bk_scope_close: (*U8, *U8,) -> (I32,)
+bk_task_cancel: (*U8,) -> ()
+bk_task_detach: (*U8,) -> ()
+bk_task_is_cancelled: () -> (I32,)
+bk_task_join: (*U8, *U8,) -> (I32,)
+bk_task_join_all: (*U8, I32, *U8,) -> (I32,)
+bk_task_join_all_box: (*U8, *U8,) -> (I32,)
+bk_task_join_within: (*U8, I32, *U8,) -> (I32,)
+bk_task_spawn: (*U8, *U8, *U8, I32, I32,) -> (*U8,)
+bk_task_yield: () -> (I32,)
+
+; 阻塞内建：毫秒数按 I32 传入，挂起当前任务。
+[sleep|foreign]
+bk_sleep: (I32,) -> ()
+
+; 让出族：让出与恢复的帧槽由运行时段分配，返回值表示恢复状态。
+[resume|foreign]
+bk_task_await: (*U8, *U8,) -> (I32,)
+bk_task_frame: (I64,) -> (*U8,)
+bk_task_slot: (I64,) -> (*U8,)
+
+; 调度驱动面：绑定与状态查询只服务宿主驱动，发射器不产出调用点。
+[sched|foreign]
+bk_task_bind_sched: (*U8, *U8,) -> (I32,)
+bk_task_state: (*U8,) -> (I32,)
+
+; 错误载荷族：错误字是类型擦除的机器字，只经这些入口创建与读取。
+[error|foreign]
+bk_cancel_error_create: (String,) -> (I64,)
+bk_error_code: (I64,) -> (I32,)
+bk_error_create: (String,) -> (I64,)
+bk_error_from_enum: (I64, I32, String, *I32,) -> (I64,)
+bk_error_is_cancel: (I64,) -> (I32,)
+bk_error_lookup: (I32, *I32, **I8, I32,) -> (*I8,)
+bk_error_message: (I64,) -> (*U8,)
+bk_error_with_code: (I32,) -> (I64,)

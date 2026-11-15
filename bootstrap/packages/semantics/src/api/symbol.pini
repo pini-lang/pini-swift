@@ -16,6 +16,7 @@ visibilityPackage
 visibilityPublic
 
 ; 符号：NFC 键用于判等与查找，原始拼写只服务诊断；owner 是成员符号的宿主类型名。
+; 外部符号另带签名与标志：同名合并与异型判定只比这两项，不比声明位置。
 (Symbol)
 key: Array<U8> = []
 spelling: String = ""
@@ -24,6 +25,9 @@ visibility: Visibility = .visibilityPublic
 file: String = ""
 offset: I32 = 0
 owner: String = ""
+isForeign: Bool = false
+foreignShape: String = ""
+foreignFlags: Array<String> = []
 
 ; 种类名：诊断与测试共用一份拼写。
 symbolKindName|func(_kind: SymbolKind,) -> (String,):

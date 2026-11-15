@@ -9,13 +9,14 @@ interfacePath: String = ""
 executablePath: String = ""
 isBuiltByDefault: Bool = true
 
-; 包计划：包名、包根相对路径、声明依赖、构建排除项与按清单顺序排好的 target。
+; 包计划：包名、包根相对路径、声明依赖、构建排除项、FFI 配置与按清单顺序排好的 target。
 (PackagePlan)
 name: String = ""
 rootPath: String = ""
 requires: Array<String> = []
 targets: Array<TargetPlan> = []
 excludes: Array<String> = []
+ffi: FFIConfig = FFIConfig()
 
 ; 构建计划：根、profile、拓扑序上的包与全部错误；错误非空时 packages 为空。
 (BuildPlan)
@@ -57,6 +58,36 @@ planText|func(_plan: BuildPlan,) -> (String,):
             if len(target.executablePath) > 0:
                 text = text + "  exe " + target.executablePath + "\n"
             t = t + 1
+        text = text + ffiPlanText(pkg.ffi)
+        i = i + 1
+    return text
+
+; FFI 计划行：全默认时不占行；字段序与参考件的表一致，数组按清单顺序逗号连接。
+ffiPlanText|func(_ffi: FFIConfig,) -> (String,):
+    if _ffi.abi == "C" && len(_ffi.searchPaths) == 0 && len(_ffi.libs) == 0:
+        if len(_ffi.headers) == 0 && len(_ffi.includePaths) == 0 && len(_ffi.defines) == 0:
+            return ""
+    var text = "  ffi abi=" + _ffi.abi
+    if len(_ffi.searchPaths) > 0:
+        text = text + " search_paths=" + joinPlanArray(_ffi.searchPaths)
+    if len(_ffi.libs) > 0:
+        text = text + " libs=" + joinPlanArray(_ffi.libs)
+    if len(_ffi.headers) > 0:
+        text = text + " headers=" + joinPlanArray(_ffi.headers)
+    if len(_ffi.includePaths) > 0:
+        text = text + " include_paths=" + joinPlanArray(_ffi.includePaths)
+    if len(_ffi.defines) > 0:
+        text = text + " defines=" + joinPlanArray(_ffi.defines)
+    return text + "\n"
+
+; 逗号连接：按给定顺序拼接，空数组答空串。
+joinPlanArray|func(_items: Array<String>,) -> (String,):
+    var text = ""
+    var i = 0
+    while i < len(_items):
+        if i > 0:
+            text = text + ","
+        text = text + _items[i]
         i = i + 1
     return text
 
@@ -77,7 +108,7 @@ assemblePlan|func(workspace: WorkspaceParse, parses: Array<PackageParse>,) -> (B
         if !norm.ok:
             plan.errors = plan.errors.append(manifestError(kind = errorMemberPath, path = plan.rootPath, detail = raw + "：" + norm.reason))
             continue
-        if containsText(items = members, value = norm.value):
+        if _containsPlanText(items = members, value = norm.value):
             plan.errors = plan.errors.append(manifestError(kind = errorMemberDuplicated, path = plan.rootPath, detail = norm.value))
             continue
         members = members.append(norm.value)
@@ -138,6 +169,7 @@ packagePlan|func(pkg: PackageManifest, root: String, profile: String,) -> (Packa
     out.rootPath = pkg.rootPath
     out.requires = pkg.requires
     out.excludes = pkg.excludes
+    out.ffi = pkg.ffi
     let buildDir = root + "/.build/" + profile + "/packages/" + pkg.name
     var i = 0
     while i < len(pkg.targets):
@@ -177,7 +209,7 @@ checkExecutableNames|func(packages: Array<PackageManifest>, rootPath: String, er
         while t < len(pkg.targets):
             let target = pkg.targets[t]
             if isTargetKind(kind = target.kind, expected = targetExecutable):
-                if containsText(items = seen, value = target.name):
+                if _containsPlanText(items = seen, value = target.name):
                     out = out.append(manifestError(kind = errorExecutableCollision, path = rootPath, detail = target.name + " @ " + pkg.name))
                 else:
                     seen = seen.append(target.name)
@@ -275,7 +307,7 @@ sortedRequires|func(packages: Array<PackageManifest>, requires: Array<String>,) 
     var kept: Array<String> = []
     var i = 0
     while i < len(requires):
-        if findPackage(packages = packages, name = requires[i]) >= 0 && !containsText(items = kept, value = requires[i]):
+        if findPackage(packages = packages, name = requires[i]) >= 0 && !_containsPlanText(items = kept, value = requires[i]):
             kept = kept.append(requires[i])
         i = i + 1
     return sortedTexts(kept)
@@ -350,7 +382,7 @@ hasEarlierPackage|func(packages: Array<PackageManifest>, at: I32, name: String,)
     return false
 
 ; 串表查找：名字与路径去重共用。
-containsText|func(items: Array<String>, value: String,) -> (Bool,):
+_containsPlanText|func(items: Array<String>, value: String,) -> (Bool,):
     var i = 0
     while i < len(items):
         if items[i] == value:

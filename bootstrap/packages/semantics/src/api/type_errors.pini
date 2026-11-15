@@ -1,4 +1,4 @@
-; 类型错误类别：未知名字、非类型名、实参个数、约束、直接自引用与间接成环各一类。
+; 类型错误类别：未知名字、非类型名、实参个数、约束、直接自引用、间接成环与仅外部面可用的名字各一类。
 [TypeErrorKind]
 typeErrorUnknownName
 typeErrorNotTypeName
@@ -6,6 +6,7 @@ typeErrorArityMismatch
 typeErrorConstraint
 typeErrorSelfReference
 typeErrorRecursiveCycle
+typeErrorForeignOnlyName
 
 ; 类型错误：类别、文件、源内字节偏移、相关名字与细节；位置指向标注起点。
 (TypeError)
@@ -30,6 +31,8 @@ typeErrorName|func(_kind: TypeErrorKind,) -> (String,):
             return "类型直接包含自身"
         case typeErrorRecursiveCycle:
             return "类型经字段成环"
+        case typeErrorForeignOnlyName:
+            return "名字只在外部面成立"
     return "类型错误"
 
 ; 同一类别判定：枚举相等比较不可用，按名称比。

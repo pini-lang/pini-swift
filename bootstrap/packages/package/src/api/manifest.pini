@@ -10,13 +10,23 @@ name: String = ""
 kind: TargetKind = .targetLibrary
 entry: String = ""
 
-; 包清单：包名、包根相对路径、声明依赖、全部目标与构建排除项。
+; FFI 配置：库绑定与宏求值的输入；abi 全局唯一，数组按清单顺序原样保留。
+(FFIConfig)
+abi: String = "C"
+searchPaths: Array<String> = []
+libs: Array<String> = []
+headers: Array<String> = []
+includePaths: Array<String> = []
+defines: Array<String> = []
+
+; 包清单：包名、包根相对路径、声明依赖、全部目标、构建排除项与 FFI 配置。
 (PackageManifest)
 name: String = ""
 rootPath: String = ""
 requires: Array<String> = []
 targets: Array<TargetSpec> = []
 excludes: Array<String> = []
+ffi: FFIConfig = FFIConfig()
 
 ; 工作区清单：根路径、成员相对路径与构建 profile。
 (WorkspaceManifest)
@@ -27,6 +37,11 @@ profile: String = "debug"
 ; 解析结果：清单与错误并列；错误非空时清单不参与建计划。
 (PackageParse)
 manifest: PackageManifest = PackageManifest()
+errors: Array<ManifestError> = []
+
+; FFI 解析结果：配置与错误并列；错误非空时配置仍可读，建计划前会整体拦下。
+(FFIParse)
+config: FFIConfig = FFIConfig()
 errors: Array<ManifestError> = []
 
 (WorkspaceParse)
@@ -76,8 +91,43 @@ parsePackageManifest|func(text: String, rootPath: String, path: String,) -> (Pac
     manifest.requires = tomlKeys(doc = doc, table = "require")
     manifest.targets = collectTargets(doc)
     manifest.excludes = tomlArray(doc = doc, table = "build", key = "exclude")
-    out.errors = checkTargets(manifest = manifest, path = path, errors = out.errors)
+    let ffi = parseFFIConfig(doc = doc, path = path, errors = out.errors)
+    manifest.ffi = ffi.config
+    out.errors = checkTargets(manifest = manifest, path = path, errors = ffi.errors)
     out.manifest = manifest
+    return out
+
+; 解析 [ffi]：缺表即全默认；abi 只认 C，库名不得带 -l，坏值逐条记账。
+parseFFIConfig|func(doc: TomlDocument, path: String, errors: Array<ManifestError>,) -> (FFIParse,):
+    var out = FFIParse()
+    out.errors = errors
+    if !tomlHasTable(doc = doc, name = "ffi"):
+        return out
+    var config = FFIConfig()
+    let abiAt = findEntry(doc = doc, table = "ffi", row = -1, key = "abi")
+    if abiAt >= 0:
+        let abi = doc.entries[abiAt].value
+        if abi == "C":
+            config.abi = abi
+        else:
+            out.errors = out.errors.append(manifestError(kind = errorFFIABI, path = path, detail = abi))
+    config.searchPaths = tomlArray(doc = doc, table = "ffi", key = "search_paths")
+    config.libs = tomlArray(doc = doc, table = "ffi", key = "libs")
+    config.headers = tomlArray(doc = doc, table = "ffi", key = "headers")
+    config.includePaths = tomlArray(doc = doc, table = "ffi", key = "include_paths")
+    config.defines = tomlArray(doc = doc, table = "ffi", key = "defines")
+    out.errors = checkFFILibs(libs = config.libs, path = path, errors = out.errors)
+    out.config = config
+    return out
+
+; 库名判定：名字不带 -l，带前缀即报错，避免链接参数拼成 -l-lfoo。
+checkFFILibs|func(libs: Array<String>, path: String, errors: Array<ManifestError>,) -> (Array<ManifestError>,):
+    var out = errors
+    var i = 0
+    while i < len(libs):
+        if startsWith(text = libs[i], prefix = "-l"):
+            out = out.append(manifestError(kind = errorFFILibrary, path = path, detail = libs[i]))
+        i = i + 1
     return out
 
 ; 收集三类 target：[lib] 至多一个，[[bin]] 与 [[test]] 按行展开。

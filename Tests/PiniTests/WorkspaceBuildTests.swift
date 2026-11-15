@@ -127,10 +127,17 @@ struct WorkspaceBuildTests {
         try SemanticAnalyzer().analyze(package: loaded.package)
         try TypeChecker().check(package: loaded.package)
 
-        let main = root.appendingPathComponent("packages/driver/src/api/main.pini")
-        let text = try String(contentsOf: main, encoding: .utf8)
-        try text.replacingOccurrences(of: "support.nonNegativeWidth", with: "support.widthFloor")
-            .write(to: main, atomically: true, encoding: .utf8)
+        try WorkspaceTestSupport.write(
+            root, "packages/driver/src/api/main.pini",
+            """
+            [main|import]
+            package = "../../../package"
+
+            main|func() -> ():
+                let 结果 = package.normalizeMemberPath("./x")
+                print(结果.value)
+                return
+            """)
         let changed = try WorkspaceBuilder.load(package: driver, target: target)
         do {
             try SemanticAnalyzer().analyze(package: changed.package)
@@ -178,7 +185,7 @@ struct WorkspaceBuildTests {
         #expect(FileManager.default.isExecutableFile(atPath: binary.path))
         let execution = try WorkspaceTestSupport.run(binary.path, [], cwd: root)
         #expect(execution.status == 0, "执行失败：\(execution.stderr)")
-        #expect(execution.stdout == "workspace-ok 3 true\n")
+        #expect(execution.stdout == "workspace-ok 9 true\n")
         let interface = root.appendingPathComponent(
             ".build/debug/packages/support/interface.txt")
         let text = try String(contentsOf: interface, encoding: .utf8)
@@ -193,10 +200,17 @@ struct WorkspaceBuildTests {
         let cli = try #require(PiniTestEnvironment.cliPath())
         let root = try WorkspaceTestSupport.copyBootstrap(tag: "cli-internal")
         defer { try? FileManager.default.removeItem(at: root) }
-        let main = root.appendingPathComponent("packages/driver/src/api/main.pini")
-        let text = try String(contentsOf: main, encoding: .utf8)
-        try text.replacingOccurrences(of: "support.nonNegativeWidth", with: "support.widthFloor")
-            .write(to: main, atomically: true, encoding: .utf8)
+        try WorkspaceTestSupport.write(
+            root, "packages/driver/src/api/main.pini",
+            """
+            [main|import]
+            package = "../../../package"
+
+            main|func() -> ():
+                let 结果 = package.normalizeMemberPath("./x")
+                print(结果.value)
+                return
+            """)
 
         let result = try WorkspaceTestSupport.run(cli, ["build", root.path], cwd: root)
         #expect(result.status != 0)

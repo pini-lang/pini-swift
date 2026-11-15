@@ -36,10 +36,12 @@ start: I32 = 0
 end: I32 = 0
 
 ; 词法结果：记号序列含布局记号与末尾的结束记号；问题与警告不参与记号流。
+; `bytes` 是扫描过的归一化源字节，解析期按同一份字节比对标识符文本与切插值段。
 (LexResult)
 tokens: Array<Token> = []
 issues: Array<LexIssue> = []
 warnings: Array<LexWarning> = []
+bytes: Array<U8> = []
 
 ; 问题类别名：用于诊断消息与测试断言。
 issueName|func(_kind: LexIssueKind,) -> (String,):

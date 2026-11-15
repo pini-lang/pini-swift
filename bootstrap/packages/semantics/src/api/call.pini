@@ -6,11 +6,12 @@ _module_loader = "../../../module-loader"
 ; 实参从语法树按父节点识别：标签实参是二元节点加名字区间，值节点才是类型来源。
 ; 命名函数按名字对标签、按默认值与取用位放宽个数；函数值与内建成员只按位置逐位对。
 
-; 实参：标签、类型下标与源内位置；标签为空即位置实参。
+; 实参：标签、类型下标、源内位置与值节点下标；标签为空即位置实参。
 (CallArg)
 label: String = ""
 typeId: I32 = -1
 offset: I32 = 0
+node: I32 = -1
 
 ; 形参：名字、类型下标、默认值、取用位、长度约束与标签面。
 (CallParam)
@@ -21,7 +22,7 @@ isUsing: Bool = false
 sized: Bool = false
 takesLabel: Bool = true
 
-; 调用点：符号下标、内建函数下标、函数值类型、实参与诊断位置。
+; 调用点：符号下标、内建函数下标、函数值类型、实参、诊断位置与所在单元。
 (CallSite)
 symbol: I32 = -1
 builtin: I32 = -1
@@ -29,9 +30,10 @@ calleeType: I32 = -1
 name: String = ""
 file: String = ""
 offset: I32 = 0
+unit: I32 = -1
 args: Array<CallArg> = []
 
-; 调用错误：个数、标签、实参类型与不可调用五类。
+; 调用错误：个数、标签、实参类型、不可调用、回调来历与变参尾六类。
 [CallErrorKind]
 callArity
 callUnknownLabel
@@ -40,6 +42,8 @@ callNotCallable
 callMissingLabel
 callUnexpectedLabel
 callDuplicateLabel
+callCallback
+callVarargsTail
 
 ; 调用错误：类别、位置、被调方与期望/实得文本。
 (CallError)
@@ -80,6 +84,10 @@ callErrorName|func(_kind: CallErrorKind,) -> (String,):
             return "该形参不接标签"
         case callDuplicateLabel:
             return "实参标签重复"
+        case callCallback:
+            return "回调实参不合格"
+        case callVarargsTail:
+            return "变参尾实参不合格"
     return "调用错误"
 
 ; 同一错误类别判定：枚举相等比较不可用，按名称比。
@@ -103,6 +111,10 @@ callErrorCode|func(_kind: CallErrorKind,) -> (String,):
             return "E4-037"
         case callDuplicateLabel:
             return "E4-038"
+        case callCallback:
+            return "E4-031"
+        case callVarargsTail:
+            return "E4-034"
     return "E4-005"
 
 ; 造错误：位置取实参或调用点起点，期望与实得文本由调用方给。
@@ -138,9 +150,11 @@ callArguments|func(unit: CompilationUnit, unitIndex: I32, node: I32, types: Expr
         if ast.isLabeledArgument(kid):
             let labelNode = ast.exprAt(kid)
             arg.label = decodeRange(bytes = bytes, start = labelNode.nameStart, end = labelNode.nameEnd)
-            arg.typeId = exprTypeAt(table = types, unit = unitIndex, node = ast.childOf(id = kid, index = 0))
+            arg.node = ast.childOf(id = kid, index = 0)
+            arg.typeId = exprTypeAt(table = types, unit = unitIndex, node = arg.node)
             arg.offset = labelNode.start
         else:
+            arg.node = kid
             arg.typeId = exprTypeAt(table = types, unit = unitIndex, node = kid)
             arg.offset = ast.exprAt(kid).start
         out = out.append(arg)
@@ -197,15 +211,19 @@ checkArg|func(out: CallResult, site: CallSite, arg: CallArg, param: CallParam,) 
 
 ; 实参匹配：标签按名字、位置按次序；缺失位若有默认值或取用则放过。
 ; 要标签的形参只收标签实参，退出标签面的只收位置实参。
-matchCall|func(out: CallResult, site: CallSite, params: Array<CallParam>, variadic: Bool, retId: I32,) -> (CallResult,):
+; tailStart 之后的实参交给调用方（外部变参尾），这里的匹配不碰它们。
+matchCall|func(out: CallResult, site: CallSite, params: Array<CallParam>, variadic: Bool, tailStart: I32, retId: I32,) -> (CallResult,):
     var filled: Array<Bool> = []
     var i = 0
     while i < len(params):
         filled = filled.append(false)
         i = i + 1
     var nextPos = 0
+    var limit = len(site.args)
+    if tailStart >= 0 && tailStart < limit:
+        limit = tailStart
     var e = 0
-    while e < len(site.args):
+    while e < limit:
         let arg = site.args[e]
         if len(arg.label) > 0:
             let at = paramIndexOf(params = params, name = arg.label)
@@ -280,7 +298,7 @@ checkNamedCall|func(world: MemberWorld, out: CallResult, site: CallSite, ref: De
     let retId = world.types.typeOf(unit = ref.unit, decl = ref.decl)
     if retId < 0:
         return deferCall(out)
-    return matchCall(out = out, site = site, params = declParams(world = world, ref = ref), variadic = false, retId = retId)
+    return matchCall(out = out, site = site, params = declParams(world = world, ref = ref), variadic = false, tailStart = -1, retId = retId)
 
 ; 内建形参：形状逐个定型，Any 答 -1 由比对处跳过。
 builtinParams|func(pool: TypePool, params: Array<BuiltinParam>,) -> (BuiltinArgs,):
@@ -310,7 +328,7 @@ checkBuiltinCall|func(world: MemberWorld, out: CallResult, site: CallSite,) -> (
     ready.pool = ret.pool
     if ret.id < 0:
         return deferCall(ready)
-    return matchCall(out = ready, site = site, params = typed.params, variadic = function.variadic, retId = ret.id)
+    return matchCall(out = ready, site = site, params = typed.params, variadic = function.variadic, tailStart = -1, retId = ret.id)
 
 ; 函数值调用：形参只从函数类型读，没有名字与默认值，个数必须相等。
 checkValueCall|func(out: CallResult, site: CallSite,) -> (CallResult,):
@@ -327,9 +345,9 @@ checkValueCall|func(out: CallResult, site: CallSite,) -> (CallResult,):
         param.takesLabel = false
         params = params.append(param)
         i = i + 1
-    return matchCall(out = out, site = site, params = params, variadic = false, retId = entry.ret)
+    return matchCall(out = out, site = site, params = params, variadic = false, tailStart = -1, retId = entry.ret)
 
-; 判定入口：符号指向函数声明才走命名路径，其余按内建或函数值分流。
+; 判定入口：外部符号先走外部面，其余符号指向函数声明才走命名路径，最后按内建或函数值分流。
 checkCall|func(world: MemberWorld, site: CallSite,) -> (CallResult,):
     var out = CallResult()
     out.pool = world.types.pool
@@ -337,6 +355,8 @@ checkCall|func(world: MemberWorld, site: CallSite,) -> (CallResult,):
         let ref = symbolDecl(world = world, symbol = site.symbol)
         if ref.unit >= 0:
             let decl = world.units[ref.unit].ast.decls[ref.decl]
+            if isForeignSymbolCode(decl.kind):
+                return checkForeignCall(world = world, out = out, site = site, ref = ref)
             if isFunctionDeclCode(decl.kind):
                 return checkNamedCall(world = world, out = out, site = site, ref = ref)
     if site.builtin >= 0:

@@ -1,0 +1,65 @@
+; 转换池：一批标量类型与它们的下标，顺序与调用方给的名单一致。
+(转换池)
+pool: TypePool = TypePool()
+ids: Array<I32> = []
+
+; 造转换池：按名单逐个驻留标量，池随结果带回。
+造转换池|func(_names: Array<String>,) -> (转换池,):
+    var pool = TypePool()
+    var ids: Array<I32> = []
+    var i = 0
+    while i < len(_names):
+        let inserted = intern(pool = pool, kind = typeClassScalar, name = _names[i], kids = [], ret = -1)
+        pool = inserted.pool
+        ids = ids.append(inserted.id)
+        i = i + 1
+    var out = 转换池()
+    out.pool = pool
+    out.ids = ids
+    return out
+
+; 数值互转：同族、跨族与窄化都成立，结果类型恒为目标类型。
+数值互转|test() -> ():
+    let 池 = 造转换池(["I32", "I64", "F64", "U8"])
+    let 加宽 = checkCast(pool = 池.pool, source = 池.ids[0], target = 池.ids[1], file = "", offset = 0)
+    assert(!加宽.failed, "整数加宽应通过")
+    assert(typeText(pool = 加宽.pool, id = 加宽.typeId) == "I64", "结果即目标类型")
+    let 跨族 = checkCast(pool = 池.pool, source = 池.ids[0], target = 池.ids[2], file = "", offset = 0)
+    assert(!跨族.failed, "整数到浮点应通过")
+    let 窄化 = checkCast(pool = 池.pool, source = 池.ids[2], target = 池.ids[3], file = "", offset = 0)
+    assert(!窄化.failed, "浮点到窄整数应通过")
+    assert(!窄化.deferred, "两侧都判定时不留待定")
+    return
+
+; 非数值目标：Bool、Char、String 与具名类型都不能作 `as` 的目标，报 E4-001。
+非数值目标|test() -> ():
+    let 池 = 造转换池(["I32", "Bool", "Char", "String"])
+    let 布尔 = checkCast(pool = 池.pool, source = 池.ids[0], target = 池.ids[1], file = "", offset = 5)
+    assert(布尔.failed, "Bool 目标应拒绝")
+    assert(isCastError(error = 布尔.error, kind = castTargetNotNumeric), "类别是目标不合法")
+    assert(castErrorCode(布尔.error.kind) == "E4-001", "码取 E4-001")
+    assert(布尔.error.offset == 5, "位置照传")
+    let 字符 = checkCast(pool = 池.pool, source = 池.ids[1], target = 池.ids[2], file = "", offset = 0)
+    assert(字符.failed, "Char 目标应拒绝")
+    assert(isCastError(error = 字符.error, kind = castTargetNotNumeric), "类别是目标不合法")
+    let 文本 = checkCast(pool = 池.pool, source = 池.ids[0], target = 池.ids[3], file = "", offset = 0)
+    assert(文本.failed, "String 目标应拒绝")
+    return
+
+; 非数值操作数：目标合法而操作数是 Bool，按操作数不合法拒绝。
+非数值操作数|test() -> ():
+    let 池 = 造转换池(["I64", "Bool"])
+    let 结果 = checkCast(pool = 池.pool, source = 池.ids[1], target = 池.ids[0], file = "a.pini", offset = 3)
+    assert(结果.failed, "Bool 操作数应拒绝")
+    assert(isCastError(error = 结果.error, kind = castOperandNotNumeric), "类别是操作数不合法")
+    assert(结果.error.file == "a.pini", "文件照传")
+    return
+
+; 待定：源类型尚未判定时先按目标类型给出结果，不当作失败。
+源未定|test() -> ():
+    let 池 = 造转换池(["I64"])
+    let 结果 = checkCast(pool = 池.pool, source = -1, target = 池.ids[0], file = "", offset = 0)
+    assert(!结果.failed, "源未定不失败")
+    assert(结果.deferred, "标记待定")
+    assert(typeText(pool = 结果.pool, id = 结果.typeId) == "I64", "结果仍是目标类型")
+    return

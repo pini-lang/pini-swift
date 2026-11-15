@@ -1,0 +1,119 @@
+[interface_test|import]
+_syntax = "../../syntax"
+_module_loader = "../../module-loader"
+
+; 包接口文本：公开名与布局行，内部实现不进文本；漂移按行对照。
+; 样例只走装载、注册、解析类型与建世界四步，不读文件系统。
+
+; 接口样例：世界与排序后的单元；单元序与类型表的下标一致。
+(接口样例)
+world: MemberWorld = MemberWorld()
+units: Array<CompilationUnit> = []
+
+; 造接口样例：装载、排序、注册、解析类型、建世界；顺序不能反。
+造接口样例|func(files: Array<String>, texts: Array<String>,) -> (接口样例,):
+    var loaded: Array<CompilationUnit> = []
+    var i = 0
+    while i < len(files):
+        let one = loadUnit(path = files[i], text = texts[i])
+        assert(!one.failed, "样例应可加载：" + files[i])
+        loaded = loaded.append(one.unit)
+        i = i + 1
+    let units = sortedUnits(loaded)
+    let table = registerPackage(units)
+    let types = resolvePackage(units = units, table = table)
+    var out = 接口样例()
+    out.units = units
+    out.world = makeMemberWorld(units = units, table = table, types = types)
+    return out
+
+; 公开面：api 目录的公开声明进文本，私有名、internal 文件与 _internal 目录都不进。
+接口只收公开|test() -> ():
+    let 样例 = 造接口样例(files = ["packages/p/src/api/p.pini", "packages/p/src/api/_hidden.pini", "packages/p/src/_internal/deep.pini"], texts = [
+            "(点)\nx: I32 = 0\ny: I32 = 0\n\n公开函数|func() -> ():\n    pass\n\n_私有|func() -> ():\n    pass\n",
+            "内部函数|func() -> ():\n    pass\n",
+            "更深|func() -> ():\n    pass\n",
+    ]
+    )
+    let text = interfaceText(name = "p", units = 样例.units, world = 样例.world)
+    let 期望 = "package=p\n公开函数\n点\nsig 公开函数() -> ()\nlayout 点 结构 slots=6 fields=x,y\n"
+    assert(text == 期望, "实得：" + text)
+    return
+
+; 布局行：结构的槽数含头四格，字段序取声明序；枚举写用例名。
+接口布局行|test() -> ():
+    let 样例 = 造接口样例(files = ["packages/p/src/api/p.pini"], texts = ["[形状]\n圆(半径: F64,)\n方(边长: F64,)\n\n(点)\nx: I32 = 0\n"])
+    let text = interfaceText(name = "p", units = 样例.units, world = 样例.world)
+    assert(text.contains("layout 点 结构 slots=5 fields=x"), "结构应给槽数与字段，实得：" + text)
+    assert(text.contains("layout 形状 枚举 slots=6 cases=圆,方"), "枚举应给用例，实得：" + text)
+    return
+
+; 内部实现删除：公开面不变，只在别的文件里删内部实现，接口文本逐字相同。
+接口不受内部实现影响|test() -> ():
+    let 前 = 造接口样例(files = ["packages/p/src/api/p.pini", "packages/p/src/api/_hidden.pini"], texts = ["公开函数|func(_a: I32,) -> (I32,):\n    return a\n", "内部函数|func() -> ():\n    pass\n"])
+    let 后 = 造接口样例(files = ["packages/p/src/api/p.pini", "packages/p/src/api/_hidden.pini"], texts = ["公开函数|func(_a: I32,) -> (I32,):\n    return a\n", "内部函数|func() -> (I32,):\n    return 1\n"])
+    let 前文本 = interfaceText(name = "p", units = 前.units, world = 前.world)
+    let 后文本 = interfaceText(name = "p", units = 后.units, world = 后.world)
+    assert(前文本 == 后文本, "内部实现改动不应改变接口：" + 前文本 + " / " + 后文本)
+    return
+
+; 名字排序：公开名按 UTF-8 字节序，签名行随名字同序，与声明序无关。
+接口名字有序|test() -> ():
+    let 样例 = 造接口样例(files = ["packages/p/src/api/p.pini"], texts = ["丙|func() -> ():\n    pass\n\n甲|func() -> ():\n    pass\n\n乙|func() -> ():\n    pass\n"])
+    let text = interfaceText(name = "p", units = 样例.units, world = 样例.world)
+    assert(text == "package=p\n丙\n乙\n甲\nsig 丙() -> ()\nsig 乙() -> ()\nsig 甲() -> ()\n", "实得：" + text)
+    return
+
+; 漂移未变：两份文本逐行相同即判未变。
+接口未漂移|test() -> ():
+    let 记录 = "package=p\n公开函数\n"
+    let drift = interfaceDrift(recorded = 记录, current = 记录)
+    assert(!drift.changed, "相同文本不应判漂移")
+    assert(drift.line == 0, "未变时行号为 0")
+    return
+
+; 漂移：新增一行即变，首个差异行与多出的行都要给出。
+接口漂移识别|test() -> ():
+    let 记录 = "package=p\n公开函数\n"
+    let 当前 = "package=p\n公开函数\n点\n"
+    let drift = interfaceDrift(recorded = 记录, current = 当前)
+    assert(drift.changed, "应判漂移")
+    assert(drift.line == 3, "首个差异应在第 3 行，实得 " + "\(drift.line)")
+    assert(len(drift.extra) == 1 && drift.extra[0] == "点", "多出的行应是 点")
+    assert(len(drift.missing) == 0, "不应有缺失行")
+    return
+
+; 签名变化：参数类型改了，名字段不变而签名段变，漂移必须判出来。
+签名变则文本变|test() -> ():
+    let 前 = 造接口样例(files = ["packages/p/src/api/p.pini"], texts = ["公开函数|func(_a: I32,) -> (I32,):\n    return a\n"])
+    let 后 = 造接口样例(files = ["packages/p/src/api/p.pini"], texts = ["公开函数|func(_a: F64,) -> (I32,):\n    return a\n"])
+    let 前文本 = interfaceText(name = "p", units = 前.units, world = 前.world)
+    let 后文本 = interfaceText(name = "p", units = 后.units, world = 后.world)
+    assert(前文本 != 后文本, "参数类型变化应使接口文本变：" + 前文本)
+    assert(interfaceDrift(recorded = 前文本, current = 后文本).changed, "应判漂移")
+    return
+
+; 包面排除：外部块与扩展块的块名不是符号，测试函数也不进接口。
+块名与测试不进接口|test() -> ():
+    let 样例 = 造接口样例(files = ["packages/p/src/api/p.pini", "packages/p/src/api/q.pini"], texts = [
+            "[libc|foreign]\nmalloc: (I64,) -> (*I8,)\n\n真函数|func() -> ():\n    pass\n\n用例|test() -> ():\n    assert(true, \"\")\n",
+            "(点)\nx: I32 = 0\n\n[[幽灵]]\n方法|func() -> ():\n    pass\n",
+    ]
+    )
+    let text = interfaceText(name = "p", units = 样例.units, world = 样例.world)
+    assert(text.contains("真函数"), "公开函数应进：" + text)
+    assert(!text.contains("libc"), "外部块名不是符号：" + text)
+    assert(!text.contains("用例"), "测试函数不进包面：" + text)
+    assert(!text.contains("幽灵"), "扩展块名不是符号：" + text)
+    return
+
+接口漂移错误|test() -> ():
+    var 记录 = InterfaceRecord()
+    记录.name = "p"
+    记录.text = "package=p\n公开函数\n"
+    let drift = interfaceDrift(recorded = 记录.text, current = "package=p\n点\n")
+    let error = interfaceDriftError(record = 记录, drift = drift)
+    assert(error.name == "p", "错误应带包名")
+    assert(error.detail.contains("第 2 行"), "描述应带行号，实得：" + error.detail)
+    assert(interfaceErrorCode() == "E3-021", "接口漂移应有专用码")
+    return

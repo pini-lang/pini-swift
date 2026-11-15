@@ -22,6 +22,7 @@ storeLoopControlOutside
 storeNotIterable
 storeIterableArity
 storeBadLoopPattern
+storeForeignReadonly
 
 ; 存储错误：类别、文件、源内偏移、相关名字、运算符与期望/实得文本。
 (StoreError)
@@ -81,6 +82,8 @@ storeErrorName|func(_kind: StoreErrorKind,) -> (String,):
             return "遍历元素个数不符"
         case storeBadLoopPattern:
             return "遍历模式不合法"
+        case storeForeignReadonly:
+            return "只读外部数据符号被赋值"
     return "语句错误"
 
 ; 同一类别判定：枚举相等比较不可用，按名称比。
@@ -116,6 +119,8 @@ storeErrorCode|func(_kind: StoreErrorKind,) -> (String,):
             return "E4-005"
         case storeBadLoopPattern:
             return "E4-001"
+        case storeForeignReadonly:
+            return "E4-039"
     return "E4-001"
 
 ; 造错误：位置取语句或初值起点，运算符只对赋值类错误填。
@@ -290,6 +295,10 @@ checkAssignStmt|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, 
             targetType = local.typeId
             if !local.mutable:
                 return appendStoreError(out = working, unit = unit, offset = offset, kind = storeLetImmutable, name = name, op = "=", expected = "", got = "")
+        else:
+            let reason = readonlyWriteReason(world = world, name = name)
+            if len(reason) > 0:
+                return appendStoreError(out = working, unit = unit, offset = offset, kind = storeForeignReadonly, name = name, op = "=", expected = "", got = reason)
     elif unit.ast.isMemberExpr(target) || unit.ast.isSubscriptExpr(target):
         targetType = exprTypeAt(table = working.types, unit = unitIndex, node = target)
     else:

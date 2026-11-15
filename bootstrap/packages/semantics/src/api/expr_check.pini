@@ -1,0 +1,194 @@
+[expr_check|import]
+_syntax = "../../../syntax"
+_module_loader = "../../../module-loader"
+
+; 表达式检查：按表达式池逐节点判名字、成员与调用形状，不重跑类型推导。
+; 名字面是文件级：跨函数误用会漏报，但不会把合法名字判成未定义。
+; 实参类型未知时 checkArg 放过，本层只落实个数与标签两类调用判据。
+
+; 表达式错误：未定义名、成员缺失与调用形状三类，各带自己的诊断码。
+[ExprErrorKind]
+exprUndefined
+exprMemberFailed
+exprCallFailed
+
+; 表达式错误：类别、文件、位置、名字、细节与诊断码；码在造错时定死。
+(ExprError)
+kind: ExprErrorKind = .exprUndefined
+file: String = ""
+offset: I32 = 0
+name: String = ""
+detail: String = ""
+code: String = "E3-003"
+
+; 表达式检查结果：错误表与失败标记；错误按表达式池次序，天然有序。
+(ExprCheck)
+errors: Array<ExprError> = []
+failed: Bool = false
+
+; 类别名：诊断、测试与回执共用一份拼写。
+exprErrorName|func(_kind: ExprErrorKind,) -> (String,):
+    match _kind:
+        case exprUndefined:
+            return "未定义名字"
+        case exprMemberFailed:
+            return "成员不存在"
+        case exprCallFailed:
+            return "调用不成立"
+    return "表达式错误"
+
+; 同一类别判定：枚举相等比较不可用，按名称比。
+isExprError|func(error: ExprError, kind: ExprErrorKind,) -> (Bool,):
+    return exprErrorName(error.kind) == exprErrorName(kind)
+
+; 造错误：码由调用方按来源面给，避免本层再抄一张码表。
+makeExprError|func(kind: ExprErrorKind, file: String, offset: I32, name: String, detail: String, code: String,) -> (ExprError,):
+    var out = ExprError()
+    out.kind = kind
+    out.file = file
+    out.offset = offset
+    out.name = name
+    out.detail = detail
+    out.code = code
+    return out
+
+; 追加错误：其余字段原样保留，一个节点出错不中断后续节点。
+appendExprError|func(out: ExprCheck, unit: CompilationUnit, offset: I32, kind: ExprErrorKind, name: String, detail: String, code: String,) -> (ExprCheck,):
+    var done = out
+    done.errors = done.errors.append(makeExprError(kind = kind, file = unit.path, offset = offset, name = name, detail = detail, code = code))
+    return done
+
+; 名字命中：整串相等即命中；名字表是文件级绑定名。
+hasName|func(items: Array<String>, value: String,) -> (Bool,):
+    var i = 0
+    while i < len(items):
+        if items[i] == value:
+            return true
+        i = i + 1
+    return false
+
+; 已知名字：自身与占位符、文件绑定名、顶层符号、导入别名、内建函数五处。
+knownName|func(world: MemberWorld, unit: CompilationUnit, locals: Array<String>, name: String,) -> (Bool,):
+    if len(name) == 0 || name == "_" || name == "self":
+        return true
+    if hasName(items = locals, value = name):
+        return true
+    if world.table.topIndex(keyOfText(name)) >= 0:
+        return true
+    if world.table.importIndex(file = unit.path, key = keyOfText(name)) >= 0:
+        return true
+    return findBuiltinFunction(functions = world.functions, name = name) >= 0
+
+; 局部绑定名：参数、变量、遍历与匹配绑定；不含顶层声明名，供排除遮蔽用。
+localOnlyNames|func(unit: CompilationUnit,) -> (Array<String>,):
+    let bytes = tempUtf8Bytes(unit.text)
+    var out: Array<String> = []
+    var d = 0
+    while d < unit.ast.declCount():
+        let decl = unit.ast.decls[d]
+        if isParamDeclCode(decl.kind):
+            let name = decodeRange(bytes = bytes, start = decl.nameStart, end = decl.nameEnd)
+            if len(name) > 0 && name != "_":
+                out = out.append(name)
+        d = d + 1
+    var s = 0
+    while s < unit.ast.stmtCount():
+        let stmt = unit.ast.stmtAt(s)
+        if unit.ast.isVariableStmt(s) || unit.ast.isForStmt(s):
+            out = mergeNames(items = out, add = patternNames(unit = unit, bytes = bytes, node = unit.ast.stmtChild(id = s, index = 0)))
+        if unit.ast.isMatchStmt(s):
+            var m = 1
+            while m < len(stmt.kids):
+                out = mergeNames(items = out, add = patternNames(unit = unit, bytes = bytes, node = stmt.kids[m]))
+                m = m + 2
+        s = s + 1
+    return out
+
+; 并表：追加不查重，重复名字只会让查找多一次比较。
+mergeNames|func(items: Array<String>, add: Array<String>,) -> (Array<String>,):
+    var out = items
+    var i = 0
+    while i < len(add):
+        out = out.append(add[i])
+        i = i + 1
+    return out
+
+; 未定义名：文件级名字面都不含这个名字时报；位置取标识符起点。
+checkIdentifierNode|func(world: MemberWorld, unit: CompilationUnit, bytes: Array<U8>, locals: Array<String>, node: I32, out: ExprCheck,) -> (ExprCheck,):
+    let expr = unit.ast.exprAt(node)
+    let name = decodeRange(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
+    if knownName(world = world, unit = unit, locals = locals, name = name):
+        return out
+    return appendExprError(out = out, unit = unit, offset = expr.start, kind = exprUndefined, name = name, detail = "文件内没有这个名字", code = "E3-003")
+
+; 成员缺失：接收者是顶层类型名且不是局部遮蔽时，按名义成员判一次。
+; 类型名位不暴露字段，这与成员面的语义一致；接收者是变量时留给类型推导。
+checkMemberNode|func(world: MemberWorld, unit: CompilationUnit, bytes: Array<U8>, shadow: Array<String>, node: I32, out: ExprCheck,) -> (ExprCheck,):
+    let member = unit.ast.exprAt(node)
+    let receiver = unit.ast.childOf(id = node, index = 0)
+    if receiver < 0 || !unit.ast.isIdentifierExpr(receiver):
+        return out
+    let recv = unit.ast.exprAt(receiver)
+    let recvName = decodeRange(bytes = bytes, start = recv.nameStart, end = recv.nameEnd)
+    if hasName(items = shadow, value = recvName):
+        return out
+    let typeId = nominalTypeId(world = world, name = recvName)
+    if typeId < 0:
+        return out
+    let memberName = decodeRange(bytes = bytes, start = member.nameStart, end = member.nameEnd)
+    let access = memberAccess(receiver = typeId, name = memberName, isTypeName = true, owner = recvName, file = unit.path, offset = member.start)
+    let result = checkMember(world = world, access = access)
+    if !result.failed:
+        return out
+    return appendExprError(out = out, unit = unit, offset = member.start, kind = exprMemberFailed, name = memberName, detail = recvName + " 上没有该成员", code = memberErrorCode(result.error.kind))
+
+; 调用形状：被调是顶层函数或内建时按签名对实参标签与个数。
+; 外部符号跳过：变参尾与回调判据要实参类型，本层拿不到；未定义由标识符扫描报。
+checkCallNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, bytes: Array<U8>, shadow: Array<String>, types: ExprTypes, node: I32, out: ExprCheck,) -> (ExprCheck,):
+    let callee = calleeNode(unit = unit, node = node)
+    if callee < 0 || !unit.ast.isIdentifierExpr(callee):
+        return out
+    let calleeExpr = unit.ast.exprAt(callee)
+    let name = decodeRange(bytes = bytes, start = calleeExpr.nameStart, end = calleeExpr.nameEnd)
+    if hasName(items = shadow, value = name):
+        return out
+    var site = CallSite()
+    site.name = name
+    site.file = unit.path
+    site.offset = unit.ast.exprAt(node).start
+    site.unit = unitIndex
+    site.symbol = world.table.topIndex(keyOfText(name))
+    if site.symbol < 0:
+        site.builtin = findBuiltinFunction(functions = world.functions, name = name)
+    if site.symbol < 0 && site.builtin < 0:
+        return out
+    if site.symbol >= 0:
+        let ref = symbolDecl(world = world, symbol = site.symbol)
+        if ref.unit >= 0 && isForeignSymbolCode(world.units[ref.unit].ast.decls[ref.decl].kind):
+            return out
+    site.args = callArguments(unit = unit, unitIndex = unitIndex, node = node, types = types)
+    let result = checkCall(world = world, site = site)
+    if !result.failed:
+        return out
+    return appendExprError(out = out, unit = unit, offset = site.offset, kind = exprCallFailed, name = name, detail = callErrorName(result.error.kind), code = callErrorCode(result.error.kind))
+
+; 单元检查：逐个表达式节点分派；同一节点只走一条分支。
+checkUnitExprs|func(world: MemberWorld, unitIndex: I32, types: ExprTypes,) -> (ExprCheck,):
+    var out = ExprCheck()
+    if unitIndex < 0 || unitIndex >= len(world.units):
+        return out
+    let unit = world.units[unitIndex]
+    let bytes = tempUtf8Bytes(unit.text)
+    let known = unitBareNames(unit = unit)
+    let shadow = localOnlyNames(unit = unit)
+    var i = 0
+    while i < unit.ast.exprCount():
+        if unit.ast.isIdentifierExpr(i):
+            out = checkIdentifierNode(world = world, unit = unit, bytes = bytes, locals = known, node = i, out = out)
+        elif unit.ast.isMemberExpr(i):
+            out = checkMemberNode(world = world, unit = unit, bytes = bytes, shadow = shadow, node = i, out = out)
+        elif unit.ast.isCallExpr(i):
+            out = checkCallNode(world = world, unit = unit, unitIndex = unitIndex, bytes = bytes, shadow = shadow, types = types, node = i, out = out)
+        i = i + 1
+    out.failed = len(out.errors) > 0
+    return out

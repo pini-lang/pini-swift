@@ -66,6 +66,33 @@ defineTop|func(table: SymbolTable, symbol: Symbol,) -> (SymbolTable,):
     out.symbols = out.symbols.append(symbol)
     return out
 
+; 定义外部符号：同名同型合并，异型或与本地符号撞名报错；外部符号不覆盖已有条目。
+defineForeign|func(table: SymbolTable, symbol: Symbol,) -> (SymbolTable,):
+    var out = table
+    let at = table.topIndex(symbol.key)
+    if at < 0:
+        out.symbols = out.symbols.append(symbol)
+        return out
+    let existing = table.symbols[at]
+    if !existing.isForeign:
+        out.errors = out.errors.append(makeForeignError(kind = symbolForeignClash, file = symbol.file, offset = symbol.offset, name = symbol.spelling, detail = existing.file))
+        return out
+    if existing.foreignShape != symbol.foreignShape || !sameFlags(first = existing.foreignFlags, second = symbol.foreignFlags):
+        out.errors = out.errors.append(makeForeignError(kind = symbolForeignMismatch, file = symbol.file, offset = symbol.offset, name = symbol.spelling, detail = existing.file))
+        return out
+    return out
+
+; 标志表相等：长度与逐项文本都相同；两边登记时已排序，故顺序不影响判定。
+sameFlags|func(first: Array<String>, second: Array<String>,) -> (Bool,):
+    if len(first) != len(second):
+        return false
+    var i = 0
+    while i < len(first):
+        if first[i] != second[i]:
+            return false
+        i = i + 1
+    return true
+
 ; 定义成员符号：同一所有者下同键即报成员同名，保留先声明者。
 defineMember|func(table: SymbolTable, symbol: Symbol,) -> (SymbolTable,):
     var out = table

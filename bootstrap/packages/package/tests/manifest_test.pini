@@ -41,3 +41,36 @@
     let 工作区 = parseWorkspaceManifest(text = "[package]\nname = \"p\"\n", rootPath = ".", path = "pini.toml")
     assert(isErrorKind(e = 工作区.errors[0], kind = .errorTableMissing), "缺 [workspace]")
     return
+
+; FFI 配置：六字段进清单；数组按清单顺序保留，abi 显式写成 C。
+FFI配置|test() -> ():
+    let 文本 = "[package]\nname = \"p\"\n\n[ffi]\nabi = \"C\"\nsearch_paths = [\"/usr/lib\",]\nlibs = [\"m\", \"pthread\"]\nheaders = [\"stdio.h\"]\ninclude_paths = [\"include\"]\ndefines = [\"_GNU_SOURCE\", \"LIMIT=8\"]\n\n[lib]\nname = \"p\"\nentry = \"src/a.pini\"\n"
+    let 解析 = parsePackageManifest(text = 文本, rootPath = "p", path = "p/pini.toml")
+    assert(len(解析.errors) == 0, "不应有错误")
+    assert(解析.manifest.ffi.abi == "C", "abi 为 C")
+    assert(len(解析.manifest.ffi.searchPaths) == 1, "一条搜索路径")
+    assert(解析.manifest.ffi.searchPaths[0] == "/usr/lib", "搜索路径值")
+    assert(len(解析.manifest.ffi.libs) == 2, "两个库")
+    assert(解析.manifest.ffi.libs[1] == "pthread", "库名按顺序")
+    assert(解析.manifest.ffi.headers[0] == "stdio.h", "头文件")
+    assert(解析.manifest.ffi.includePaths[0] == "include", "包含路径")
+    assert(解析.manifest.ffi.defines[1] == "LIMIT=8", "宏定义")
+    return
+
+; 没有 [ffi] 表时不建默认值：abi 仍是 C，其余为空。
+FFI缺省|test() -> ():
+    let 文本 = "[package]\nname = \"p\"\n\n[lib]\nname = \"p\"\nentry = \"src/a.pini\"\n"
+    let 解析 = parsePackageManifest(text = 文本, rootPath = "p", path = "p/pini.toml")
+    assert(len(解析.errors) == 0, "不应有错误")
+    assert(解析.manifest.ffi.abi == "C", "abi 缺省 C")
+    assert(len(解析.manifest.ffi.libs) == 0, "库为空")
+    assert(len(解析.manifest.ffi.defines) == 0, "宏为空")
+    return
+
+; FFI 坏值：abi 非 C 与库名带 -l 各有专用错误，位置指向清单。
+FFI错误|test() -> ():
+    let 坏abi = parsePackageManifest(text = "[package]\nname = \"p\"\n[ffi]\nabi = \"Rust\"\n[lib]\nname = \"p\"\nentry = \"src/a.pini\"\n", rootPath = "p", path = "p/pini.toml")
+    assert(isErrorKind(e = 坏abi.errors[0], kind = .errorFFIABI), "abi 只认 C")
+    let 坏库 = parsePackageManifest(text = "[package]\nname = \"p\"\n[ffi]\nlibs = [\"-lm\"]\n[lib]\nname = \"p\"\nentry = \"src/a.pini\"\n", rootPath = "p", path = "p/pini.toml")
+    assert(isErrorKind(e = 坏库.errors[0], kind = .errorFFILibrary), "库名不带 -l")
+    return

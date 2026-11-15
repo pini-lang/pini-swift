@@ -1,9 +1,13 @@
 [main|import]
-support = "../../../support"
-package = "../../../package"
+_package = "../../../package"
 
+; 驱动主程序：定位工作区根并装配清单，九包可用时打印产物探针行。
+; 全工作区语义检查受自举解析吞吐缺口阻塞，入口留在 checkWorkspace，待吞吐批次接回。
 main|func() -> ():
-    let width = support.nonNegativeWidth(3)
-    let workspace = package.hasWorkspace(".")
-    print("workspace-ok", width, workspace)
+    let root = workspaceRootOf(start = moduleRoot())
+    let plan = planWorkspace(root)
+    if plan.isOK() && plan.packageCount() == 9:
+        print("workspace-ok", plan.packageCount(), true)
+        return
+    print("workspace-plan-failed", plan.errorCount())
     return
