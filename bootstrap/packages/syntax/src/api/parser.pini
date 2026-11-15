@@ -1372,7 +1372,16 @@ parseInlineBlock|self() -> (I32,):
         self.pushStmtKid(id = block, kid = id)
     return block
 ; 语句分派：关键字开头各有专用形状，其余按表达式或赋值处理。
+; `名|if` / `名|while` / `名|for` 是带标签控制流，标签只在控制流关键字前成立。
 parseStatement|self() -> (I32,):
+    if self.at(kwCapture):
+        return self.parseCapture()
+    if self.at(identifier) && self.isKindAt(offset = 1, kind = opBitOr) && self.isKindAt(offset = 2, kind = kwIf):
+        return self.parseLabelled(what = kwIf)
+    if self.at(identifier) && self.isKindAt(offset = 1, kind = opBitOr) && self.isKindAt(offset = 2, kind = kwWhile):
+        return self.parseLabelled(what = kwWhile)
+    if self.at(identifier) && self.isKindAt(offset = 1, kind = opBitOr) && self.isKindAt(offset = 2, kind = kwFor):
+        return self.parseLabelled(what = kwFor)
     if self.at(kwVar) || self.at(kwLet):
         return self.parseVariableDecl(false)
     if self.at(kwIf):
@@ -1391,18 +1400,90 @@ parseStatement|self() -> (I32,):
         return self.parseContinue()
     if self.at(kwPass):
         return self.parsePass()
+    if self.at(kwUnroll):
+        return self.parseUnroll()
     if self.at(kwDefer):
-        let start: I32 = self.current().start
-        self.advance()
-        if !self.expect(kind = colon, what = "`:`"):
-            self.recover()
-            return -1
-        let body: I32 = self.parseIndentedBlock()
-        let id: I32 = self.newStmt(kind = stmtDefer, start = start, end = self.previousEnd())
-        if body >= 0:
-            self.pushStmtKid(id = id, kid = body)
-        return id
+        return self.parseDefer()
     return self.parseExprStatement()
+; 带标签控制流：标签名先记下，再交对应控制流解析；标签不进 kids。
+parseLabelled|self(what: TokenKind,) -> (I32,):
+    let labelStart: I32 = self.current().nameStart
+    let labelEnd: I32 = self.current().nameEnd
+    self.advance()
+    self.advance()
+    var id = -1
+    if kindTag(what) == kindTag(kwIf):
+        id = self.parseIf()
+    elif kindTag(what) == kindTag(kwWhile):
+        id = self.parseWhile()
+    elif kindTag(what) == kindTag(kwFor):
+        id = self.parseFor()
+    if id >= 0:
+        self.setStmtName(id = id, start = labelStart, end = labelEnd)
+    return id
+; capture 语句：`capture 名字`，每行恰一个捕获；名字区间原样保留。
+parseCapture|self() -> (I32,):
+    let start: I32 = self.current().start
+    self.advance()
+    var nameStart = -1
+    var nameEnd = -1
+    if self.at(identifier):
+        nameStart = self.current().nameStart
+        nameEnd = self.current().nameEnd
+        self.advance()
+    else:
+        self.report(code = "E2-001", message = "capture 后须恰有一个标识符")
+    if !self.atStatementEnd():
+        self.report(code = "E2-001", message = "capture 每行只允许一个标识符")
+        self.recover()
+    let id: I32 = self.newStmt(kind = stmtCapture, start = start, end = self.previousEnd())
+    self.setStmtName(id = id, start = nameStart, end = nameEnd)
+    return id
+; unroll 语句：`unroll (模式,) in 表:` 后接块，按静态展开语义处理。
+parseUnroll|self() -> (I32,):
+    let start: I32 = self.current().start
+    self.advance()
+    var pattern = -1
+    if self.at(leftParen):
+        pattern = self.parseParenExpr()
+    elif self.at(identifier):
+        let token = self.current()
+        self.advance()
+        pattern = self.newExpr(kind = exprIdentifier, start = token.start, end = token.end)
+        self.setExprName(id = pattern, start = token.nameStart, end = token.nameEnd)
+    else:
+        self.report(code = "E2-007", message = "缺少展开模式")
+    if !self.expect(kind = kwIn, what = "`in`"):
+        self.recover()
+        return -1
+    let table: I32 = self.parseExpression(1)
+    if !self.expect(kind = colon, what = "`:`"):
+        self.recover()
+        return -1
+    let body: I32 = self.parseIndentedBlock()
+    let id: I32 = self.newStmt(kind = stmtUnroll, start = start, end = self.previousEnd())
+    self.pushStmtKid(id = id, kid = pattern)
+    self.pushStmtKid(id = id, kid = table)
+    self.pushStmtKid(id = id, kid = body)
+    return id
+; defer 语句：`defer:` 加缩进块是块形式，`defer 语句` 是相邻单行形式；两者都存成块。
+parseDefer|self() -> (I32,):
+    let start: I32 = self.current().start
+    self.advance()
+    var body = -1
+    if self.at(colon):
+        self.advance()
+        body = self.parseIndentedBlock()
+    else:
+        let bodyStart: I32 = self.current().start
+        let single: I32 = self.parseStatement()
+        body = self.newStmt(kind = stmtBlock, start = bodyStart, end = self.previousEnd())
+        if single >= 0:
+            self.pushStmtKid(id = body, kid = single)
+    let id: I32 = self.newStmt(kind = stmtDefer, start = start, end = self.previousEnd())
+    if body >= 0:
+        self.pushStmtKid(id = id, kid = body)
+    return id
 ; 变量语句：`var|let` 后接名字或元组模式，可选类型与初值。
 parseVariableDecl|self(_topLevel: Bool,) -> (I32,):
     let start: I32 = self.current().start
@@ -1611,11 +1692,19 @@ atStatementEnd|self() -> (Bool,):
     if self.at(rightParen) || self.at(rightBracket) || self.at(rightBrace):
         return true
     return self.at(comma)
-; 继续语句：无标签形态。
+; 继续语句：可带标签，标签按标识符表达式登记。
 parseContinue|self() -> (I32,):
     let start: I32 = self.current().start
     self.advance()
-    return self.newStmt(kind = stmtContinue, start = start, end = self.previousEnd())
+    var label = -1
+    if self.at(identifier):
+        let token = self.current()
+        self.advance()
+        label = self.newExpr(kind = exprIdentifier, start = token.start, end = token.end)
+        self.setExprName(id = label, start = token.nameStart, end = token.nameEnd)
+    let id: I32 = self.newStmt(kind = stmtContinue, start = start, end = self.previousEnd())
+    self.pushStmtKid(id = id, kid = label)
+    return id
 ; 通过语句：空语句，处理器里的显式吞错。
 parsePass|self() -> (I32,):
     let start: I32 = self.current().start
@@ -1804,5 +1893,11 @@ setStmtType|self(id: I32, typeId: I32,) -> ():
 setStmtEnd|self(id: I32, end: I32,) -> ():
     var node = self.ast.stmts[id]
     node.end = end
+    self.ast.stmts[id] = node
+    return
+setStmtName|self(id: I32, start: I32, end: I32,) -> ():
+    var node = self.ast.stmts[id]
+    node.nameStart = start
+    node.nameEnd = end
     self.ast.stmts[id] = node
     return

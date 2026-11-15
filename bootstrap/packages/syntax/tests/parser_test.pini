@@ -566,3 +566,86 @@ try处理器白名单|test() -> ():
     let 结构 = ast.declAt(ast.itemAt(0))
     assert(len(结构.generic) == 1, "一个形参")
     return
+
+; 标签控制流：`名|if` / `名|while` / `名|for` 把标签记在语句上，跳出与继续各带标签。
+标签控制流|test() -> ():
+    let src = "f|func(表: Array<I32>,) -> ():\n    外层|while 真值:\n        内层|for (项,) in 表:\n            break 内层\n        continue 外层\n    return\n"
+    let 结果 = parseText(src)
+    var 诊断 = ""
+    if len(结果.diagnostics) > 0:
+        诊断 = 结果.diagnostics[0].message
+    assert(len(结果.diagnostics) == 0, "不应有语法诊断：" + 诊断)
+    let ast = 结果.ast
+    let 体 = ast.declAt(ast.itemAt(0)).body
+    let 外层 = ast.stmtAt(体).kids[0]
+    assert(ast.isWhileStmt(外层), "外层是循环")
+    assert(ast.stmtAt(外层).nameEnd - ast.stmtAt(外层).nameStart == 6, "标签占两字六字节：外层")
+    let 内层 = ast.stmtAt(外层).kids[1]
+    assert(ast.isBlockStmt(内层), "循环体是块")
+    let 内层循环 = ast.stmtAt(内层).kids[0]
+    assert(ast.isForStmt(内层循环), "内层是遍历")
+    assert(ast.stmtAt(内层循环).nameEnd - ast.stmtAt(内层循环).nameStart == 6, "内层标签")
+    let 内层体 = ast.stmtAt(内层循环).kids[2]
+    let 跳出 = ast.stmtAt(内层体).kids[0]
+    assert(ast.isBreakStmt(跳出), "跳出语句")
+    let 跳出名 = ast.stmtChild(id = 跳出, index = 0)
+    assert(ast.isIdentifierExpr(跳出名), "跳出带标签")
+    let 继续 = ast.stmtAt(内层).kids[1]
+    assert(ast.isContinueStmt(继续), "继续语句")
+    let 继续名 = ast.stmtChild(id = 继续, index = 0)
+    assert(ast.isIdentifierExpr(继续名), "继续带标签")
+    return
+
+; capture：函数字面量体里逐行捕获，名字落区间。
+capture语句|test() -> ():
+    let src = "g|func(x: I32,) -> ():\n    return\n\nf|func() -> ():\n    let 闭包 = func() -> ():\n        capture x\n        return\n    return\n"
+    let 结果 = parseText(src)
+    var 诊断 = ""
+    if len(结果.diagnostics) > 0:
+        诊断 = 结果.diagnostics[0].message
+    assert(len(结果.diagnostics) == 0, "不应有语法诊断：" + 诊断)
+    let ast = 结果.ast
+    assert(ast.itemCount() == 2, "两个函数")
+    let 体 = ast.declAt(ast.itemAt(1)).body
+    let 变量 = ast.stmtAt(体).kids[0]
+    let 闭包 = ast.stmtChild(id = 变量, index = 1)
+    assert(ast.isExpr(id = 闭包, kind = exprFunction), "右值是函数字面量")
+    let 闭包体 = ast.exprAt(闭包).kids[len(ast.exprAt(闭包).kids) - 1]
+    assert(ast.isBlockStmt(闭包体), "字面量体是块")
+    let 捕获 = ast.stmtAt(闭包体).kids[0]
+    assert(ast.isCaptureStmt(捕获), "首条是捕获")
+    assert(ast.stmtAt(捕获).nameEnd - ast.stmtAt(捕获).nameStart == 1, "捕获名一字节")
+    return
+
+; unroll：模式、表与体三段，模式元组与遍历同构。
+unroll语句|test() -> ():
+    let src = "f|func(表: Array<I32>,) -> ():\n    unroll (项,) in 表:\n        return\n    return\n"
+    let 结果 = parseText(src)
+    var 诊断 = ""
+    if len(结果.diagnostics) > 0:
+        诊断 = 结果.diagnostics[0].message
+    assert(len(结果.diagnostics) == 0, "不应有语法诊断：" + 诊断)
+    let ast = 结果.ast
+    let 体 = ast.declAt(ast.itemAt(0)).body
+    let 展开 = ast.stmtAt(体).kids[0]
+    assert(ast.isUnrollStmt(展开), "展开语句")
+    assert(len(ast.stmtAt(展开).kids) == 3, "模式、表与体")
+    assert(ast.isBlockStmt(ast.stmtAt(展开).kids[2]), "体是块")
+    return
+
+; defer 单行：冒号后同行的语句进块，与块形式同一形状。
+defer单行|test() -> ():
+    let src = "f|func() -> ():\n    defer 记()\n    defer:\n        记()\n    return\n"
+    let 结果 = parseText(src)
+    var 诊断 = ""
+    if len(结果.diagnostics) > 0:
+        诊断 = 结果.diagnostics[0].message
+    assert(len(结果.diagnostics) == 0, "不应有语法诊断：" + 诊断)
+    let ast = 结果.ast
+    let 体 = ast.declAt(ast.itemAt(0)).body
+    let 单行 = ast.stmtAt(体).kids[0]
+    assert(ast.isDeferStmt(单行), "单行延迟")
+    assert(ast.isBlockStmt(ast.stmtChild(id = 单行, index = 0)), "单行也存成块")
+    let 块 = ast.stmtAt(体).kids[1]
+    assert(ast.isDeferStmt(块), "块延迟")
+    return
