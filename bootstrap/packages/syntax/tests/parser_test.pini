@@ -749,25 +749,15 @@ defer单行|test() -> ():
     assert(ast.typeAt(ast.exprAt(带类).typeId).nameEnd - ast.typeAt(ast.exprAt(带类).typeId).nameStart == 3, "标注名 I32")
     return
 
-; 顶层裸变量：`名: 类型 = 值` 不写关键字，名字落在声明上且恒不可变。
-顶层裸变量|test() -> ():
-    let src = "x: I32 = 0\n\ny: String = \"s\"\n\nf|func() -> ():\n    return\n"
+; 顶层裸变量：`名: 类型 = 值` 不在顶级声明形态表内，行首标识符后跟冒号一律报顶级错误。
+顶层裸变量被拒|test() -> ():
+    let src = "x: I32 = 0\n\nf|func() -> ():\n    return\n"
     let 结果 = parseText(src)
-    var 诊断 = ""
-    if len(结果.diagnostics) > 0:
-        诊断 = 结果.diagnostics[0].message
-    assert(len(结果.diagnostics) == 0, "不应有语法诊断：" + 诊断)
-    let ast = 结果.ast
-    assert(ast.itemCount() == 3, "两条变量与一条函数")
-    let 首 = ast.declAt(ast.itemAt(0))
-    assert(ast.isDecl(id = ast.itemAt(0), kind = declVariable), "裸变量是变量声明")
-    assert(!首.mutable, "裸变量不可变")
-    assert(首.nameEnd - 首.nameStart == 1, "名字一字节")
-    assert(ast.isType(id = 首.typeId, kind = typeNamed), "类型具名")
-    assert(ast.isExpr(id = 首.kids[0], kind = exprInteger), "初值是整数")
-    let 次 = ast.declAt(ast.itemAt(1))
-    assert(ast.isDecl(id = ast.itemAt(1), kind = declVariable), "第二条也是变量")
-    assert(ast.isExpr(id = 次.kids[0], kind = exprString), "初值是字符串")
+    assert(len(结果.diagnostics) > 0, "顶层裸写法应报错")
+    assert(结果.diagnostics[0].code == "E2-005", "错误码 E2-005")
+    assert(结果.diagnostics[0].message.contains("无效的顶级声明"), "消息指向顶级声明")
+    assert(结果.ast.itemCount() == 1, "只有函数进顶层")
+    assert(结果.ast.isDecl(id = 结果.ast.itemAt(0), kind = declFunction), "唯一条目是函数")
     return
 
 ; 字典条目缺 `=`：带标注也须写赋值，缺了报专用诊断而不静默吞成集合。

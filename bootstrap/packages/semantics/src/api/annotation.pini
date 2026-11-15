@@ -360,7 +360,7 @@ resolveUnit|func(stage: TypePass, world: TypeWorld, unitIndex: I32,) -> (TypePas
         i = i + 1
     return out
 
-; 顶层声明分派：类型连带成员，函数连带签名，变量单条，扩展块只走签名。
+; 顶层声明分派：类型连带成员，函数连带签名，外部块与扩展块各走一面。
 resolveDecl|func(stage: TypePass, cursor: TypeCursor, unitIndex: I32, declId: I32,) -> (TypePass,):
     let decl = cursor.ast.decls[declId]
     var out = stage
@@ -371,8 +371,6 @@ resolveDecl|func(stage: TypePass, cursor: TypeCursor, unitIndex: I32, declId: I3
     if isFunctionDeclCode(decl.kind):
         out = resolveOne(stage = out, cursor = cursor, unitIndex = unitIndex, declId = declId, typeId = decl.typeId)
         return resolveSignature(stage = out, cursor = cursor, unitIndex = unitIndex, decl = decl)
-    if isVariableDeclCode(decl.kind):
-        return resolveOne(stage = out, cursor = cursor, unitIndex = unitIndex, declId = declId, typeId = decl.typeId)
     if isForeignDeclCode(decl.kind):
         return resolveForeignBlock(stage = out, cursor = cursor, unitIndex = unitIndex, decl = decl)
     if isExtensionDeclCode(decl.kind):

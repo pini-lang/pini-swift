@@ -120,7 +120,6 @@ declObject
 declEnum
 declExtension
 declFunction
-declVariable
 declImportBlock
 declImportEntry
 declField
@@ -263,38 +262,36 @@ declKindTag|func(_kind: DeclKind,) -> (I32,):
             return 4
         case declFunction:
             return 5
-        case declVariable:
-            return 6
         case declImportBlock:
-            return 7
+            return 6
         case declImportEntry:
-            return 8
+            return 7
         case declField:
-            return 9
+            return 8
         case declParam:
-            return 10
+            return 9
         case declVariant:
-            return 11
+            return 10
         case declForeign:
-            return 12
+            return 11
         case declForeignSymbol:
-            return 13
+            return 12
         case declForeignFlag:
-            return 14
+            return 13
         case declTrait:
-            return 15
+            return 14
         case declTraitExtension:
-            return 16
+            return 15
         case declExportBlock:
-            return 17
+            return 16
         case declExportEntry:
-            return 18
+            return 17
         case declExportTarget:
-            return 19
+            return 18
         case declGiven:
-            return 20
+            return 19
         case declImplements:
-            return 21
+            return 20
     return 0
 
 ; 类型类别码。
@@ -526,9 +523,6 @@ isEnumDeclCode|func(_code: I32,) -> (Bool,):
 
 isFunctionDeclCode|func(_code: I32,) -> (Bool,):
     return _code == declKindTag(declFunction)
-
-isVariableDeclCode|func(_code: I32,) -> (Bool,):
-    return _code == declKindTag(declVariable)
 
 isExtensionDeclCode|func(_code: I32,) -> (Bool,):
     return _code == declKindTag(declExtension)

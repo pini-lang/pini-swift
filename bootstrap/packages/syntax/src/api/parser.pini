@@ -199,11 +199,6 @@ parseTopLevel|self() -> ():
         if id >= 0:
             self.ast.addItem(id)
         return
-    if self.at(identifier) && self.isKindAt(offset = 1, kind = colon):
-        let id = self.parseVariableDecl(true)
-        if id >= 0:
-            self.ast.addItem(id)
-        return
     self.report(code = "E2-005", message = "无效的顶级声明")
     self.recover()
     return
@@ -535,7 +530,7 @@ parseForeignSymbol|self() -> (I32,):
     self.setDeclType(id = id, typeId = typeId)
     self.setDeclKids(id = id, kids = flags)
     return id
-; 行内赋值判定：外部符号条目不含 `=`，同一行出现它即块已到下一个顶级声明。
+; 行内赋值判定：外部符号条目不含 `=`，同一行出现它就不是条目形态，收块交顶级分派报错。
 lineHasAssign|self() -> (Bool,):
     var i = self.pos
     while i < self.total:
@@ -1468,7 +1463,7 @@ parseStatement|self() -> (I32,):
     if self.at(identifier) && self.isKindAt(offset = 1, kind = opBitOr) && self.isKindAt(offset = 2, kind = kwFor):
         return self.parseLabelled(what = kwFor)
     if self.at(kwVar) || self.at(kwLet):
-        return self.parseVariableDecl(false)
+        return self.parseVariableDecl()
     if self.at(kwIf):
         return self.parseIf()
     if self.at(kwWhile):
@@ -1580,23 +1575,12 @@ parseDefer|self() -> (I32,):
         self.pushStmtKid(id = id, kid = body)
     return id
 ; 变量语句：`var|let` 后接名字或元组模式，可选类型与初值。
-; 变量声明：`var` / `let` 开头是块内与顶层的常规形态；顶层省关键字即裸变量 `名: 类型 = 值`，
-; 这种写法恒不可变，名字直接落在声明上，不另造解构。
-parseVariableDecl|self(_topLevel: Bool,) -> (I32,):
+; 变量声明：`var` / `let` 开头，只在块内成立；顶层没有这一形态，行首同名写法交顶级分派报错。
+; 解构写在括号里，标注与初值按序读；无初值的形态只有标注。
+parseVariableDecl|self() -> (I32,):
     let start: I32 = self.current().start
-    var keyword: TokenKind = kwLet
-    var mutable = false
-    var bare = false
-    if self.at(kwVar) || self.at(kwLet):
-        keyword = self.current().kind
-        mutable = self.at(kwVar)
-        self.advance()
-    elif _topLevel && self.at(identifier):
-        bare = true
-    else:
-        self.report(code = "E2-007", message = "缺少 `var` 或 `let`")
-        self.recover()
-        return -1
+    let keyword: TokenKind = self.current().kind
+    self.advance()
     var pattern = -1
     if self.at(leftParen):
         pattern = self.parseParenExpr()
@@ -1617,14 +1601,6 @@ parseVariableDecl|self(_topLevel: Bool,) -> (I32,):
     if self.at(opAssign):
         self.advance()
         init = self.parseExpression(1)
-    if _topLevel || bare:
-        let id: I32 = self.newDecl(kind = declVariable, start = start, end = self.previousEnd())
-        self.setDeclName(id = id, start = self.ast.exprAt(pattern).nameStart, end = self.ast.exprAt(pattern).nameEnd)
-        self.setDeclType(id = id, typeId = typeId)
-        if init >= 0:
-            self.pushDeclKid(id = id, kid = init)
-        self.setDeclMutable(id = id, value = mutable)
-        return id
     let id: I32 = self.newStmt(kind = stmtVariable, start = start, end = self.previousEnd())
     self.setStmtOp(id = id, op = keyword)
     self.setStmtType(id = id, typeId = typeId)
@@ -1966,11 +1942,6 @@ setParamMarks|self(id: I32, isOwn: Bool, isUsing: Bool, isSelf: Bool,) -> ():
     node.isOwn = isOwn
     node.isUsing = isUsing
     node.isSelf = isSelf
-    self.ast.decls[id] = node
-    return
-setDeclMutable|self(id: I32, value: Bool,) -> ():
-    var node = self.ast.decls[id]
-    node.mutable = value
     self.ast.decls[id] = node
     return
 ; 异步位写回：只由 `=>` 置位，函数声明与函数字面量各走一条。
