@@ -146,6 +146,14 @@ resolveNode|func(cursor: TypeCursor, pool: TypePool, typeId: I32,) -> (TypeResol
     if typeId < 0 || typeId >= len(cursor.ast.types):
         return out
     let node = cursor.ast.typeAt(typeId)
+    if isArrayTypeCode(node.kind):
+        return resolveContainerType(cursor = cursor, pool = pool, node = node, name = "Array")
+    if isSetTypeCode(node.kind):
+        return resolveContainerType(cursor = cursor, pool = pool, node = node, name = "Set")
+    if isDictionaryTypeCode(node.kind):
+        return resolveContainerType(cursor = cursor, pool = pool, node = node, name = "Dictionary")
+    if isResultTypeCode(node.kind):
+        return resolveContainerType(cursor = cursor, pool = pool, node = node, name = "Result")
     if isOptionalTypeCode(node.kind):
         return wrapResolved(cursor = cursor, pool = pool, kind = typeClassOptional, name = "", child = cursor.ast.typeChild(id = typeId, index = 0))
     if isPointerTypeCode(node.kind):
@@ -171,6 +179,34 @@ wrapResolved|func(cursor: TypeCursor, pool: TypePool, kind: TypeClass, name: Str
     var kids: Array<I32> = []
     kids = kids.append(inner.root)
     let inserted = intern(pool = inner.pool, kind = kind, name = name, kids = kids, ret = -1)
+    out.pool = inserted.pool
+    out.root = inserted.id
+    return out
+
+; 容器写法糖：`[T,]`、`{T,}`、`{K: V,}`、`^T` 四类各自的组件逐个解析，
+; 再按容器名驻留；结果类的错误实参在驻留时补内建 `Error`。
+resolveContainerType|func(cursor: TypeCursor, pool: TypePool, node: TypeNode, name: String,) -> (TypeResolution,):
+    var out = TypeResolution()
+    var ids: Array<I32> = []
+    var failed = false
+    var working = pool
+    var i = 0
+    while i < len(node.kids):
+        let item = resolveNode(cursor = cursor, pool = working, typeId = node.kids[i])
+        working = item.pool
+        if item.root < 0:
+            failed = true
+        else:
+            ids = ids.append(item.root)
+        i = i + 1
+    out.pool = working
+    if failed:
+        return out
+    if name == "Result" && len(ids) == 1:
+        let error = intern(pool = working, kind = typeClassScalar, name = "Error", kids = [], ret = -1)
+        working = error.pool
+        ids = ids.append(error.id)
+    let inserted = intern(pool = working, kind = containerClass(name), name = name, kids = ids, ret = -1)
     out.pool = inserted.pool
     out.root = inserted.id
     return out

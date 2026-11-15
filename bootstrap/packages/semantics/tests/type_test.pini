@@ -223,3 +223,20 @@ firstField: I32 = -1
         assert(false, "类型解析应零错误，实得 " + 首.file + " " + typeErrorName(首.kind) + " " + 首.name)
     assert(types.bindingCount() > 0, "应解析出绑定")
     return
+
+; 容器写法：方括号、花括号与结果糖解析到与泛型拼写同一组池条目，文本取内建拼写。
+容器写法文本|test() -> ():
+    let 样例 = 采样(path = "packages/p/src/api/a.pini", src = "(P)\na: [I32,]\nb: {String,}\nc: {String: I32,}\nd: ^I32\n")
+    assert(样例.table.isOK(), "容器写法应无错")
+    assert(样例.table.textOf(unit = 0, decl = 字段下标(sample = 样例, index = 0)) == "Array<I32>", "数组实得 " + 样例.table.textOf(unit = 0, decl = 字段下标(sample = 样例, index = 0)))
+    assert(样例.table.textOf(unit = 0, decl = 字段下标(sample = 样例, index = 1)) == "Set<String>", "集合实得 " + 样例.table.textOf(unit = 0, decl = 字段下标(sample = 样例, index = 1)))
+    assert(样例.table.textOf(unit = 0, decl = 字段下标(sample = 样例, index = 2)) == "Dictionary<String, I32>", "字典实得 " + 样例.table.textOf(unit = 0, decl = 字段下标(sample = 样例, index = 2)))
+    assert(样例.table.textOf(unit = 0, decl = 字段下标(sample = 样例, index = 3)) == "^I32", "结果实得 " + 样例.table.textOf(unit = 0, decl = 字段下标(sample = 样例, index = 3)))
+    return
+
+; 结果糖的嵌套：`^[T,]` 组件先成容器，再进结果类；错误实参取内建 Error。
+结果糖嵌套|test() -> ():
+    let 样例 = 采样(path = "packages/p/src/api/a.pini", src = "(P)\na: ^[I32,]\n")
+    assert(样例.table.isOK(), "嵌套结果糖应无错")
+    assert(样例.table.textOf(unit = 0, decl = 字段下标(sample = 样例, index = 0)) == "^Array<I32>", "实得 " + 样例.table.textOf(unit = 0, decl = 字段下标(sample = 样例, index = 0)))
+    return

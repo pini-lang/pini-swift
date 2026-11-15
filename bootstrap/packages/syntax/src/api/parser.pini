@@ -540,7 +540,7 @@ parseParams|self() -> (Array<I32>,):
         self.skipNewlines()
     self.expect(kind = rightParen, what = "`)`")
     return params
-; 类型：前缀星号、圆括号元组或函数、具名与泛型实参、后缀问号。
+; 类型：前缀星号与结果糖、圆括号元组或函数、方括号与花括号容器、具名与泛型实参、后缀问号。
 parseType|self() -> (I32,):
     if self.at(opMul):
         let start: I32 = self.current().start
@@ -549,6 +549,12 @@ parseType|self() -> (I32,):
         let id: I32 = self.newType(kind = typePointer, start = start, end = self.previousEnd())
         self.pushTypeKid(id = id, kid = inner)
         return id
+    if self.at(opBitXor):
+        return self.parseResultType()
+    if self.at(leftBracket):
+        return self.parseArrayType()
+    if self.at(leftBrace):
+        return self.parseBraceType()
     if self.at(leftParen):
         return self.parseParenType()
     if !self.at(identifier):
@@ -576,6 +582,51 @@ parseType|self() -> (I32,):
         return self.maybeOptional(id)
     let id: I32 = self.newType(kind = typeNamed, start = start, end = self.previousEnd())
     self.setTypeName(id = id, start = nameStart, end = nameEnd)
+    return self.maybeOptional(id)
+; 结果类型糖：`^T` 即 `Result<T, Error>`，错误实参由类型面补。
+parseResultType|self() -> (I32,):
+    let start: I32 = self.current().start
+    self.advance()
+    let inner: I32 = self.parseType()
+    var args: Array<I32> = []
+    args = args.append(inner)
+    let id: I32 = self.newType(kind = typeResult, start = start, end = self.previousEnd())
+    self.setTypeKids(id = id, kids = args)
+    return self.maybeOptional(id)
+; 数组类型：`[T,]` 与 `[T]` 同义，元素类型只写一个。
+parseArrayType|self() -> (I32,):
+    let start: I32 = self.current().start
+    self.advance()
+    let inner: I32 = self.parseType()
+    if self.at(comma):
+        self.advance()
+    self.expect(kind = rightBracket, what = "`]`")
+    var args: Array<I32> = []
+    args = args.append(inner)
+    let id: I32 = self.newType(kind = typeArray, start = start, end = self.previousEnd())
+    self.setTypeKids(id = id, kids = args)
+    return self.maybeOptional(id)
+; 集合与字典类型：首项后见冒号是字典 `{K: V,}`，否则是集合 `{T,}`；空类型位无组件类型。
+parseBraceType|self() -> (I32,):
+    let start: I32 = self.current().start
+    self.advance()
+    if self.at(rightBrace):
+        self.report(code = "E2-008", message = "空类型位 `{}` 无组件类型")
+        self.advance()
+        return -1
+    let first: I32 = self.parseType()
+    var kind = typeSet
+    var args: Array<I32> = []
+    args = args.append(first)
+    if self.at(colon):
+        kind = typeDictionary
+        self.advance()
+        args = args.append(self.parseType())
+    if self.at(comma):
+        self.advance()
+    self.expect(kind = rightBrace, what = "`}`")
+    let id: I32 = self.newType(kind = kind, start = start, end = self.previousEnd())
+    self.setTypeKids(id = id, kids = args)
     return self.maybeOptional(id)
 ; 返回列表：括号内单元素即该元素本身，空表与多元素保持元组形状。
 collapseReturn|self(_id: I32,) -> (I32,):

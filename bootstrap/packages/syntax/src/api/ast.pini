@@ -114,6 +114,7 @@ declForeignSymbol
 declForeignFlag
 
 ; 类型类别：`typeGeneric` 的 `kids` 是实参，`typeFunction` 的 `kids` 是形参、`ret` 是返回。
+; 容器四类是类型位的写法糖，`kids` 即组件类型：数组与集合一个，字典两个，结果为被包裹者。
 [TypeKind]
 typeUnknown
 typeNamed
@@ -122,6 +123,10 @@ typeOptional
 typePointer
 typeTuple
 typeFunction
+typeArray
+typeSet
+typeDictionary
+typeResult
 
 ; 表达式类别码：只用于比较与索引，不参与枚举相等。
 exprKindTag|func(_kind: ExprKind,) -> (I32,):
@@ -257,6 +262,14 @@ typeKindTag|func(_kind: TypeKind,) -> (I32,):
             return 5
         case typeFunction:
             return 6
+        case typeArray:
+            return 7
+        case typeSet:
+            return 8
+        case typeDictionary:
+            return 9
+        case typeResult:
+            return 10
     return 0
 
 ((Ast))
@@ -492,3 +505,15 @@ isTupleTypeCode|func(_code: I32,) -> (Bool,):
 
 isFunctionTypeCode|func(_code: I32,) -> (Bool,):
     return _code == typeKindTag(typeFunction)
+
+isArrayTypeCode|func(_code: I32,) -> (Bool,):
+    return _code == typeKindTag(typeArray)
+
+isSetTypeCode|func(_code: I32,) -> (Bool,):
+    return _code == typeKindTag(typeSet)
+
+isDictionaryTypeCode|func(_code: I32,) -> (Bool,):
+    return _code == typeKindTag(typeDictionary)
+
+isResultTypeCode|func(_code: I32,) -> (Bool,):
+    return _code == typeKindTag(typeResult)

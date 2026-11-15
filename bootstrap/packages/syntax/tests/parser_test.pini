@@ -326,3 +326,40 @@
     let 值 = ast.stmtChild(id = 1, index = 0)
     assert(ast.isIdentifierExpr(值), "右值标识符未被当成转换")
     return
+
+; 类型写法：方括号是数组、花括号按有无冒号分集合与字典、尖号是结果糖；组件类型各占一个 kid。
+类型写法|test() -> ():
+    let src = "(P)\na: [I32,]\nb: {String,}\nc: {String: I32,}\nd: ^I32\n"
+    let 结果 = parseText(src)
+    var 诊断 = ""
+    if len(结果.diagnostics) > 0:
+        诊断 = 结果.diagnostics[0].message
+    assert(len(结果.diagnostics) == 0, "不应有语法诊断：" + 诊断)
+    let ast = 结果.ast
+    let 结构 = ast.declAt(ast.itemAt(0))
+    let 数组 = ast.declAt(结构.kids[0])
+    assert(ast.isType(id = 数组.typeId, kind = typeArray), "方括号是数组")
+    assert(len(ast.typeAt(数组.typeId).kids) == 1, "数组一个组件")
+    assert(ast.isType(id = ast.typeAt(数组.typeId).kids[0], kind = typeNamed), "元素是具名")
+    let 集合 = ast.declAt(结构.kids[1])
+    assert(ast.isType(id = 集合.typeId, kind = typeSet), "无冒号是集合")
+    let 字典 = ast.declAt(结构.kids[2])
+    assert(ast.isType(id = 字典.typeId, kind = typeDictionary), "有冒号是字典")
+    assert(len(ast.typeAt(字典.typeId).kids) == 2, "字典两个组件")
+    let 结果类型 = ast.declAt(结构.kids[3])
+    assert(ast.isType(id = 结果类型.typeId, kind = typeResult), "尖号是结果糖")
+    assert(len(ast.typeAt(结果类型.typeId).kids) == 1, "结果一个组件")
+    return
+
+; 类型写法的可选后缀：`[T,]?` 先容器后可选，与具名类型同规。
+类型写法可选|test() -> ():
+    let src = "(P)\na: [I32,]?\n"
+    let 结果 = parseText(src)
+    assert(len(结果.diagnostics) == 0, "不应有语法诊断")
+    let ast = 结果.ast
+    let 结构 = ast.declAt(ast.itemAt(0))
+    let 字段 = ast.declAt(结构.kids[0])
+    assert(ast.isType(id = 字段.typeId, kind = typeOptional), "外层是可选")
+    let 内层 = ast.typeAt(字段.typeId).kids[0]
+    assert(ast.isType(id = 内层, kind = typeArray), "内层是数组")
+    return
