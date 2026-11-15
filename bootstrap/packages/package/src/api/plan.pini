@@ -108,7 +108,7 @@ assemblePlan|func(workspace: WorkspaceParse, parses: Array<PackageParse>,) -> (B
         if !norm.ok:
             plan.errors = plan.errors.append(manifestError(kind = errorMemberPath, path = plan.rootPath, detail = raw + "：" + norm.reason))
             continue
-        if containsText(items = members, value = norm.value):
+        if _containsPlanText(items = members, value = norm.value):
             plan.errors = plan.errors.append(manifestError(kind = errorMemberDuplicated, path = plan.rootPath, detail = norm.value))
             continue
         members = members.append(norm.value)
@@ -209,7 +209,7 @@ checkExecutableNames|func(packages: Array<PackageManifest>, rootPath: String, er
         while t < len(pkg.targets):
             let target = pkg.targets[t]
             if isTargetKind(kind = target.kind, expected = targetExecutable):
-                if containsText(items = seen, value = target.name):
+                if _containsPlanText(items = seen, value = target.name):
                     out = out.append(manifestError(kind = errorExecutableCollision, path = rootPath, detail = target.name + " @ " + pkg.name))
                 else:
                     seen = seen.append(target.name)
@@ -307,7 +307,7 @@ sortedRequires|func(packages: Array<PackageManifest>, requires: Array<String>,) 
     var kept: Array<String> = []
     var i = 0
     while i < len(requires):
-        if findPackage(packages = packages, name = requires[i]) >= 0 && !containsText(items = kept, value = requires[i]):
+        if findPackage(packages = packages, name = requires[i]) >= 0 && !_containsPlanText(items = kept, value = requires[i]):
             kept = kept.append(requires[i])
         i = i + 1
     return sortedTexts(kept)
@@ -382,7 +382,7 @@ hasEarlierPackage|func(packages: Array<PackageManifest>, at: I32, name: String,)
     return false
 
 ; 串表查找：名字与路径去重共用。
-containsText|func(items: Array<String>, value: String,) -> (Bool,):
+_containsPlanText|func(items: Array<String>, value: String,) -> (Bool,):
     var i = 0
     while i < len(items):
         if items[i] == value:

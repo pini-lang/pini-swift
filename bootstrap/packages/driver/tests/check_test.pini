@@ -1,0 +1,32 @@
+[check_test|import]
+package = "../../package"
+
+; 工作区检查：清单失效时报告非空，退出码为 1；零诊断判据由产物探针承担。
+; 这里不跑全工作区：解释器通道下装载整棵树过慢，零诊断由原生二进制自己跑。
+
+; 根目录：测试模块根往上两级即工作区根。
+工作区根|func() -> (String,):
+    return moduleRoot() + "/../.."
+
+; 缺清单：给一个没有 pini.toml 的目录，报告非空且退出码为 1。
+缺清单报错|test() -> ():
+    let report = checkWorkspace(root = 工作区根() + "/packages/package/src")
+    assert(report.errorCount > 0, "缺清单应报错")
+    assert(report.exitCode == 1, "退出码应为 1")
+    assert(report.packages == 0, "清单不可用时包数为零")
+    assert(report.text.contains("pini.toml"), "应提到清单文件，实得：" + report.text)
+    return
+
+; 清单可用：根清单装配出九个包，检查入口因此能往下走。
+根清单可装配|test() -> ():
+    let plan = package.planWorkspace(工作区根())
+    assert(plan.isOK(), "根清单应可用：" + package.planText(plan))
+    assert(plan.packageCount() == 9, "九个包，实得 " + "\(plan.packageCount())")
+    return
+
+; 工作区根定位：从包根向上找到带 [workspace] 的根清单。
+工作区根定位|test() -> ():
+    let found = workspaceRootOf(start = moduleRoot())
+    assert(found.contains("bootstrap"), "应定位到 bootstrap，实得 " + found)
+    assert(found != moduleRoot(), "不应停在包根")
+    return

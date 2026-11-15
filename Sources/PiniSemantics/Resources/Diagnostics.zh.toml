@@ -210,6 +210,10 @@ suggestion = "删掉实参前的 '{param} = '；声明写成 '_{param}' 就表�
 message = "调用 '{callee}' 重复写了形参 '{param}' 的标签"
 suggestion = "每个形参只给一个实参；去掉重复的那个"
 
+[E4-039]
+message = "外部数据符号 '{name}' 标为只读（`readonly` 或 `macro`），不能赋值"
+suggestion = "只读符号的值由 C 侧给出；要在 Pini 侧改状态，改用可写的数据符号或在 C 侧提供 setter"
+
 [E5-001]
 message = "未定义变量 '{name}'"
 suggestion = "你是想说 '{closest}' 吗？"
@@ -324,3 +328,7 @@ suggestion = "两处只留一处；生成模块与手写块同名时，签名必
 [E3-020]
 message = "外部符号名 '{name}' 不是合法 C 标识符"
 suggestion = "名字就是 C 符号名，只能用 ASCII 字母、数字与下划线，且不以数字开头"
+[E3-021]
+message = "包 '{name}' 的接口与下游记录的接口不一致：{detail}"
+suggestion = "确认这次接口变化是有意的；有意则更新下游记录，无意说明包内公开面被意外改动"
+

@@ -210,6 +210,10 @@ suggestion = "drop '{param} = ' before the argument; a declaration written as '_
 message = "call to '{callee}' repeats the label for parameter '{param}'"
 suggestion = "give each parameter exactly one argument; remove the duplicate"
 
+[E4-039]
+message = "foreign data symbol '{name}' is read-only ('readonly' or 'macro') and cannot be assigned"
+suggestion = "the value comes from the C side; keep state on the Pini side, or expose a setter in C"
+
 [E5-001]
 message = "undefined variable '{name}'"
 suggestion = "Did you mean '{closest}'?"
@@ -325,3 +329,7 @@ suggestion = "keep only one of the two; when a generated module and a hand-writt
 [E3-020]
 message = "foreign symbol name '{name}' is not a valid C identifier"
 suggestion = "the name is the C symbol name: use ASCII letters, digits and underscores only, and do not start with a digit"
+[E3-021]
+message = "package '{name}' interface differs from the recorded one: {detail}"
+suggestion = "confirm the interface change is intended and update the downstream record; otherwise the public surface changed by accident"
+

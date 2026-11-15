@@ -1,0 +1,370 @@
+[crossref|import]
+_syntax = "../../../syntax"
+_module_loader = "../../../module-loader"
+
+; 跨包引用：别名限定的成员访问按目标包判门槛，注入导入的公开名与本文件裸名对撞一并判。
+; 包归属来自单元到包的映射，不靠路径前缀猜；只判命名空间，不判实参。
+; 诊断按文件与偏移排序后返回，包图次序变化不改变序列。
+
+; 跨包错误：非 public 与注入遮蔽两类，各有一枚诊断码。
+[CrossRefKind]
+crossNotPublic
+crossInjectedShadow
+
+; 跨包错误：类别、文件、偏移、相关名字与承接位置；位置指向引用点或导入条目。
+(CrossRefError)
+kind: CrossRefKind = .crossNotPublic
+file: String = ""
+offset: I32 = 0
+name: String = ""
+detail: String = ""
+
+; 跨包结果：错误表与失败标记；错误已按文件与偏移排序。
+(CrossRefCheck)
+errors: Array<CrossRefError> = []
+failed: Bool = false
+
+; 导入绑定：文件、别名、目标包名、是否注入与导入条目起点。
+; 同一文件可有多个别名指向同一个包；非 `_` 别名必须限定调用，`_` 别名另占裸名空间。
+(ImportBinding)
+file: String = ""
+alias: String = ""
+target: String = ""
+injected: Bool = false
+offset: I32 = 0
+
+; 包公开名：包名与它的公开名表；建一次供全部文件查，避免每文件重扫目标包源码。
+(PackagePublic)
+name: String = ""
+publics: Array<String> = []
+
+; 类别名：诊断、测试与回执共用一份拼写。
+crossKindName|func(_kind: CrossRefKind,) -> (String,):
+    match _kind:
+        case crossNotPublic:
+            return "跨包引用非公开名"
+        case crossInjectedShadow:
+            return "注入名与本文件名字相撞"
+    return "跨包错误"
+
+; 同一类别判定：枚举相等比较不可用，按名称比。
+isCrossRef|func(error: CrossRefError, kind: CrossRefKind,) -> (Bool,):
+    return crossKindName(error.kind) == crossKindName(kind)
+
+; 诊断码：非 public 用 public 门槛码，遮蔽用注入歧义码；两枚都在码表里。
+crossErrorCode|func(_kind: CrossRefKind,) -> (String,):
+    match _kind:
+        case crossNotPublic:
+            return "E3-012"
+        case crossInjectedShadow:
+            return "E3-013"
+    return "E3-012"
+
+; 造错误：位置取引用点或导入条目，名字取引用到的符号或注入名。
+makeCrossRef|func(kind: CrossRefKind, file: String, offset: I32, name: String, detail: String,) -> (CrossRefError,):
+    var out = CrossRefError()
+    out.kind = kind
+    out.file = file
+    out.offset = offset
+    out.name = name
+    out.detail = detail
+    return out
+
+; 追加错误：其余字段原样保留。
+appendCrossRef|func(out: CrossRefCheck, unit: CompilationUnit, offset: I32, kind: CrossRefKind, name: String, detail: String,) -> (CrossRefCheck,):
+    var done = out
+    done.errors = done.errors.append(makeCrossRef(kind = kind, file = unit.path, offset = offset, name = name, detail = detail))
+    return done
+
+; 导入条目：路径去引号后归一，命中包根才登记；未命中的归边界层报，不在这里重复。
+appendImportBindings|func(ws: WorkspaceUnits, unit: CompilationUnit, bytes: Array<U8>, decl: DeclNode, out: Array<ImportBinding>,) -> (Array<ImportBinding>,):
+    var working = out
+    var i = 0
+    while i < len(decl.kids):
+        let entry = unit.ast.decls[decl.kids[i]]
+        if isImportEntryCode(entry.kind) && len(entry.kids) > 0:
+            let path = unit.ast.exprAt(entry.kids[0])
+            let raw = decodeRange(bytes = bytes, start = path.start + 1, end = path.end - 1)
+            let target = normalizeImport(unitPath = unit.path, target = raw)
+            let at = packageIndexAt(ws = ws, target = target)
+            if at >= 0:
+                var binding = ImportBinding()
+                binding.file = unit.path
+                binding.alias = decodeRange(bytes = bytes, start = entry.nameStart, end = entry.nameEnd)
+                binding.target = ws.packages[at].name
+                binding.injected = startsWithUnderscore(binding.alias)
+                binding.offset = entry.start
+                working = working.append(binding)
+        i = i + 1
+    return working
+
+; 导入表：逐包逐单元扫导入块；单元次序不影响结果，查表按文件与别名整串比。
+buildImportBindings|func(_ws: WorkspaceUnits,) -> (Array<ImportBinding>,):
+    var out: Array<ImportBinding> = []
+    var p = 0
+    while p < len(_ws.packages):
+        let group = _ws.packages[p]
+        var u = 0
+        while u < len(group.units):
+            let unit = group.units[u]
+            let bytes = tempUtf8Bytes(unit.text)
+            var i = 0
+            while i < len(unit.ast.items):
+                let decl = unit.ast.decls[unit.ast.items[i]]
+                if isImportBlockCode(decl.kind):
+                    out = appendImportBindings(ws = _ws, unit = unit, bytes = bytes, decl = decl, out = out)
+                i = i + 1
+            u = u + 1
+        p = p + 1
+    return out
+
+; 本文件绑定：扫一遍全表只留该文件的条目，通常一两条，后续查找不再线性扫全表。
+bindingsOfFile|func(bindings: Array<ImportBinding>, file: String,) -> (Array<ImportBinding>,):
+    var out: Array<ImportBinding> = []
+    var i = 0
+    while i < len(bindings):
+        if bindings[i].file == file:
+            out = out.append(bindings[i])
+        i = i + 1
+    return out
+
+; 别名目标：本文件绑定里按名字整串比；未命中答空串（不是导入别名）。
+aliasTargetOf|func(bindings: Array<ImportBinding>, alias: String,) -> (String,):
+    var i = 0
+    while i < len(bindings):
+        if bindings[i].alias == alias:
+            return bindings[i].target
+        i = i + 1
+    return ""
+
+; 引用判定：接收者是本文件导入别名、目标在别的包、成员命中包级符号，三者齐备才判。
+; 同包别名与本地变量接收者不在这里判；名字未命中归解析面。
+checkUnitRefs|func(world: MemberWorld, group: PackageUnits, bindings: Array<ImportBinding>, unit: CompilationUnit, out: CrossRefCheck,) -> (CrossRefCheck,):
+    let bytes = tempUtf8Bytes(unit.text)
+    var working = out
+    var i = 0
+    while i < unit.ast.exprCount():
+        if unit.ast.isMemberExpr(i):
+            let member = unit.ast.exprAt(i)
+            let receiver = unit.ast.childOf(id = i, index = 0)
+            if receiver >= 0 && unit.ast.isIdentifierExpr(receiver):
+                let recv = unit.ast.exprAt(receiver)
+                let alias = decodeRange(bytes = bytes, start = recv.nameStart, end = recv.nameEnd)
+                let target = aliasTargetOf(bindings = bindings, alias = alias)
+                if len(target) > 0 && target != group.name:
+                    let memberName = decodeRange(bytes = bytes, start = member.nameStart, end = member.nameEnd)
+                    let symbol = world.table.topIndex(keyOfText(memberName))
+                    if symbol >= 0:
+                        let entry = world.table.symbolAt(symbol)
+                        if !isExported(entry.visibility):
+                            working = appendCrossRef(out = working, unit = unit, offset = member.start, kind = crossNotPublic, name = memberName, detail = target + " 只导出 public 声明")
+        i = i + 1
+    return working
+
+; 包公开名：一个包内各单元顶层声明的 public 名字，`_` 名字与内部目录不进。
+packagePublicNames|func(group: PackageUnits,) -> (Array<String>,):
+    var out: Array<String> = []
+    var u = 0
+    while u < len(group.units):
+        let unit = group.units[u]
+        let bytes = tempUtf8Bytes(unit.text)
+        var i = 0
+        while i < len(unit.ast.items):
+            let name = publicNameOf(unit = unit, bytes = bytes, decl = unit.ast.decls[unit.ast.items[i]])
+            if len(name) > 0:
+                out = out.append(name)
+            i = i + 1
+        u = u + 1
+    return out
+
+; 公开名表：逐包算一次，此后按包名查；包序变化不改变每包的名表。
+packagePublicTable|func(_ws: WorkspaceUnits,) -> (Array<PackagePublic>,):
+    var out: Array<PackagePublic> = []
+    var p = 0
+    while p < len(_ws.packages):
+        var row = PackagePublic()
+        row.name = _ws.packages[p].name
+        row.publics = packagePublicNames(group = _ws.packages[p])
+        out = out.append(row)
+        p = p + 1
+    return out
+
+; 查公开名：按包名整串比；未命中答空表。
+publicsOf|func(table: Array<PackagePublic>, name: String,) -> (Array<String>,):
+    var out: Array<String> = []
+    var i = 0
+    while i < len(table):
+        if table[i].name == name:
+            return table[i].publics
+        i = i + 1
+    return out
+
+; 表内命中：整串相等即命中。
+_containsCrossRefText|func(items: Array<String>, value: String,) -> (Bool,):
+    var i = 0
+    while i < len(items):
+        if items[i] == value:
+            return true
+        i = i + 1
+    return false
+
+; 模式名：标识符取名字（`_` 跳过），元组与用例模式递归到子节点，`名字: 变量` 只取变量位。
+patternNames|func(unit: CompilationUnit, bytes: Array<U8>, node: I32,) -> (Array<String>,):
+    var out: Array<String> = []
+    if node < 0 || node >= unit.ast.exprCount():
+        return out
+    if unit.ast.isIdentifierExpr(node):
+        let expr = unit.ast.exprAt(node)
+        let name = decodeRange(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
+        if len(name) > 0 && name != "_":
+            out = out.append(name)
+        return out
+    let kids = unit.ast.exprAt(node).kids
+    var i = 0
+    while i < len(kids):
+        var inner = patternNames(unit = unit, bytes = bytes, node = kids[i])
+        var j = 0
+        while j < len(inner):
+            out = out.append(inner[j])
+            j = j + 1
+        i = i + 1
+    return out
+
+; 可裸引用名：顶层声明、全部参数与语句里的绑定名；注入名与其中任一相撞即为歧义。
+; 语句按整池扫，不区分所在函数：同一文件内的名字都算本文件的可裸引用面。
+unitBareNames|func(unit: CompilationUnit,) -> (Array<String>,):
+    let bytes = tempUtf8Bytes(unit.text)
+    var out: Array<String> = []
+    var i = 0
+    while i < len(unit.ast.items):
+        let decl = unit.ast.decls[unit.ast.items[i]]
+        if !isImportBlockCode(decl.kind) && !isExportBlockCode(decl.kind):
+            let name = decodeRange(bytes = bytes, start = decl.nameStart, end = decl.nameEnd)
+            if len(name) > 0:
+                out = out.append(name)
+        i = i + 1
+    var d = 0
+    while d < unit.ast.declCount():
+        let decl = unit.ast.decls[d]
+        if isParamDeclCode(decl.kind):
+            let name = decodeRange(bytes = bytes, start = decl.nameStart, end = decl.nameEnd)
+            if len(name) > 0 && name != "_":
+                out = out.append(name)
+        d = d + 1
+    var s = 0
+    while s < unit.ast.stmtCount():
+        let stmt = unit.ast.stmtAt(s)
+        if unit.ast.isVariableStmt(s) || unit.ast.isForStmt(s):
+            let pattern = unit.ast.stmtChild(id = s, index = 0)
+            var names = patternNames(unit = unit, bytes = bytes, node = pattern)
+            var k = 0
+            while k < len(names):
+                out = out.append(names[k])
+                k = k + 1
+        if unit.ast.isMatchStmt(s):
+            var m = 1
+            while m < len(stmt.kids):
+                var names = patternNames(unit = unit, bytes = bytes, node = stmt.kids[m])
+                var k = 0
+                while k < len(names):
+                    out = out.append(names[k])
+                    k = k + 1
+                m = m + 2
+        s = s + 1
+    return out
+
+; 遮蔽判定：本文件每条注入导入的公开名与可裸引用名、先前注入名逐个比，撞上即报。
+; 非注入别名不占裸名空间，不参与这一步。
+checkUnitShadows|func(table: Array<PackagePublic>, bindings: Array<ImportBinding>, unit: CompilationUnit, out: CrossRefCheck,) -> (CrossRefCheck,):
+    var locals = unitBareNames(unit = unit)
+    var seen: Array<String> = []
+    var working = out
+    var i = 0
+    while i < len(bindings):
+        let binding = bindings[i]
+        if binding.injected:
+            let publics = publicsOf(table = table, name = binding.target)
+            var j = 0
+            while j < len(publics):
+                let name = publics[j]
+                if _containsCrossRefText(items = locals, value = name):
+                    working = appendCrossRef(out = working, unit = unit, offset = binding.offset, kind = crossInjectedShadow, name = name, detail = "与本文件顶层声明同名")
+                elif _containsCrossRefText(items = seen, value = name):
+                    working = appendCrossRef(out = working, unit = unit, offset = binding.offset, kind = crossInjectedShadow, name = name, detail = "另一条注入导入已引入同名符号")
+                else:
+                    seen = seen.append(name)
+                j = j + 1
+        i = i + 1
+    return working
+
+; 错误次序：先按文件字节序，再按偏移升序；同位置再按类别名与名字定序。
+compareCrossRefs|func(first: CrossRefError, second: CrossRefError,) -> (I32,):
+    let order = compareSourcePaths(first = first.file, second = second.file)
+    if order != 0:
+        return order
+    if first.offset < second.offset:
+        return -1
+    if first.offset > second.offset:
+        return 1
+    let byKind = compareSourcePaths(first = crossKindName(first.kind), second = crossKindName(second.kind))
+    if byKind != 0:
+        return byKind
+    return compareSourcePaths(first = first.name, second = second.name)
+
+; 取前段：左闭右开。
+takeCrossRefs|func(values: Array<CrossRefError>, from: I32, to: I32,) -> (Array<CrossRefError>,):
+    var out: Array<CrossRefError> = []
+    var i = from
+    while i < to && i < len(values):
+        out = out.append(values[i])
+        i = i + 1
+    return out
+
+; 归并：两段各自有序，合并后整段有序。
+mergeCrossRefs|func(left: Array<CrossRefError>, right: Array<CrossRefError>,) -> (Array<CrossRefError>,):
+    var out: Array<CrossRefError> = []
+    var i = 0
+    var j = 0
+    while i < len(left) && j < len(right):
+        if compareCrossRefs(first = left[i], second = right[j]) <= 0:
+            out = out.append(left[i])
+            i = i + 1
+        else:
+            out = out.append(right[j])
+            j = j + 1
+    while i < len(left):
+        out = out.append(left[i])
+        i = i + 1
+    while j < len(right):
+        out = out.append(right[j])
+        j = j + 1
+    return out
+
+; 排序：稳定归并，同一输入两次得同一序列。
+sortCrossRefs|func(_values: Array<CrossRefError>,) -> (Array<CrossRefError>,):
+    if len(_values) <= 1:
+        return _values
+    let mid = len(_values) / 2
+    let left = sortCrossRefs(takeCrossRefs(values = _values, from = 0, to = mid))
+    let right = sortCrossRefs(takeCrossRefs(values = _values, from = mid, to = len(_values)))
+    return mergeCrossRefs(left = left, right = right)
+
+; 对账入口：导入表与公开名表各建一次，再逐包逐单元判引用与遮蔽，收齐后统一排序。
+checkWorkspaceCrossRefs|func(_ws: WorkspaceUnits, world: MemberWorld,) -> (CrossRefCheck,):
+    var out = CrossRefCheck()
+    let bindings = buildImportBindings(_ws)
+    let publics = packagePublicTable(_ws)
+    var p = 0
+    while p < len(_ws.packages):
+        let group = _ws.packages[p]
+        var u = 0
+        while u < len(group.units):
+            let unit = group.units[u]
+            let fileBindings = bindingsOfFile(bindings = bindings, file = unit.path)
+            out = checkUnitRefs(world = world, group = group, bindings = fileBindings, unit = unit, out = out)
+            out = checkUnitShadows(table = publics, bindings = fileBindings, unit = unit, out = out)
+            u = u + 1
+        p = p + 1
+    out.errors = sortCrossRefs(out.errors)
+    out.failed = len(out.errors) > 0
+    return out

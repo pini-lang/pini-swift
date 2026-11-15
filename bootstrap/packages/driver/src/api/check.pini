@@ -1,0 +1,373 @@
+[check|import]
+_support = "../../../support"
+_syntax = "../../../syntax"
+_diagnostics = "../../../diagnostics"
+_module_loader = "../../../module-loader"
+_package = "../../../package"
+_semantics = "../../../semantics"
+
+; 工作区检查：清单、装载、语法、注册、类型、边界、跨包与函数体按同一张包图串起。
+; 诊断统一排序后渲染成文本；退出码只表达有无错误，进程落地归宿主。
+; 语法阶段有错就短路：后续阶段会拿半棵树复述同一问题，噪声大于信息。
+
+; 检查报告：根、包数、已排序的诊断、渲染文本、错误数与退出码。
+(WorkspaceReport)
+root: String = ""
+packages: I32 = 0
+diagnostics: Array<Diagnostic> = []
+text: String = ""
+errorCount: I32 = 0
+exitCode: I32 = 0
+
+; 造诊断：位置给定时挂一个零宽主标签，渲染据此给行列。
+makeCheckDiagnostic|func(file: String, category: Category, code: String, message: String, offset: I32,) -> (Diagnostic,):
+    var out = makeDiagnostic(file = file, category = category, severity = errorSeverity(), code = code, message = message)
+    if offset >= 0:
+        out = out.addLabel(makeLabel(start = offset, end = offset, message = "", primary = true))
+    return out
+
+; 清单诊断：清单错误按输入输出类别报，路径就是清单文件；无专用码，沿用物理边界码。
+planDiagnostics|func(_plan: BuildPlan,) -> (Array<Diagnostic>,):
+    var out: Array<Diagnostic> = []
+    var i = 0
+    while i < len(_plan.errors):
+        let error = _plan.errors[i]
+        var message = manifestErrorKindName(error.kind)
+        if len(error.detail) > 0:
+            message = message + "：" + error.detail
+        out = out.append(makeCheckDiagnostic(file = error.path, category = ioCategory(), code = "E3-011", message = message, offset = -1))
+        i = i + 1
+    return out
+
+; 装载诊断：路径取工作区相对形式，带偏移的按源文本错位报。
+loadDiagnostics|func(_ws: WorkspaceUnits,) -> (Array<Diagnostic>,):
+    var out: Array<Diagnostic> = []
+    var i = 0
+    while i < len(_ws.errors):
+        let error = _ws.errors[i]
+        var message = loadErrorName(error.kind)
+        if len(error.detail) > 0:
+            message = message + "：" + error.detail
+        out = out.append(makeCheckDiagnostic(file = error.path, category = ioCategory(), code = "E3-011", message = message, offset = error.offset))
+        i = i + 1
+    return out
+
+; 词法诊断：问题按词法类别报，码表里与词法问题最近的条目是 E1-004。
+lexicalDiagnostics|func(_units: Array<CompilationUnit>,) -> (Array<Diagnostic>,):
+    var out: Array<Diagnostic> = []
+    var u = 0
+    while u < len(_units):
+        let unit = _units[u]
+        var i = 0
+        while i < len(unit.issues):
+            let issue = unit.issues[i]
+            out = out.append(makeCheckDiagnostic(file = unit.path, category = lexicalCategory(), code = "E1-004", message = "词法问题：" + issueName(issue.kind), offset = issue.start))
+            i = i + 1
+        u = u + 1
+    return out
+
+; 语法诊断：解析器已给完整标签，原样并入序列，不再重写位置。
+syntaxDiagnostics|func(_units: Array<CompilationUnit>,) -> (Array<Diagnostic>,):
+    var out: Array<Diagnostic> = []
+    var u = 0
+    while u < len(_units):
+        let unit = _units[u]
+        var i = 0
+        while i < len(unit.diagnostics):
+            out = out.append(unit.diagnostics[i])
+            i = i + 1
+        u = u + 1
+    return out
+
+; 符号诊断码：注册期四类冲突各取最近的既有码，外部三类各有专用码。
+symbolErrorCode|func(_kind: SymbolErrorKind,) -> (String,):
+    match _kind:
+        case symbolRedeclared:
+            return "E3-004"
+        case symbolMemberDuplicated:
+            return "E3-004"
+        case symbolImportAmbiguous:
+            return "E3-013"
+        case symbolExtensionUnknown:
+            return "E3-003"
+        case symbolForeignMismatch:
+            return "E3-019"
+        case symbolForeignClash:
+            return "E3-004"
+        case symbolForeignName:
+            return "E3-020"
+    return "E3-004"
+
+; 符号诊断：消息取类别名与相关名字，细节非空时附在后面。
+symbolDiagnostics|func(_table: SymbolTable,) -> (Array<Diagnostic>,):
+    var out: Array<Diagnostic> = []
+    var i = 0
+    while i < _table.errorCount():
+        let error = _table.errorAt(i)
+        var message = symbolErrorName(error.kind)
+        if len(error.name) > 0:
+            message = message + "：" + error.name
+        if len(error.detail) > 0:
+            message = message + "（" + error.detail + "）"
+        out = out.append(makeCheckDiagnostic(file = error.file, category = semanticCategory(), code = symbolErrorCode(error.kind), message = message, offset = error.offset))
+        i = i + 1
+    return out
+
+; 类型诊断码：未定义与不是类型归一处，泛型约束与环归类型能力，外部专属名用句柄码。
+typeErrorCode|func(_kind: TypeErrorKind,) -> (String,):
+    match _kind:
+        case typeErrorUnknownName:
+            return "E3-003"
+        case typeErrorNotTypeName:
+            return "E3-003"
+        case typeErrorArityMismatch:
+            return "E6-001"
+        case typeErrorConstraint:
+            return "E6-001"
+        case typeErrorSelfReference:
+            return "E6-001"
+        case typeErrorRecursiveCycle:
+            return "E6-001"
+        case typeErrorForeignOnlyName:
+            return "E4-035"
+    return "E3-003"
+
+; 类型诊断：标注面的错误按类型类别报，位置指向标注起点。
+typeDiagnostics|func(_types: TypeTable,) -> (Array<Diagnostic>,):
+    var out: Array<Diagnostic> = []
+    var i = 0
+    while i < _types.errorCount():
+        let error = _types.errorAt(i)
+        var message = typeErrorName(error.kind)
+        if len(error.name) > 0:
+            message = message + "：" + error.name
+        if len(error.detail) > 0:
+            message = message + "（" + error.detail + "）"
+        out = out.append(makeCheckDiagnostic(file = error.file, category = typeCategory(), code = typeErrorCode(error.kind), message = message, offset = error.offset))
+        i = i + 1
+    return out
+
+; 外部判型诊断：声明面的白名单与标志错误，码取判型面自己的表。
+foreignDiagnostics|func(_check: ForeignTypeCheck,) -> (Array<Diagnostic>,):
+    var out: Array<Diagnostic> = []
+    var i = 0
+    while i < len(_check.errors):
+        let error = _check.errors[i]
+        var message = foreignTypeErrorName(error.kind)
+        if len(error.name) > 0:
+            message = message + "：" + error.name
+        if len(error.detail) > 0:
+            message = message + "（" + error.detail + "）"
+        out = out.append(makeCheckDiagnostic(file = error.file, category = typeCategory(), code = foreignTypeErrorCode(error.kind), message = message, offset = error.offset))
+        i = i + 1
+    return out
+
+; 边界诊断：三类共用 E3-005，靠类别名区分；别名与目标都进消息。
+boundaryDiagnostics|func(_check: BoundaryCheck,) -> (Array<Diagnostic>,):
+    var out: Array<Diagnostic> = []
+    var i = 0
+    while i < len(_check.errors):
+        let error = _check.errors[i]
+        let message = boundaryKindName(error.kind) + "：" + error.alias + " → " + error.target
+        out = out.append(makeCheckDiagnostic(file = error.file, category = semanticCategory(), code = boundaryErrorCode(error.kind), message = message, offset = error.offset))
+        i = i + 1
+    return out
+
+; 跨包诊断：非 public 与注入遮蔽各自带码，细节非空时附在名字之后。
+crossDiagnostics|func(_check: CrossRefCheck,) -> (Array<Diagnostic>,):
+    var out: Array<Diagnostic> = []
+    var i = 0
+    while i < len(_check.errors):
+        let error = _check.errors[i]
+        var message = crossKindName(error.kind)
+        if len(error.name) > 0:
+            message = message + "：" + error.name
+        if len(error.detail) > 0:
+            message = message + "（" + error.detail + "）"
+        out = out.append(makeCheckDiagnostic(file = error.file, category = semanticCategory(), code = crossErrorCode(error.kind), message = message, offset = error.offset))
+        i = i + 1
+    return out
+
+; 体诊断：返回路径与参数重名，码取体面自己的表。
+bodyDiagnostics|func(_check: BodyCheck,) -> (Array<Diagnostic>,):
+    var out: Array<Diagnostic> = []
+    var i = 0
+    while i < len(_check.errors):
+        let error = _check.errors[i]
+        var message = bodyErrorName(error.kind)
+        if len(error.name) > 0:
+            message = message + "：" + error.name
+        if len(error.expected) > 0 || len(error.got) > 0:
+            message = message + "（期望 " + error.expected + "，实得 " + error.got + "）"
+        out = out.append(makeCheckDiagnostic(file = error.file, category = typeCategory(), code = bodyErrorCode(error.kind), message = message, offset = error.offset))
+        i = i + 1
+    return out
+
+; 存储诊断：声明、赋值与循环控制的错误，码取存储面自己的表。
+storeDiagnostics|func(_check: StoreCheck,) -> (Array<Diagnostic>,):
+    var out: Array<Diagnostic> = []
+    var i = 0
+    while i < len(_check.errors):
+        let error = _check.errors[i]
+        var message = storeErrorName(error.kind)
+        if len(error.name) > 0:
+            message = message + "：" + error.name
+        if len(error.expected) > 0 || len(error.got) > 0:
+            message = message + "（期望 " + error.expected + "，实得 " + error.got + "）"
+        out = out.append(makeCheckDiagnostic(file = error.file, category = typeCategory(), code = storeErrorCode(error.kind), message = message, offset = error.offset))
+        i = i + 1
+    return out
+
+; 单函数检查：返回路径与声明赋值各走一遍，两份错误合并成一串诊断。
+checkOneFunction|func(world: MemberWorld, types: ExprTypes, unitIndex: I32, declId: I32, out: Array<Diagnostic>,) -> (Array<Diagnostic>,):
+    var working = out
+    let body = checkFunctionBody(world = world, unitIndex = unitIndex, declId = declId, types = types)
+    var bodyList = bodyDiagnostics(body)
+    var i = 0
+    while i < len(bodyList):
+        working = working.append(bodyList[i])
+        i = i + 1
+    let stores = checkFunctionStores(world = world, unitIndex = unitIndex, declId = declId, types = types)
+    var storeList = storeDiagnostics(stores)
+    i = 0
+    while i < len(storeList):
+        working = working.append(storeList[i])
+        i = i + 1
+    return working
+
+; 单声明检查：函数直接查，类型与扩展块下钻到成员函数。
+checkDeclBodies|func(world: MemberWorld, types: ExprTypes, unitIndex: I32, declId: I32, out: Array<Diagnostic>,) -> (Array<Diagnostic>,):
+    let unit = world.units[unitIndex]
+    let decl = unit.ast.decls[declId]
+    if isFunctionDeclCode(decl.kind):
+        return checkOneFunction(world = world, types = types, unitIndex = unitIndex, declId = declId, out = out)
+    var working = out
+    if isTypeDecl(decl) || isExtensionDeclCode(decl.kind):
+        var i = 0
+        while i < len(decl.kids):
+            if isFunctionDeclCode(unit.ast.decls[decl.kids[i]].kind):
+                working = checkOneFunction(world = world, types = types, unitIndex = unitIndex, declId = decl.kids[i], out = working)
+            i = i + 1
+    return working
+
+; 整工作区体检查：逐单元逐顶层声明走一遍，错误按单元与声明序追加。
+bodyPackageDiagnostics|func(world: MemberWorld, types: ExprTypes, units: Array<CompilationUnit>,) -> (Array<Diagnostic>,):
+    var out: Array<Diagnostic> = []
+    var u = 0
+    while u < len(units):
+        var i = 0
+        while i < len(units[u].ast.items):
+            out = checkDeclBodies(world = world, types = types, unitIndex = u, declId = units[u].ast.items[i], out = out)
+            i = i + 1
+        u = u + 1
+    return out
+
+; 收尾：排序后渲染；文件表与单元同序，清单与装载诊断没有源文本，退化为无位置头行。
+finishReport|func(root: String, packages: I32, diagnostics: Array<Diagnostic>, units: Array<CompilationUnit>,) -> (WorkspaceReport,):
+    var out = WorkspaceReport()
+    out.root = root
+    out.packages = packages
+    out.diagnostics = sortDiagnostics(diagnostics)
+    var files: Array<String> = []
+    var texts: Array<SourceText> = []
+    var i = 0
+    while i < len(units):
+        files = files.append(units[i].path)
+        texts = texts.append(makeSourceText(units[i].text))
+        i = i + 1
+    out.text = renderAll(items = out.diagnostics, files = files, texts = texts)
+    out.errorCount = len(out.diagnostics)
+    if out.errorCount > 0:
+        out.exitCode = 1
+    return out
+
+; 工作区根：从给定目录向上找第一份带 `[workspace]` 的清单；找不到答原目录。
+; 层数上限八层，避免在根文件系统上无界回溯；路径分隔按斜杠，源码树与产物目录同规。
+workspaceRootOf|func(start: String,) -> (String,):
+    var dir = start
+    var depth = 0
+    while depth < 8:
+        if exists(dir + "/pini.toml") && hasWorkspace(dir):
+            return dir
+        let at = lastSlash(dir)
+        if at <= 0:
+            return start
+        dir = dir.substring(0, at)
+        depth = depth + 1
+    return start
+
+; 单元汇总：按包序取全部单元，再去重排序；同一文件不因多包登记出现两次。
+collectWorkspaceUnits|func(_ws: WorkspaceUnits,) -> (Array<CompilationUnit>,):
+    var all: Array<CompilationUnit> = []
+    var p = 0
+    while p < len(_ws.packages):
+        var u = 0
+        while u < len(_ws.packages[p].units):
+            all = all.append(_ws.packages[p].units[u])
+            u = u + 1
+        p = p + 1
+    return sortedUnits(all)
+
+; 包接口表：逐包生成接口文本，包序与工作区一致；每份只含该包自己的公开面。
+packageInterfaces|func(_ws: WorkspaceUnits, world: MemberWorld,) -> (Array<InterfaceRecord>,):
+    var out: Array<InterfaceRecord> = []
+    var p = 0
+    while p < len(_ws.packages):
+        out = out.append(interfaceRecord(name = _ws.packages[p].name, units = _ws.packages[p].units, world = world))
+        p = p + 1
+    return out
+
+; 检查入口：清单不可用时只报清单错；语法有错就短路，其余阶段按同一张包图接。
+checkWorkspace|func(root: String,) -> (WorkspaceReport,):
+    let plan = planWorkspace(root)
+    if !plan.isOK():
+        return finishReport(root = root, packages = 0, diagnostics = planDiagnostics(plan), units = [])
+    let ws = loadWorkspaceGrouped(plan)
+    let units = collectWorkspaceUnits(ws)
+    var diagnostics = loadDiagnostics(ws)
+    var lexical = lexicalDiagnostics(units)
+    var i = 0
+    while i < len(lexical):
+        diagnostics = diagnostics.append(lexical[i])
+        i = i + 1
+    var syntax = syntaxDiagnostics(units)
+    i = 0
+    while i < len(syntax):
+        diagnostics = diagnostics.append(syntax[i])
+        i = i + 1
+    if len(diagnostics) > 0:
+        return finishReport(root = root, packages = plan.packageCount(), diagnostics = diagnostics, units = units)
+    let table = registerPackage(units)
+    var symbols = symbolDiagnostics(table)
+    i = 0
+    while i < len(symbols):
+        diagnostics = diagnostics.append(symbols[i])
+        i = i + 1
+    let types = resolvePackage(units = units, table = table)
+    var typed = typeDiagnostics(types)
+    i = 0
+    while i < len(typed):
+        diagnostics = diagnostics.append(typed[i])
+        i = i + 1
+    let world = makeMemberWorld(units = units, table = table, types = types)
+    var foreignErrors = foreignDiagnostics(checkForeignPackage(units = units, types = types))
+    i = 0
+    while i < len(foreignErrors):
+        diagnostics = diagnostics.append(foreignErrors[i])
+        i = i + 1
+    var boundary = boundaryDiagnostics(checkWorkspaceImports(ws))
+    i = 0
+    while i < len(boundary):
+        diagnostics = diagnostics.append(boundary[i])
+        i = i + 1
+    var cross = crossDiagnostics(checkWorkspaceCrossRefs(ws, world = world))
+    i = 0
+    while i < len(cross):
+        diagnostics = diagnostics.append(cross[i])
+        i = i + 1
+    var bodies = bodyPackageDiagnostics(world = world, types = makeExprTypes(units), units = units)
+    i = 0
+    while i < len(bodies):
+        diagnostics = diagnostics.append(bodies[i])
+        i = i + 1
+    return finishReport(root = root, packages = plan.packageCount(), diagnostics = diagnostics, units = units)

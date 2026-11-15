@@ -4,6 +4,10 @@ name = "driver"
 [require]
 support = "*"
 package = "*"
+syntax = "*"
+diagnostics = "*"
+module_loader = "*"
+semantics = "*"
 
 [[bin]]
 name = "pini-bootstrap"
