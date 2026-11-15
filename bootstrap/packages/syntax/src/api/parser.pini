@@ -702,6 +702,10 @@ parseCast|self() -> (I32,):
         left = id
     return left
 parseUnary|self() -> (I32,):
+    if self.at(kwTry):
+        return self.parseTryExpr()
+    if self.at(opBitXor):
+        return self.parseUnwrapExpr()
     let kind: TokenKind = self.current().kind
     if isUnaryKind(kind):
         let start: I32 = self.current().start
@@ -712,6 +716,63 @@ parseUnary|self() -> (I32,):
         self.pushExprKid(id = id, kid = operand)
         return id
     return self.parsePostfix()
+; try 表达式：`try 操作数 else 错误名: 处理器`，语句位与表达式位同形；
+; 处理器是块，单行形态只收 return / break / continue / pass。
+parseTryExpr|self() -> (I32,):
+    let start: I32 = self.current().start
+    self.advance()
+    let operand: I32 = self.parseExpression(1)
+    if !self.expect(kind = kwElse, what = "`else`"):
+        self.recover()
+        return operand
+    var nameStart = -1
+    var nameEnd = -1
+    if self.at(identifier):
+        nameStart = self.current().nameStart
+        nameEnd = self.current().nameEnd
+        self.advance()
+    else:
+        self.report(code = "E2-001", message = "期望错误名")
+    let handler: I32 = self.parseTryHandler()
+    let id: I32 = self.newExpr(kind = exprTry, start = start, end = self.previousEnd())
+    self.setExprName(id = id, start = nameStart, end = nameEnd)
+    self.pushExprKid(id = id, kid = operand)
+    var node = self.ast.exprs[id]
+    node.body = handler
+    self.ast.exprs[id] = node
+    return id
+; `^` 解包糖：`^右值` 等价 `try 右值 else err: return err`，`body` 留空表示处理器是合成的。
+parseUnwrapExpr|self() -> (I32,):
+    let start: I32 = self.current().start
+    self.advance()
+    let operand: I32 = self.parseUnary()
+    let id: I32 = self.newExpr(kind = exprTry, start = start, end = self.previousEnd())
+    self.pushExprKid(id = id, kid = operand)
+    return id
+; try 处理器：冒号后换行是块，同行是单条控制流语句；其余语句按非法处理器报错。
+parseTryHandler|self() -> (I32,):
+    if !self.expect(kind = colon, what = "`:`"):
+        self.recover()
+        return -1
+    if self.at(newline):
+        return self.parseIndentedBlock()
+    let start: I32 = self.current().start
+    var id = -1
+    if self.at(kwReturn):
+        id = self.parseReturn()
+    elif self.at(kwBreak):
+        id = self.parseBreak()
+    elif self.at(kwContinue):
+        id = self.parseContinue()
+    elif self.at(kwPass):
+        id = self.parsePass()
+    else:
+        self.report(code = "E2-001", message = "try 的处理器只能是 return、break、continue 或 pass")
+        self.recover()
+    let block: I32 = self.newStmt(kind = stmtBlock, start = start, end = self.previousEnd())
+    if id >= 0:
+        self.pushStmtKid(id = block, kid = id)
+    return block
 ; 后缀链：调用、下标、切片与成员访问按出现顺序叠加。
 parsePostfix|self() -> (I32,):
     var expr: I32 = self.parsePrimary()
@@ -1019,13 +1080,9 @@ parseStatement|self() -> (I32,):
     if self.at(kwBreak):
         return self.parseBreak()
     if self.at(kwContinue):
-        let start: I32 = self.current().start
-        self.advance()
-        return self.newStmt(kind = stmtContinue, start = start, end = self.previousEnd())
+        return self.parseContinue()
     if self.at(kwPass):
-        let start: I32 = self.current().start
-        self.advance()
-        return self.newStmt(kind = stmtPass, start = start, end = self.previousEnd())
+        return self.parsePass()
     if self.at(kwDefer):
         let start: I32 = self.current().start
         self.advance()
@@ -1229,16 +1286,33 @@ parsePattern|self() -> (I32,):
         self.setExprEnd(id = id, end = self.previousEnd())
         return id
     return self.parseExpression(1)
-; 返回语句：无值返回与带值返回同形，缺省值答 -1。
+; 返回语句：无值返回与带值返回同形，缺省值答 -1；值在收尾符前结束，故单行处理器里可裸写 return。
 parseReturn|self() -> (I32,):
     let start: I32 = self.current().start
     self.advance()
     var value = -1
-    if !self.at(newline) && !self.at(dedent) && !self.atEnd():
+    if !self.atStatementEnd():
         value = self.parseExpression(1)
     let id: I32 = self.newStmt(kind = stmtReturn, start = start, end = self.previousEnd())
     self.pushStmtKid(id = id, kid = value)
     return id
+; 语句收尾：换行、块边界与三种收尾括号都表示语句到头。
+atStatementEnd|self() -> (Bool,):
+    if self.atEnd() || self.at(newline) || self.at(dedent):
+        return true
+    if self.at(rightParen) || self.at(rightBracket) || self.at(rightBrace):
+        return true
+    return self.at(comma)
+; 继续语句：无标签形态。
+parseContinue|self() -> (I32,):
+    let start: I32 = self.current().start
+    self.advance()
+    return self.newStmt(kind = stmtContinue, start = start, end = self.previousEnd())
+; 通过语句：空语句，处理器里的显式吞错。
+parsePass|self() -> (I32,):
+    let start: I32 = self.current().start
+    self.advance()
+    return self.newStmt(kind = stmtPass, start = start, end = self.previousEnd())
 ; 跳出语句：可带标签，标签按标识符表达式登记。
 parseBreak|self() -> (I32,):
     let start: I32 = self.current().start

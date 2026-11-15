@@ -363,3 +363,55 @@
     let 内层 = ast.typeAt(字段.typeId).kids[0]
     assert(ast.isType(id = 内层, kind = typeArray), "内层是数组")
     return
+
+; 错误处理：语句位与表达式位同形，错误名落区间，处理器成块；块形式与单行形式都收。
+try三形态|test() -> ():
+    let src = "f|func() -> (I32,):\n    try 取() else 错误: return 0\n    let 值 = try 取() else 错误: return 1\n    try 取() else 错误:\n        return 2\n    try 取() else 错误: pass\n    return 值\n"
+    let 结果 = parseText(src)
+    var 诊断 = ""
+    if len(结果.diagnostics) > 0:
+        诊断 = 结果.diagnostics[0].message
+    assert(len(结果.diagnostics) == 0, "不应有语法诊断：" + 诊断)
+    let ast = 结果.ast
+    let 体 = ast.declAt(ast.itemAt(0)).body
+    let 语句 = ast.stmtAt(体).kids
+    let 语句位 = ast.stmtChild(id = 语句[0], index = 0)
+    assert(ast.isTryExpr(语句位), "语句位的 try 是错误处理表达式")
+    assert(ast.exprAt(语句位).body >= 0, "有处理器块")
+    assert(ast.exprAt(语句位).nameEnd - ast.exprAt(语句位).nameStart == 6, "错误名占三字节的两倍：错误")
+    let 处理器 = ast.exprAt(语句位).body
+    assert(ast.isBlockStmt(处理器), "处理器是块")
+    assert(ast.isReturnStmt(ast.stmtChild(id = 处理器, index = 0)), "单行处理器是返回")
+    let 表达式位 = ast.stmtChild(id = 语句[1], index = 1)
+    assert(ast.isTryExpr(表达式位), "右值位的 try 同形")
+    let 块形式 = ast.stmtChild(id = 语句[2], index = 0)
+    assert(ast.isTryExpr(块形式), "块形式也是错误处理表达式")
+    assert(ast.isBlockStmt(ast.exprAt(块形式).body), "块形式的处理器是块")
+    return
+
+; 解包糖：`^右值` 成错误处理表达式但无处理器块，右值保持子树；中缀 `^` 仍是按位异或。
+解包糖|test() -> ():
+    let src = "f|func(r: ^I32, a: I32, b: I32,) -> (I32,):\n    let v = ^r\n    let x = a ^ b\n    return v + x\n"
+    let 结果 = parseText(src)
+    var 诊断 = ""
+    if len(结果.diagnostics) > 0:
+        诊断 = 结果.diagnostics[0].message
+    assert(len(结果.diagnostics) == 0, "不应有语法诊断：" + 诊断)
+    let ast = 结果.ast
+    let 体 = ast.declAt(ast.itemAt(0)).body
+    let 语句 = ast.stmtAt(体).kids
+    let 解包 = ast.stmtChild(id = 语句[0], index = 1)
+    assert(ast.isTryExpr(解包), "前缀尖号是解包")
+    assert(ast.exprAt(解包).body < 0, "解包不落处理器块")
+    assert(ast.isIdentifierExpr(ast.exprAt(解包).kids[0]), "操作数是标识符")
+    let 异或 = ast.stmtChild(id = 语句[1], index = 1)
+    assert(ast.isExpr(id = 异或, kind = exprBinary), "中缀仍是二元")
+    assert(ast.exprAt(异或).op == kindTag(opBitXor), "中缀是按位异或")
+    return
+
+; 处理器白名单：单行处理器只收控制流语句与 pass，其余报语法诊断。
+try处理器白名单|test() -> ():
+    let src = "f|func() -> ():\n    try 取() else 错误: 记()\n"
+    let 结果 = parseText(src)
+    assert(len(结果.diagnostics) > 0, "非控制流处理器应报错")
+    return
