@@ -369,9 +369,8 @@ seedFunctionScope|func(world: MemberWorld, unitIndex: I32, declId: I32, bytes: A
         out.returnType = empty.id
     return out
 
-; 检查入口：播种函数帧，走一遍体，最后按返回路径补缺失返回。
-checkFunctionBody|func(world: MemberWorld, unitIndex: I32, declId: I32, types: ExprTypes, bytes: Array<U8>,) -> (BodyCheck,):
-    let seed = seedFunctionScope(world = world, unitIndex = unitIndex, declId = declId, bytes = bytes)
+; 检查入口（带帧）：按传入的函数帧走一遍体，最后按返回路径补缺失返回。
+checkFunctionBodyWith|func(world: MemberWorld, unitIndex: I32, declId: I32, types: ExprTypes, bytes: Array<U8>, seed: BodySeed,) -> (BodyCheck,):
     var out = BodyCheck()
     out.pool = seed.pool
     if !seed.valid:
@@ -397,3 +396,7 @@ checkFunctionBody|func(world: MemberWorld, unitIndex: I32, declId: I32, types: E
         out = appendBodyError(out = out, unit = unit, offset = decl.start, kind = bodyReturnMissing, name = name, expected = typeText(pool = out.pool, id = out.returnType), got = "()")
     out.failed = len(out.errors) > 0
     return out
+
+; 检查入口：自行播种后转调；调用方已有函数帧时走带 seed 的版本，同一函数不重复播种。
+checkFunctionBody|func(world: MemberWorld, unitIndex: I32, declId: I32, types: ExprTypes, bytes: Array<U8>,) -> (BodyCheck,):
+    return checkFunctionBodyWith(world = world, unitIndex = unitIndex, declId = declId, types = types, bytes = bytes, seed = seedFunctionScope(world = world, unitIndex = unitIndex, declId = declId, bytes = bytes))
