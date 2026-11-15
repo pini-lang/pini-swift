@@ -201,9 +201,9 @@ struct ConcurrencyYieldTests: Sendable, PiniSourceLowering {
 
     // MARK: - 判据 5：顺序由**策略**决定，而不是由**决出顺序**决定（改道那一格的验收面）
 
-    /// 一对判据共用的语料 —— 两份只差开头那一段 `[[调度器]]` 覆盖块。机关在时间上：`父` 先派发
-    /// `甲`/`乙`、再 await 自己的闸 ⇒ 父先被挂起；父的续跑段睡 1200ms 占住驱动，`甲`(100) 与 `乙`(600)
-    /// 在这期间先后决出 ⇒ 两笔入队都在任何一次挑选之前。间隔按几百毫秒留：顺序不该被调度抖动量出来。
+    /// 一对判据共用的语料 —— 两份只差开头那一段 `[[调度器]]` 覆盖块。机关是结构而不是睡眠窗口：
+    /// `甲`/`乙` 由 `父` 的续跑段派发 ⇒ 父入队那刻队列里只有它，任何策略都先跑父；父随后睡 1500ms
+    /// 占住驱动，`甲`(80) 与 `乙`(320) 都在这期间入队 ⇒ 挑选才轮到策略。父把两子都等回来，不等即取消。
     private static func strategyOrderCorpus(overriding: Bool) -> String {
         let overrideBlock = overriding ? """
         [[调度器]]
@@ -225,30 +225,32 @@ struct ConcurrencyYieldTests: Sendable, PiniSourceLowering {
             sleep(_毫秒)
             return ok(0)
 
-        甲|func() => (I32,):
-            var g = 闸(100)
+        甲|func(_闸: I32,) => (I32,):
+            var g = 闸(_闸)
             let x = try await g else e:
                 return err(Error("闸"))
             print("甲")
             return ok(0)
 
-        乙|func() => (I32,):
-            var g = 闸(600)
+        乙|func(_闸: I32,) => (I32,):
+            var g = 闸(_闸)
             let x = try await g else e:
                 return err(Error("闸"))
             print("乙")
             return ok(0)
 
         父|func() => (I32,):
-            var a = 甲()
-            var b = 乙()
             var g0 = 闸(50)
             let x = try await g0 else e:
                 return err(Error("闸"))
-            sleep(1200)
+            var a = 甲(80)
+            var b = 乙(320)
+            sleep(1500)
             print("父续")
             let ra = try await a else e:
                 return err(Error("甲"))
+            let rb = try await b else e:
+                return err(Error("乙"))
             return ok(0)
 
         main|func() -> ():
@@ -260,19 +262,19 @@ struct ConcurrencyYieldTests: Sendable, PiniSourceLowering {
 
     @Test("顺序由策略决定 —— 换成后进先出后，先跑的是后决出的那个")
     func thePolicyDecidesTheOrder() throws {
-        /// 意图：整段「改道」的验收面。推进性：两次运行都以「父续」开头、甲乙各跑一次 —— 两个闸确实
-        /// 先后决出，且都排在父续之前。驳回性：只多一个覆盖块，两次顺序必须恰好相反。两条合起来才说明
-        /// 「先跑谁」由策略说了算，而不是由决出顺序说了算。
+        /// 意图：整段「改道」的验收面。推进性：两次运行都以「父续」开头、甲乙各跑一次 —— 父先续跑由
+        /// 「它是队列里唯一的项」立住，两个闸都在父占住驱动期间决出。驳回性：只多一个覆盖块，两次顺序
+        /// 必须恰好相反。两条合起来才说明「先跑谁」由策略说了算，而不是由决出顺序说了算。
         let preset = try runYieldProbe(Self.strategyOrderCorpus(overriding: false)).lines
         let overridden = try runYieldProbe(Self.strategyOrderCorpus(overriding: true)).lines
         #expect(
             preset.first == "父续" && overridden.first == "父续",
-            "父的占位没盖住甲乙：默认 \(preset)，覆盖 \(overridden)")
+            "父没抢在甲乙之前续跑：默认 \(preset)，覆盖 \(overridden)")
         #expect(
             Set(preset.dropFirst()) == ["甲", "乙"]
                 && Set(overridden.dropFirst()) == ["甲", "乙"],
             "两次运行都得让甲乙各跑一次：默认 \(preset)，覆盖 \(overridden)")
-        /// 甲先决出还是乙先决出由调度定，两次运行未必同序 ⇒ 只判「反过来」，不钉绝对顺序。
+        /// 甲(80) 先于乙(320) 决出，两次运行同序 ⇒ 后进先出下这两项必须整个反过来。
         #expect(
             Array(preset.dropFirst()) == Array(overridden.dropFirst().reversed()),
             "覆盖成后进先出后顺序应当反过来：默认 \(preset)，覆盖 \(overridden)")
