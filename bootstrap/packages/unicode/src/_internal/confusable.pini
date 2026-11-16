@@ -3,10 +3,11 @@
 confusableSkeletonCodes|func(_codes: Array<I32>,) -> (Array<I32>,):
     let decomposed = nfdOfCodes(_codes)
     let pool = tempUtf8Bytes(confusablePool())
+    let index = tempUtf8Bytes(confusableData())
     var mapped: Array<I32> = []
     var i = 0
     while i < len(decomposed):
-        let packed = confusablePacked(decomposed[i])
+        let packed = confusablePackedIn(index, decomposed[i])
         if packed < 0:
             mapped = mapped.append(decomposed[i])
         else:

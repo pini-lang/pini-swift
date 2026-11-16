@@ -1,0 +1,64 @@
+; 降载错误：类型映射失败、表达式与语句未支持、能力缺口四类。
+; 码沿用诊断码表的 E6 段，不新增条目；一条错误带文件与偏移，不中断整份模块的降载。
+; 错误只记失败原因，不记建议修法 —— 修法归诊断渲染，那里有码可查。
+
+; 错误类别：与 E6 段的四条一一对应。
+[LowerErrorKind]
+lowerUnsupportedType
+lowerUnsupportedExpr
+lowerUnsupportedStmt
+lowerMissingCapability
+
+; 降载错误：类别、文件、源内偏移与细节；细节写节点名或类型名，供定位。
+(LowerError)
+kind: LowerErrorKind = .lowerUnsupportedType
+file: String = ""
+offset: I32 = 0
+detail: String = ""
+
+; 类别名：回执与测试共用一份拼写。
+lowerErrorName|func(_kind: LowerErrorKind,) -> (String,):
+    match _kind:
+        case lowerUnsupportedType:
+            return "类型不可降载"
+        case lowerUnsupportedExpr:
+            return "表达式不可降载"
+        case lowerUnsupportedStmt:
+            return "语句不可降载"
+        case lowerMissingCapability:
+            return "能力缺口"
+    return "降载错误"
+
+; 诊断码：类型 E6-001、表达式 E6-002、语句 E6-003、其余 E6-004。
+lowerErrorCode|func(_kind: LowerErrorKind,) -> (String,):
+    match _kind:
+        case lowerUnsupportedType:
+            return "E6-001"
+        case lowerUnsupportedExpr:
+            return "E6-002"
+        case lowerUnsupportedStmt:
+            return "E6-003"
+        case lowerMissingCapability:
+            return "E6-004"
+    return "E6-004"
+
+; 造一条：字段直填；偏移为负表示与源码位置无关的池级错误。
+makeLowerError|func(kind: LowerErrorKind, file: String, offset: I32, detail: String,) -> (LowerError,):
+    var out = LowerError()
+    out.kind = kind
+    out.file = file
+    out.offset = offset
+    out.detail = detail
+    return out
+
+; 追加一条：错误表只增，顺序即发生序。
+appendLowerError|func(errors: Array<LowerError>, error: LowerError,) -> (Array<LowerError>,):
+    return errors.append(error)
+
+; 条数：下标合法区间是 0 到 count - 1。
+lowerErrorCount|func(_errors: Array<LowerError>,) -> (I32,):
+    return len(_errors)
+
+; 条目读：越界是运行时陷阱，调用方先判条数。
+lowerErrorAt|func(_errors: Array<LowerError>, _index: I32,) -> (LowerError,):
+    return _errors[_index]

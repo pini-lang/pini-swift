@@ -112,14 +112,17 @@ isOwnerDeclCode|func(_code: I32,) -> (Bool,):
     return false
 
 ; 所属类型：按父声明的 kids 找方法所在块，再按名字查名义类型；找不到答 -1。
-ownerTypeOf|func(world: MemberWorld, unitIndex: I32, declId: I32,) -> (I32,):
+; 字节视图由调用方传：逐方法调用时复用已转好的视图，免得整单元文本重复复制。
+ownerTypeOf|func(world: MemberWorld, unitIndex: I32, declId: I32, bytes: Array<U8>,) -> (I32,):
     let unit = world.units[unitIndex]
-    let bytes = tempUtf8Bytes(unit.text)
+    var view = bytes
+    if len(view) == 0:
+        view = tempUtf8Bytes(unit.text)
     var i = 0
     while i < unit.ast.declCount():
         let decl = unit.ast.decls[i]
         if isOwnerDeclCode(decl.kind) && containsDeclKid(kids = decl.kids, id = declId):
-            let owner = decodeRange(bytes = bytes, start = decl.nameStart, end = decl.nameEnd)
+            let owner = decodeRange(bytes = view, start = decl.nameStart, end = decl.nameEnd)
             return nominalTypeId(world = world, name = owner)
         i = i + 1
     return -1
@@ -340,7 +343,7 @@ seedFunctionScope|func(world: MemberWorld, unitIndex: I32, declId: I32, bytes: A
         view = tempUtf8Bytes(unit.text)
     var stack = enterScope(stack = ScopeStack(), kind = scopeFunction, file = unit.path, offset = decl.start)
     if decl.isSelf:
-        let ownerId = ownerTypeOf(world = world, unitIndex = unitIndex, declId = declId)
+        let ownerId = ownerTypeOf(world = world, unitIndex = unitIndex, declId = declId, bytes = view)
         if ownerId >= 0:
             let selfDecl = declareSelf(stack = stack, spelling = "self", typeId = ownerId, file = unit.path, offset = decl.start)
             if selfDecl.failed:

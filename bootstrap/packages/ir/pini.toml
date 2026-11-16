@@ -1,0 +1,14 @@
+[package]
+name = "ir"
+
+[require]
+syntax = "*"
+semantics = "*"
+
+[lib]
+name = "ir"
+entry = "src/api/node.pini"
+
+[[test]]
+name = "ir-tests"
+entry = "tests"

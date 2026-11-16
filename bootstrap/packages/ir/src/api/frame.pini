@@ -1,0 +1,65 @@
+; 局部帧：降载期的名字与槽位，起点接函数帧播种后的水位。
+; 槽位只增不减：块退出只收回名字，不回收槽位，故槽位号等于声明序。
+; 跨块复用槽位会让两处不同声明的节点指向同一槽，漏声明时看不出来。
+
+; 局部：名字、槽位、IR 类型与可变位。
+(IrLocal)
+name: String = ""
+slot: I32 = -1
+typeId: I32 = -1
+mutable: Bool = false
+
+; 帧：局部表与下一个可用槽位。
+(LowerFrame)
+locals: Array<IrLocal> = []
+nextSlot: I32 = 0
+
+; 建帧：参数与自身已由播种占位，此处只接水位，不重排既有槽位。
+makeLowerFrame|func(scope: ScopeStack,) -> (LowerFrame,):
+    var out = LowerFrame()
+    out.nextSlot = scope.nextSlot
+    return out
+
+; 声明局部：槽位取当前水位，随后水位加一。
+declareIrLocal|func(frame: LowerFrame, name: String, typeId: I32, mutable: Bool,) -> (LowerFrame,):
+    var out = frame
+    var row = IrLocal()
+    row.name = name
+    row.slot = out.nextSlot
+    row.typeId = typeId
+    row.mutable = mutable
+    out.locals = out.locals.append(row)
+    out.nextSlot = out.nextSlot + 1
+    return out
+
+; 查局部：由后向前，后声明遮蔽先声明；未命中答 -1。
+findIrLocal|func(frame: LowerFrame, name: String,) -> (I32,):
+    var i = len(frame.locals) - 1
+    while i >= 0:
+        if frame.locals[i].name == name:
+            return i
+        i = i - 1
+    return -1
+
+; 块边界：块内声明从这一位开始，退出时截断到它。
+frameMark|func(frame: LowerFrame,) -> (I32,):
+    return len(frame.locals)
+
+; 退块：只收回名字，槽位水位保持；mark 越界按长度夹紧。
+closeBlock|func(frame: LowerFrame, mark: I32,) -> (LowerFrame,):
+    var out = frame
+    var kept: Array<IrLocal> = []
+    var i = 0
+    while i < mark && i < len(out.locals):
+        kept = kept.append(out.locals[i])
+        i = i + 1
+    out.locals = kept
+    return out
+
+; 局部数：在册名字的条数，退块后变小。
+frameLocalCount|func(frame: LowerFrame,) -> (I32,):
+    return len(frame.locals)
+
+; 槽位水位：函数内已分配的下一个槽位，函数结束时即帧大小。
+frameSlotCount|func(frame: LowerFrame,) -> (I32,):
+    return frame.nextSlot

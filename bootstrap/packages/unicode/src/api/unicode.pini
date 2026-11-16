@@ -117,6 +117,16 @@ startsIdentifier|func(_code: I32,) -> (Bool,):
         return true
     return unicodeClassOf(_code) == 1
 
+; 分类表字节视图：逐标量转换代价高，词法层整段只转一次并逐查询复用。
+identifierClassTable|func() -> (Array<U8>,):
+    return tempUtf8Bytes(unicodeClassData())
+
+; 已持字节视图时的首字符判定：与 startsIdentifier 同规，不再转换。
+startsIdentifierIn|func(_data: Array<U8>, _code: I32,) -> (Bool,):
+    if _code == 95:
+        return true
+    return unicodeClassOfIn(_data, _code) == 1
+
 ; 高风险脚本号：0 其它，1 拉丁，2 西里尔，3 希腊。只服务混写判定，不作字符分类。
 scriptOf|func(_code: I32,) -> (I32,):
     return scriptClassOf(_code)
@@ -159,6 +169,17 @@ continuesIdentifier|func(_code: I32,) -> (Bool,):
         return true
     return kind == 2
 
+; 已持字节视图时的续字符判定：与 continuesIdentifier 同规，不再转换。
+continuesIdentifierIn|func(_data: Array<U8>, _code: I32,) -> (Bool,):
+    if _code == 95:
+        return true
+    if isCombiningMarkScalar(_code):
+        return true
+    let kind = unicodeClassOfIn(_data, _code)
+    if kind == 1:
+        return true
+    return kind == 2
+
 ; 规范分解（NFD）：按等价类拆成基字与附标；非法 UTF-8 原样返回，不吞字节。
 normalizeNfdBytes|func(_bytes: Array<U8>,) -> (Array<U8>,):
     let text = decodeUtf8(_bytes)
@@ -182,15 +203,30 @@ confusableSkeletonBytes|func(_bytes: Array<U8>,) -> (Array<U8>,):
 
 ; 标识符查找键：把源内字节区间按 NFC 规范化，符号表以此为比较键。
 ; 两界夹紧后取区间；调用方只对标识符区间调用，不得把整份源码送进来。
+; ASCII 行先判：NFC 对 ASCII 是恒等，直接复制，省掉逐标量的分解与合成。
 identifierKeyBytes|func(bytes: Array<U8>, start: I32, end: I32,) -> (Array<U8>,):
-    var part: Array<U8> = []
-    var i = start
-    if i < 0:
-        i = 0
-    while i < end && i < len(bytes):
-        part = part.append(bytes[i])
+    var lo = start
+    if lo < 0:
+        lo = 0
+    var hi = end
+    if hi > len(bytes):
+        hi = len(bytes)
+    var allAscii = true
+    var k = lo
+    while k < hi:
+        if tempByteToInt(bytes[k]) > 127:
+            allAscii = false
+            k = hi
+        else:
+            k = k + 1
+    var out: Array<U8> = []
+    var i = lo
+    while i < hi:
+        out = out.append(bytes[i])
         i = i + 1
-    return normalizeNfcBytes(part)
+    if allAscii:
+        return out
+    return normalizeNfcBytes(out)
 
 ((Utf8Text))
 ; 整段合法：出错位置为 -1。

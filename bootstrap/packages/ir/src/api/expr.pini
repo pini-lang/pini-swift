@@ -1,0 +1,515 @@
+[expr|import]
+_syntax = "../../../syntax"
+_semantics = "../../../semantics"
+
+; 表达式降载：AST 节点 + 推导表 + 局部帧 → IR 节点。
+; 运算符按符号映射，不看记号码；类型一律取自推导表经映射后的下标。
+; 推不出类型或类别未支持即整函数留空并报缺口，不产占位节点。
+
+; 二元运算：项序与宿主 IRBinaryOp 一致，码从 1 起。
+[IrBinaryOp]
+irAdd
+irSubtract
+irMultiply
+irDivide
+irModulo
+irEqual
+irNotEqual
+irLessThan
+irLessThanOrEqual
+irGreaterThan
+irGreaterThanOrEqual
+irBitwiseAnd
+irBitwiseOr
+irBitwiseXor
+irLeftShift
+irRightShift
+irMinOf
+irMaxOf
+
+; 一元运算：项序与宿主 IRUnaryOp 一致。
+[IrUnaryOp]
+irNegate
+irLogicalNot
+irBitwiseNot
+irAbs
+irCast
+
+; 逻辑运算：短路求值，与按值二元运算分开。
+[IrLogicalOp]
+irLogicalAnd
+irLogicalOr
+
+; 文本驻留结果：池与下标。
+(TextInsert)
+texts: Array<String> = []
+id: I32 = -1
+
+; 表达式降载结果：节点池、文本池、帧、节点下标与失败原因。
+(LowerExpr)
+pool: IrNodePool = IrNodePool()
+texts: Array<String> = []
+frame: LowerFrame = LowerFrame()
+id: I32 = -1
+failed: Bool = false
+detail: String = ""
+offset: I32 = 0
+
+; 二元码：与枚举项序一致，从 1 起。
+irBinaryTag|func(_op: IrBinaryOp,) -> (I32,):
+    match _op:
+        case irAdd:
+            return 1
+        case irSubtract:
+            return 2
+        case irMultiply:
+            return 3
+        case irDivide:
+            return 4
+        case irModulo:
+            return 5
+        case irEqual:
+            return 6
+        case irNotEqual:
+            return 7
+        case irLessThan:
+            return 8
+        case irLessThanOrEqual:
+            return 9
+        case irGreaterThan:
+            return 10
+        case irGreaterThanOrEqual:
+            return 11
+        case irBitwiseAnd:
+            return 12
+        case irBitwiseOr:
+            return 13
+        case irBitwiseXor:
+            return 14
+        case irLeftShift:
+            return 15
+        case irRightShift:
+            return 16
+        case irMinOf:
+            return 17
+        case irMaxOf:
+            return 18
+    return 0
+
+; 一元码：与枚举项序一致，从 1 起。
+irUnaryTag|func(_op: IrUnaryOp,) -> (I32,):
+    match _op:
+        case irNegate:
+            return 1
+        case irLogicalNot:
+            return 2
+        case irBitwiseNot:
+            return 3
+        case irAbs:
+            return 4
+        case irCast:
+            return 5
+    return 0
+
+; 逻辑码：与枚举项序一致，从 1 起。
+irLogicalTag|func(_op: IrLogicalOp,) -> (I32,):
+    match _op:
+        case irLogicalAnd:
+            return 1
+        case irLogicalOr:
+            return 2
+    return 0
+
+; 二元码按符号：符号未登记答 0，调用方据此报缺口。
+binaryTagOf|func(spelling: String,) -> (I32,):
+    if spelling == "+":
+        return irBinaryTag(irAdd)
+    if spelling == "-":
+        return irBinaryTag(irSubtract)
+    if spelling == "*":
+        return irBinaryTag(irMultiply)
+    if spelling == "/":
+        return irBinaryTag(irDivide)
+    if spelling == "%":
+        return irBinaryTag(irModulo)
+    if spelling == "==":
+        return irBinaryTag(irEqual)
+    if spelling == "!=":
+        return irBinaryTag(irNotEqual)
+    if spelling == "<":
+        return irBinaryTag(irLessThan)
+    if spelling == "<=":
+        return irBinaryTag(irLessThanOrEqual)
+    if spelling == ">":
+        return irBinaryTag(irGreaterThan)
+    if spelling == ">=":
+        return irBinaryTag(irGreaterThanOrEqual)
+    if spelling == "&":
+        return irBinaryTag(irBitwiseAnd)
+    if spelling == "|":
+        return irBinaryTag(irBitwiseOr)
+    if spelling == "^":
+        return irBinaryTag(irBitwiseXor)
+    if spelling == "<<":
+        return irBinaryTag(irLeftShift)
+    if spelling == ">>":
+        return irBinaryTag(irRightShift)
+    return 0
+
+; 一元码按符号：取负、逻辑非、按位取反；其余答 0。
+unaryTagOf|func(spelling: String,) -> (I32,):
+    if spelling == "-":
+        return irUnaryTag(irNegate)
+    if spelling == "!":
+        return irUnaryTag(irLogicalNot)
+    if spelling == "~":
+        return irUnaryTag(irBitwiseNot)
+    return 0
+
+; 文本驻留：同内容复用下标，池序即首次出现序。
+internText|func(texts: Array<String>, value: String,) -> (TextInsert,):
+    var out = TextInsert()
+    out.texts = texts
+    var i = 0
+    while i < len(texts):
+        if texts[i] == value:
+            out.id = i
+            return out
+        i = i + 1
+    var grown = texts
+    grown = grown.append(value)
+    out.texts = grown
+    out.id = len(grown) - 1
+    return out
+
+; 整数拼写转值：认十进制与 0x / 0b / 0o 前缀，下划线跳过，非法字符按 0 进值。
+; 只处理非负写法：源里的负数是取负一元节点，不在拼写里。
+intSpellingValue|func(text: String,) -> (I64,):
+    let pieces = chars(text)
+    var base: I64 = 10
+    var start = 0
+    if len(pieces) > 2 && ord(pieces[0]) == 48:
+        let mark = ord(pieces[1])
+        if mark == 120 || mark == 88:
+            base = 16
+            start = 2
+        elif mark == 98 || mark == 66:
+            base = 2
+            start = 2
+        elif mark == 111 || mark == 79:
+            base = 8
+            start = 2
+    var value: I64 = 0
+    var i = start
+    while i < len(pieces):
+        let code = ord(pieces[i])
+        var digit: I64 = 0
+        if code >= 48 && code <= 57:
+            digit = (code - 48) as I64
+        elif code >= 97 && code <= 102:
+            digit = (code - 87) as I64
+        elif code >= 65 && code <= 70:
+            digit = (code - 55) as I64
+        if code != 95:
+            value = value * base + digit
+        i = i + 1
+    return value
+
+; 造节点并入池：类别、类型、算符与子节点一次写齐。
+addIrNode|func(pool: IrNodePool, kind: I32, typeId: I32, op: I32, kids: Array<I32>,) -> (IrNodeInsert,):
+    var node = irMakeNode(kind = kind, typeId = typeId)
+    node.op = op
+    node.kids = kids
+    return irAppendNode(pool = pool, node = node)
+
+; 类型后备：推导表不覆盖由非字面量初始化的局部，此处按运算符形状取结果类型。
+; 比较与逻辑答布尔，一元答操作数类型；这条判定是过渡，待局部类型表落地后删除。
+fallbackIrType|func(map: TypeMap, types: ExprTypes, unit: CompilationUnit, unitIndex: I32, frame: LowerFrame, bytes: Array<U8>, id: I32,) -> (I32,):
+    if id < 0 || id >= unit.ast.exprCount():
+        return -1
+    let expr = unit.ast.exprAt(id)
+    if unit.ast.isBinaryExpr(id):
+        let spelling = opSymbol(expr.op)
+        if spelling == "==" || spelling == "!=":
+            return map.booleanId
+        if spelling == "<" || spelling == "<=":
+            return map.booleanId
+        if spelling == ">" || spelling == ">=":
+            return map.booleanId
+        if spelling == "&&" || spelling == "||":
+            return map.booleanId
+        if len(expr.kids) > 0:
+            return exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = frame, bytes = bytes, id = expr.kids[0])
+        return -1
+    if unit.ast.isUnaryExpr(id):
+        if opSymbol(expr.op) == "!":
+            return map.booleanId
+        if len(expr.kids) > 0:
+            return exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = frame, bytes = bytes, id = expr.kids[0])
+        return -1
+    return -1
+
+; 表达式类型：先读推导表，标识符回查帧，最后按运算符形状取后备；都没有答 -1。
+exprIrType|func(map: TypeMap, types: ExprTypes, unit: CompilationUnit, unitIndex: I32, frame: LowerFrame, bytes: Array<U8>, id: I32,) -> (I32,):
+    let known = exprTypeAt(table = types, unit = unitIndex, node = id)
+    if known >= 0:
+        return irIdOf(map = map, semanticId = known)
+    if id < 0 || id >= unit.ast.exprCount():
+        return -1
+    if unit.ast.isIdentifierExpr(id):
+        let expr = unit.ast.exprAt(id)
+        let name = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
+        let at = findIrLocal(frame = frame, name = name)
+        if at >= 0:
+            return frame.locals[at].typeId
+    return fallbackIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = frame, bytes = bytes, id = id)
+
+; 缺类型：类型未定或不可映射；偏移记在结果上，由调用方写进错误表。
+missType|func(out: LowerExpr, unit: CompilationUnit, id: I32,) -> (LowerExpr,):
+    var done = out
+    done.failed = true
+    done.detail = "表达式类型未定"
+    if id >= 0 && id < unit.ast.exprCount():
+        done.offset = unit.ast.exprAt(id).start
+    return done
+
+; 缺能力：类别尚未降载，带类别与位置，不产占位节点。
+missExpr|func(out: LowerExpr, unit: CompilationUnit, id: I32, what: String,) -> (LowerExpr,):
+    var done = out
+    done.failed = true
+    done.detail = what + " 尚未降载"
+    if id >= 0 && id < unit.ast.exprCount():
+        done.offset = unit.ast.exprAt(id).start
+    return done
+
+; 失败转发：子节点已失败时把原因原样上抛，不覆盖位置与细节。
+takeFailure|func(out: LowerExpr, one: LowerExpr,) -> (LowerExpr,):
+    var done = out
+    done.pool = one.pool
+    done.texts = one.texts
+    done.frame = one.frame
+    done.failed = true
+    done.detail = one.detail
+    done.offset = one.offset
+    return done
+
+; 标识符：局部与顶层符号同形，都降成按名读；槽位由帧给出。
+lowerIdentifier|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
+    let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = out.frame, bytes = bytes, id = id)
+    if typeId < 0:
+        return missType(out = out, unit = unit, id = id)
+    let expr = unit.ast.exprAt(id)
+    let name = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
+    let placed = internText(texts = out.texts, value = name)
+    var node = irMakeNode(kind = irExprTag(irLoad), typeId = typeId)
+    node.text = placed.id
+    let inserted = irAppendNode(pool = out.pool, node = node)
+    var done = out
+    done.texts = placed.texts
+    done.pool = inserted.pool
+    done.id = inserted.id
+    return done
+
+; 二元：短路逻辑单独成节点，其余按值二元；带标签实参的 `=` 不是运算，报缺口。
+lowerBinary|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
+    if unit.ast.isLabeledArgument(id):
+        return missExpr(out = out, unit = unit, id = id, what = "带标签实参")
+    let expr = unit.ast.exprAt(id)
+    var done = out
+    var kids: Array<I32> = []
+    var i = 0
+    while i < len(expr.kids):
+        let one = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = expr.kids[i])
+        done.pool = one.pool
+        done.texts = one.texts
+        done.frame = one.frame
+        if one.failed:
+            return takeFailure(out = done, one = one)
+        kids = kids.append(one.id)
+        i = i + 1
+    let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
+    if typeId < 0:
+        return missType(out = done, unit = unit, id = id)
+    let spelling = opSymbol(expr.op)
+    if spelling == "&&":
+        let inserted = addIrNode(pool = done.pool, kind = irExprTag(irShortCircuit), typeId = typeId, op = irLogicalTag(irLogicalAnd), kids = kids)
+        done.pool = inserted.pool
+        done.id = inserted.id
+        return done
+    if spelling == "||":
+        let inserted = addIrNode(pool = done.pool, kind = irExprTag(irShortCircuit), typeId = typeId, op = irLogicalTag(irLogicalOr), kids = kids)
+        done.pool = inserted.pool
+        done.id = inserted.id
+        return done
+    let op = binaryTagOf(spelling = spelling)
+    if op == 0:
+        return missExpr(out = done, unit = unit, id = id, what = "运算符 " + spelling)
+    let inserted = addIrNode(pool = done.pool, kind = irExprTag(irBinary), typeId = typeId, op = op, kids = kids)
+    done.pool = inserted.pool
+    done.id = inserted.id
+    return done
+
+; 一元：操作数是唯一子节点；符号未登记报缺口。
+lowerUnary|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
+    let expr = unit.ast.exprAt(id)
+    var done = out
+    var kids: Array<I32> = []
+    var i = 0
+    while i < len(expr.kids):
+        let one = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = expr.kids[i])
+        done.pool = one.pool
+        done.texts = one.texts
+        done.frame = one.frame
+        if one.failed:
+            return takeFailure(out = done, one = one)
+        kids = kids.append(one.id)
+        i = i + 1
+    let spelling = opSymbol(expr.op)
+    let op = unaryTagOf(spelling = spelling)
+    if op == 0:
+        return missExpr(out = done, unit = unit, id = id, what = "一元运算符 " + spelling)
+    let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
+    if typeId < 0:
+        return missType(out = done, unit = unit, id = id)
+    let inserted = addIrNode(pool = done.pool, kind = irExprTag(irUnary), typeId = typeId, op = op, kids = kids)
+    done.pool = inserted.pool
+    done.id = inserted.id
+    return done
+
+; 调用：被调为标识符时按名调用；`print` 单参降成打印节点；成员被调报缺口。
+lowerCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
+    let expr = unit.ast.exprAt(id)
+    if len(expr.kids) < 1:
+        return missExpr(out = out, unit = unit, id = id, what = "空调用")
+    let callee = expr.kids[0]
+    if !unit.ast.isIdentifierExpr(callee):
+        return missExpr(out = out, unit = unit, id = id, what = "成员被调")
+    let calleeExpr = unit.ast.exprAt(callee)
+    let name = decodeSpelling(bytes = bytes, start = calleeExpr.nameStart, end = calleeExpr.nameEnd)
+    var done = out
+    var args: Array<I32> = []
+    var i = 1
+    while i < len(expr.kids):
+        let one = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = expr.kids[i])
+        done.pool = one.pool
+        done.texts = one.texts
+        done.frame = one.frame
+        if one.failed:
+            return takeFailure(out = done, one = one)
+        args = args.append(one.id)
+        i = i + 1
+    if name == "print" && len(args) == 1:
+        let inserted = addIrNode(pool = done.pool, kind = irExprTag(irPrintCall), typeId = -1, op = 0, kids = args)
+        done.pool = inserted.pool
+        done.id = inserted.id
+        return done
+    let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
+    if typeId < 0:
+        return missType(out = done, unit = unit, id = id)
+    let placed = internText(texts = done.texts, value = name)
+    var node = irMakeNode(kind = irExprTag(irCall), typeId = typeId)
+    node.text = placed.id
+    node.kids = args
+    let inserted = irAppendNode(pool = done.pool, node = node)
+    done.texts = placed.texts
+    done.pool = inserted.pool
+    done.id = inserted.id
+    return done
+
+; 成员读：接收者一个子节点，字段名驻留进文本池；方法值不走这条。
+lowerMember|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
+    let expr = unit.ast.exprAt(id)
+    if len(expr.kids) < 1:
+        return missExpr(out = out, unit = unit, id = id, what = "无接收者的成员读")
+    let one = lowerExpr(pool = out.pool, texts = out.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = out.frame, id = expr.kids[0])
+    var done = out
+    done.pool = one.pool
+    done.texts = one.texts
+    done.frame = one.frame
+    if one.failed:
+        return takeFailure(out = done, one = one)
+    let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
+    if typeId < 0:
+        return missType(out = done, unit = unit, id = id)
+    let fieldName = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
+    let placed = internText(texts = done.texts, value = fieldName)
+    var node = irMakeNode(kind = irExprTag(irFieldGet), typeId = typeId)
+    node.text = placed.id
+    node.kids = [one.id]
+    let inserted = irAppendNode(pool = done.pool, node = node)
+    done.texts = placed.texts
+    done.pool = inserted.pool
+    done.id = inserted.id
+    return done
+
+; 下标读：容器与下标两个子节点，安全断言读，越界由运行时陷阱承担。
+lowerSubscript|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
+    let expr = unit.ast.exprAt(id)
+    if len(expr.kids) < 2:
+        return missExpr(out = out, unit = unit, id = id, what = "缺下标的读取")
+    var done = out
+    var kids: Array<I32> = []
+    var i = 0
+    while i < 2:
+        let one = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = expr.kids[i])
+        done.pool = one.pool
+        done.texts = one.texts
+        done.frame = one.frame
+        if one.failed:
+            return takeFailure(out = done, one = one)
+        kids = kids.append(one.id)
+        i = i + 1
+    let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
+    if typeId < 0:
+        return missType(out = done, unit = unit, id = id)
+    let inserted = addIrNode(pool = done.pool, kind = irExprTag(irSubscriptGet), typeId = typeId, op = 0, kids = kids)
+    done.pool = inserted.pool
+    done.id = inserted.id
+    return done
+
+; 表达式入口：按类别分派；未知类别报缺口。
+lowerExpr|func(pool: IrNodePool, texts: Array<String>, map: TypeMap, types: ExprTypes, unit: CompilationUnit, unitIndex: I32, bytes: Array<U8>, frame: LowerFrame, id: I32,) -> (LowerExpr,):
+    var out = LowerExpr()
+    out.pool = pool
+    out.texts = texts
+    out.frame = frame
+    if id < 0 || id >= unit.ast.exprCount():
+        out.failed = true
+        out.detail = "表达式下标越界"
+        return out
+    if unit.ast.isIntegerExpr(id):
+        let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = frame, bytes = bytes, id = id)
+        if typeId < 0:
+            return missType(out = out, unit = unit, id = id)
+        let expr = unit.ast.exprAt(id)
+        let spelling = decodeSpelling(bytes = bytes, start = expr.start, end = expr.end)
+        var node = irMakeNode(kind = irExprTag(irIntConst), typeId = typeId)
+        node.intValue = intSpellingValue(text = spelling)
+        let inserted = irAppendNode(pool = out.pool, node = node)
+        out.pool = inserted.pool
+        out.id = inserted.id
+        return out
+    if unit.ast.isBoolExpr(id):
+        let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = frame, bytes = bytes, id = id)
+        if typeId < 0:
+            return missType(out = out, unit = unit, id = id)
+        var node = irMakeNode(kind = irExprTag(irBoolConst), typeId = typeId)
+        if unit.ast.isTrueExpr(id):
+            node.intValue = 1
+        let inserted = irAppendNode(pool = out.pool, node = node)
+        out.pool = inserted.pool
+        out.id = inserted.id
+        return out
+    if unit.ast.isIdentifierExpr(id):
+        return lowerIdentifier(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
+    if unit.ast.isBinaryExpr(id):
+        return lowerBinary(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
+    if unit.ast.isUnaryExpr(id):
+        return lowerUnary(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
+    if unit.ast.isCallExpr(id):
+        return lowerCall(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
+    if unit.ast.isMemberExpr(id):
+        return lowerMember(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
+    if unit.ast.isSubscriptExpr(id):
+        return lowerSubscript(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
+    return missExpr(out = out, unit = unit, id = id, what = "该表达式类别")

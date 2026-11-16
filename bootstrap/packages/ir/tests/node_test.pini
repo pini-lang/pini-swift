@@ -1,0 +1,94 @@
+; 节点池、类型池与契约清单的判据：码段、驻留、追加与文本形状。
+; 清单表的条数与节点枚举的码必须互相钉住，任一侧改了就红。
+
+; 清单规模：两段条数与总数；总数改了说明契约加了节点，枚举也要同批补。
+契约清单规模|test() -> ():
+    let table = contractTable()
+    assert(contractCount(table = table) == 73, "总条数应为 73")
+    assert(contractExprCount(table = table) == 56, "表达式段应为 56")
+    assert(contractStmtCount(table = table) == 17, "语句段应为 17")
+    return
+
+; 码对齐：枚举给出的码与清单表按名字查到的码逐条相同，含无参节点。
+节点码对齐|test() -> ():
+    let table = contractTable()
+    assert(irExprTag(irIntConst) == contractTagOf(table = table, name = "intConst"), "首个表达式节点码应一致")
+    assert(irExprTag(irShortCircuit) == 56, "末个表达式节点码应为 56")
+    assert(irExprTag(irReadLine) == contractTagOf(table = table, name = "readLine"), "无参节点码应一致")
+    assert(irStmtTag(irAllocVar) == 101, "首个语句节点码应为 101")
+    assert(irStmtTag(irDetachStmt) == 117, "末个语句节点码应为 117")
+    return
+
+; 码段判定：表达式与语句两段互不重叠，段外一律不认。
+码段判定|test() -> ():
+    assert(irIsExprTag(1), "1 应属表达式段")
+    assert(irIsExprTag(56), "56 应属表达式段")
+    assert(!irIsExprTag(101), "101 不应属表达式段")
+    assert(irIsStmtTag(101), "101 应属语句段")
+    assert(irIsStmtTag(117), "117 应属语句段")
+    assert(!irIsStmtTag(56), "56 不应属语句段")
+    return
+
+; 族表：十四个族，序与能力族一致；未登记的名字答 -1。
+族表与族码|test() -> ():
+    let names = contractFamilyNames()
+    assert(len(names) == 14, "族应为 14 个")
+    assert(contractFamilyId(name = "controlFlow") == 0, "控制流应排首位")
+    assert(contractFamilyId(name = "givenInstances") == 13, "末族应为给定实例")
+    assert(contractFamilyId(name = "不存在") == -1, "未登记应答 -1")
+    return
+
+; 类型驻留：同形复用同一下标，异形新增；池只增不改。
+标量驻留复用|test() -> ():
+    var pool = IrTypePool()
+    let first = irScalarType(pool = pool, kind = irTypeI32, name = "i32")
+    pool = first.pool
+    let second = irScalarType(pool = pool, kind = irTypeI32, name = "i32")
+    assert(first.id == 0, "首次驻留应在 0")
+    assert(second.id == first.id, "同形应复用同一下标")
+    assert(irTypeCount(second.pool) == 1, "同形不应新增条目")
+    let other = irScalarType(pool = second.pool, kind = irTypeF64, name = "f64")
+    assert(other.id == 1, "异形应追加到池尾")
+    return
+
+; 类型文本：标量写名字，容器写尖括号，逐层拼出可比较的形状。
+类型文本|test() -> ():
+    var pool = IrTypePool()
+    let inner = irScalarType(pool = pool, kind = irTypeU8, name = "u8")
+    pool = inner.pool
+    let array = irWrapType(pool = pool, kind = irTypeArray, name = "", inner = inner.id)
+    pool = array.pool
+    let optional = irWrapType(pool = pool, kind = irTypeOptional, name = "", inner = inner.id)
+    assert(irTypeText(pool = pool, id = inner.id) == "u8", "标量应写名字")
+    assert(irTypeText(pool = pool, id = array.id) == "array<u8>", "容器应写尖括号")
+    assert(irTypeText(pool = optional.pool, id = optional.id) == "optional<u8>", "可选应写尖括号")
+    return
+
+; 对象标志：只有名义类型且标志位置位才算对象；标量一律不是。
+对象标志|test() -> ():
+    var pool = IrTypePool()
+    let value = irNominalType(pool = pool, name = "点", isObject = false)
+    pool = value.pool
+    let 引用类型 = irNominalType(pool = pool, name = "计数器", isObject = true)
+    pool = 引用类型.pool
+    assert(!irIsObjectType(pool = pool, id = value.id), "值语义结构不应判为对象")
+    assert(irIsObjectType(pool = pool, id = 引用类型.id), "对象应判为对象")
+    let scalar = irScalarType(pool = pool, kind = irTypeI32, name = "i32")
+    assert(!irIsObjectType(pool = scalar.pool, id = scalar.id), "标量不应判为对象")
+    return
+
+; 节点追加：下标递增；子节点原地追加后池内可见，旧池快照不参与判据。
+节点追加与子节点|test() -> ():
+    var pool = IrNodePool()
+    let root = irAppendNode(pool = pool, node = irMakeNode(kind = 1, typeId = 0))
+    pool = root.pool
+    assert(root.id == 0, "首个节点应在 0")
+    let kid = irAppendNode(pool = pool, node = irMakeNode(kind = 2, typeId = 0))
+    pool = kid.pool
+    assert(kid.id == 1, "第二个节点应在 1")
+    pool = irAddKid(pool = pool, id = root.id, kid = kid.id)
+    assert(irNodeCount(pool) == 2, "池应有 2 个节点")
+    assert(len(irNodeKids(pool = pool, id = root.id)) == 1, "根应有 1 个子节点")
+    assert(irNodeKids(pool = pool, id = root.id)[0] == kid.id, "子节点下标应一致")
+    assert(len(irNodeKids(pool = pool, id = kid.id)) == 0, "叶节点不应有子节点")
+    return

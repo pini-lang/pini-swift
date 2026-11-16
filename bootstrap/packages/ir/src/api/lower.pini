@@ -1,0 +1,218 @@
+[lower|import]
+_syntax = "../../../syntax"
+_semantics = "../../../semantics"
+
+; 降载入口：吃工作区世界与各张表，出一份 IR 模块。
+; 函数表与语句体一并产出；语句或表达式降不了时整函数留空并逐函数报缺口。
+; 空体在发射期会变成能跑却错的码，故缺口必须可见。
+
+; 降载入参：世界、表达式类型表、解析表、形态表与槽布局；后两者本切片只带不改。
+(LowerWorld)
+world: MemberWorld = MemberWorld()
+types: ExprTypes = ExprTypes()
+resolve: ResolveTable = ResolveTable()
+shapes: ShapeTable = ShapeTable()
+layouts: LayoutTable = LayoutTable()
+
+; 函数形参：名字、IR 类型下标、函数内槽位与取用位。
+(IrParam)
+name: String = ""
+typeId: I32 = -1
+slot: I32 = -1
+isUsing: Bool = false
+
+; 函数：名字、形参、返回类型与语句节点下标；返回 -1 表示空返回。
+(IrFunction)
+name: String = ""
+params: Array<IrParam> = []
+returnType: I32 = -1
+body: Array<I32> = []
+isTest: Bool = false
+isAsync: Bool = false
+sourceFile: String = ""
+
+; 模块：类型池、节点池、字符串池、函数表与两张错误表。
+; `errors` 只放函数级降载失败，`typeErrors` 放类型映射失败：前者与空体一一对应，后者没有函数。
+(IrModule)
+types: IrTypePool = IrTypePool()
+nodes: IrNodePool = IrNodePool()
+texts: Array<String> = []
+functions: Array<IrFunction> = []
+errors: Array<LowerError> = []
+typeErrors: Array<LowerError> = []
+
+; 降载状态：模块四表加当前单元视图；函数之间只共享类型池、节点池与错误表。
+(LowerState)
+map: TypeMap = TypeMap()
+nodes: IrNodePool = IrNodePool()
+texts: Array<String> = []
+functions: Array<IrFunction> = []
+errors: Array<LowerError> = []
+world: MemberWorld = MemberWorld()
+types: ExprTypes = ExprTypes()
+unitIndex: I32 = 0
+bytes: Array<U8> = []
+
+; 声明名：从源内区间解码，保留原始拼写。
+declName|func(unit: CompilationUnit, bytes: Array<U8>, decl: DeclNode,) -> (String,):
+    return decodeSpelling(bytes = bytes, start = decl.nameStart, end = decl.nameEnd)
+
+; 参数槽位：在函数帧里按拼写找参数局部，缺席答 -1。
+paramSlotOf|func(scope: ScopeStack, name: String,) -> (I32,):
+    var i = 0
+    while i < len(scope.locals):
+        let local = scope.locals[i]
+        if isParamLocal(local.kind) && local.spelling == name:
+            return local.slot
+        i = i + 1
+    return -1
+
+; 形参表：逐个取参数声明，名字、类型、槽位与取用位一并落地。
+lowerParams|func(state: LowerState, unit: CompilationUnit, decl: DeclNode, scope: ScopeStack,) -> (Array<IrParam>,):
+    var out: Array<IrParam> = []
+    var i = 0
+    while i < len(decl.kids):
+        let kid: DeclNode = unit.ast.decls[decl.kids[i]]
+        if isParamDeclCode(kid.kind):
+            var param = IrParam()
+            param.name = declName(unit = unit, bytes = state.bytes, decl = kid)
+            let semanticId: I32 = state.world.types.typeOf(unit = state.unitIndex, decl = decl.kids[i])
+            param.typeId = irIdOf(map = state.map, semanticId = semanticId)
+            param.slot = paramSlotOf(scope = scope, name = param.name)
+            param.isUsing = kid.isUsing
+            out = out.append(param)
+        i = i + 1
+    return out
+
+; 单函数：播种函数帧取参数与返回类型，再降语句体。
+; 体降不了就整函数留空并记一条缺口：半截体在发射期能跑却少了语句。
+lowerFunction|func(state: LowerState, unit: CompilationUnit, declId: I32,) -> (LowerState,):
+    var out = state
+    let decl: DeclNode = unit.ast.decls[declId]
+    let seed = seedFunctionScope(world = out.world, unitIndex = out.unitIndex, declId = declId, bytes = out.bytes)
+    if !seed.valid:
+        return out
+    var fn = IrFunction()
+    fn.name = declName(unit = unit, bytes = out.bytes, decl = decl)
+    fn.isTest = decl.isTest
+    fn.isAsync = decl.isAsync
+    fn.sourceFile = unit.path
+    if !isVoidReturn(pool = out.world.types.pool, id = seed.returnType):
+        fn.returnType = irIdOf(map = out.map, semanticId = seed.returnType)
+    fn.params = lowerParams(state = out, unit = unit, decl = decl, scope = seed.scope)
+    if decl.body >= 0:
+        var start = LowerStmt()
+        start.pool = out.nodes
+        start.texts = out.texts
+        start.frame = makeLowerFrame(scope = seed.scope)
+        let body = lowerBlockOf(out = start, unit = unit, bytes = out.bytes, map = out.map, types = out.types, unitIndex = out.unitIndex, blockId = decl.body)
+        out.nodes = body.pool
+        out.texts = body.texts
+        if body.failed:
+            out.errors = appendLowerError(errors = out.errors, error = makeLowerError(kind = lowerMissingCapability, file = unit.path, offset = body.offset, detail = fn.name + "：" + body.detail))
+            out.functions = out.functions.append(fn)
+            return out
+        fn.body = body.ids
+    out.functions = out.functions.append(fn)
+    return out
+
+; 单声明：函数直接降；类型与扩展块下钻到成员函数，顺序即声明序。
+lowerDeclBody|func(state: LowerState, unit: CompilationUnit, declId: I32,) -> (LowerState,):
+    var out = state
+    let decl: DeclNode = unit.ast.decls[declId]
+    if isFunctionDeclCode(decl.kind):
+        return lowerFunction(state = out, unit = unit, declId = declId)
+    if isTypeDecl(decl) || isExtensionDeclCode(decl.kind):
+        var i = 0
+        while i < len(decl.kids):
+            let child: DeclNode = unit.ast.decls[decl.kids[i]]
+            if isFunctionDeclCode(child.kind):
+                out = lowerFunction(state = out, unit = unit, declId = decl.kids[i])
+            i = i + 1
+    return out
+
+; 单单元：按顶层声明序走；单元序由调用方给，降载不再排序。
+lowerUnit|func(state: LowerState, unit: CompilationUnit,) -> (LowerState,):
+    var out = state
+    var i = 0
+    while i < len(unit.ast.items):
+        out = lowerDeclBody(state = out, unit = unit, declId = unit.ast.items[i])
+        i = i + 1
+    return out
+
+; 入口：先建类型映射，再逐单元降函数表。
+; 映射错误与函数级失败分表存放：前者没有对应函数，不能参与「每个空体一条」的对照。
+lowerWorkspace|func(input: LowerWorld,) -> (IrModule,):
+    var state = LowerState()
+    state.world = input.world
+    state.types = input.types
+    state.map = buildTypeMap(world = input.world)
+    var u = 0
+    while u < len(input.world.units):
+        state.unitIndex = u
+        state.bytes = tempUtf8Bytes(input.world.units[u].text)
+        state = lowerUnit(state = state, unit = input.world.units[u])
+        u = u + 1
+    var out = IrModule()
+    out.types = state.map.pool
+    out.nodes = state.nodes
+    out.texts = state.texts
+    out.functions = state.functions
+    out.errors = state.errors
+    out.typeErrors = state.map.errors
+    return out
+
+; 函数表按名字查：未命中答 -1；同名不应出现，出现即说明降载重复。
+findFunction|func(module: IrModule, name: String,) -> (I32,):
+    var i = 0
+    while i < len(module.functions):
+        if module.functions[i].name == name:
+            return i
+        i = i + 1
+    return -1
+
+; 函数名表：按降载次序，供判据逐项对照。
+functionNames|func(module: IrModule,) -> (Array<String>,):
+    var out: Array<String> = []
+    var i = 0
+    while i < len(module.functions):
+        out = out.append(module.functions[i].name)
+        i = i + 1
+    return out
+
+; 空体函数数：它与 `errors` 条数应当相等；`typeErrors` 没有对应函数，不进这条对照。
+; 远小于即有函数没报缺口就吞了体，远大于即有函数报了缺口却留下了体。
+emptyBodyCount|func(module: IrModule,) -> (I32,):
+    var total = 0
+    var i = 0
+    while i < len(module.functions):
+        if len(module.functions[i].body) == 0:
+            total = total + 1
+        i = i + 1
+    return total
+
+; 按类别码数节点：判据用，统计整池；类别码由 irExprTag 与 irStmtTag 给。
+countNodes|func(module: IrModule, kind: I32,) -> (I32,):
+    var total = 0
+    var i = 0
+    while i < len(module.nodes.nodes):
+        if module.nodes.nodes[i].kind == kind:
+            total = total + 1
+        i = i + 1
+    return total
+
+; 文本读：文本池下标越界答空串，调用方不必先判边界。
+textAt|func(module: IrModule, id: I32,) -> (String,):
+    if id < 0 || id >= len(module.texts):
+        return ""
+    return module.texts[id]
+
+; 按名取码：枚举项不能跨包引用，判据与发射层都经契约清单查码；未登记答 0。
+tagOfName|func(name: String,) -> (I32,):
+    let table = contractTable()
+    var i = 0
+    while i < len(table.entries):
+        if table.entries[i].name == name:
+            return table.entries[i].tag
+        i = i + 1
+    return 0

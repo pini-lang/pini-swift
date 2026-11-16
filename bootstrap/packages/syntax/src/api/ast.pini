@@ -392,6 +392,9 @@ isCallExpr|self(_id: I32,) -> (Bool,):
     return self.exprs[_id].kind == exprKindTag(exprCall)
 isBinaryExpr|self(_id: I32,) -> (Bool,):
     return self.exprs[_id].kind == exprKindTag(exprBinary)
+; 一元运算：前缀或后缀运算符，操作数是唯一子节点。
+isUnaryExpr|self(_id: I32,) -> (Bool,):
+    return self.exprs[_id].kind == exprKindTag(exprUnary)
 ; 标签实参：二元节点、名字区间非空且运算符为赋值，三者同时成立。
 isLabeledArgument|self(_id: I32,) -> (Bool,):
     if !self.isBinaryExpr(_id):
@@ -410,6 +413,9 @@ isBoolExpr|self(_id: I32,) -> (Bool,):
     if self.exprs[_id].kind == exprKindTag(exprTrue):
         return true
     return self.exprs[_id].kind == exprKindTag(exprFalse)
+; 真值字面量：降载要区分 `true` 与 `false`，布尔合判不够。
+isTrueExpr|self(_id: I32,) -> (Bool,):
+    return self.exprs[_id].kind == exprKindTag(exprTrue)
 isNilExpr|self(_id: I32,) -> (Bool,):
     return self.exprs[_id].kind == exprKindTag(exprNil)
 isInterpolatedExpr|self(_id: I32,) -> (Bool,):

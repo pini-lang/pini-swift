@@ -1,0 +1,576 @@
+; IR 节点池与 IR 类型池：类别码标识节点，下标标识类型；两者都只增不改。
+; 节点单池：表达式段自 1 起、语句段自 101 起，子节点用池下标，遍历按类别码分派。
+; 类型池独立于语义池：语义池十二类、IR 池二十三类，映射在降载入口一次建好，此处不回查。
+
+; 表达式节点类别：项序即类别码，与契约条目号一一对应。
+[IrExprKind]
+irIntConst
+irFloatConst
+irBoolConst
+irStringConst
+irLoad
+irBinary
+irUnary
+irCall
+irPrintCall
+irPrintMulti
+irIndirectCall
+irFunctionValue
+irClosureLiteral
+irAssertCall
+irResultConstruct
+irOptionalConstruct
+irOptionalGet
+irArrayLiteral
+irDictLiteral
+irSetLiteral
+irSubscriptGet
+irLenCall
+irSliceCall
+irTupleConstruct
+irTupleIndexGet
+irConstruct
+irEnumConstruct
+irFieldGet
+irPointerLoad
+irPointerStore
+irAddressOfVar
+irFileWrite
+irFileRead
+irReadLine
+irFileAppend
+irFileTryRead
+irFileTryWrite
+irFileTryAppend
+irIsAsciiDigit
+irStringCase
+irStringContains
+irStringSubstring
+irStringSplit
+irArrayJoin
+irStringConcat
+irInterpString
+irStringTrimLeft
+irStringTrimRight
+irStringIndexOf
+irLazyRefConstruct
+irLazyRefValue
+irJoin
+irGivenInstance
+irForeignDataAddress
+irCFunctionAddress
+irShortCircuit
+
+; 语句节点类别：项序即类别码，码段从 101 起，与表达式段分开。
+[IrStmtKind]
+irAllocVar
+irStoreVar
+irIfStmt
+irWhileStmt
+irForInStmt
+irReturnStmt
+irExprStmt
+irDeferStmt
+irTryStmt
+irSubscriptStore
+irBreakStmt
+irContinueStmt
+irPanicStmt
+irMatchStmt
+irFieldStore
+irCaptureMarker
+irDetachStmt
+
+; IR 类型类别：二十三类，与契约的类型层一一对应。
+; 标量六类各自成项；`char` 与 `string` 同拼写但不同项，「恰含一个字素」由类型系统承担。
+[IrTypeClass]
+irTypeI32
+irTypeI64
+irTypeU64
+irTypeU8
+irTypeI8
+irTypeF64
+irTypeBoolean
+irTypeString
+irTypeChar
+irTypeResult
+irTypeFuture
+irTypeArray
+irTypeOptional
+irTypeNominal
+irTypeEnumeration
+irTypeDict
+irTypeSet
+irTypeLazyRef
+irTypeTuple
+irTypeFunction
+irTypePointer
+irTypeCFunction
+irTypeStringHandle
+
+; 类型条目：类别、名义拼写、分量与返回；`uses` 只给函数类型记取用参数位，`flags` 位 0 表示对象。
+(IrTypeEntry)
+kind: IrTypeClass = .irTypeI32
+name: String = ""
+kids: Array<I32> = []
+ret: I32 = -1
+uses: Array<I32> = []
+flags: I32 = 0
+
+; 类型池：同形只驻留一份，故下标相等即类型相等。
+(IrTypePool)
+entries: Array<IrTypeEntry> = []
+
+; 驻留结果：池与命中的下标；调用方一律拿新池覆盖旧池。
+(IrTypeInsert)
+pool: IrTypePool = IrTypePool()
+id: I32 = -1
+
+; 节点：类别码加通用字段；排布由类别码决定，字段比任何单个节点需要的都多。
+; `tail` 是 `kids` 里第二段序列的起始下标，-1 表示只有一段。
+; 控制流节点的体是语句序列：条件或表头在前，两段体的边界只能靠它切开。
+(IrNode)
+kind: I32 = 0
+typeId: I32 = -1
+op: I32 = 0
+intValue: I64 = 0
+floatValue: F64 = 0.0
+text: I32 = -1
+tail: I32 = -1
+kids: Array<I32> = []
+
+; 节点池：只追加，下标即节点身份。
+(IrNodePool)
+nodes: Array<IrNode> = []
+
+; 表达式类别码：与枚举项序一致，从 1 起。
+irExprTag|func(_kind: IrExprKind,) -> (I32,):
+    match _kind:
+        case irIntConst:
+            return 1
+        case irFloatConst:
+            return 2
+        case irBoolConst:
+            return 3
+        case irStringConst:
+            return 4
+        case irLoad:
+            return 5
+        case irBinary:
+            return 6
+        case irUnary:
+            return 7
+        case irCall:
+            return 8
+        case irPrintCall:
+            return 9
+        case irPrintMulti:
+            return 10
+        case irIndirectCall:
+            return 11
+        case irFunctionValue:
+            return 12
+        case irClosureLiteral:
+            return 13
+        case irAssertCall:
+            return 14
+        case irResultConstruct:
+            return 15
+        case irOptionalConstruct:
+            return 16
+        case irOptionalGet:
+            return 17
+        case irArrayLiteral:
+            return 18
+        case irDictLiteral:
+            return 19
+        case irSetLiteral:
+            return 20
+        case irSubscriptGet:
+            return 21
+        case irLenCall:
+            return 22
+        case irSliceCall:
+            return 23
+        case irTupleConstruct:
+            return 24
+        case irTupleIndexGet:
+            return 25
+        case irConstruct:
+            return 26
+        case irEnumConstruct:
+            return 27
+        case irFieldGet:
+            return 28
+        case irPointerLoad:
+            return 29
+        case irPointerStore:
+            return 30
+        case irAddressOfVar:
+            return 31
+        case irFileWrite:
+            return 32
+        case irFileRead:
+            return 33
+        case irReadLine:
+            return 34
+        case irFileAppend:
+            return 35
+        case irFileTryRead:
+            return 36
+        case irFileTryWrite:
+            return 37
+        case irFileTryAppend:
+            return 38
+        case irIsAsciiDigit:
+            return 39
+        case irStringCase:
+            return 40
+        case irStringContains:
+            return 41
+        case irStringSubstring:
+            return 42
+        case irStringSplit:
+            return 43
+        case irArrayJoin:
+            return 44
+        case irStringConcat:
+            return 45
+        case irInterpString:
+            return 46
+        case irStringTrimLeft:
+            return 47
+        case irStringTrimRight:
+            return 48
+        case irStringIndexOf:
+            return 49
+        case irLazyRefConstruct:
+            return 50
+        case irLazyRefValue:
+            return 51
+        case irJoin:
+            return 52
+        case irGivenInstance:
+            return 53
+        case irForeignDataAddress:
+            return 54
+        case irCFunctionAddress:
+            return 55
+        case irShortCircuit:
+            return 56
+    return 0
+
+; 语句类别码：与枚举项序一致，码段从 101 起。
+irStmtTag|func(_kind: IrStmtKind,) -> (I32,):
+    match _kind:
+        case irAllocVar:
+            return 101
+        case irStoreVar:
+            return 102
+        case irIfStmt:
+            return 103
+        case irWhileStmt:
+            return 104
+        case irForInStmt:
+            return 105
+        case irReturnStmt:
+            return 106
+        case irExprStmt:
+            return 107
+        case irDeferStmt:
+            return 108
+        case irTryStmt:
+            return 109
+        case irSubscriptStore:
+            return 110
+        case irBreakStmt:
+            return 111
+        case irContinueStmt:
+            return 112
+        case irPanicStmt:
+            return 113
+        case irMatchStmt:
+            return 114
+        case irFieldStore:
+            return 115
+        case irCaptureMarker:
+            return 116
+        case irDetachStmt:
+            return 117
+    return 0
+
+; 表达式段判定：码在 1 到 100 之间。
+irIsExprTag|func(_tag: I32,) -> (Bool,):
+    return _tag >= 1 && _tag <= 100
+
+; 语句段判定：码在 101 到 200 之间。
+irIsStmtTag|func(_tag: I32,) -> (Bool,):
+    return _tag >= 101 && _tag <= 200
+
+; 类型类别码：与枚举项序一致，从 1 起。
+irTypeTag|func(_kind: IrTypeClass,) -> (I32,):
+    match _kind:
+        case irTypeI32:
+            return 1
+        case irTypeI64:
+            return 2
+        case irTypeU64:
+            return 3
+        case irTypeU8:
+            return 4
+        case irTypeI8:
+            return 5
+        case irTypeF64:
+            return 6
+        case irTypeBoolean:
+            return 7
+        case irTypeString:
+            return 8
+        case irTypeChar:
+            return 9
+        case irTypeResult:
+            return 10
+        case irTypeFuture:
+            return 11
+        case irTypeArray:
+            return 12
+        case irTypeOptional:
+            return 13
+        case irTypeNominal:
+            return 14
+        case irTypeEnumeration:
+            return 15
+        case irTypeDict:
+            return 16
+        case irTypeSet:
+            return 17
+        case irTypeLazyRef:
+            return 18
+        case irTypeTuple:
+            return 19
+        case irTypeFunction:
+            return 20
+        case irTypePointer:
+            return 21
+        case irTypeCFunction:
+            return 22
+        case irTypeStringHandle:
+            return 23
+    return 0
+
+; 逐项相等：按下标比，长度不同直接假。
+irSameIds|func(first: Array<I32>, second: Array<I32>,) -> (Bool,):
+    if len(first) != len(second):
+        return false
+    var i = 0
+    while i < len(first):
+        if first[i] != second[i]:
+            return false
+        i = i + 1
+    return true
+
+; 查同形条目：类别码、名字、分量、返回、取用位与标志全同才算命中；找不到答 -1。
+irFindType|func(pool: IrTypePool, kind: IrTypeClass, name: String, kids: Array<I32>, ret: I32, uses: Array<I32>, flags: I32,) -> (I32,):
+    var i = 0
+    while i < len(pool.entries):
+        let entry = pool.entries[i]
+        if irTypeTag(entry.kind) == irTypeTag(kind):
+            if entry.name == name && irSameIds(first = entry.kids, second = kids) && entry.ret == ret:
+                if irSameIds(first = entry.uses, second = uses) && entry.flags == flags:
+                    return i
+        i = i + 1
+    return -1
+
+; 驻留一个类型：同形复用已有下标，否则追加到池尾。
+irInternType|func(pool: IrTypePool, kind: IrTypeClass, name: String, kids: Array<I32>, ret: I32, uses: Array<I32>, flags: I32,) -> (IrTypeInsert,):
+    var out = IrTypeInsert()
+    let at = irFindType(pool = pool, kind = kind, name = name, kids = kids, ret = ret, uses = uses, flags = flags)
+    if at >= 0:
+        out.pool = pool
+        out.id = at
+        return out
+    var entry = IrTypeEntry()
+    entry.kind = kind
+    entry.name = name
+    entry.kids = kids
+    entry.ret = ret
+    entry.uses = uses
+    entry.flags = flags
+    var grown = pool
+    grown.entries = grown.entries.append(entry)
+    out.pool = grown
+    out.id = len(grown.entries) - 1
+    return out
+
+; 标量驻留：只给类别与拼写，其余字段取缺省。
+irScalarType|func(pool: IrTypePool, kind: IrTypeClass, name: String,) -> (IrTypeInsert,):
+    return irInternType(pool = pool, kind = kind, name = name, kids = [], ret = -1, uses = [], flags = 0)
+
+; 单层包装驻留：数组、可选、指针、结果、集合、字典与惰性引用共用。
+irWrapType|func(pool: IrTypePool, kind: IrTypeClass, name: String, inner: I32,) -> (IrTypeInsert,):
+    return irInternType(pool = pool, kind = kind, name = name, kids = [inner], ret = -1, uses = [], flags = 0)
+
+; 双参驻留：字典收键与值，其余容器不用。
+irPairType|func(pool: IrTypePool, kind: IrTypeClass, name: String, firstKid: I32, secondKid: I32,) -> (IrTypeInsert,):
+    return irInternType(pool = pool, kind = kind, name = name, kids = [firstKid, secondKid], ret = -1, uses = [], flags = 0)
+
+; 名义类型驻留：`flags` 位 0 为对象，其余为值语义。
+irNominalType|func(pool: IrTypePool, name: String, isObject: Bool,) -> (IrTypeInsert,):
+    var flags = 0
+    if isObject:
+        flags = 1
+    return irInternType(pool = pool, kind = irTypeNominal, name = name, kids = [], ret = -1, uses = [], flags = flags)
+
+; 枚举类型驻留：引用语义，载荷按用例另存形态表，池内只记名字。
+irEnumType|func(pool: IrTypePool, name: String,) -> (IrTypeInsert,):
+    return irInternType(pool = pool, kind = irTypeEnumeration, name = name, kids = [], ret = -1, uses = [], flags = 0)
+
+; 函数类型驻留：形参、返回与取用位一并入池；取用位不进运行时表示，但参与驻留判等。
+irFunctionType|func(pool: IrTypePool, params: Array<I32>, ret: I32, uses: Array<I32>,) -> (IrTypeInsert,):
+    return irInternType(pool = pool, kind = irTypeFunction, name = "", kids = params, ret = ret, uses = uses, flags = 0)
+
+; 元组类型驻留：分量按声明序，标签不进池（标签只供诊断，槽序即分量序）。
+irTupleType|func(pool: IrTypePool, fields: Array<I32>,) -> (IrTypeInsert,):
+    return irInternType(pool = pool, kind = irTypeTuple, name = "", kids = fields, ret = -1, uses = [], flags = 0)
+
+; 池长：下标合法区间是 0 到 count - 1。
+irTypeCount|func(_pool: IrTypePool,) -> (I32,):
+    return len(_pool.entries)
+
+; 条目读：越界是运行时陷阱，调用方先判池长。
+irTypeAt|func(pool: IrTypePool, id: I32,) -> (IrTypeEntry,):
+    return pool.entries[id]
+
+; 对象判定：只有名义类型且标志位 0 置位才算。
+irIsObjectType|func(pool: IrTypePool, id: I32,) -> (Bool,):
+    if id < 0 || id >= len(pool.entries):
+        return false
+    let entry = pool.entries[id]
+    if irTypeTag(entry.kind) != irTypeTag(irTypeNominal):
+        return false
+    return entry.flags % 2 == 1
+
+; 分量读：标量等无分量类别答空表。
+irTypeKids|func(pool: IrTypePool, id: I32,) -> (Array<I32>,):
+    if id < 0 || id >= len(pool.entries):
+        return []
+    return pool.entries[id].kids
+
+; 规范化文本：诊断与接口共用一份拼写，同一类型在任何遍历顺序下同一串。
+irTypeText|func(pool: IrTypePool, id: I32,) -> (String,):
+    if id < 0 || id >= len(pool.entries):
+        return "<无效>"
+    let entry = pool.entries[id]
+    let tag = irTypeTag(entry.kind)
+    if tag == irTypeTag(irTypeI32):
+        return "i32"
+    if tag == irTypeTag(irTypeI64):
+        return "i64"
+    if tag == irTypeTag(irTypeU64):
+        return "u64"
+    if tag == irTypeTag(irTypeU8):
+        return "u8"
+    if tag == irTypeTag(irTypeI8):
+        return "i8"
+    if tag == irTypeTag(irTypeF64):
+        return "f64"
+    if tag == irTypeTag(irTypeBoolean):
+        return "boolean"
+    if tag == irTypeTag(irTypeString):
+        return "string"
+    if tag == irTypeTag(irTypeChar):
+        return "char"
+    if tag == irTypeTag(irTypeNominal):
+        return entry.name
+    if tag == irTypeTag(irTypeEnumeration):
+        return entry.name
+    if tag == irTypeTag(irTypeStringHandle):
+        return "stringHandle"
+    if tag == irTypeTag(irTypeResult):
+        return "result<" + irTypeList(pool = pool, ids = entry.kids) + ">"
+    if tag == irTypeTag(irTypeFuture):
+        return "future<" + irTypeList(pool = pool, ids = entry.kids) + ">"
+    if tag == irTypeTag(irTypeArray):
+        return "array<" + irTypeList(pool = pool, ids = entry.kids) + ">"
+    if tag == irTypeTag(irTypeOptional):
+        return "optional<" + irTypeList(pool = pool, ids = entry.kids) + ">"
+    if tag == irTypeTag(irTypeDict):
+        return "dict<" + irTypeList(pool = pool, ids = entry.kids) + ">"
+    if tag == irTypeTag(irTypeSet):
+        return "set<" + irTypeList(pool = pool, ids = entry.kids) + ">"
+    if tag == irTypeTag(irTypeLazyRef):
+        return "lazyRef<" + irTypeList(pool = pool, ids = entry.kids) + ">"
+    if tag == irTypeTag(irTypeTuple):
+        return "(" + irTypeList(pool = pool, ids = entry.kids) + ",)"
+    if tag == irTypeTag(irTypePointer):
+        return "*" + irTypeText(pool = pool, id = entry.kids[0])
+    if tag == irTypeTag(irTypeFunction):
+        return "(" + irTypeList(pool = pool, ids = entry.kids) + ",) -> " + irTypeText(pool = pool, id = entry.ret)
+    if tag == irTypeTag(irTypeCFunction):
+        return "cFunction(" + irTypeList(pool = pool, ids = entry.kids) + ",) -> " + irTypeText(pool = pool, id = entry.ret)
+    return "<无效>"
+
+; 分量拼成文本：逗号加空格分隔。
+irTypeList|func(pool: IrTypePool, ids: Array<I32>,) -> (String,):
+    var out = ""
+    var i = 0
+    while i < len(ids):
+        if i > 0:
+            out = out + ", "
+        out = out + irTypeText(pool = pool, id = ids[i])
+        i = i + 1
+    return out
+
+; 造节点：只给类别码与类型下标，其余字段取缺省，调用方按需补。
+irMakeNode|func(kind: I32, typeId: I32,) -> (IrNode,):
+    var out = IrNode()
+    out.kind = kind
+    out.typeId = typeId
+    return out
+
+; 追加节点：返回新池与节点下标；池只增不改。
+(IrNodeInsert)
+pool: IrNodePool = IrNodePool()
+id: I32 = -1
+
+irAppendNode|func(pool: IrNodePool, node: IrNode,) -> (IrNodeInsert,):
+    var out = IrNodeInsert()
+    var grown = pool
+    grown.nodes = grown.nodes.append(node)
+    out.pool = grown
+    out.id = len(grown.nodes) - 1
+    return out
+
+; 节点读：越界是运行时陷阱，调用方先判池长。
+irNodeAt|func(pool: IrNodePool, id: I32,) -> (IrNode,):
+    return pool.nodes[id]
+
+; 池长：下标合法区间是 0 到 count - 1。
+irNodeCount|func(_pool: IrNodePool,) -> (I32,):
+    return len(_pool.nodes)
+
+; 子节点读：越界答空表。
+irNodeKids|func(pool: IrNodePool, id: I32,) -> (Array<I32>,):
+    if id < 0 || id >= len(pool.nodes):
+        return []
+    return pool.nodes[id].kids
+
+; 追加子节点：整节点读改写的原地更新，旧池快照不得与新池共存。
+irAddKid|func(pool: IrNodePool, id: I32, kid: I32,) -> (IrNodePool,):
+    if id < 0 || id >= len(pool.nodes):
+        return pool
+    var out = pool
+    var node = out.nodes[id]
+    node.kids = node.kids.append(kid)
+    out.nodes[id] = node
+    return out
+
+; 改类型位：降载期补判时用，同样走整节点读改写。
+irSetNodeType|func(pool: IrNodePool, id: I32, typeId: I32,) -> (IrNodePool,):
+    if id < 0 || id >= len(pool.nodes):
+        return pool
+    var out = pool
+    var node = out.nodes[id]
+    node.typeId = typeId
+    out.nodes[id] = node
+    return out

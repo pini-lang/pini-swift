@@ -1,0 +1,174 @@
+; 由 bootstrap/tools/gen-ir-contract-table.py 生成，勿手改。
+; 源自 IR 节点契约的节点表；族映射与能力普查工具同源。
+; 类别码：表达式段自 1 起，语句段自 101 起，与契约条目号一一对应。
+
+; 契约条目：类别码、节点名、族码与契约小节。
+(IrContractEntry)
+tag: I32 = 0
+name: String = ""
+family: I32 = 0
+section: String = ""
+
+; 契约清单：条目按类别码升序；两段计数供双向检查用。
+(IrContractTable)
+entries: Array<IrContractEntry> = []
+
+; 族名表：下标即族码，与 backend-kit 的能力族同序。
+contractFamilyNames|func() -> (Array<String>,):
+    var out: Array<String> = []
+    out = out.append("controlFlow")
+    out = out.append("scalars")
+    out = out.append("variablesAndOperators")
+    out = out.append("calls")
+    out = out.append("resultAndOptional")
+    out = out.append("collections")
+    out = out.append("nominals")
+    out = out.append("pointers")
+    out = out.append("fileIO")
+    out = out.append("catchableIO")
+    out = out.append("strings")
+    out = out.append("lazyRef")
+    out = out.append("concurrency")
+    out = out.append("givenInstances")
+    return out
+
+; 族码：名字未登记答 -1。
+contractFamilyId|func(name: String,) -> (I32,):
+    let names = contractFamilyNames()
+    var i = 0
+    while i < len(names):
+        if names[i] == name:
+            return i
+        i = i + 1
+    return -1
+
+; 造一条：字段直填，不做校验。
+makeContractEntry|func(tag: I32, name: String, family: I32, section: String,) -> (IrContractEntry,):
+    var out = IrContractEntry()
+    out.tag = tag
+    out.name = name
+    out.family = family
+    out.section = section
+    return out
+
+; 清单：逐条按类别码升序；两次调用得到同一串条目。
+contractTable|func() -> (IrContractTable,):
+    var out = IrContractTable()
+    out.entries = out.entries.append(makeContractEntry(tag = 1, name = "intConst", family = 1, section = "2.1"))
+    out.entries = out.entries.append(makeContractEntry(tag = 2, name = "floatConst", family = 1, section = "2.1"))
+    out.entries = out.entries.append(makeContractEntry(tag = 3, name = "boolConst", family = 1, section = "2.1"))
+    out.entries = out.entries.append(makeContractEntry(tag = 4, name = "stringConst", family = 1, section = "2.1"))
+    out.entries = out.entries.append(makeContractEntry(tag = 5, name = "load", family = 2, section = "2.2"))
+    out.entries = out.entries.append(makeContractEntry(tag = 6, name = "binary", family = 2, section = "2.2"))
+    out.entries = out.entries.append(makeContractEntry(tag = 7, name = "unary", family = 2, section = "2.2"))
+    out.entries = out.entries.append(makeContractEntry(tag = 8, name = "call", family = 3, section = "2.3"))
+    out.entries = out.entries.append(makeContractEntry(tag = 9, name = "printCall", family = 3, section = "2.3"))
+    out.entries = out.entries.append(makeContractEntry(tag = 10, name = "printMulti", family = 3, section = "2.3"))
+    out.entries = out.entries.append(makeContractEntry(tag = 11, name = "indirectCall", family = 3, section = "2.3"))
+    out.entries = out.entries.append(makeContractEntry(tag = 12, name = "functionValue", family = 3, section = "2.3"))
+    out.entries = out.entries.append(makeContractEntry(tag = 13, name = "closureLiteral", family = 3, section = "2.3"))
+    out.entries = out.entries.append(makeContractEntry(tag = 14, name = "assertCall", family = 3, section = "2.3"))
+    out.entries = out.entries.append(makeContractEntry(tag = 15, name = "resultConstruct", family = 4, section = "2.4"))
+    out.entries = out.entries.append(makeContractEntry(tag = 16, name = "optionalConstruct", family = 4, section = "2.4"))
+    out.entries = out.entries.append(makeContractEntry(tag = 17, name = "optionalGet", family = 4, section = "2.4"))
+    out.entries = out.entries.append(makeContractEntry(tag = 18, name = "arrayLiteral", family = 5, section = "2.5"))
+    out.entries = out.entries.append(makeContractEntry(tag = 19, name = "dictLiteral", family = 5, section = "2.5"))
+    out.entries = out.entries.append(makeContractEntry(tag = 20, name = "setLiteral", family = 5, section = "2.5"))
+    out.entries = out.entries.append(makeContractEntry(tag = 21, name = "subscriptGet", family = 5, section = "2.5"))
+    out.entries = out.entries.append(makeContractEntry(tag = 22, name = "lenCall", family = 5, section = "2.5"))
+    out.entries = out.entries.append(makeContractEntry(tag = 23, name = "sliceCall", family = 5, section = "2.5"))
+    out.entries = out.entries.append(makeContractEntry(tag = 24, name = "tupleConstruct", family = 5, section = "2.5"))
+    out.entries = out.entries.append(makeContractEntry(tag = 25, name = "tupleIndexGet", family = 5, section = "2.5"))
+    out.entries = out.entries.append(makeContractEntry(tag = 26, name = "construct", family = 6, section = "2.6"))
+    out.entries = out.entries.append(makeContractEntry(tag = 27, name = "enumConstruct", family = 6, section = "2.6"))
+    out.entries = out.entries.append(makeContractEntry(tag = 28, name = "fieldGet", family = 6, section = "2.6"))
+    out.entries = out.entries.append(makeContractEntry(tag = 29, name = "pointerLoad", family = 7, section = "2.7"))
+    out.entries = out.entries.append(makeContractEntry(tag = 30, name = "pointerStore", family = 7, section = "2.7"))
+    out.entries = out.entries.append(makeContractEntry(tag = 31, name = "addressOfVar", family = 7, section = "2.7"))
+    out.entries = out.entries.append(makeContractEntry(tag = 32, name = "fileWrite", family = 8, section = "2.8"))
+    out.entries = out.entries.append(makeContractEntry(tag = 33, name = "fileRead", family = 8, section = "2.8"))
+    out.entries = out.entries.append(makeContractEntry(tag = 34, name = "readLine", family = 8, section = "2.8"))
+    out.entries = out.entries.append(makeContractEntry(tag = 35, name = "fileAppend", family = 8, section = "2.8"))
+    out.entries = out.entries.append(makeContractEntry(tag = 36, name = "fileTryRead", family = 9, section = "2.9"))
+    out.entries = out.entries.append(makeContractEntry(tag = 37, name = "fileTryWrite", family = 9, section = "2.9"))
+    out.entries = out.entries.append(makeContractEntry(tag = 38, name = "fileTryAppend", family = 9, section = "2.9"))
+    out.entries = out.entries.append(makeContractEntry(tag = 39, name = "isAsciiDigit", family = 10, section = "2.10"))
+    out.entries = out.entries.append(makeContractEntry(tag = 40, name = "stringCase", family = 10, section = "2.10"))
+    out.entries = out.entries.append(makeContractEntry(tag = 41, name = "stringContains", family = 10, section = "2.10"))
+    out.entries = out.entries.append(makeContractEntry(tag = 42, name = "stringSubstring", family = 10, section = "2.10"))
+    out.entries = out.entries.append(makeContractEntry(tag = 43, name = "stringSplit", family = 10, section = "2.10"))
+    out.entries = out.entries.append(makeContractEntry(tag = 44, name = "arrayJoin", family = 10, section = "2.10"))
+    out.entries = out.entries.append(makeContractEntry(tag = 45, name = "stringConcat", family = 10, section = "2.10"))
+    out.entries = out.entries.append(makeContractEntry(tag = 46, name = "interpString", family = 10, section = "2.10"))
+    out.entries = out.entries.append(makeContractEntry(tag = 47, name = "stringTrimLeft", family = 10, section = "2.10"))
+    out.entries = out.entries.append(makeContractEntry(tag = 48, name = "stringTrimRight", family = 10, section = "2.10"))
+    out.entries = out.entries.append(makeContractEntry(tag = 49, name = "stringIndexOf", family = 10, section = "2.10"))
+    out.entries = out.entries.append(makeContractEntry(tag = 50, name = "lazyRefConstruct", family = 11, section = "2.11"))
+    out.entries = out.entries.append(makeContractEntry(tag = 51, name = "lazyRefValue", family = 11, section = "2.11"))
+    out.entries = out.entries.append(makeContractEntry(tag = 52, name = "join", family = 12, section = "2.12"))
+    out.entries = out.entries.append(makeContractEntry(tag = 53, name = "givenInstance", family = 13, section = "2.13"))
+    out.entries = out.entries.append(makeContractEntry(tag = 54, name = "foreignDataAddress", family = 7, section = "2.14"))
+    out.entries = out.entries.append(makeContractEntry(tag = 55, name = "cFunctionAddress", family = 3, section = "2.14"))
+    out.entries = out.entries.append(makeContractEntry(tag = 56, name = "shortCircuit", family = 2, section = "2.15"))
+    out.entries = out.entries.append(makeContractEntry(tag = 101, name = "allocVar", family = 0, section = "3"))
+    out.entries = out.entries.append(makeContractEntry(tag = 102, name = "storeVar", family = 0, section = "3"))
+    out.entries = out.entries.append(makeContractEntry(tag = 103, name = "ifStmt", family = 0, section = "3"))
+    out.entries = out.entries.append(makeContractEntry(tag = 104, name = "whileStmt", family = 0, section = "3"))
+    out.entries = out.entries.append(makeContractEntry(tag = 105, name = "forInStmt", family = 0, section = "3"))
+    out.entries = out.entries.append(makeContractEntry(tag = 106, name = "returnStmt", family = 0, section = "3"))
+    out.entries = out.entries.append(makeContractEntry(tag = 107, name = "exprStmt", family = 0, section = "3"))
+    out.entries = out.entries.append(makeContractEntry(tag = 108, name = "deferStmt", family = 0, section = "3"))
+    out.entries = out.entries.append(makeContractEntry(tag = 109, name = "tryStmt", family = 0, section = "3"))
+    out.entries = out.entries.append(makeContractEntry(tag = 110, name = "subscriptStore", family = 0, section = "3"))
+    out.entries = out.entries.append(makeContractEntry(tag = 111, name = "breakStmt", family = 0, section = "3"))
+    out.entries = out.entries.append(makeContractEntry(tag = 112, name = "continueStmt", family = 0, section = "3"))
+    out.entries = out.entries.append(makeContractEntry(tag = 113, name = "panicStmt", family = 0, section = "3"))
+    out.entries = out.entries.append(makeContractEntry(tag = 114, name = "matchStmt", family = 0, section = "3"))
+    out.entries = out.entries.append(makeContractEntry(tag = 115, name = "fieldStore", family = 0, section = "3"))
+    out.entries = out.entries.append(makeContractEntry(tag = 116, name = "captureMarker", family = 0, section = "3"))
+    out.entries = out.entries.append(makeContractEntry(tag = 117, name = "detachStmt", family = 0, section = "3"))
+    return out
+
+; 条目数：下标合法区间是 0 到 count - 1。
+contractCount|func(table: IrContractTable,) -> (I32,):
+    return len(table.entries)
+
+; 表达式条目数。
+contractExprCount|func(table: IrContractTable,) -> (I32,):
+    var total = 0
+    var i = 0
+    while i < len(table.entries):
+        if table.entries[i].tag < 100:
+            total = total + 1
+        i = i + 1
+    return total
+
+; 语句条目数。
+contractStmtCount|func(table: IrContractTable,) -> (I32,):
+    return len(table.entries) - contractExprCount(table = table)
+
+; 按类别码取条目：未命中答空条目。
+contractAt|func(table: IrContractTable, tag: I32,) -> (IrContractEntry,):
+    var i = 0
+    while i < len(table.entries):
+        if table.entries[i].tag == tag:
+            return table.entries[i]
+        i = i + 1
+    return IrContractEntry()
+
+; 按名字取类别码：未命中答 -1；名字是 ASCII，逐字节比即可。
+contractTagOf|func(table: IrContractTable, name: String,) -> (I32,):
+    var i = 0
+    while i < len(table.entries):
+        if table.entries[i].name == name:
+            return table.entries[i].tag
+        i = i + 1
+    return -1
+
+; 表达式段条数（常量，供节点枚举对照）。
+contractExprTotal|func() -> (I32,):
+    return 56
+
+; 语句段条数。
+contractStmtTotal|func() -> (I32,):
+    return 17

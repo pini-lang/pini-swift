@@ -81,6 +81,22 @@ localKindName|func(_kind: LocalKind,) -> (String,):
 isLocalKind|func(kind: LocalKind, expected: LocalKind,) -> (Bool,):
     return localKindName(kind) == localKindName(expected)
 
+; 跨包判定：枚举项不能跨包引用，下游按种类逐个问。
+isParamLocal|func(_kind: LocalKind,) -> (Bool,):
+    return localKindName(_kind) == localKindName(localParam)
+
+isSelfLocal|func(_kind: LocalKind,) -> (Bool,):
+    return localKindName(_kind) == localKindName(localSelf)
+
+isVariableLocal|func(_kind: LocalKind,) -> (Bool,):
+    return localKindName(_kind) == localKindName(localVariable)
+
+isLoopVarLocal|func(_kind: LocalKind,) -> (Bool,):
+    return localKindName(_kind) == localKindName(localLoopVar)
+
+isBindingLocal|func(_kind: LocalKind,) -> (Bool,):
+    return localKindName(_kind) == localKindName(localBinding)
+
 ; 帧种类名：与计划件的四类帧同名。
 scopeKindName|func(_kind: ScopeKind,) -> (String,):
     match _kind:
