@@ -71,13 +71,14 @@ probeWorld|func(world: MemberWorld, pool: TypePool,) -> (MemberWorld,):
     return out
 
 ; 变量声明入表：有标注按标注，无标注且初值是字面量按字面量，其余跳过。
-noteVariable|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmtId: I32, out: NameBuild,) -> (NameBuild,):
+; 字节视图由调用方传：整单元只转一次，逐语句复用。
+noteVariable|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmtId: I32, bytes: Array<U8>, out: NameBuild,) -> (NameBuild,):
     let stmt = unit.ast.stmtAt(stmtId)
     let pattern = unit.ast.stmtChild(id = stmtId, index = 0)
     if pattern < 0 || !unit.ast.isIdentifierExpr(pattern):
         return out
     let expr = unit.ast.exprAt(pattern)
-    let name = decodeRange(bytes = tempUtf8Bytes(unit.text), start = expr.nameStart, end = expr.nameEnd)
+    let name = decodeRange(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
     if name == "_":
         return out
     var typeId = -1
@@ -95,11 +96,10 @@ noteVariable|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stm
     out.table = noteName(table = out.table, name = name, typeId = typeId)
     return out
 
-; 建名字表：先收全部参数，再收顶层语句里的变量声明。
-buildNameTable|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32,) -> (NameBuild,):
+; 建名字表：先收全部参数，再收顶层语句里的变量声明；字节视图只转一次。
+buildNameTable|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, bytes: Array<U8>,) -> (NameBuild,):
     var out = NameBuild()
     out.pool = world.types.pool
-    let bytes = tempUtf8Bytes(unit.text)
     var d = 0
     while d < unit.ast.declCount():
         let decl = unit.ast.decls[d]
@@ -112,7 +112,7 @@ buildNameTable|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32,) 
     var s = 0
     while s < unit.ast.stmtCount():
         if unit.ast.isVariableStmt(s):
-            out = noteVariable(world = world, unit = unit, unitIndex = unitIndex, stmtId = s, out = out)
+            out = noteVariable(world = world, unit = unit, unitIndex = unitIndex, stmtId = s, bytes = bytes, out = out)
         s = s + 1
     return out
 
@@ -127,14 +127,14 @@ returnTypeOf|func(world: MemberWorld, symbol: I32, pool: TypePool,) -> (TypeInse
     return annotationType(world = world, unit = world.units[ref.unit], node = decl.typeId, pool = pool)
 
 ; 实参预推：先把调用节点的全部子节点推一遍，实参类型因此在提取时可用。
-inferKids|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, pool: TypePool, types: ExprTypes,) -> (InferResult,):
+inferKids|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, pool: TypePool, types: ExprTypes, bytes: Array<U8>,) -> (InferResult,):
     var out = InferResult()
     out.pool = pool
     out.types = types
     var kids = unit.ast.exprAt(node).kids
     var i = 0
     while i < len(kids):
-        let one = inferNode(world = world, unit = unit, unitIndex = unitIndex, node = kids[i], names = names, pool = out.pool, types = out.types)
+        let one = inferNode(world = world, unit = unit, unitIndex = unitIndex, node = kids[i], names = names, pool = out.pool, types = out.types, bytes = bytes)
         out.pool = one.pool
         out.types = one.types
         i = i + 1
@@ -142,7 +142,7 @@ inferKids|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
     return out
 
 ; 推导一个节点：已定型的直接复用，其余按类别后序求值并写表。
-inferNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, pool: TypePool, types: ExprTypes,) -> (InferResult,):
+inferNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, pool: TypePool, types: ExprTypes, bytes: Array<U8>,) -> (InferResult,):
     var out = InferResult()
     out.pool = pool
     out.types = types
@@ -162,21 +162,21 @@ inferNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
         return out
     if unit.ast.isIdentifierExpr(node):
         let expr = unit.ast.exprAt(node)
-        let name = decodeRange(bytes = tempUtf8Bytes(unit.text), start = expr.nameStart, end = expr.nameEnd)
+        let name = decodeRange(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
         out.typeId = lookupNameType(table = names, name = name)
         if out.typeId >= 0:
             out.types = writeExprType(table = out.types, unit = unitIndex, node = node, typeId = out.typeId)
         return out
     if unit.ast.isMemberExpr(node):
-        return inferMember(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out)
+        return inferMember(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out, bytes = bytes)
     if unit.ast.isCallExpr(node):
-        return inferCall(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out)
+        return inferCall(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out, bytes = bytes)
     if unit.ast.isBinaryExpr(node):
-        return inferBinary(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out)
+        return inferBinary(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out, bytes = bytes)
     if unit.ast.isArrayExpr(node) || unit.ast.isSetExpr(node) || unit.ast.isDictionaryExpr(node):
-        return inferContainer(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out)
+        return inferContainer(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out, bytes = bytes)
     if unit.ast.isSubscriptExpr(node) || unit.ast.isSliceExpr(node):
-        return inferIndex(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out)
+        return inferIndex(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out, bytes = bytes)
     if unit.ast.isCastExpr(node):
         let expr = unit.ast.exprAt(node)
         let resolved = annotationType(world = world, unit = unit, node = expr.typeId, pool = out.pool)
@@ -188,16 +188,16 @@ inferNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
     return out
 
 ; 成员：接收者先推；类型已知才问成员面，成员不存在答未写。
-inferMember|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, out: InferResult,) -> (InferResult,):
+inferMember|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, out: InferResult, bytes: Array<U8>,) -> (InferResult,):
     let receiver = unit.ast.childOf(id = node, index = 0)
-    let inner = inferNode(world = world, unit = unit, unitIndex = unitIndex, node = receiver, names = names, pool = out.pool, types = out.types)
+    let inner = inferNode(world = world, unit = unit, unitIndex = unitIndex, node = receiver, names = names, pool = out.pool, types = out.types, bytes = bytes)
     var done = out
     done.pool = inner.pool
     done.types = inner.types
     if inner.typeId < 0:
         return done
     let member = unit.ast.exprAt(node)
-    let memberName = decodeRange(bytes = tempUtf8Bytes(unit.text), start = member.nameStart, end = member.nameEnd)
+    let memberName = decodeRange(bytes = bytes, start = member.nameStart, end = member.nameEnd)
     let access = memberAccess(receiver = inner.typeId, name = memberName, isTypeName = false, owner = "", file = unit.path, offset = member.start)
     let result = checkMember(world = probeWorld(world = world, pool = done.pool), access = access)
     done.pool = result.pool
@@ -208,8 +208,8 @@ inferMember|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node
     return done
 
 ; 调用：先推被调与实参，顶层函数取声明返回类型，内建交给调用面。
-inferCall|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, out: InferResult,) -> (InferResult,):
-    let kids = inferKids(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, pool = out.pool, types = out.types)
+inferCall|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, out: InferResult, bytes: Array<U8>,) -> (InferResult,):
+    let kids = inferKids(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, pool = out.pool, types = out.types, bytes = bytes)
     var done = out
     done.pool = kids.pool
     done.types = kids.types
@@ -217,7 +217,7 @@ inferCall|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
     if callee < 0 || !unit.ast.isIdentifierExpr(callee):
         return done
     let calleeExpr = unit.ast.exprAt(callee)
-    let name = decodeRange(bytes = tempUtf8Bytes(unit.text), start = calleeExpr.nameStart, end = calleeExpr.nameEnd)
+    let name = decodeRange(bytes = bytes, start = calleeExpr.nameStart, end = calleeExpr.nameEnd)
     let symbol = world.table.topIndex(keyOfText(name))
     if symbol >= 0:
         let ret = returnTypeOf(world = world, symbol = symbol, pool = done.pool)
@@ -245,8 +245,8 @@ inferCall|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
     return done
 
 ; 二元：两侧都推得出才判；标签实参的 `=` 不是运算，运算面自然拒绝。
-inferBinary|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, out: InferResult,) -> (InferResult,):
-    let kids = inferKids(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, pool = out.pool, types = out.types)
+inferBinary|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, out: InferResult, bytes: Array<U8>,) -> (InferResult,):
+    let kids = inferKids(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, pool = out.pool, types = out.types, bytes = bytes)
     var done = out
     done.pool = kids.pool
     done.types = kids.types
@@ -267,8 +267,8 @@ inferBinary|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node
     return done
 
 ; 容器字面量：元素推完后交给容器面统一元素类型。
-inferContainer|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, out: InferResult,) -> (InferResult,):
-    let kids = inferKids(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, pool = out.pool, types = out.types)
+inferContainer|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, out: InferResult, bytes: Array<U8>,) -> (InferResult,):
+    let kids = inferKids(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, pool = out.pool, types = out.types, bytes = bytes)
     var done = out
     done.pool = kids.pool
     done.types = kids.types
@@ -290,8 +290,8 @@ inferContainer|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, n
     return done
 
 ; 下标与切片：先推容器和界，类型由容器面按元素或自身给出。
-inferIndex|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, out: InferResult,) -> (InferResult,):
-    let kids = inferKids(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, pool = out.pool, types = out.types)
+inferIndex|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, out: InferResult, bytes: Array<U8>,) -> (InferResult,):
+    let kids = inferKids(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, pool = out.pool, types = out.types, bytes = bytes)
     var done = out
     done.pool = kids.pool
     done.types = kids.types
@@ -316,6 +316,7 @@ types: ExprTypes = ExprTypes()
 pool: TypePool = TypePool()
 
 ; 单元推导：建名字表后逐个表达式节点后序推，表与池一起交回调用方。
+; 整单元文本只转一次字节，逐节点复用；否则标识符与成员名会反复复制全文。
 inferUnitExprs|func(world: MemberWorld, unitIndex: I32, types: ExprTypes,) -> (InferUnit,):
     var out = InferUnit()
     out.types = types
@@ -323,12 +324,32 @@ inferUnitExprs|func(world: MemberWorld, unitIndex: I32, types: ExprTypes,) -> (I
     if unitIndex < 0 || unitIndex >= len(world.units):
         return out
     let unit = world.units[unitIndex]
-    let built = buildNameTable(world = world, unit = unit, unitIndex = unitIndex)
+    let bytes = tempUtf8Bytes(unit.text)
+    let built = buildNameTable(world = world, unit = unit, unitIndex = unitIndex, bytes = bytes)
     out.pool = built.pool
     var i = 0
     while i < unit.ast.exprCount():
-        let one = inferNode(world = world, unit = unit, unitIndex = unitIndex, node = i, names = built.table, pool = out.pool, types = out.types)
+        let one = inferNode(world = world, unit = unit, unitIndex = unitIndex, node = i, names = built.table, pool = out.pool, types = out.types, bytes = bytes)
         out.pool = one.pool
         out.types = one.types
         i = i + 1
+    return out
+
+; 全工作区推导结果：填好的类型表与累积后的池；两者的下标必须按同一份池解释。
+(ExprFill)
+types: ExprTypes = ExprTypes()
+pool: TypePool = TypePool()
+
+; 全工作区推导：逐单元推，后一单元基于前一单元增长后的池。
+; 池增长只追加，故既有下标不变；调用方用返回的池解释表，不得用入参世界的池。
+fillExprTypes|func(world: MemberWorld, units: Array<CompilationUnit>,) -> (ExprFill,):
+    var out = ExprFill()
+    out.types = makeExprTypes(units)
+    out.pool = world.types.pool
+    var u = 0
+    while u < len(units):
+        let one = inferUnitExprs(world = probeWorld(world = world, pool = out.pool), unitIndex = u, types = out.types)
+        out.pool = one.pool
+        out.types = one.types
+        u = u + 1
     return out

@@ -5,10 +5,12 @@ _semantics = "../../../semantics"
 ; 语义池十三项含无效标记，IR 池二十三类；两集合不同，映射不上的报能力缺口。
 ; 标量只收 IR 有宽度的九种；I16、U16、U32、F32 与用户泛型实例不在其中，照宿主同规拒绝。
 
-; 映射表：IR 池、逐语义下标的像与错误；未映射答 -1。
+; 映射表：IR 池、逐语义下标的像、布尔类型下标与错误；未映射答 -1。
+; `booleanId` 供降载的类型后备用：比较与逻辑的结果类型不依赖语义池里是否驻留过布尔。
 (TypeMap)
 pool: IrTypePool = IrTypePool()
 ids: Array<I32> = []
+booleanId: I32 = -1
 errors: Array<LowerError> = []
 
 ; 取像：越界或未映射答 -1，调用方据此报能力缺口。
@@ -219,6 +221,7 @@ mapSemanticType|func(map: TypeMap, pool: TypePool, id: I32,) -> (TypeMap,):
     return addMapError(map = out, kind = lowerUnsupportedType, detail = entry.name)
 
 ; 建表：先铺满未映射槽，再逐条映射；递归在槽已铺好之后进行，故无需另设环检测。
+; 收尾驻留布尔：它不一定在语义池里出现过，但比较与逻辑的结果要用它。
 buildTypeMap|func(world: MemberWorld,) -> (TypeMap,):
     var out = TypeMap()
     var i = 0
@@ -229,6 +232,9 @@ buildTypeMap|func(world: MemberWorld,) -> (TypeMap,):
     while i < len(world.types.pool.entries):
         out = mapSemanticType(map = out, pool = world.types.pool, id = i)
         i = i + 1
+    let flag = irScalarType(pool = out.pool, kind = irTypeBoolean, name = "boolean")
+    out.pool = flag.pool
+    out.booleanId = flag.id
     return out
 
 ; 映射计数：已映射的条目数，供回执与测试对照。

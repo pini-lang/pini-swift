@@ -1,10 +1,12 @@
 [main|import]
 _package = "../../../package"
 _module_loader = "../../../module-loader"
+_semantics = "../../../semantics"
 _ir = "../../../ir"
 
 ; 驱动主程序：无参数只装配清单并打印产物行，毫秒级；`check` 跑完整检查，`lower` 走降载。
 ; 两个子命令的根取第二个参数，缺省从模块根上溯；检查有诊断即非零退出，降载只报计数。
+; 降载前先填表达式类型表并把池换成填表后的池，否则类型下标越界。
 main|func() -> ():
     let args = argv()
     var root = workspaceRootOf(start = moduleRoot())
@@ -36,10 +38,16 @@ main|func() -> ():
         let ws = loadWorkspaceGrouped(plan)
         let units = collectWorkspaceUnits(ws)
         let build = buildWorld(units = units, packages = ws.packages)
+        let 填 = fillExprTypes(world = build.world, units = units)
+        var 世界 = build.world
+        var 类型面 = 世界.types
+        类型面.pool = 填.pool
+        世界.types = 类型面
         var input = LowerWorld()
-        input.world = build.world
+        input.world = 世界
+        input.types = 填.types
         let module = lowerWorkspace(input = input)
-        print("lower-ok", len(module.functions), len(module.errors))
+        print("lower-ok", len(module.functions), len(module.errors), emptyBodyCount(module = module), len(module.typeErrors))
         return
     let plan = planWorkspace(root)
     if plan.isOK() && plan.packageCount() == 10:

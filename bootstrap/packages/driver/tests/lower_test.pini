@@ -3,8 +3,8 @@ _ir = "../../ir"
 _module_loader = "../../module-loader"
 _semantics = "../../semantics"
 
-; 降载判据：单个源文件即可验证函数表、参数与缺口纪律，不装配全工作区。
-; 全工作区的端到端降载归吞吐批次；这里只钉入口形状与「不许静默吞体」这一条。
+; 降载判据：单个源文件即可验证函数表、语句体与缺口纪律，不装配全工作区。
+; 全工作区的端到端降载归吞吐批次；这里钉入口形状、节点计数与「不许静默吞体」。
 
 ; 单文件世界：装一个文件、注册一个包、解析类型；不依赖其他包。
 单文件世界|func(relative: String,) -> (MemberWorld,):
@@ -20,6 +20,34 @@ _semantics = "../../semantics"
     let table: SymbolTable = registerPackages(packages)
     let types: TypeTable = resolvePackage(units = units, table = table)
     return makeMemberWorld(units = units, table = table, types = types)
+
+; 样例源码：覆盖无标注声明、二元、分支、循环与返回；不含字符串与浮点。
+样例源码|func() -> (String,):
+    return "累积|func(a: I32, b: I32,) -> (I32,):\n    var total = a + b\n    if total > 0:\n        total = total - 1\n    while total > 0:\n        total = total - 1\n    return total\n"
+
+; 样例模块：从文本建单元，单包注册解析，填表后降载。
+样例模块|func() -> (IrModule,):
+    let loaded: UnitLoad = loadUnit(path = "sample.pini", text = 样例源码())
+    assert(!loaded.failed, "样例应装载成功")
+    assert(len(loaded.unit.diagnostics) == 0, "样例不应有语法诊断")
+    var units: Array<CompilationUnit> = [loaded.unit]
+    var pkg = PackageUnits()
+    pkg.name = "sample"
+    pkg.rootPath = "sample"
+    pkg.units = units
+    var packages: Array<PackageUnits> = [pkg]
+    let table: SymbolTable = registerPackages(packages)
+    let types: TypeTable = resolvePackage(units = units, table = table)
+    let world = makeMemberWorld(units = units, table = table, types = types)
+    let 填 = fillExprTypes(world = world, units = units)
+    var 世界 = world
+    var 类型面 = 世界.types
+    类型面.pool = 填.pool
+    世界.types = 类型面
+    var input = LowerWorld()
+    input.world = 世界
+    input.types = 填.types
+    return lowerWorkspace(input = input)
 
 ; 函数表：一个文件的顶层函数按声明序进表，名字保留原始拼写。
 函数表按声明序|test() -> ():
@@ -45,13 +73,47 @@ _semantics = "../../semantics"
     assert(fn.returnType >= 0, "返回类型应为非空")
     return
 
-; 缺口纪律：每个有体函数各一条缺口，体留空；缺口数少于函数数即静默吞体。
+; 语句体：样例整体降成，零缺口，四条顶层语句。
+语句体可降|test() -> ():
+    let module = 样例模块()
+    assert(len(module.errors) == 0, "样例不应有缺口")
+    assert(len(module.functions) == 1, "样例应有一个函数")
+    assert(len(module.functions[0].body) == 4, "顶层应降出四条语句")
+    return
+
+; 节点计数：类别分布钉住体展开与次序，多一个少一个都会红。
+节点计数|test() -> ():
+    let module = 样例模块()
+    assert(countNodes(module = module, kind = tagOfName(name = "allocVar")) == 1, "一次声明")
+    assert(countNodes(module = module, kind = tagOfName(name = "storeVar")) == 2, "两处赋值")
+    assert(countNodes(module = module, kind = tagOfName(name = "ifStmt")) == 1, "一条分支")
+    assert(countNodes(module = module, kind = tagOfName(name = "whileStmt")) == 1, "一条循环")
+    assert(countNodes(module = module, kind = tagOfName(name = "returnStmt")) == 1, "一条返回")
+    assert(countNodes(module = module, kind = tagOfName(name = "load")) == 7, "七处读取")
+    assert(countNodes(module = module, kind = tagOfName(name = "binary")) == 5, "五处二元")
+    assert(countNodes(module = module, kind = tagOfName(name = "intConst")) == 4, "四个字面量")
+    assert(len(module.nodes.nodes) == 22, "总节点数应为 22")
+    return
+
+; 名字与体边界：声明的名字进文本池，分支与循环的体边界落在 tail 上。
+体边界|test() -> ():
+    let module = 样例模块()
+    let body = module.functions[0].body
+    let 首: IrNode = module.nodes.nodes[body[0]]
+    assert(textAt(module = module, id = 首.text) == "total", "首个节点应是声明 total")
+    assert(首.op == 1, "var 声明记为可变")
+    let 分支: IrNode = module.nodes.nodes[body[1]]
+    assert(分支.tail == 2, "分支体只含一条语句，边界应为 2")
+    let 循环: IrNode = module.nodes.nodes[body[2]]
+    assert(循环.tail == 2, "循环体只含一条语句，边界应为 2")
+    return
+
+; 缺口纪律：依赖缺失时每个有体函数各一条缺口，体留空；缺口少于函数数即静默吞体。
 缺口逐函数|test() -> ():
     var input = LowerWorld()
     input.world = 单文件世界(relative = "packages/support/src/api/offsets.pini")
     let module = lowerWorkspace(input = input)
     assert(len(module.errors) == 2, "两个函数应各报一条缺口")
     assert(emptyBodyCount(module = module) == 2, "两个函数体应全为空")
-    let error: LowerError = module.errors[0]
-    assert(error.detail.contains("语句体尚未降载"), "缺口应说清缺的是语句体")
+    assert(len(module.errors[0].detail) > 0, "缺口应写清原因")
     return

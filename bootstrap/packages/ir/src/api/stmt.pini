@@ -1,0 +1,268 @@
+[stmt|import]
+_syntax = "../../../syntax"
+_semantics = "../../../semantics"
+
+; 语句降载：块、变量、赋值、表达式、分支、循环与返回；体是语句序列，控制流节点的
+; `kids` 用 `tail` 切成两段，前段是体、后段是 else。任一语句降不了即整函数失败：
+; 半截体在发射期能跑却少了语句。`adopt` 与 `releaseOld` 留缺省，份额判定落地时统一补。
+
+; 语句降载结果：池、文本池、帧、语句产出的节点序列与失败原因。
+(LowerStmt)
+pool: IrNodePool = IrNodePool()
+texts: Array<String> = []
+frame: LowerFrame = LowerFrame()
+ids: Array<I32> = []
+failed: Bool = false
+detail: String = ""
+offset: I32 = 0
+
+; 缺能力：语句类别尚未降载，带类别与位置。
+missStmt|func(out: LowerStmt, unit: CompilationUnit, stmtId: I32, what: String,) -> (LowerStmt,):
+    var done = out
+    done.failed = true
+    done.detail = what
+    if stmtId >= 0 && stmtId < unit.ast.stmtCount():
+        done.offset = unit.ast.stmtAt(stmtId).start
+    return done
+
+; 失败转发：表达式侧失败时把原因原样上抛。
+takeStmtFailure|func(out: LowerStmt, detail: String, offset: I32,) -> (LowerStmt,):
+    var done = out
+    done.failed = true
+    done.detail = detail
+    done.offset = offset
+    return done
+
+; 变量声明：无标注声明取初值类型，槽位由帧分配。
+; 带标注的声明本切片不降：标注与初值可能不同宽，取谁都会让另一半错。
+lowerVariableStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32,) -> (LowerStmt,):
+    let stmt = unit.ast.stmtAt(stmtId)
+    if stmt.typeId >= 0:
+        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "带标注的变量声明")
+    let pattern: I32 = unit.ast.stmtChild(id = stmtId, index = 0)
+    let init: I32 = unit.ast.stmtChild(id = stmtId, index = 1)
+    if pattern < 0 || !unit.ast.isIdentifierExpr(pattern):
+        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "非标识符的声明模式")
+    if init < 0:
+        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "无初值的变量声明")
+    var done = out
+    let one = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = init)
+    done.pool = one.pool
+    done.texts = one.texts
+    done.frame = one.frame
+    if one.failed:
+        return takeStmtFailure(out = done, detail = one.detail, offset = one.offset)
+    let valueNode = irNodeAt(pool = done.pool, id = one.id)
+    if valueNode.typeId < 0:
+        return missStmt(out = done, unit = unit, stmtId = stmtId, what = "初值类型未定")
+    let expr = unit.ast.exprAt(pattern)
+    let name = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
+    let placed = internText(texts = done.texts, value = name)
+    var mutable = false
+    if unit.ast.isMutableVariableStmt(stmtId):
+        mutable = true
+    var node = irMakeNode(kind = irStmtTag(irAllocVar), typeId = valueNode.typeId)
+    node.text = placed.id
+    if mutable:
+        node.op = 1
+    node.kids = [one.id]
+    let inserted = irAppendNode(pool = done.pool, node = node)
+    done.texts = placed.texts
+    done.pool = inserted.pool
+    done.ids = done.ids.append(inserted.id)
+    done.frame = declareIrLocal(frame = done.frame, name = name, typeId = valueNode.typeId, mutable = mutable)
+    return done
+
+; 赋值：只接简单赋值与标识符目标；复合赋值与非标识符目标报缺口。
+lowerAssignStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32,) -> (LowerStmt,):
+    let stmt = unit.ast.stmtAt(stmtId)
+    if opSymbol(stmt.op) != "=":
+        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "复合赋值")
+    if len(stmt.kids) < 2:
+        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "缺值或目标的赋值")
+    let target = stmt.kids[0]
+    if !unit.ast.isIdentifierExpr(target):
+        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "非标识符赋值目标")
+    let expr = unit.ast.exprAt(target)
+    let name = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
+    let at = findIrLocal(frame = out.frame, name = name)
+    if at < 0:
+        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "非局部变量的赋值目标")
+    var done = out
+    let one = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = stmt.kids[1])
+    done.pool = one.pool
+    done.texts = one.texts
+    done.frame = one.frame
+    if one.failed:
+        return takeStmtFailure(out = done, detail = one.detail, offset = one.offset)
+    let local = done.frame.locals[at]
+    let placed = internText(texts = done.texts, value = name)
+    var node = irMakeNode(kind = irStmtTag(irStoreVar), typeId = local.typeId)
+    node.text = placed.id
+    node.kids = [one.id]
+    let inserted = irAppendNode(pool = done.pool, node = node)
+    done.texts = placed.texts
+    done.pool = inserted.pool
+    done.ids = done.ids.append(inserted.id)
+    return done
+
+; 表达式语句：求值并丢弃结果。
+lowerExprStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32,) -> (LowerStmt,):
+    let stmt = unit.ast.stmtAt(stmtId)
+    if len(stmt.kids) < 1:
+        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "空表达式语句")
+    var done = out
+    let one = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = stmt.kids[0])
+    done.pool = one.pool
+    done.texts = one.texts
+    done.frame = one.frame
+    if one.failed:
+        return takeStmtFailure(out = done, detail = one.detail, offset = one.offset)
+    let inserted = addIrNode(pool = done.pool, kind = irStmtTag(irExprStmt), typeId = -1, op = 0, kids = [one.id])
+    done.pool = inserted.pool
+    done.ids = done.ids.append(inserted.id)
+    return done
+
+; 返回：有值降值，无值留空子表。
+lowerReturnStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32,) -> (LowerStmt,):
+    let stmt = unit.ast.stmtAt(stmtId)
+    var done = out
+    var kids: Array<I32> = []
+    if len(stmt.kids) > 0 && stmt.kids[0] >= 0:
+        let one = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = stmt.kids[0])
+        done.pool = one.pool
+        done.texts = one.texts
+        done.frame = one.frame
+        if one.failed:
+            return takeStmtFailure(out = done, detail = one.detail, offset = one.offset)
+        kids = kids.append(one.id)
+    let inserted = addIrNode(pool = done.pool, kind = irStmtTag(irReturnStmt), typeId = -1, op = 0, kids = kids)
+    done.pool = inserted.pool
+    done.ids = done.ids.append(inserted.id)
+    return done
+
+; 分支：只接 then 与可选 else；出现 elif 报缺口，链式改写留待分支补面。
+lowerIfStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32,) -> (LowerStmt,):
+    let kids = unit.ast.stmtAt(stmtId).kids
+    if len(kids) < 2:
+        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "缺体的分支")
+    if len(kids) > 3:
+        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "带 elif 的分支")
+    var done = out
+    let cond = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = kids[0])
+    done.pool = cond.pool
+    done.texts = cond.texts
+    done.frame = cond.frame
+    if cond.failed:
+        return takeStmtFailure(out = done, detail = cond.detail, offset = cond.offset)
+    let thenPart = lowerBlockOf(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, blockId = kids[1])
+    done = thenPart
+    if done.failed:
+        return done
+    var nodes: Array<I32> = [cond.id]
+    var i = 0
+    while i < len(thenPart.ids):
+        nodes = nodes.append(thenPart.ids[i])
+        i = i + 1
+    let tail = len(nodes)
+    if len(kids) == 3:
+        let elsePart = lowerBlockOf(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, blockId = kids[2])
+        done = elsePart
+        if done.failed:
+            return done
+        i = 0
+        while i < len(elsePart.ids):
+            nodes = nodes.append(elsePart.ids[i])
+            i = i + 1
+    var node = irMakeNode(kind = irStmtTag(irIfStmt), typeId = -1)
+    node.kids = nodes
+    node.tail = tail
+    let inserted = irAppendNode(pool = done.pool, node = node)
+    done.pool = inserted.pool
+    done.ids = [inserted.id]
+    return done
+
+; 循环：只接条件与体；`step` 块的轮末语义另批处理，出现即报缺口。
+lowerWhileStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32,) -> (LowerStmt,):
+    let kids = unit.ast.stmtAt(stmtId).kids
+    if len(kids) < 2:
+        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "缺体的循环")
+    if len(kids) > 2 && kids[2] >= 0:
+        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "带 step 的循环")
+    var done = out
+    let cond = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = kids[0])
+    done.pool = cond.pool
+    done.texts = cond.texts
+    done.frame = cond.frame
+    if cond.failed:
+        return takeStmtFailure(out = done, detail = cond.detail, offset = cond.offset)
+    let bodyPart = lowerBlockOf(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, blockId = kids[1])
+    done = bodyPart
+    if done.failed:
+        return done
+    var nodes: Array<I32> = [cond.id]
+    var i = 0
+    while i < len(bodyPart.ids):
+        nodes = nodes.append(bodyPart.ids[i])
+        i = i + 1
+    var node = irMakeNode(kind = irStmtTag(irWhileStmt), typeId = -1)
+    node.kids = nodes
+    node.tail = len(nodes)
+    let inserted = irAppendNode(pool = done.pool, node = node)
+    done.pool = inserted.pool
+    done.ids = [inserted.id]
+    return done
+
+; 块：进块记边界，逐条降载，退块只收回名字。
+lowerBlockOf|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, blockId: I32,) -> (LowerStmt,):
+    var done = out
+    if blockId < 0 || blockId >= unit.ast.stmtCount():
+        return missStmt(out = done, unit = unit, stmtId = blockId, what = "块下标越界")
+    let kids = unit.ast.stmtAt(blockId).kids
+    let mark = frameMark(frame = done.frame)
+    var ids: Array<I32> = []
+    var i = 0
+    while i < len(kids):
+        let one = lowerStmt(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = kids[i])
+        done.pool = one.pool
+        done.texts = one.texts
+        done.frame = one.frame
+        if one.failed:
+            done.failed = true
+            done.detail = one.detail
+            done.offset = one.offset
+            done.ids = ids
+            return done
+        var k = 0
+        while k < len(one.ids):
+            ids = ids.append(one.ids[k])
+            k = k + 1
+        i = i + 1
+    done.ids = ids
+    done.frame = closeBlock(frame = done.frame, mark = mark)
+    return done
+
+; 单条语句：按类别分派；`pass` 不产节点，其余未知类别报缺口。
+lowerStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32,) -> (LowerStmt,):
+    if stmtId < 0 || stmtId >= unit.ast.stmtCount():
+        var bad = out
+        bad.failed = true
+        bad.detail = "语句下标越界"
+        return bad
+    if unit.ast.isBlockStmt(stmtId):
+        return lowerBlockOf(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, blockId = stmtId)
+    if unit.ast.isVariableStmt(stmtId):
+        return lowerVariableStmt(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId)
+    if unit.ast.isAssignStmt(stmtId):
+        return lowerAssignStmt(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId)
+    if unit.ast.isExpressionStmt(stmtId):
+        return lowerExprStmt(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId)
+    if unit.ast.isReturnStmt(stmtId):
+        return lowerReturnStmt(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId)
+    if unit.ast.isIfStmt(stmtId):
+        return lowerIfStmt(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId)
+    if unit.ast.isWhileStmt(stmtId):
+        return lowerWhileStmt(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId)
+    if unit.ast.isPassStmt(stmtId):
+        return out
+    return missStmt(out = out, unit = unit, stmtId = stmtId, what = "该语句类别尚未降载")
