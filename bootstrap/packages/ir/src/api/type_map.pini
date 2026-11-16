@@ -1,0 +1,242 @@
+[type_map|import]
+_semantics = "../../../semantics"
+
+; 语义类型池到 IR 类型池的映射：入口一次建表，IR 内部不回查语义池。
+; 语义池十三项含无效标记，IR 池二十三类；两集合不同，映射不上的报能力缺口。
+; 标量只收 IR 有宽度的九种；I16、U16、U32、F32 与用户泛型实例不在其中，照宿主同规拒绝。
+
+; 映射表：IR 池、逐语义下标的像与错误；未映射答 -1。
+(TypeMap)
+pool: IrTypePool = IrTypePool()
+ids: Array<I32> = []
+errors: Array<LowerError> = []
+
+; 取像：越界或未映射答 -1，调用方据此报能力缺口。
+irIdOf|func(map: TypeMap, semanticId: I32,) -> (I32,):
+    if semanticId < 0 || semanticId >= len(map.ids):
+        return -1
+    return map.ids[semanticId]
+
+; 记像：逐槽写入，先取数组再整体写回，避免新旧快照共存。
+setMapped|func(map: TypeMap, semanticId: I32, irId: I32,) -> (TypeMap,):
+    var out = map
+    if semanticId < 0 || semanticId >= len(out.ids):
+        return out
+    var ids = out.ids
+    ids[semanticId] = irId
+    out.ids = ids
+    return out
+
+; 记错误：映射失败只累积，不抛；调用方看错误数决定要不要继续。
+addMapError|func(map: TypeMap, kind: LowerErrorKind, detail: String,) -> (TypeMap,):
+    var out = map
+    out.errors = appendLowerError(errors = out.errors, error = makeLowerError(kind = kind, file = "", offset = -1, detail = detail))
+    return out
+
+; 标量映射：只收 IR 有宽度的九种；名字未登记即能力缺口。
+mapScalar|func(map: TypeMap, name: String, semanticId: I32,) -> (TypeMap,):
+    var out = map
+    if name == "I8":
+        let inserted = irScalarType(pool = out.pool, kind = irTypeI8, name = "i8")
+        out.pool = inserted.pool
+        return setMapped(map = out, semanticId = semanticId, irId = inserted.id)
+    if name == "U8":
+        let inserted = irScalarType(pool = out.pool, kind = irTypeU8, name = "u8")
+        out.pool = inserted.pool
+        return setMapped(map = out, semanticId = semanticId, irId = inserted.id)
+    if name == "I32":
+        let inserted = irScalarType(pool = out.pool, kind = irTypeI32, name = "i32")
+        out.pool = inserted.pool
+        return setMapped(map = out, semanticId = semanticId, irId = inserted.id)
+    if name == "I64":
+        let inserted = irScalarType(pool = out.pool, kind = irTypeI64, name = "i64")
+        out.pool = inserted.pool
+        return setMapped(map = out, semanticId = semanticId, irId = inserted.id)
+    if name == "U64":
+        let inserted = irScalarType(pool = out.pool, kind = irTypeU64, name = "u64")
+        out.pool = inserted.pool
+        return setMapped(map = out, semanticId = semanticId, irId = inserted.id)
+    if name == "F64":
+        let inserted = irScalarType(pool = out.pool, kind = irTypeF64, name = "f64")
+        out.pool = inserted.pool
+        return setMapped(map = out, semanticId = semanticId, irId = inserted.id)
+    if name == "Bool":
+        let inserted = irScalarType(pool = out.pool, kind = irTypeBoolean, name = "boolean")
+        out.pool = inserted.pool
+        return setMapped(map = out, semanticId = semanticId, irId = inserted.id)
+    if name == "String":
+        let inserted = irScalarType(pool = out.pool, kind = irTypeString, name = "string")
+        out.pool = inserted.pool
+        return setMapped(map = out, semanticId = semanticId, irId = inserted.id)
+    if name == "Char":
+        let inserted = irScalarType(pool = out.pool, kind = irTypeChar, name = "char")
+        out.pool = inserted.pool
+        return setMapped(map = out, semanticId = semanticId, irId = inserted.id)
+    return addMapError(map = out, kind = lowerUnsupportedType, detail = name)
+
+; 容器映射：按语义名分三类；实参先递归映射，任一缺席即放弃父类型。
+mapCollection|func(map: TypeMap, pool: TypePool, name: String, kids: Array<I32>, semanticId: I32,) -> (TypeMap,):
+    var out = map
+    var i = 0
+    while i < len(kids):
+        out = mapSemanticType(map = out, pool = pool, id = kids[i])
+        i = i + 1
+    if name == "Array" && len(kids) == 1:
+        let inner = irIdOf(map = out, semanticId = kids[0])
+        if inner < 0:
+            return out
+        let inserted = irWrapType(pool = out.pool, kind = irTypeArray, name = "", inner = inner)
+        out.pool = inserted.pool
+        return setMapped(map = out, semanticId = semanticId, irId = inserted.id)
+    if name == "Set" && len(kids) == 1:
+        let inner = irIdOf(map = out, semanticId = kids[0])
+        if inner < 0:
+            return out
+        let inserted = irWrapType(pool = out.pool, kind = irTypeSet, name = "", inner = inner)
+        out.pool = inserted.pool
+        return setMapped(map = out, semanticId = semanticId, irId = inserted.id)
+    if name == "Dictionary" && len(kids) == 2:
+        let key = irIdOf(map = out, semanticId = kids[0])
+        let value = irIdOf(map = out, semanticId = kids[1])
+        if key < 0 || value < 0:
+            return out
+        let inserted = irPairType(pool = out.pool, kind = irTypeDict, name = "", firstKid = key, secondKid = value)
+        out.pool = inserted.pool
+        return setMapped(map = out, semanticId = semanticId, irId = inserted.id)
+    return addMapError(map = out, kind = lowerUnsupportedType, detail = name)
+
+; 单层包装：可选与指针共用；实参缺席即放弃父类型。
+mapWrapped|func(map: TypeMap, pool: TypePool, kind: IrTypeClass, kids: Array<I32>, semanticId: I32,) -> (TypeMap,):
+    var out = map
+    if len(kids) != 1:
+        return addMapError(map = out, kind = lowerUnsupportedType, detail = irTypeClassNameFor(kind = kind))
+    out = mapSemanticType(map = out, pool = pool, id = kids[0])
+    let inner = irIdOf(map = out, semanticId = kids[0])
+    if inner < 0:
+        return out
+    let inserted = irWrapType(pool = out.pool, kind = kind, name = "", inner = inner)
+    out.pool = inserted.pool
+    return setMapped(map = out, semanticId = semanticId, irId = inserted.id)
+
+; 类别名：错误细节里用，不参与判等。
+irTypeClassNameFor|func(kind: IrTypeClass,) -> (String,):
+    let tag = irTypeTag(kind)
+    if tag == irTypeTag(irTypePointer):
+        return "指针"
+    if tag == irTypeTag(irTypeOptional):
+        return "可选"
+    return "包装类型"
+
+; 元组映射：分量逐个递归，全部到位才驻留。
+mapTuple|func(map: TypeMap, pool: TypePool, kids: Array<I32>, semanticId: I32,) -> (TypeMap,):
+    var out = map
+    var ids: Array<I32> = []
+    var i = 0
+    while i < len(kids):
+        out = mapSemanticType(map = out, pool = pool, id = kids[i])
+        let mapped = irIdOf(map = out, semanticId = kids[i])
+        if mapped < 0:
+            return out
+        ids = ids.append(mapped)
+        i = i + 1
+    let inserted = irTupleType(pool = out.pool, fields = ids)
+    out.pool = inserted.pool
+    return setMapped(map = out, semanticId = semanticId, irId = inserted.id)
+
+; 函数映射：形参逐个递归，返回单独递归；取用位此刻没有生产者，留空。
+mapFunction|func(map: TypeMap, pool: TypePool, entry: TypeEntry, semanticId: I32,) -> (TypeMap,):
+    var out = map
+    var ids: Array<I32> = []
+    var i = 0
+    while i < len(entry.kids):
+        out = mapSemanticType(map = out, pool = pool, id = entry.kids[i])
+        let mapped = irIdOf(map = out, semanticId = entry.kids[i])
+        if mapped < 0:
+            return out
+        ids = ids.append(mapped)
+        i = i + 1
+    out = mapSemanticType(map = out, pool = pool, id = entry.ret)
+    let ret = irIdOf(map = out, semanticId = entry.ret)
+    if ret < 0:
+        return out
+    let inserted = irFunctionType(pool = out.pool, params = ids, ret = ret, uses = [])
+    out.pool = inserted.pool
+    return setMapped(map = out, semanticId = semanticId, irId = inserted.id)
+
+; 结果映射：只保留 ok 侧，错误槽类型擦除；缺席即放弃。
+mapResult|func(map: TypeMap, pool: TypePool, kids: Array<I32>, semanticId: I32,) -> (TypeMap,):
+    var out = map
+    if len(kids) == 0:
+        return addMapError(map = out, kind = lowerUnsupportedType, detail = "结果缺载荷")
+    out = mapSemanticType(map = out, pool = pool, id = kids[0])
+    let ok = irIdOf(map = out, semanticId = kids[0])
+    if ok < 0:
+        return out
+    let inserted = irInternType(pool = out.pool, kind = irTypeResult, name = "", kids = [ok], ret = -1, uses = [], flags = 0)
+    out.pool = inserted.pool
+    return setMapped(map = out, semanticId = semanticId, irId = inserted.id)
+
+; 单条映射：先查是否已映射，再按类别分流；未覆盖的类别报能力缺口。
+mapSemanticType|func(map: TypeMap, pool: TypePool, id: I32,) -> (TypeMap,):
+    var out = map
+    if id < 0 || id >= len(pool.entries):
+        return out
+    if irIdOf(map = out, semanticId = id) >= 0:
+        return out
+    let entry = pool.entries[id]
+    if isScalarClass(entry.kind):
+        return mapScalar(map = out, name = entry.name, semanticId = id)
+    if isOpaqueClass(entry.kind):
+        if entry.name == "StringHandle":
+            let inserted = irInternType(pool = out.pool, kind = irTypeStringHandle, name = "stringHandle", kids = [], ret = -1, uses = [], flags = 0)
+            out.pool = inserted.pool
+            return setMapped(map = out, semanticId = id, irId = inserted.id)
+        return addMapError(map = out, kind = lowerUnsupportedType, detail = entry.name)
+    if isPointerClass(entry.kind):
+        return mapWrapped(map = out, pool = pool, kind = irTypePointer, kids = entry.kids, semanticId = id)
+    if isOptionalClass(entry.kind):
+        return mapWrapped(map = out, pool = pool, kind = irTypeOptional, kids = entry.kids, semanticId = id)
+    if isStructClass(entry.kind):
+        let inserted = irNominalType(pool = out.pool, name = entry.name, isObject = false)
+        out.pool = inserted.pool
+        return setMapped(map = out, semanticId = id, irId = inserted.id)
+    if isObjectClass(entry.kind):
+        let inserted = irNominalType(pool = out.pool, name = entry.name, isObject = true)
+        out.pool = inserted.pool
+        return setMapped(map = out, semanticId = id, irId = inserted.id)
+    if isEnumClass(entry.kind):
+        let inserted = irEnumType(pool = out.pool, name = entry.name)
+        out.pool = inserted.pool
+        return setMapped(map = out, semanticId = id, irId = inserted.id)
+    if isTupleClass(entry.kind):
+        return mapTuple(map = out, pool = pool, kids = entry.kids, semanticId = id)
+    if isCollectionClass(entry.kind):
+        return mapCollection(map = out, pool = pool, name = entry.name, kids = entry.kids, semanticId = id)
+    if isResultClass(entry.kind):
+        return mapResult(map = out, pool = pool, kids = entry.kids, semanticId = id)
+    if isFunctionClass(entry.kind):
+        return mapFunction(map = out, pool = pool, entry = entry, semanticId = id)
+    return addMapError(map = out, kind = lowerUnsupportedType, detail = entry.name)
+
+; 建表：先铺满未映射槽，再逐条映射；递归在槽已铺好之后进行，故无需另设环检测。
+buildTypeMap|func(world: MemberWorld,) -> (TypeMap,):
+    var out = TypeMap()
+    var i = 0
+    while i < len(world.types.pool.entries):
+        out.ids = out.ids.append(-1)
+        i = i + 1
+    i = 0
+    while i < len(world.types.pool.entries):
+        out = mapSemanticType(map = out, pool = world.types.pool, id = i)
+        i = i + 1
+    return out
+
+; 映射计数：已映射的条目数，供回执与测试对照。
+mappedCount|func(map: TypeMap,) -> (I32,):
+    var total = 0
+    var i = 0
+    while i < len(map.ids):
+        if map.ids[i] >= 0:
+            total = total + 1
+        i = i + 1
+    return total

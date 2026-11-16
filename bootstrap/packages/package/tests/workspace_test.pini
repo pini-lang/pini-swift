@@ -13,8 +13,8 @@
     assert(计划.packageAt(4).name == "syntax", "语法包在装载器之前")
     assert(计划.packageAt(5).name == "module_loader", "装载器依赖四包")
     assert(计划.packageAt(6).name == "semantics", "语义层依赖装载器")
-    assert(计划.packageAt(7).name == "driver", "驱动依赖全部前置包")
-    assert(计划.packageAt(8).name == "ir", "中间层无依赖，排在驱动之后")
+    assert(计划.packageAt(7).name == "ir", "中间层排在语义层之后")
+    assert(计划.packageAt(8).name == "driver", "驱动依赖全部前置包")
     assert(计划.packageAt(9).name == "runtime_api", "运行时段包无依赖，排在最后")
     let 首 = 计划.packageAt(0).targets[0]
     assert(首.irPath == "./.build/debug/packages/support/support.ll", "库产物路径")

@@ -67,6 +67,43 @@ typeClassName|func(_kind: TypeClass,) -> (String,):
 isTypeClass|func(kind: TypeClass, expected: TypeClass,) -> (Bool,):
     return typeClassName(kind) == typeClassName(expected)
 
+; 跨包判定：枚举项不能跨包引用，下游按类别逐个问；每条只比一份拼写。
+isScalarClass|func(_kind: TypeClass,) -> (Bool,):
+    return typeClassName(_kind) == typeClassName(typeClassScalar)
+
+isOpaqueClass|func(_kind: TypeClass,) -> (Bool,):
+    return typeClassName(_kind) == typeClassName(typeClassOpaque)
+
+isPointerClass|func(_kind: TypeClass,) -> (Bool,):
+    return typeClassName(_kind) == typeClassName(typeClassPointer)
+
+isStructClass|func(_kind: TypeClass,) -> (Bool,):
+    return typeClassName(_kind) == typeClassName(typeClassStruct)
+
+isObjectClass|func(_kind: TypeClass,) -> (Bool,):
+    return typeClassName(_kind) == typeClassName(typeClassObject)
+
+isEnumClass|func(_kind: TypeClass,) -> (Bool,):
+    return typeClassName(_kind) == typeClassName(typeClassEnum)
+
+isTupleClass|func(_kind: TypeClass,) -> (Bool,):
+    return typeClassName(_kind) == typeClassName(typeClassTuple)
+
+isCollectionClass|func(_kind: TypeClass,) -> (Bool,):
+    return typeClassName(_kind) == typeClassName(typeClassCollection)
+
+isOptionalClass|func(_kind: TypeClass,) -> (Bool,):
+    return typeClassName(_kind) == typeClassName(typeClassOptional)
+
+isResultClass|func(_kind: TypeClass,) -> (Bool,):
+    return typeClassName(_kind) == typeClassName(typeClassResult)
+
+isFunctionClass|func(_kind: TypeClass,) -> (Bool,):
+    return typeClassName(_kind) == typeClassName(typeClassFunction)
+
+isGenericClass|func(_kind: TypeClass,) -> (Bool,):
+    return typeClassName(_kind) == typeClassName(typeClassGeneric)
+
 ((TypePool))
 ; 条目数：下标合法区间是 0 到 count() - 1。
 count|self() -> (I32,):
