@@ -40,6 +40,7 @@ got: String = ""
 (StoreCheck)
 pool: TypePool = TypePool()
 types: ExprTypes = ExprTypes()
+bytes: Array<U8> = []
 scope: ScopeStack = ScopeStack()
 errors: Array<StoreError> = []
 declared: Array<LocalSymbol> = []
@@ -47,6 +48,12 @@ loopDepth: I32 = 0
 matchCheck: MatchResult = MatchResult()
 defers: Array<I32> = []
 failed: Bool = false
+
+; 字节视图：检查状态带着整单元视图；单独调用未带时现转一次，保证两种入口都可用。
+storeBytes|func(unit: CompilationUnit, out: StoreCheck,) -> (Array<U8>,):
+    if len(out.bytes) > 0:
+        return out.bytes
+    return tempUtf8Bytes(unit.text)
 
 ; 初值定型结果：检查状态与类型下标；-2 表示已判错。
 (TypedValue)
@@ -159,7 +166,7 @@ resolveAnnotation|func(world: MemberWorld, unit: CompilationUnit, node: I32, out
     cursor.world = types
     cursor.file = unit.path
     cursor.ast = unit.ast
-    cursor.bytes = tempUtf8Bytes(unit.text)
+    cursor.bytes = storeBytes(unit = unit, out = out)
     let resolved = resolveNode(cursor = cursor, pool = out.pool, typeId = node)
     return hitType(pool = resolved.pool, id = resolved.root)
 
@@ -204,7 +211,7 @@ declareStoreAs|func(out: StoreCheck, unit: CompilationUnit, kind: LocalKind, nam
 ; 元组解构：按初值元组的分量逐位声明；个数不符报一条，非名字位各报一条。
 checkDestructure|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, pattern: I32, init: I32, mutable: Bool, offset: I32, out: StoreCheck,) -> (StoreCheck,):
     let kids = unit.ast.exprAt(pattern).kids
-    let bytes = tempUtf8Bytes(unit.text)
+    let bytes = storeBytes(unit = unit, out = out)
     var working = out
     var components: Array<I32> = []
     var knownTuple = false
@@ -258,7 +265,7 @@ checkVariableDecl|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32
     if !unit.ast.isIdentifierExpr(pattern):
         return appendStoreError(out = working, unit = unit, offset = stmt.start, kind = storeBadPattern, name = "", op = "", expected = "名字或元组", got = "其他形态")
     let expr = unit.ast.exprAt(pattern)
-    let name = decodeRange(bytes = tempUtf8Bytes(unit.text), start = expr.nameStart, end = expr.nameEnd)
+    let name = decodeRange(bytes = storeBytes(unit = unit, out = working), start = expr.nameStart, end = expr.nameEnd)
     var initType = -1
     if init >= 0:
         let typed = checkInitializer(unit = unit, unitIndex = unitIndex, node = init, expected = annotation, name = name, out = working)
@@ -288,7 +295,7 @@ checkAssignStmt|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, 
     var name = ""
     if unit.ast.isIdentifierExpr(target):
         let expr = unit.ast.exprAt(target)
-        name = decodeRange(bytes = tempUtf8Bytes(unit.text), start = expr.nameStart, end = expr.nameEnd)
+        name = decodeRange(bytes = working.bytes, start = expr.nameStart, end = expr.nameEnd)
         let at = lookupName(stack = working.scope, spelling = name)
         if at >= 0:
             let local = working.scope.localAt(at)
@@ -374,6 +381,7 @@ checkFunctionStoresWith|func(world: MemberWorld, unitIndex: I32, declId: I32, ty
     var out = StoreCheck()
     out.pool = seed.pool
     out.types = types
+    out.bytes = bytes
     if !seed.valid:
         return out
     out.scope = seed.scope
