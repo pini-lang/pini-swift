@@ -95,53 +95,30 @@ def hex_literal(value):
     return "0x%X" % value
 
 
-def emit_range_tree(ranges, lines, depth):
-    """平衡二叉判定：区间按起点升序，叶子答该区间的值。"""
-    pad = "    " * depth
-    if len(ranges) == 1:
-        lines.append("%sreturn %d" % (pad, ranges[0][2]))
-        return
-    mid = len(ranges) // 2
-    lines.append("%sif _code < %s:" % (pad, hex_literal(ranges[mid][0])))
-    emit_range_tree(ranges[:mid], lines, depth + 1)
-    lines.append("%selse:" % pad)
-    emit_range_tree(ranges[mid:], lines, depth + 1)
+CODE_WIDTH = 6
 
 
-def emit_blocked_exact(entries, lines, depth):
-    """精确匹配：块间按首码点二分，块内逐条相等比较；未命中一律 -1。"""
-    blocks = [entries[i:i + BLOCK] for i in range(0, len(entries), BLOCK)]
-    pad = "    " * depth
-    if len(blocks) == 1:
-        for code, value in blocks[0]:
-            lines.append("%sif _code == %s:" % (pad, hex_literal(code)))
-            lines.append("%s    return %s" % (pad, value))
-        lines.append("%sreturn -1" % pad)
-        return
-    mid = (len(blocks) + 1) // 2
-    lines.append("%sif _code < %s:" % (pad, hex_literal(blocks[mid][0][0])))
-    emit_blocked_exact([e for b in blocks[:mid] for e in b], lines, depth + 1)
-    lines.append("%selse:" % pad)
-    emit_blocked_exact([e for b in blocks[mid:] for e in b], lines, depth + 1)
+def hex_text(records):
+    """定宽十六进制记录拼成一串：字段宽度固定，故可按偏移直接读，不必整体解码。"""
+    return "".join(
+        "".join("%0*x" % (width, value) for value, width in record)
+        for record in records
+    )
 
 
-def emit_composition(groups, lines, depth):
-    """先按起始字符二分，叶子核对该起始字符后逐条比较第二个字符。"""
-    pad = "    " * depth
-    if len(groups) == 1:
-        first, pairs = groups[0]
-        lines.append("%sif first != %s:" % (pad, hex_literal(first)))
-        lines.append("%s    return -1" % pad)
-        for second, composed in pairs:
-            lines.append("%sif second == %s:" % (pad, hex_literal(second)))
-            lines.append("%s    return %s" % (pad, hex_literal(composed)))
-        lines.append("%sreturn -1" % pad)
-        return
-    mid = (len(groups) + 1) // 2
-    lines.append("%sif first < %s:" % (pad, hex_literal(groups[mid][0])))
-    emit_composition(groups[:mid], lines, depth + 1)
-    lines.append("%selse:" % pad)
-    emit_composition(groups[mid:], lines, depth + 1)
+def emit_table(lines, name, records, value_width, note):
+    """产出一张表：数据串、表描述与查表入口；查表由 table_search.pini 的通用二分承担。"""
+    lines.append(note)
+    lines.append("%sData|func() -> (String,):" % name)
+    lines.append('    return "%s"' % hex_text(records))
+    lines.append("")
+    lines.append("%sTable|func() -> (HexTable,):" % name)
+    lines.append("    var out = HexTable()")
+    lines.append("    out.limit = %d" % len(records))
+    lines.append("    out.recordWidth = %d" % sum(width for _, width in records[0]))
+    lines.append("    out.valueWidth = %d" % value_width)
+    lines.append("    return out")
+    lines.append("")
 
 
 def decompositions():
@@ -266,20 +243,26 @@ def script_segments():
 
 
 def build_scripts(ranges):
+    records = [((start, CODE_WIDTH), (value, 2)) for start, _end, value in ranges]
     lines = [
         "; 本文件由 bootstrap/tools/gen-unicode-tables.py 生成，勿手改。",
-        "; 数据版本 Unicode %s；区间为闭区间，按码点升序。" % UNICODE_VERSION,
+        "; 数据版本 Unicode %s；记录为定宽十六进制，按码点升序。" % UNICODE_VERSION,
         "; 脚本号：0 其它，1 拉丁，2 西里尔，3 希腊。",
         "",
+    ]
+    emit_table(
+        lines, "script", records, 2,
+        "; 脚本表：每条 = 区间起点 6 位 + 脚本号 2 位，覆盖 0 到 U+10FFFF。")
+    lines += [
         "; 码点脚本号：只区分三个高风险脚本，其余一律 0；越界码点按 0。",
         "scriptClassOf|func(_code: I32,) -> (I32,):",
         "    if _code < 0:",
         "        return 0",
         "    if _code > %s:" % hex_literal(MAX_CODE),
         "        return 0",
+        "    return lookupRange(bytes = tempUtf8Bytes(scriptData()), table = scriptTable(), code = _code)",
+        "",
     ]
-    emit_range_tree(ranges, lines, 1)
-    lines += [""]
     return "\n".join(lines)
 
 
@@ -321,20 +304,32 @@ def pool_of(table):
 
 
 def build_class(ranges):
+    records = [((start, CODE_WIDTH), (value, 1)) for start, _end, value in ranges]
     lines = [
         "; 本文件由 bootstrap/tools/gen-unicode-tables.py 生成，勿手改。",
-        "; 数据版本 Unicode %s；区间为闭区间，按码点升序。" % UNICODE_VERSION,
+        "; 数据版本 Unicode %s；记录为定宽十六进制，按码点升序。" % UNICODE_VERSION,
         "; 分类：0 其它，1 字母（L*），2 数字（N*），3 空白（White_Space）。",
         "",
+    ]
+    emit_table(
+        lines, "unicodeClass", records, 1,
+        "; 分类表：每条 = 区间起点 6 位 + 类别 1 位，覆盖 0 到 U+10FFFF。")
+    lines += [
         "; 码点分类：0 其它，1 字母，2 数字，3 空白；越界码点一律按其它。",
         "unicodeClassOf|func(_code: I32,) -> (I32,):",
         "    if _code < 0:",
         "        return 0",
         "    if _code > %s:" % hex_literal(MAX_CODE),
         "        return 0",
-    ]
-    emit_range_tree(ranges, lines, 1)
-    lines += [
+        "    return lookupRange(bytes = tempUtf8Bytes(unicodeClassData()), table = unicodeClassTable(), code = _code)",
+        "",
+        "; 已持字节视图时用它：同一份表多次查询只转一次。",
+        "unicodeClassOfIn|func(_data: Array<U8>, _code: I32,) -> (I32,):",
+        "    if _code < 0:",
+        "        return 0",
+        "    if _code > %s:" % hex_literal(MAX_CODE),
+        "        return 0",
+        "    return lookupRange(bytes = _data, table = unicodeClassTable(), code = _code)",
         "",
         "; 数据版本，供上层核对表与规范声明是否同版。",
         "unicodeDataVersion|func() -> (String,):",
@@ -346,46 +341,79 @@ def build_class(ranges):
 
 def build_nfc(table, ccc, groups):
     pool, packed = pool_of(table)
-    entries = [
-        (code, "%d" % ((packed[code][0] << DECOMP_SHIFT) | packed[code][1]))
+    decomp = [
+        ((code, CODE_WIDTH), ((packed[code][0] << DECOMP_SHIFT) | packed[code][1], 8))
         for code in sorted(packed)
+    ]
+    classes = [((start, CODE_WIDTH), (value, 2)) for start, _end, value in ccc]
+    pairs = [
+        ((first, CODE_WIDTH), (second, CODE_WIDTH), (composed, CODE_WIDTH))
+        for first, items in groups
+        for second, composed in items
     ]
     lines = [
         "; 本文件由 bootstrap/tools/gen-unicode-tables.py 生成，勿手改。",
-        "; 数据版本 Unicode %s；分解目标按码点升序拼成 UTF-8 池。" % UNICODE_VERSION,
+        "; 数据版本 Unicode %s；记录为定宽十六进制，按码点升序。" % UNICODE_VERSION,
         "",
         "; 全量规范分解池：每个目标串都是递归分解后的结果，韩文不在表内。",
         "decompositionPool|func() -> (String,):",
         '    return "%s"' % pini_string(pool),
         "",
-        "; 码点的分解在池中的位置：字节偏移左移 %d 位或上字节长度；-1 表示无分解。" % DECOMP_SHIFT,
-        "decompositionPacked|func(_code: I32,) -> (I32,):",
     ]
-    emit_blocked_exact(entries, lines, 1)
+    emit_table(
+        lines, "decomposition", decomp, 8,
+        "; 分解索引：每条 = 码点 6 位 + 池内位置 8 位（字节偏移左移 %d 位或上字节长）。" % DECOMP_SHIFT)
     lines += [
+        "; 码点的分解在池中的位置；未列出的码点答 -1。",
+        "decompositionPacked|func(_code: I32,) -> (I32,):",
+        "    return lookupExact(bytes = tempUtf8Bytes(decompositionData()), table = decompositionTable(), code = _code)",
         "",
-        "; 组合类（Canonical_Combining_Class）区间：0 为起始字符，覆盖整个码点空间。",
+        "; 已持字节视图时用它：同一份表多次查询只转一次。",
+        "decompositionPackedIn|func(_data: Array<U8>, _code: I32,) -> (I32,):",
+        "    return lookupExact(bytes = _data, table = decompositionTable(), code = _code)",
+        "",
+    ]
+    emit_table(
+        lines, "combining", classes, 2,
+        "; 组合类表：每条 = 区间起点 6 位 + 组合类 2 位，覆盖 0 到 U+10FFFF。")
+    lines += [
+        "; 组合类（Canonical_Combining_Class）：0 为起始字符，越界码点答 0。",
         "combiningClassOf|func(_code: I32,) -> (I32,):",
         "    if _code < 0:",
         "        return 0",
         "    if _code > %s:" % hex_literal(MAX_CODE),
         "        return 0",
-    ]
-    emit_range_tree(ccc, lines, 1)
-    lines += [
+        "    return lookupRange(bytes = tempUtf8Bytes(combiningData()), table = combiningTable(), code = _code)",
         "",
+        "; 已持字节视图时用它：同一份表多次查询只转一次。",
+        "combiningClassOfIn|func(_data: Array<U8>, _code: I32,) -> (I32,):",
+        "    if _code < 0:",
+        "        return 0",
+        "    if _code > %s:" % hex_literal(MAX_CODE),
+        "        return 0",
+        "    return lookupRange(bytes = _data, table = combiningTable(), code = _code)",
+        "",
+    ]
+    emit_table(
+        lines, "composition", pairs, CODE_WIDTH,
+        "; 组合表：每条 = 首字符 6 位 + 次字符 6 位 + 合成码点 6 位，按两码点升序。")
+    lines += [
         "; 单步规范组合：两个标量合成一个码点，-1 表示不成对；韩文由调用方算术处理。",
         "compositionOf|func(first: I32, second: I32,) -> (I32,):",
+        "    return lookupPair(bytes = tempUtf8Bytes(compositionData()), table = compositionTable(), first = first, second = second)",
+        "",
+        "; 已持字节视图时用它：同一份表多次查询只转一次。",
+        "compositionOfIn|func(_data: Array<U8>, _first: I32, _second: I32,) -> (I32,):",
+        "    return lookupPair(bytes = _data, table = compositionTable(), first = _first, second = _second)",
+        "",
     ]
-    emit_composition(groups, lines, 1)
-    lines.append("")
     return "\n".join(lines)
 
 
 def build_confusable(table):
     pool, packed = pool_of(table)
     entries = [
-        (code, "%d" % ((packed[code][0] << CONFUSABLE_SHIFT) | packed[code][1]))
+        ((code, CODE_WIDTH), ((packed[code][0] << CONFUSABLE_SHIFT) | packed[code][1], 8))
         for code in sorted(packed)
     ]
     lines = [
@@ -396,11 +424,20 @@ def build_confusable(table):
         "confusablePool|func() -> (String,):",
         '    return "%s"' % pini_string(pool),
         "",
-        "; 源码点的目标在池中的位置：字节偏移左移 %d 位或上字节长度；-1 表示无映射。" % CONFUSABLE_SHIFT,
-        "confusablePacked|func(_code: I32,) -> (I32,):",
     ]
-    emit_blocked_exact(entries, lines, 1)
-    lines.append("")
+    emit_table(
+        lines, "confusable", entries, 8,
+        "; 混淆索引：每条 = 源码点 6 位 + 池内位置 8 位（字节偏移左移 %d 位或上字节长）。" % CONFUSABLE_SHIFT)
+    lines += [
+        "; 源码点的目标在池中的位置；未列出的码点答 -1。",
+        "confusablePacked|func(_code: I32,) -> (I32,):",
+        "    return lookupExact(bytes = tempUtf8Bytes(confusableData()), table = confusableTable(), code = _code)",
+        "",
+        "; 已持字节视图时用它：同一份表多次查询只转一次。",
+        "confusablePackedIn|func(_data: Array<U8>, _code: I32,) -> (I32,):",
+        "    return lookupExact(bytes = _data, table = confusableTable(), code = _code)",
+        "",
+    ]
     return "\n".join(lines)
 
 

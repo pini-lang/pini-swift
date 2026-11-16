@@ -8,6 +8,7 @@ bytes: Array<U8> = []
 pos: I32 = 0
 language: KeywordLanguage = .langEnglish
 keywords: KeywordTable = KeywordTable()
+classes: Array<U8> = []
 indents: Array<I32> = []
 brackets: Array<Bool> = []
 tokens: Array<Token> = []
@@ -23,6 +24,7 @@ scanAll|func(language: KeywordLanguage, bytes: Array<U8>, start: I32, issues: Ar
     state.pos = start
     state.language = language
     state.keywords = makeKeywordTable(language)
+    state.classes = identifierClassTable()
     state.issues = issues
     state.indents = state.indents.append(0)
     let total = len(bytes)
@@ -54,6 +56,7 @@ scanFragment|func(language: KeywordLanguage, bytes: Array<U8>, start: I32, end: 
     state.bytes = bytes
     state.pos = start
     state.language = language
+    state.classes = identifierClassTable()
     state.indents = state.indents.append(0)
     let total = len(bytes)
     var limit = end
@@ -231,7 +234,7 @@ isIdentifierContinueByte|func(_c: I32,) -> (Bool,):
 scanIdentifier|func(_state: LexState,) -> (LexState,):
     var out = _state
     let start = out.pos
-    let end = identifierEnd(bytes = out.bytes, start = start)
+    let end = identifierEnd(bytes = out.bytes, start = start, classes = out.classes)
     if end == start:
         return scanWideByte(out)
     out.pos = end
@@ -239,7 +242,7 @@ scanIdentifier|func(_state: LexState,) -> (LexState,):
     return emitToken(state = out, kind = kind, start = start, end = end)
 
 ; 标识符词界：起点不是标识符首字节时答原位置；否则按 ASCII 快路与标量分类推进到词尾。
-identifierEnd|func(bytes: Array<U8>, start: I32,) -> (I32,):
+identifierEnd|func(bytes: Array<U8>, start: I32, classes: Array<U8>,) -> (I32,):
     let total = len(bytes)
     if start < 0 || start >= total:
         return start
@@ -251,7 +254,7 @@ identifierEnd|func(bytes: Array<U8>, start: I32,) -> (I32,):
         pos = start + 1
     else:
         let head = decodeScalarAt(bytes = bytes, offset = start)
-        if head.length == 0 || !startsIdentifier(head.code):
+        if head.length == 0 || !startsIdentifierIn(classes, head.code):
             return start
         pos = start + head.length
     var scanning = true
@@ -267,7 +270,7 @@ identifierEnd|func(bytes: Array<U8>, start: I32,) -> (I32,):
                     scanning = false
             else:
                 let unit = decodeScalarAt(bytes = bytes, offset = pos)
-                if unit.length == 0 || !continuesIdentifier(unit.code):
+                if unit.length == 0 || !continuesIdentifierIn(classes, unit.code):
                     scanning = false
                 else:
                     pos = pos + unit.length
@@ -608,7 +611,7 @@ scanPunctuation|func(_state: LexState,) -> (LexState,):
     if c == 126:
         return emitAscii(state = out, kind = opBitNot, width = 1)
     if c == 40:
-        out = pushBracket(state = out, carrying = isBlockCarryingParen(table = out.keywords, bytes = out.bytes, openAt = start))
+        out = pushBracket(state = out, carrying = isBlockCarryingParen(table = out.keywords, bytes = out.bytes, openAt = start, classes = out.classes))
         return emitAscii(state = out, kind = leftParen, width = 1)
     if c == 91:
         out = pushBracket(state = out, carrying = false)
@@ -641,11 +644,11 @@ scanPunctuation|func(_state: LexState,) -> (LexState,):
     return out
 
 ; 块携带判定：`(` 后同行紧跟函数关键字且其后不是标识符续字节；关键字拼写按词表取。
-isBlockCarryingParen|func(table: KeywordTable, bytes: Array<U8>, openAt: I32,) -> (Bool,):
+isBlockCarryingParen|func(table: KeywordTable, bytes: Array<U8>, openAt: I32, classes: Array<U8>,) -> (Bool,):
     var i = openAt + 1
     while i < len(bytes) && byteAt(bytes = bytes, index = i) == 32:
         i = i + 1
-    let end = identifierEnd(bytes = bytes, start = i)
+    let end = identifierEnd(bytes = bytes, start = i, classes = classes)
     if end == i:
         return false
     return kindTag(keywordKindIn(table = table, bytes = bytes, start = i, end = end)) == kindTag(kwFunc)
