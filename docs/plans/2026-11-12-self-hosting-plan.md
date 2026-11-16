@@ -305,7 +305,7 @@ NFC 会改变符号身份，属于语言面决定。实施前先修订 `docs/spe
 交付回执：
 
 - `syntax`、`semantics`、`ir` 与 `backend-llvm` 的 `|test`、断言、测试元数据和测试报告面在单模块上已具备；本批以工作区链路把它们接通，没有另建第二套测试编译器。
-- `PiniHost` 新增工作区测试发现与执行：`WorkspaceTestRunner` 按包拓扑序与 `[[test]]` 出现序展开，逐 target 做语义/类型门禁后收集 `|test`；`WorkspaceTestReport` 统一渲染首行、逐条结果与汇总，筛选只收窄执行面。
+- `PiniHost` 新增工作区测试发现与执行：`WorkspaceTestRunner` 按包拓扑序与 `[[test]]` 出现序展开，逐 target 做语义/类型门禁后收集 `|test`；`WorkspaceTestReport` 统一渲染首行、逐 target 汇总、失败清单与总耗时，通过的用例只计数不逐条打印，筛选只收窄执行面。
 - 普通 `build` 与 `test` 共用同一张包图与包可见性；测试 target 的 import 允许是包依赖的子集，但用了未声明的依赖仍然被拒绝。
 - 依赖装载不再把被依赖包的测试源码并进调用方：`driver` 的测试 target 由误收 3 条恢复为自身的 1 条，测试收集不会跨包串味。
 - `pini test <工作区根>` 已接通；`--filter` 支持位置参数与等号两种写法。声明的测试 target 收集不到 `|test`、筛选零命中均以非零退出，空跑不能读成通过。

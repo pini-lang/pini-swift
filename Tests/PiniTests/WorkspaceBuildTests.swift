@@ -285,6 +285,12 @@ struct WorkspaceProcessResult {
 enum WorkspaceTestSupport {
     static let bootstrapRoot = PiniTestEnvironment.repositoryRoot.appendingPathComponent("bootstrap")
 
+    /// 报告末尾带总耗时，golden 只钉稳定部分：把「（N.NN 秒）」统一换成占位。
+    static func withoutTiming(_ text: String) -> String {
+        text.replacingOccurrences(
+            of: #"（[0-9]+\.[0-9]+ 秒）"#, with: "（用时）", options: .regularExpression)
+    }
+
     static func temporaryDirectory(tag: String) throws -> URL {
         let url = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("pini-workspace-\(tag)-\(UUID().uuidString)")

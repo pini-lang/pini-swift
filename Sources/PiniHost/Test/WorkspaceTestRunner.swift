@@ -37,30 +37,34 @@ public struct WorkspaceTestSuiteResult {
 /// 工作区测试的统一结果：汇总只从逐条结果派生，不另存计数器。
 public struct WorkspaceTestReport {
     public let suites: [WorkspaceTestSuiteResult]
+    /// 发现到执行结束的墙钟秒数，只进报告末尾，不参与任何判据。
+    public let elapsed: TimeInterval
 
     public var passed: Int { suites.reduce(0) { $0 + $1.results.filter(\.passed).count } }
     public var failed: Int { suites.reduce(0) { $0 + $1.results.filter { !$0.passed }.count } }
     public var total: Int { passed + failed }
 
-    public init(suites: [WorkspaceTestSuiteResult]) {
+    public init(suites: [WorkspaceTestSuiteResult], elapsed: TimeInterval = 0) {
         self.suites = suites
+        self.elapsed = elapsed
     }
 }
 
 extension WorkspaceTestReport {
-    /// 报告全文一次拼好：首行、逐 target 节与汇总行不得由不同调用点各拼一次。
+    /// 报告全文一次拼好：首行、逐 target 汇总与失败清单不得由不同调用点各拼一次。
+    /// 通过的用例只计数不逐条打印，失败的一条不落——降噪不能盖住该看的东西。
     public func rendered(rootLabel: String) -> String {
         var lines = ["测试目标: 工作区 \(rootLabel)（\(suites.count) 个测试 target）"]
         for suite in suites {
             let name = "\(suite.suite.packageName) / \(suite.suite.targetName)"
-            let note = suite.fullySkipped ? "，--skip 全数排除" : ""
-            lines.append("包 \(name)（\(suite.results.count) 个测试\(note)）")
-            for result in suite.results {
-                lines.append(
-                    result.passed ? " ✓ \(result.name)" : " ✗ \(result.name): \(result.message)")
+            let passedHere = suite.results.filter(\.passed).count
+            let detail = suite.fullySkipped ? "--skip 全数排除" : "\(passedHere) 通过"
+            lines.append("包 \(name)（\(suite.results.count) 个测试，\(detail)）")
+            for result in suite.results where !result.passed {
+                lines.append(" ✗ \(result.name): \(result.message)")
             }
         }
-        lines.append("结果: \(passed) 通过, \(failed) 失败")
+        lines.append(String(format: "结果: %d 通过, %d 失败（%.2f 秒）", passed, failed, elapsed))
         return lines.joined(separator: "\n")
     }
 }
@@ -118,6 +122,7 @@ public enum WorkspaceTestRunner {
     public static func run(
         plan: WorkspaceBuildPlan, filter: String? = nil, skip: [String] = []
     ) throws -> WorkspaceTestReport {
+        let started = Date()
         let declaredSuites = suites(in: plan)
         guard !declaredSuites.isEmpty else {
             throw WorkspaceTestError.noTestTargets(root: plan.rootPath)
@@ -193,7 +198,7 @@ public enum WorkspaceTestRunner {
         if let filter, executed.isEmpty {
             throw WorkspaceTestError.noMatchingTests(filter: filter)
         }
-        return WorkspaceTestReport(suites: executed)
+        return WorkspaceTestReport(suites: executed, elapsed: Date().timeIntervalSince(started))
     }
 
     /// AST 面声明的测试函数数：收集数少于它即说明注册链路丢过节点。
