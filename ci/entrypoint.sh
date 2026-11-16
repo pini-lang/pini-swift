@@ -159,7 +159,8 @@ fi
 step "测试"
 # 测试里的命令行与 LLVM 判据从 `PiniTestEnvironment` 取产物（环境变量优先，仓根兜底）。
 # 这里指向本次构建产物；「缺工具链即失败」已在文件开头打开。
+# `-q` 只留失败条目与汇总：逐条 passing 行把 781 项的日志推到两千行以上。
 export PINI_CLI_BIN="$PWD/.build/debug/pini"
-swift test --disable-sandbox
+swift test -q --disable-sandbox
 
 printf '\n=== 全绿（总耗时 %ss）===\n' "$(( $(date +%s) - script_start ))"
