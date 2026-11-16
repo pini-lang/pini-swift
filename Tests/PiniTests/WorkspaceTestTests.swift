@@ -16,16 +16,12 @@ struct WorkspaceTestTests {
         #expect(result.status == 0, "工作区测试失败：\(result.stderr)")
         #expect(result.stderr.isEmpty)
         #expect(
-            result.stdout
+            WorkspaceTestSupport.withoutTiming(result.stdout)
                 == """
                 测试目标: 工作区 .（2 个测试 target）
-                包 alpha / alpha-tests（3 个测试）
-                 ✓ 加法成立
-                 ✓ 负数可用
-                 ✓ 减法成立
-                包 beta / beta-tests（1 个测试）
-                 ✓ 字符串长度
-                结果: 4 通过, 0 失败
+                包 alpha / alpha-tests（3 个测试，3 通过）
+                包 beta / beta-tests（1 个测试，1 通过）
+                结果: 4 通过, 0 失败（用时）
 
                 """)
     }
@@ -41,14 +37,12 @@ struct WorkspaceTestTests {
         #expect(result.status == 1)
         #expect(result.stderr.isEmpty)
         #expect(
-            result.stdout
+            WorkspaceTestSupport.withoutTiming(result.stdout)
                 == """
                 测试目标: 工作区 .（1 个测试 target）
-                包 gamma / gamma-tests（3 个测试）
-                 ✓ 甲
+                包 gamma / gamma-tests（3 个测试，2 通过）
                  ✗ 乙: 必失
-                 ✓ 丙
-                结果: 2 通过, 1 失败
+                结果: 2 通过, 1 失败（用时）
 
                 """)
     }
@@ -64,12 +58,11 @@ struct WorkspaceTestTests {
             cli, ["test", ".", "--filter", "减法"], cwd: root)
         #expect(narrowed.status == 0, "筛选运行失败：\(narrowed.stderr)")
         #expect(
-            narrowed.stdout
+            WorkspaceTestSupport.withoutTiming(narrowed.stdout)
                 == """
                 测试目标: 工作区 .（1 个测试 target）
-                包 alpha / alpha-tests（1 个测试）
-                 ✓ 减法成立
-                结果: 1 通过, 0 失败
+                包 alpha / alpha-tests（1 个测试，1 通过）
+                结果: 1 通过, 0 失败（用时）
 
                 """)
 
@@ -93,13 +86,12 @@ struct WorkspaceTestTests {
         #expect(result.stdout.contains("保留-执行"))
         #expect(!result.stdout.contains("排除-执行"))
         #expect(
-            result.stdout
+            WorkspaceTestSupport.withoutTiming(result.stdout)
                 == """
                 保留-执行
                 测试目标: 工作区 .（1 个测试 target）
-                包 delta / delta-tests（1 个测试）
-                 ✓ 保留
-                结果: 1 通过, 0 失败
+                包 delta / delta-tests（1 个测试，1 通过）
+                结果: 1 通过, 0 失败（用时）
 
                 """)
     }
@@ -115,21 +107,21 @@ struct WorkspaceTestTests {
             cli, ["test", ".", "--skip", "减法"], cwd: root)
         #expect(result.status == 0, "跳过运行失败：\(result.stderr)")
         #expect(
-            result.stdout
+            WorkspaceTestSupport.withoutTiming(result.stdout)
                 == """
                 测试目标: 工作区 .（2 个测试 target）
-                包 alpha / alpha-tests（2 个测试）
-                 ✓ 加法成立
-                 ✓ 负数可用
-                包 beta / beta-tests（1 个测试）
-                 ✓ 字符串长度
-                结果: 3 通过, 0 失败
+                包 alpha / alpha-tests（2 个测试，2 通过）
+                包 beta / beta-tests（1 个测试，1 通过）
+                结果: 3 通过, 0 失败（用时）
 
                 """)
 
         let equalsForm = try WorkspaceTestSupport.run(
             cli, ["test", ".", "--skip=减法"], cwd: root)
-        #expect(equalsForm.stdout == result.stdout, "--skip 与 --skip= 应等价")
+        #expect(
+            WorkspaceTestSupport.withoutTiming(equalsForm.stdout)
+                == WorkspaceTestSupport.withoutTiming(result.stdout),
+            "--skip 与 --skip= 应等价")
     }
 
     @Test("跳过名单零命中按框架错报出，不静默当成跳过")
@@ -175,15 +167,12 @@ struct WorkspaceTestTests {
             cli, ["test", ".", "--skip", "字符串"], cwd: root)
         #expect(result.status == 0, "跳过运行失败：\(result.stderr)")
         #expect(
-            result.stdout
+            WorkspaceTestSupport.withoutTiming(result.stdout)
                 == """
                 测试目标: 工作区 .（2 个测试 target）
-                包 alpha / alpha-tests（3 个测试）
-                 ✓ 加法成立
-                 ✓ 负数可用
-                 ✓ 减法成立
+                包 alpha / alpha-tests（3 个测试，3 通过）
                 包 beta / beta-tests（0 个测试，--skip 全数排除）
-                结果: 3 通过, 0 失败
+                结果: 3 通过, 0 失败（用时）
 
                 """)
     }
@@ -237,7 +226,7 @@ struct WorkspaceTestTests {
         let fixture = PiniTestEnvironment.repositoryRoot
             .appendingPathComponent("Tests/PiniTests/bootstrap-workspace-tests.txt")
         let expected = try String(contentsOf: fixture, encoding: .utf8)
-        #expect(result.stdout == expected)
+        #expect(WorkspaceTestSupport.withoutTiming(result.stdout) == expected)
     }
 
     @Test("测试 target 按包依赖拓扑序展开")
