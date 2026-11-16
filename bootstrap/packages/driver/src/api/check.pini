@@ -358,6 +358,20 @@ packageInterfaces|func(_ws: WorkspaceUnits, world: MemberWorld,) -> (Array<Inter
         p = p + 1
     return out
 
+; 装配后半段：注册、类型与成员世界。检查与降载共用一条链，免得两处各装一遍。
+(WorldBuild)
+table: SymbolTable = SymbolTable()
+types: TypeTable = TypeTable()
+world: MemberWorld = MemberWorld()
+
+; 装配：三步次序固定 —— 注册先于类型，类型先于世界；诊断在装配之后逐段跑。
+buildWorld|func(units: Array<CompilationUnit>, packages: Array<PackageUnits>,) -> (WorldBuild,):
+    var out = WorldBuild()
+    out.table = registerPackages(packages)
+    out.types = resolvePackage(units = units, table = out.table)
+    out.world = makeMemberWorld(units = units, table = out.table, types = out.types)
+    return out
+
 ; 检查入口：清单不可用时只报清单错；语法有错就短路，其余阶段按同一张包图接。
 checkWorkspace|func(root: String,) -> (WorkspaceReport,):
     let plan = planWorkspace(root)
@@ -378,20 +392,19 @@ checkWorkspace|func(root: String,) -> (WorkspaceReport,):
         i = i + 1
     if len(diagnostics) > 0:
         return finishReport(root = root, packages = plan.packageCount(), diagnostics = diagnostics, units = units)
-    let table = registerPackages(ws.packages)
-    var symbols = symbolDiagnostics(table)
+    let build = buildWorld(units = units, packages = ws.packages)
+    var symbols = symbolDiagnostics(build.table)
     i = 0
     while i < len(symbols):
         diagnostics = diagnostics.append(symbols[i])
         i = i + 1
-    let types = resolvePackage(units = units, table = table)
-    var typed = typeDiagnostics(types)
+    var typed = typeDiagnostics(build.types)
     i = 0
     while i < len(typed):
         diagnostics = diagnostics.append(typed[i])
         i = i + 1
-    let world = makeMemberWorld(units = units, table = table, types = types)
-    var foreignErrors = foreignDiagnostics(checkForeignPackage(units = units, types = types))
+    let world = build.world
+    var foreignErrors = foreignDiagnostics(checkForeignPackage(units = units, types = build.types))
     i = 0
     while i < len(foreignErrors):
         diagnostics = diagnostics.append(foreignErrors[i])
