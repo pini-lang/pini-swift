@@ -163,3 +163,17 @@ _module_loader = "../../module-loader"
     assert(len(check.errors) == 1, "应报一条，实得 " + 跨包错误串(check))
     assert(isCrossRef(error = check.errors[0], kind = crossMissing), "实得 " + crossKindName(check.errors[0].kind))
     return
+
+; 测试单元不进公开面：同包 tests/ 下的助手既不算公开名，也不进包符号表。
+测试助手不进公开面|test() -> ():
+    let lib = 造跨包单元(path = "packages/base/src/api/base.pini", src = "公开函数|func() -> ():\n    pass\n")
+    let helper = 造跨包单元(path = "packages/base/tests/helper_test.pini", src = "助手|func() -> ():\n    pass\n")
+    var base = 组跨包(name = "base", root = "packages/base", requires = [], units = [lib, helper])
+    base.testRoots = ["tests"]
+    let ws = 跨包工作区([base])
+    assert(len(packagePublicNames(group = base)) == 1, "测试助手不算公开名")
+    let rows = buildPackageSymbols(ws, world = 建跨包世界(ws))
+    assert(len(rows) == 1, "一个包一行")
+    assert(len(rows[0].symbols) == 1, "测试助手不进包符号表")
+    assert(rows[0].symbols[0].spelling == "公开函数", "只留生产符号")
+    return

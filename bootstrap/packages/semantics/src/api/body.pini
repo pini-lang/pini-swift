@@ -322,7 +322,8 @@ errors: Array<BodyError> = []
 valid: Bool = false
 
 ; 播种函数帧：`|self` 方法先放自身，再逐个放参数；返回类型一并定好，无标注按空元组。
-seedFunctionScope|func(world: MemberWorld, unitIndex: I32, declId: I32,) -> (BodySeed,):
+; 播种函数帧：字节视图由调用方传入，整单元只转一次；传空时按单元文本现转。
+seedFunctionScope|func(world: MemberWorld, unitIndex: I32, declId: I32, bytes: Array<U8>,) -> (BodySeed,):
     var out = BodySeed()
     out.pool = world.types.pool
     if unitIndex < 0 || unitIndex >= len(world.units):
@@ -334,7 +335,9 @@ seedFunctionScope|func(world: MemberWorld, unitIndex: I32, declId: I32,) -> (Bod
     if !isFunctionDeclCode(decl.kind) || decl.isForeign:
         return out
     out.valid = true
-    let bytes = tempUtf8Bytes(unit.text)
+    var view = bytes
+    if len(view) == 0:
+        view = tempUtf8Bytes(unit.text)
     var stack = enterScope(stack = ScopeStack(), kind = scopeFunction, file = unit.path, offset = decl.start)
     if decl.isSelf:
         let ownerId = ownerTypeOf(world = world, unitIndex = unitIndex, declId = declId)
@@ -349,7 +352,7 @@ seedFunctionScope|func(world: MemberWorld, unitIndex: I32, declId: I32,) -> (Bod
         let kid = decl.kids[i]
         if isParamDeclCode(unit.ast.decls[kid].kind):
             let typeId = world.types.typeOf(unit = unitIndex, decl = kid)
-            let declared = declareParam(stack = stack, decl = unit.ast.decls[kid], declId = kid, typeId = typeId, file = unit.path, bytes = bytes)
+            let declared = declareParam(stack = stack, decl = unit.ast.decls[kid], declId = kid, typeId = typeId, file = unit.path, bytes = view)
             if declared.failed:
                 out.errors = out.errors.append(makeBodyError(kind = bodyParamDuplicated, file = unit.path, offset = declared.error.offset, name = declared.error.spelling, expected = "", got = ""))
             else:
@@ -366,9 +369,8 @@ seedFunctionScope|func(world: MemberWorld, unitIndex: I32, declId: I32,) -> (Bod
         out.returnType = empty.id
     return out
 
-; 检查入口：播种函数帧，走一遍体，最后按返回路径补缺失返回。
-checkFunctionBody|func(world: MemberWorld, unitIndex: I32, declId: I32, types: ExprTypes,) -> (BodyCheck,):
-    let seed = seedFunctionScope(world = world, unitIndex = unitIndex, declId = declId)
+; 检查入口（带帧）：按传入的函数帧走一遍体，最后按返回路径补缺失返回。
+checkFunctionBodyWith|func(world: MemberWorld, unitIndex: I32, declId: I32, types: ExprTypes, bytes: Array<U8>, seed: BodySeed,) -> (BodyCheck,):
     var out = BodyCheck()
     out.pool = seed.pool
     if !seed.valid:
@@ -387,7 +389,14 @@ checkFunctionBody|func(world: MemberWorld, unitIndex: I32, declId: I32, types: E
     out = walkBodyStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = decl.body, scope = seed.scope, known = known, types = types, out = out)
     out.guarantees = stmtAlwaysReturns(world = world, unit = unit, unitIndex = unitIndex, stmtId = decl.body, scope = seed.scope, types = types)
     if known && !isVoidReturn(pool = out.pool, id = out.returnType) && !out.guarantees:
-        let name = decodeRange(bytes = tempUtf8Bytes(unit.text), start = decl.nameStart, end = decl.nameEnd)
+        var view = bytes
+        if len(view) == 0:
+            view = tempUtf8Bytes(unit.text)
+        let name = decodeRange(bytes = view, start = decl.nameStart, end = decl.nameEnd)
         out = appendBodyError(out = out, unit = unit, offset = decl.start, kind = bodyReturnMissing, name = name, expected = typeText(pool = out.pool, id = out.returnType), got = "()")
     out.failed = len(out.errors) > 0
     return out
+
+; 检查入口：自行播种后转调；调用方已有函数帧时走带 seed 的版本，同一函数不重复播种。
+checkFunctionBody|func(world: MemberWorld, unitIndex: I32, declId: I32, types: ExprTypes, bytes: Array<U8>,) -> (BodyCheck,):
+    return checkFunctionBodyWith(world = world, unitIndex = unitIndex, declId = declId, types = types, bytes = bytes, seed = seedFunctionScope(world = world, unitIndex = unitIndex, declId = declId, bytes = bytes))

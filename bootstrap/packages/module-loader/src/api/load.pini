@@ -190,11 +190,12 @@ loadWorkspace|func(_plan: BuildPlan,) -> (LoadResult,):
 compareSourcePaths|func(first: String, second: String,) -> (I32,):
     return comparePaths(first = first, second = second)
 
-; 包单元：包名、包根、声明依赖与它装载出的单元；包边界由此确定，不靠路径前缀猜。
+; 包单元：包名、包根、声明依赖、测试根与它装载出的单元；包边界由此确定，不靠路径前缀猜。
 (PackageUnits)
 name: String = ""
 rootPath: String = ""
 requires: Array<String> = []
+testRoots: Array<String> = []
 units: Array<CompilationUnit> = []
 
 ; 工作区单元：按计划拓扑序分组，装载错误单列；判据读这里，不再回头猜路径。
@@ -215,6 +216,11 @@ loadWorkspaceGrouped|func(_plan: BuildPlan,) -> (WorkspaceUnits,):
         group.name = planned.name
         group.rootPath = planned.rootPath
         group.requires = planned.requires
+        var t = 0
+        while t < len(planned.targets):
+            if package.isTestTarget(planned.targets[t]):
+                group.testRoots = group.testRoots.append(planned.targets[t].sourceRoot)
+            t = t + 1
         group.units = loaded.units
         var e = 0
         while e < len(loaded.errors):

@@ -38,7 +38,7 @@ types: ExprTypes = ExprTypes()
 查控|func(sample: 控样例, name: String,) -> (StoreCheck,):
     let id = 找控函数(sample = sample, name = name)
     assert(id >= 0, "应找到函数 " + name)
-    return checkFunctionStores(world = sample.world, unitIndex = 0, declId = id, types = sample.types)
+    return checkFunctionStores(world = sample.world, unitIndex = 0, declId = id, types = sample.types, bytes = tempUtf8Bytes(sample.world.units[0].text))
 
 ; 首个条件语句：返回第一个 if 语句的下标，没有答 -1。
 首个条件语句|func(_ast: Ast,) -> (I32,):

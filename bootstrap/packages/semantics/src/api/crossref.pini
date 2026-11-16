@@ -49,7 +49,25 @@ symbols: Array<Symbol> = []
 found: Bool = false
 symbol: Symbol = Symbol()
 
-; 包符号表：按单元到包的映射把顶层符号归包；成员与参数有 owner，不进这张表。
+; 测试单元：路径落在所属包的某个测试根之下；测试助手只在包内可见，不进公开面。
+isTestUnit|func(group: PackageUnits, path: String,) -> (Bool,):
+    var i = 0
+    while i < len(group.testRoots):
+        if path.startsWith(group.rootPath + "/" + group.testRoots[i] + "/"):
+            return true
+        i = i + 1
+    return false
+
+; 按包名取分组：未命中答空分组，调用方按空测试根处理。
+packageGroupOf|func(_ws: WorkspaceUnits, name: String,) -> (PackageUnits,):
+    var p = 0
+    while p < len(_ws.packages):
+        if _ws.packages[p].name == name:
+            return _ws.packages[p]
+        p = p + 1
+    return PackageUnits()
+
+; 包符号表：按单元到包的映射把顶层符号归包；成员、参数与测试单元不进这张表。
 buildPackageSymbols|func(_ws: WorkspaceUnits, world: MemberWorld,) -> (Array<PackageSymbols>,):
     var out: Array<PackageSymbols> = []
     var p = 0
@@ -64,7 +82,9 @@ buildPackageSymbols|func(_ws: WorkspaceUnits, world: MemberWorld,) -> (Array<Pac
         if len(symbol.owner) == 0:
             let owner = _ws.packageOf(symbol.file)
             if len(owner) > 0:
-                out = appendPackageSymbol(rows = out, owner = owner, symbol = symbol)
+                let group = packageGroupOf(_ws, name = owner)
+                if !isTestUnit(group = group, path = symbol.file):
+                    out = appendPackageSymbol(rows = out, owner = owner, symbol = symbol)
         s = s + 1
     return out
 
@@ -223,19 +243,20 @@ checkUnitRefs|func(symbols: Array<PackageSymbols>, group: PackageUnits, bindings
         i = i + 1
     return working
 
-; 包公开名：一个包内各单元顶层声明的 public 名字，`_` 名字与内部目录不进。
+; 包公开名：一个包内各单元顶层声明的 public 名字，`_` 名字、内部目录与测试单元不进。
 packagePublicNames|func(group: PackageUnits,) -> (Array<String>,):
     var out: Array<String> = []
     var u = 0
     while u < len(group.units):
         let unit = group.units[u]
-        let bytes = tempUtf8Bytes(unit.text)
-        var i = 0
-        while i < len(unit.ast.items):
-            let name = publicNameOf(unit = unit, bytes = bytes, decl = unit.ast.decls[unit.ast.items[i]])
-            if len(name) > 0:
-                out = out.append(name)
-            i = i + 1
+        if !isTestUnit(group = group, path = unit.path):
+            let bytes = tempUtf8Bytes(unit.text)
+            var i = 0
+            while i < len(unit.ast.items):
+                let name = publicNameOf(unit = unit, bytes = bytes, decl = unit.ast.decls[unit.ast.items[i]])
+                if len(name) > 0:
+                    out = out.append(name)
+                i = i + 1
         u = u + 1
     return out
 

@@ -57,13 +57,13 @@ types: ExprTypes = ExprTypes()
 查体|func(sample: 体样例, name: String,) -> (BodyCheck,):
     let id = 找函数(sample = sample, name = name)
     assert(id >= 0, "应找到函数 " + name)
-    return checkFunctionBody(world = sample.world, unitIndex = 0, declId = id, types = sample.types)
+    return checkFunctionBody(world = sample.world, unitIndex = 0, declId = id, types = sample.types, bytes = tempUtf8Bytes(sample.world.units[0].text))
 
 ; 查方法体：扩展块方法按目标名与方法名检查函数体。
 查方法体|func(sample: 体样例, owner: String, name: String,) -> (BodyCheck,):
     let id = 找方法(sample = sample, owner = owner, name = name)
     assert(id >= 0, "应找到方法 " + name)
-    return checkFunctionBody(world = sample.world, unitIndex = 0, declId = id, types = sample.types)
+    return checkFunctionBody(world = sample.world, unitIndex = 0, declId = id, types = sample.types, bytes = tempUtf8Bytes(sample.world.units[0].text))
 
 ; 首个返回：返回第一个 return 语句的下标，没有答 -1。
 首个返回|func(_ast: Ast,) -> (I32,):

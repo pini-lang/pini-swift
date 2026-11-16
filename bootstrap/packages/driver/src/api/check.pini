@@ -258,15 +258,16 @@ storeDiagnostics|func(_check: StoreCheck,) -> (Array<Diagnostic>,):
     return out
 
 ; 单函数检查：返回路径与声明赋值各走一遍，两份错误合并成一串诊断。
-checkOneFunction|func(world: MemberWorld, types: ExprTypes, unitIndex: I32, declId: I32, out: Array<Diagnostic>,) -> (Array<Diagnostic>,):
+checkOneFunction|func(world: MemberWorld, types: ExprTypes, unitIndex: I32, declId: I32, bytes: Array<U8>, out: Array<Diagnostic>,) -> (Array<Diagnostic>,):
     var working = out
-    let body = checkFunctionBody(world = world, unitIndex = unitIndex, declId = declId, types = types)
+    let seed = seedFunctionScope(world = world, unitIndex = unitIndex, declId = declId, bytes = bytes)
+    let body = checkFunctionBodyWith(world = world, unitIndex = unitIndex, declId = declId, types = types, bytes = bytes, seed = seed)
     var bodyList = bodyDiagnostics(body)
     var i = 0
     while i < len(bodyList):
         working = working.append(bodyList[i])
         i = i + 1
-    let stores = checkFunctionStores(world = world, unitIndex = unitIndex, declId = declId, types = types)
+    let stores = checkFunctionStoresWith(world = world, unitIndex = unitIndex, declId = declId, types = types, bytes = bytes, seed = seed)
     var storeList = storeDiagnostics(stores)
     i = 0
     while i < len(storeList):
@@ -275,17 +276,17 @@ checkOneFunction|func(world: MemberWorld, types: ExprTypes, unitIndex: I32, decl
     return working
 
 ; 单声明检查：函数直接查，类型与扩展块下钻到成员函数。
-checkDeclBodies|func(world: MemberWorld, types: ExprTypes, unitIndex: I32, declId: I32, out: Array<Diagnostic>,) -> (Array<Diagnostic>,):
+checkDeclBodies|func(world: MemberWorld, types: ExprTypes, unitIndex: I32, declId: I32, bytes: Array<U8>, out: Array<Diagnostic>,) -> (Array<Diagnostic>,):
     let unit = world.units[unitIndex]
     let decl = unit.ast.decls[declId]
     if isFunctionDeclCode(decl.kind):
-        return checkOneFunction(world = world, types = types, unitIndex = unitIndex, declId = declId, out = out)
+        return checkOneFunction(world = world, types = types, unitIndex = unitIndex, declId = declId, bytes = bytes, out = out)
     var working = out
     if isTypeDecl(decl) || isExtensionDeclCode(decl.kind):
         var i = 0
         while i < len(decl.kids):
             if isFunctionDeclCode(unit.ast.decls[decl.kids[i]].kind):
-                working = checkOneFunction(world = world, types = types, unitIndex = unitIndex, declId = decl.kids[i], out = working)
+                working = checkOneFunction(world = world, types = types, unitIndex = unitIndex, declId = decl.kids[i], bytes = bytes, out = working)
             i = i + 1
     return working
 
@@ -294,9 +295,10 @@ bodyPackageDiagnostics|func(world: MemberWorld, types: ExprTypes, units: Array<C
     var out: Array<Diagnostic> = []
     var u = 0
     while u < len(units):
+        let bytes = tempUtf8Bytes(units[u].text)
         var i = 0
         while i < len(units[u].ast.items):
-            out = checkDeclBodies(world = world, types = types, unitIndex = u, declId = units[u].ast.items[i], out = out)
+            out = checkDeclBodies(world = world, types = types, unitIndex = u, declId = units[u].ast.items[i], bytes = bytes, out = out)
             i = i + 1
         u = u + 1
     return out
@@ -376,7 +378,7 @@ checkWorkspace|func(root: String,) -> (WorkspaceReport,):
         i = i + 1
     if len(diagnostics) > 0:
         return finishReport(root = root, packages = plan.packageCount(), diagnostics = diagnostics, units = units)
-    let table = registerPackage(units)
+    let table = registerPackages(ws.packages)
     var symbols = symbolDiagnostics(table)
     i = 0
     while i < len(symbols):

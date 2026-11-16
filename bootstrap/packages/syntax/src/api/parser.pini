@@ -12,11 +12,13 @@ file: String = ""
 language: KeywordLanguage = .langEnglish
 bytes: Array<U8> = []
 ast: Ast = Ast()
+segments: Array<Segment> = []
 diagnostics: Array<Diagnostic> = []
 
 ; 解析结果：树、语法诊断与词法问题分列；问题不参与语法判定。
 (ParseResult)
 ast: Ast = Ast()
+segments: Array<Segment> = []
 diagnostics: Array<Diagnostic> = []
 issues: Array<LexIssue> = []
 
@@ -41,6 +43,7 @@ parseFileIn|func(language: KeywordLanguage, text: String, file: String,) -> (Par
     p.file = file
     p.language = language
     p.bytes = lexed.bytes
+    p.segments = lexed.segments
     p.parseModule()
     var out = ParseResult()
     out.ast = p.ast
@@ -337,7 +340,14 @@ finishTraitSignature|self(start: I32, nameStart: I32, nameEnd: I32,) -> (I32,):
     self.setDeclBody(id = id, body = body)
     self.setFunctionMarks(id = id, isTest = false, isSelf = isSelf, isOwn = isOwn, isForeign = isForeign)
     return id
-; 方括号声明：`[名|import]`、`[名|export]`、`[名|foreign]`、`[名|given]`、`[名|object]`、
+; 块名：导入、导出、外部与给定块的头名取文件名，可与关键字同形（`foreign.pini` 即 `[foreign|import]`）。
+; 只放行名字这一格，`|` 之后的修饰符仍按词判定；非标识符且非关键字照旧报错。
+acceptBlockName|self(what: String,) -> (Bool,):
+    if self.at(identifier) || isKeywordKind(self.current().kind):
+        self.advance()
+        return true
+    self.report(code = "E2-001", message = "期望" + what + "，实际得到" + kindName(self.current().kind))
+    return false
 ; 方括号声明：`[名|import]`、`[名|export]`、`[名|foreign]`、`[名|given]`、`[名|object]`、
 ; `[名]` 枚举与 `[[名]]` 扩展；名字后可带类型形参表，修饰符按词区分。
 parseBracketDecl|self() -> (I32,):
@@ -361,7 +371,7 @@ parseBracketDecl|self() -> (I32,):
     self.advance()
     let nameStart: I32 = self.current().nameStart
     let nameEnd: I32 = self.current().nameEnd
-    if !self.expect(kind = identifier, what = "声明名"):
+    if !self.acceptBlockName(what = "声明名"):
         self.recover()
         return -1
     let generics: Array<I32> = self.parseGenericParams()
@@ -722,10 +732,15 @@ parseVariantLines|self() -> (Array<I32>,):
         self.skipNewlines()
     return variants
 ; 方法块：`名字|self(_...)` 逐行读取，遇到非方法行即收尾。
+; 扩展块成员判定：名字后跟 `|self` 或 `|own` 才算方法；`|func` 等顶层声明即闭合本块。
+isMethodLine|self() -> (Bool,):
+    if !self.at(identifier) || !self.isKindAt(offset = 1, kind = opBitOr):
+        return false
+    return self.isKindAt(offset = 2, kind = kwSelf) || self.isKindAt(offset = 2, kind = kwOwn)
 parseMethodLines|self() -> (Array<I32>,):
     var methods: Array<I32> = []
     self.skipNewlines()
-    while self.at(identifier) && self.isKindAt(offset = 1, kind = opBitOr):
+    while self.isMethodLine():
         let id: I32 = self.parseFunctionDecl()
         if id >= 0:
             methods = methods.append(id)
@@ -1237,7 +1252,7 @@ parseInterpolated|self(token: Token,) -> (I32,):
     var kids: Array<I32> = []
     var i = 0
     while i < token.segmentCount():
-        let segment: Segment = token.segmentAt(i)
+        let segment: Segment = self.segments[token.segmentBase + i]
         var isCode = false
         match segment.kind:
             case segmentInterpolation:

@@ -1,13 +1,19 @@
 [main|import]
 _package = "../../../package"
 
-; 驱动主程序：定位工作区根并装配清单，九包可用时打印产物探针行。
-; 全工作区语义检查受自举解析吞吐缺口阻塞，入口留在 checkWorkspace，待吞吐批次接回。
+; 驱动主程序：工作区根取首个参数，缺省从模块根上溯；按该根跑完整工作区检查。
+; 零诊断打印产物行并以零退出；有诊断先打印渲染文本，再断言失败使进程非零退出。
 main|func() -> ():
-    let root = workspaceRootOf(start = moduleRoot())
-    let plan = planWorkspace(root)
-    if plan.isOK() && plan.packageCount() == 9:
-        print("workspace-ok", plan.packageCount(), true)
+    var root = workspaceRootOf(start = moduleRoot())
+    let args = argv()
+    if len(args) > 0:
+        root = args[0]
+    let report = checkWorkspace(root = root)
+    if len(report.text) > 0:
+        print(report.text)
+    if report.errorCount > 0 || report.exitCode != 0:
+        print("workspace-check-failed", report.errorCount)
+        assert(false, "工作区检查未通过")
         return
-    print("workspace-plan-failed", plan.errorCount())
+    print("workspace-ok", report.packages, true)
     return

@@ -141,16 +141,16 @@ _support = "../../support"
     assert(isKind(token = plain.tokenAt(0), kind = .string), "转义不产生插值")
     assert(plain.tokenAt(0).consumed() == 6, "整条字符串消费六字节")
     assert(plain.tokenAt(0).segmentCount() == 1, "字面段数")
-    assert(plain.tokenAt(0).segmentAt(0).start == 1, "字面段起点")
-    assert(plain.tokenAt(0).segmentAt(0).end == 5, "字面段终点")
+    assert(plain.segmentAt(0, 0).start == 1, "字面段起点")
+    assert(plain.segmentAt(0, 0).end == 5, "字面段终点")
     let mixed = lexText("\"v=\\(x)\"")
     assert(isKind(token = mixed.tokenAt(0), kind = .interpolatedString), "含插值")
     assert(mixed.tokenAt(0).consumed() == 8, "整条消费八字节")
     assert(mixed.tokenAt(0).segmentCount() == 2, "字面段加插值段")
-    assert(mixed.tokenAt(0).segmentAt(0).start == 1, "字面段起点")
-    assert(mixed.tokenAt(0).segmentAt(0).end == 3, "字面段终点")
-    assert(mixed.tokenAt(0).segmentAt(1).start == 5, "插值段起点")
-    assert(mixed.tokenAt(0).segmentAt(1).end == 6, "插值段终点")
+    assert(mixed.segmentAt(0, 0).start == 1, "字面段起点")
+    assert(mixed.segmentAt(0, 0).end == 3, "字面段终点")
+    assert(mixed.segmentAt(0, 1).start == 5, "插值段起点")
+    assert(mixed.segmentAt(0, 1).end == 6, "插值段终点")
     return
 
 ; 插值内部的括号与字符串一起配平：嵌套调用的右括号不提前收尾。
@@ -160,8 +160,8 @@ _support = "../../support"
     assert(isKind(token = token, kind = .interpolatedString), "含插值")
     assert(token.consumed() == 11, "整条消费十一字节")
     assert(token.segmentCount() == 1, "只有一段插值")
-    assert(token.segmentAt(0).start == 3, "插值段起点")
-    assert(token.segmentAt(0).end == 9, "插值段终点")
+    assert(lexed.segmentAt(0, 0).start == 3, "插值段起点")
+    assert(lexed.segmentAt(0, 0).end == 9, "插值段终点")
     return
 
 ; `\0` 是内容终止符：跨度仍扫到闭引号，段表在终止符处截断，其后内容不进值。
@@ -170,8 +170,8 @@ _support = "../../support"
     let token = lexed.tokenAt(0)
     assert(token.consumed() == 6, "跨度扫到闭引号")
     assert(token.segmentCount() == 1, "终止符之后不再分段")
-    assert(token.segmentAt(0).start == 1, "字面段起点")
-    assert(token.segmentAt(0).end == 4, "字面段含终止符本身")
+    assert(lexed.segmentAt(0, 0).start == 1, "字面段起点")
+    assert(lexed.segmentAt(0, 0).end == 4, "字面段含终止符本身")
     return
 
 ; 反引号转义：整条跨度含反引号，名字区间去掉两侧引号。

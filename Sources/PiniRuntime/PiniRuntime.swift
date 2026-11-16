@@ -36,16 +36,16 @@ private class _BkBox {
 }
 
 /// 活动句柄统一登记表（数组/字典/集合共用）：平衡 `bk_*_create` 的 `passRetained`。
-/// 统一表使 `bk_handle_*` 与 `bk_runtime_cleanup` 无需按类型分派。
+/// 按对象身份索引，增删都是常数时间；表长等于活跃句柄数，若用列表则每次释放要线性扫描而退化成平方。
 /// 建句柄与释放句柄都可能落在任一任务线程，故表的增删由 `_liveHandlesLock` 守护；释放动作在锁外做。
-nonisolated(unsafe) private var _liveHandles: [Unmanaged<_BkBox>] = []
+nonisolated(unsafe) private var _liveHandles: [ObjectIdentifier: Unmanaged<_BkBox>] = [:]
 private let _liveHandlesLock = NSLock()
 
 /// 登记新建 box，返回其不透明句柄。
 private func _bkRegister(_ box: _BkBox) -> UnsafeMutableRawPointer {
     let u = Unmanaged.passRetained(box)
     _liveHandlesLock.lock()
-    _liveHandles.append(u)
+    _liveHandles[ObjectIdentifier(box)] = u
     _liveHandlesLock.unlock()
     return u.toOpaque()
 }
@@ -60,8 +60,7 @@ private func _bkReleaseShare(_ h: UnsafeMutableRawPointer?) {
     guard box.shares <= 0 else { return }
     // 摘出在锁内、释放在锁外：release 触发的 deinit 会递归回到这里，持锁递归必自锁。
     _liveHandlesLock.lock()
-    let idx = _liveHandles.firstIndex(where: { $0.toOpaque() == h })
-    let removed = idx.map { _liveHandles.remove(at: $0) }
+    let removed = _liveHandles.removeValue(forKey: ObjectIdentifier(box))
     _liveHandlesLock.unlock()
     removed?.release()
 }
@@ -632,7 +631,7 @@ public func bk_given_get(
 public func bk_runtime_cleanup() {
     // deinit 会递归修改 `_liveHandles`（释放嵌套句柄的 share），故先整体摘出再逐个 release。
     _liveHandlesLock.lock()
-    let all = _liveHandles
+    let all = Array(_liveHandles.values)
     _liveHandles.removeAll()
     _liveHandlesLock.unlock()
     for u in all { u.release() }
