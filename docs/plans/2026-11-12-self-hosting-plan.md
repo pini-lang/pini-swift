@@ -1011,6 +1011,115 @@ NFC 会改变符号身份，属于语言面决定。实施前先修订 `docs/spe
 - 语义与 IR 不包含 LLVM 名称、指令或目标布局判断。
 - 一个最小第二后端可只实现 `backend-kit` 接入，不修改语义和 IR 公共接口。
 
+决定（本批开工前记录）：
+
+- **节点单池**：自举语言无继承、无动态分派，访问者写不出来；节点按 AST 四池的先例并成一池，类别码分段（表达式一段、语句一段），子节点用池下标，遍历一律按类别码分派。族只作能力声明与契约对照的单位，不落成池的切分。
+- **后端用注册表加入口码**：特征只作约束、不作类型，协议对象不存在；一个后端记成「名字 + 输出档次 + 能力族表 + 入口码」，驱动按入口码分派，不引入函数指针。
+- **IR 类型池独立于语义类型池**：语义池十二类有效类别（另有无效标记）、IR 池二十三类，不是同一集合；降载入口一次建映射，IR 内部不回查语义池。映射不上的类别报降载错误，不留空下标。
+- **字段与用例只存声明序下标**：`fieldGet` 的字段位、`enumConstruct` 的用例位都写形态表里的序号；名字进字符串池只供诊断与发射拼写，后端不按名字查布局。
+- **节点清单随源码提交**：契约正文与宿主节点枚举实测都是五十六个表达式节点加十七个语句节点，共七十三条；清单表由工具按契约生成，与 unicode 数据表、诊断码表同规，双向检查落在清单表与节点池的对照上，不解析 Markdown。契约 §0.4 写作「55 + 17 = 72」，与本批实测不符，订正与否另案，本批以实测为准。
+- **整图降载、整图发射**：本批不做按包产物与增量缓存，与 **构建形态演进** 的初期形态一致；包边界仍由接口文本约束。
+
+终态形态（本批落地的四个包）：
+
+```text
+packages/
+  ir/
+    src/api/
+      node.pini      节点池、类别码、IR 类型池
+      lower.pini     降载入口与降载结果
+      share.pini     份额类别与求值效果
+      validate.pini  结构校验与规则表
+      errors.pini    降载错误与校验错误
+    src/_internal/
+      contract_table.pini  契约节点清单（生成）
+  backend-kit/
+    src/api/
+      backend.pini   后端记录、输出档次、能力族
+      target.pini    目标描述：字节宽度、对齐、符号拼写
+      registry.pini  注册表与查找
+  backend-llvm/
+    src/api/
+      emit.pini      发射入口与模块拼接
+    src/_internal/
+      types.pini     类型与声明的文本形状
+      decls.pini     函数声明与外部符号声明
+      bodies.pini    函数体与语句
+      glue.pini      复制、释放与计数胶水
+```
+
+依赖方向照 **各包职责与允许依赖** 的表，本批不新增边：`semantics → ir → backend-kit → backend-llvm`，`driver` 依赖四者。`ir` 不认识 LLVM，`backend-kit` 不认具体后端。
+
+`ir` 的公开面按降载推进次序分六面：
+
+| 主题词 | 内容 | 判据 |
+|---|---|---|
+| 类型映射 | 语义类型池下标到 IR 类型池下标的纯函数，入口建一次表 | 二十三类全覆盖；`future`、`cFunction`、`lazyRef`、`stringHandle` 四类由降载点就地造，语义池没有对应类别 |
+| 节点单池 | 一份节点结构加类别码，子节点用下标 | 类别码连续成段，与清单表逐条对齐 |
+| 降载入口 | `lowerWorkspace` 吃世界与各张表，出一份模块 | 函数表顺序由拓扑序、包内声明序与表达式池序共同决定 |
+| 份额判定 | 份额类别按类型判，求值效果按节点判 | 四类三效果穷尽；标量与外部指针归不参与 |
+| 结构校验 | 后端读模块之前走一遍，违约附源位置 | 每条规则有阴性夹具；新增节点同批补规则 |
+| 字符串池 | 名字、字段名与诊断拼写共用一份池 | 同内容只驻留一次；池序不参与产物定序 |
+
+公开面签名（主题词在前，签名在后）：
+
+```text
+类型映射  buildTypeMap(pool) -> TypeMap            mapType(pool, typeId) -> I32
+节点池    appendNode(pool, node) -> I32            nodeAt(pool, id) -> IrNode
+降载      lowerWorkspace(world) -> LowerResult     lowerFunction(world, unit, decl) -> LowerResult
+份额      shareClassOf(pool, typeId) -> I32        shareEffectOf(module, node) -> I32
+校验      validateModule(module) -> Array<ValidateError>
+字符串池  internText(pool, text) -> TextInsert     textAt(pool, id) -> String
+后端记录  makeBackend(name, output, families, entry) -> BackendEntry
+          supportsFamily(entry, family) -> Bool
+注册表    findBackend(table, name) -> I32          emitText(entry, module) -> EmitResult
+目标描述  byteWidthOf(target, typeId) -> I32       alignOf(target, typeId) -> I32
+```
+
+节点结构共用下列字段，覆盖全部节点：
+
+| 字段 | 用途 |
+|---|---|
+| `kind` | 类别码，表达式码段与语句码段分开 |
+| `typeId` | IR 类型池下标，无类型为 -1 |
+| `op` | 运算符、标志位与帧深度等整数位 |
+| `intValue` / `floatValue` | 字面量、用例标签、槽位 |
+| `text` | 字符串池下标：函数名、字段名、诊断消息 |
+| `kids` | 子节点下标，排布由类别码决定 |
+
+`backend-kit` 三面：
+
+- 后端记录：名字、输出档次（本机码 / 字节码 / 结构转储）、能力族表、入口码。
+- 目标描述：字节宽度与对齐、符号拼写、变参实参提升规则。字节口径只此一处，语义层不出现尺寸与偏移。
+- 注册表：装配表加一行；能力族与宿主同形，十四个族，另加控制流一档收语句节点。
+
+驱动接缝：`buildWorkspace(root)` 在 `checkWorkspace` 的九段之后接降载与发射两段，出一份 LLVM 文本与一份诊断。诊断非空即不发射。
+
+接缝清单：
+
+| 接缝 | 上游给 | 下游要 | 不变量 |
+|---|---|---|---|
+| 语义到 ir | 类型池、表达式类型表、解析表、形态表、槽布局、局部槽位、外部符号表 | 类型下标、字段与用例的声明序、槽位 | IR 不回查语义池 |
+| ir 到 backend-kit | 模块、节点池、IR 类型池、份额动作 | 只读视图 | 后端不做类型、布局、份额的再判定 |
+| backend-kit 到 backend-llvm | 目标描述、能力族、发射入口 | 文本与失败项 | 越出能力声明的节点必须报错 |
+| 后端到驱动 | 文本 | 落盘与链接由构建脚本承担 | 同一输入两次发射逐字节相同 |
+
+注意 节点单池的代价是字段比任何单个节点需要的都多；换来的是一套遍历、一套校验与一套清单对照，不必为每个族写一遍。
+
+注意 能力族是声明不是实现：一个只做结构转储的后端可以对全部族表态支持，产出档次单列，不拿族表冒充可执行。
+
+交付回执（节点池与类型池）：
+
+- `ir` 建包并进工作区：`src/api/node.pini` 给二十三类 IR 类型池、七十三项节点类别码与节点池；`src/_internal/contract_table.pini` 由 `bootstrap/tools/gen-ir-contract-table.py` 按契约生成，七十三条。
+- 类别码分段：表达式 1 到 56、语句 101 到 117，与契约条目号一一对应；`irIsExprTag` / `irIsStmtTag` 判段，段外一律不认。
+- 类型池按形状驻留：类别码、名字、分量、返回、取用位与标志全同即复用同一下标；`irTypeText` 给规范化拼写，标量与容器各有形状。
+- 节点单池：`kind`、`typeId`、`op`、`intValue`、`floatValue`、`text`、`kids` 七个字段覆盖全部节点；子节点与类型位走整节点读改写，旧池快照不参与判据。
+- 契约清单：族码表十四项，与宿主能力族同序；`contractTagOf` 按名字回码，「有节点无契约」的对照面由此成立。
+- 判据：新增 8 项 `|test`，解释器与原生通道各 8 项全过；工作区 550 项通过（原 542 加 8）；`workspace-ok 10 true`；注释门禁 602 个文件、格式门禁 262 个 `.pini` 通过。
+- 同批调整：工作区成员由九增至十，驱动产物断言、CI 产物门禁与两处包数判据同步改为十；新增 `ir` 原生测试门禁与契约清单一致性门禁。
+- 计数口径：契约正文、宿主节点枚举与官方校验工具实测均为五十六加十七共七十三条，与契约 §0.4 的「55 + 17 = 72」不符；本批以实测为准，该处订正另案。
+- 未完成：降载入口、份额判定、结构校验与 `backend-kit` 三面；本批只落节点与类型两层地基。
+
 ### LLVM 与驱动装配
 
 交付：
