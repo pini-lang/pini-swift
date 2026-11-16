@@ -182,15 +182,30 @@ confusableSkeletonBytes|func(_bytes: Array<U8>,) -> (Array<U8>,):
 
 ; 标识符查找键：把源内字节区间按 NFC 规范化，符号表以此为比较键。
 ; 两界夹紧后取区间；调用方只对标识符区间调用，不得把整份源码送进来。
+; ASCII 行先判：NFC 对 ASCII 是恒等，直接复制，省掉逐标量的分解与合成。
 identifierKeyBytes|func(bytes: Array<U8>, start: I32, end: I32,) -> (Array<U8>,):
-    var part: Array<U8> = []
-    var i = start
-    if i < 0:
-        i = 0
-    while i < end && i < len(bytes):
-        part = part.append(bytes[i])
+    var lo = start
+    if lo < 0:
+        lo = 0
+    var hi = end
+    if hi > len(bytes):
+        hi = len(bytes)
+    var allAscii = true
+    var k = lo
+    while k < hi:
+        if tempByteToInt(bytes[k]) > 127:
+            allAscii = false
+            k = hi
+        else:
+            k = k + 1
+    var out: Array<U8> = []
+    var i = lo
+    while i < hi:
+        out = out.append(bytes[i])
         i = i + 1
-    return normalizeNfcBytes(part)
+    if allAscii:
+        return out
+    return normalizeNfcBytes(out)
 
 ((Utf8Text))
 ; 整段合法：出错位置为 -1。
