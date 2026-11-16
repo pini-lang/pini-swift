@@ -96,7 +96,7 @@ swift build --disable-sandbox
 step "工作区奠基门禁"
 .build/debug/pini build bootstrap
 workspace_output="$(cd bootstrap && ./.build/debug/bin/pini-bootstrap)"
-if [ "$workspace_output" != "workspace-ok 9 true" ]; then
+if [ "$workspace_output" != "workspace-ok 10 true" ]; then
     echo "工作区产物输出不符：$workspace_output" >&2
     exit 1
 fi
@@ -134,6 +134,14 @@ step "semantics 原生测试门禁"
 step "driver 原生测试门禁"
 # 装配链与检查入口在两条通道上同规：解释器全绿不等于 LLVM 全绿。
 .build/debug/pini test-llvm bootstrap/packages/driver
+
+step "ir 原生测试门禁"
+# 节点码与类型池在两条通道上同规：解释器全绿不等于 LLVM 全绿。
+.build/debug/pini test-llvm bootstrap/packages/ir
+
+step "IR 契约清单门禁"
+# 清单表由契约生成：契约加了节点而没重新生成时先红，双向检查才有意义。
+python3 bootstrap/tools/gen-ir-contract-table.py --check
 
 step "格式门禁"
 # 语料已是规范形；豁免表在 tools/fmt-exempt.tsv，拒绝态与语法标本两类都受检，过期即红。

@@ -13,7 +13,7 @@ main|func() -> ():
             root = args[1]
     if !全量:
         let plan = planWorkspace(root)
-        if plan.isOK() && plan.packageCount() == 9:
+        if plan.isOK() && plan.packageCount() == 10:
             print("workspace-ok", plan.packageCount(), true)
             return
         print("workspace-plan-failed", plan.errorCount())
