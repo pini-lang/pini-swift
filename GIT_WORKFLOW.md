@@ -74,7 +74,7 @@ ID 命名规则：`human:<handle>` 或 `agent:<handle>`，需**全局唯一**且
 仓库提供两个钩子：
 
 - `hooks/pre-merge-commit`：`git merge` 不跑 `pre-commit`，合并提交由它置 `PINI_MERGE_GATE` 后转交，判据只有一份。
-- `hooks/pre-commit`：① 校验 author / committer 身份是否已在 §2 注册；② 注释门禁；③ 格式门禁（含「产物不旧于源码」）；④ 合并提交经 `ci/run.sh` 起容器跑整条 `ci/entrypoint.sh`（构建、全部门禁、带 `PINI_CLI_BIN` 的测试）。
+- `hooks/pre-commit`：① 校验 author / committer 身份是否已在 §2 注册；② 注释门禁；③ 格式门禁（含「产物不旧于源码」；落后时本地删产物重链，CI 里仍只读拒绝）；④ 合并提交经 `ci/run.sh` 起容器跑整条 `ci/entrypoint.sh`（构建、全部门禁、带 `PINI_CLI_BIN` 的测试）。
 
 第 ④ 项必须走容器，不在宿主上直接跑 `ci/entrypoint.sh`：两者系统、LLVM 版本与编译器分支都不同，
 `#if canImport(Darwin)` 覆盖的 Linux 代码在宿主上根本不参与编译。合并提交是交给远程前的最后一道本地判据，

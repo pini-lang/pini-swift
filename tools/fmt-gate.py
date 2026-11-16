@@ -17,6 +17,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCAN_ROOTS = ("examples", "Tests", "bench", "Sources", "bootstrap")
 EXEMPT = os.path.join(ROOT, "tools/fmt-exempt.tsv")
 DEFAULT_BIN = os.path.join(ROOT, ".build/debug/pini")
+PRODUCT_BIN = os.path.join(ROOT, ".build/out/Products/Debug/pini")
+REBUILD_ENV = "PINI_GATE_REBUILD"
 KINDS = {"unparseable", "variant"}
 
 
@@ -29,6 +31,20 @@ def indent(lines):
     return "\n".join("    " + line for line in lines)
 
 
+def rebuild(path):
+    """删产物再构建：内容不变时 `swift build` 不重链，时间戳也不动。
+    只在本地钩子里走这条；CI 的产物须来自构建步骤，自动重建会掩盖漏构建。
+    """
+    for target in {os.path.realpath(path), os.path.realpath(PRODUCT_BIN)}:
+        if os.path.exists(target):
+            os.remove(target)
+    proc = subprocess.run(
+        ["swift", "build", "--disable-sandbox"], cwd=ROOT, capture_output=True, text=True)
+    if proc.returncode != 0:
+        tail = (proc.stdout + proc.stderr).strip().splitlines()[-15:]
+        fail("格式门禁：产物落后，自动重建失败。构建输出如下：\n" + indent(tail), 2)
+
+
 def binary():
     """可执行产物，且不早于源码：旧产物会把新打印器的判据读成绿。"""
     path = os.environ.get("PINI_BIN") or DEFAULT_BIN
@@ -39,8 +55,17 @@ def binary():
         for name in files:
             if name.endswith(".swift"):
                 newest_source = max(newest_source, os.path.getmtime(os.path.join(base, name)))
-    if newest_source > os.path.getmtime(path):
+    if newest_source <= os.path.getmtime(path):
+        return path
+    # 切分支会刷新源码时间戳而产物不动，内容其实没变。本地钩子删产物重链，CI 不放行。
+    if os.environ.get(REBUILD_ENV) != "1":
         fail("格式门禁：二进制早于源码，读数不算数。先 swift build，再跑本门禁。", 2)
+    if os.path.abspath(path) != os.path.abspath(DEFAULT_BIN):
+        fail("格式门禁：二进制早于源码，且 PINI_BIN 不在默认位置；请先 swift build。", 2)
+    rebuild(path)
+    if newest_source > os.path.getmtime(path):
+        fail("格式门禁：自动重建后产物仍早于源码；检查 .build 是否被其他进程占用。", 2)
+    print("格式门禁：产物落后于源码，已删产物重链。", file=sys.stderr)
     return path
 
 
