@@ -1,13 +1,23 @@
 [main|import]
 _package = "../../../package"
 
-; 驱动主程序：工作区根取首个参数，缺省从模块根上溯；按该根跑完整工作区检查。
-; 零诊断打印产物行并以零退出；有诊断先打印渲染文本，再断言失败使进程非零退出。
+; 驱动主程序：无参数只装配清单并打印产物行，毫秒级；首个参数为 `check` 时才跑完整工作区检查。
+; 全量检查的根取第二个参数，缺省从模块根上溯；有诊断先打印渲染文本，再断言失败使进程非零退出。
 main|func() -> ():
-    var root = workspaceRootOf(start = moduleRoot())
     let args = argv()
-    if len(args) > 0:
-        root = args[0]
+    var root = workspaceRootOf(start = moduleRoot())
+    var 全量 = false
+    if len(args) > 0 && args[0] == "check":
+        全量 = true
+        if len(args) > 1:
+            root = args[1]
+    if !全量:
+        let plan = planWorkspace(root)
+        if plan.isOK() && plan.packageCount() == 9:
+            print("workspace-ok", plan.packageCount(), true)
+            return
+        print("workspace-plan-failed", plan.errorCount())
+        return
     let report = checkWorkspace(root = root)
     if len(report.text) > 0:
         print(report.text)
