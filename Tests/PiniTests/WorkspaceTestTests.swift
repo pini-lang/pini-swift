@@ -199,7 +199,7 @@ struct WorkspaceTestTests {
         #expect(result.stderr.contains("未收集到任何 |test 测试函数"), "实际 stderr：\(result.stderr)")
     }
 
-    @Test("重复运行得到逐字节相同的报告")
+    @Test("重复运行得到除耗时外相同的报告")
     func repeatsDeterministically() throws {
         guard PiniTestEnvironment.requireToolchain(["PINI_CLI_BIN"]) else { return }
         let root = try WorkspaceTestFixtures.passingWorkspace(tag: "repeat")
@@ -210,7 +210,10 @@ struct WorkspaceTestTests {
         let second = try WorkspaceTestSupport.run(cli, ["test", "."], cwd: root)
         #expect(first.status == 0, "首次运行失败：\(first.stderr)")
         #expect(first.status == second.status)
-        #expect(first.stdout == second.stdout)
+        // 总耗时逐次不同，是报告里唯一允许漂移的字段；其余必须逐字节相同。
+        #expect(
+            WorkspaceTestSupport.withoutTiming(first.stdout)
+                == WorkspaceTestSupport.withoutTiming(second.stdout))
         #expect(first.stderr == second.stderr)
     }
 
