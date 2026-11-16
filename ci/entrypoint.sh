@@ -103,7 +103,9 @@ fi
 
 step "工作区测试门禁"
 # 初始工作区的 |test 由同一条测试链执行：空 target、筛选失配与失败断言都必须红。
-.build/debug/pini test bootstrap
+# `自解析` 在此跳过：同一用例已由下面的 `syntax` 原生门禁执行，解释器那份是重复，
+# 单条占本步四成耗时。跳过规则零命中会直接红，用例改名时不会悄悄失效。
+.build/debug/pini test bootstrap --skip 自解析
 
 step "support 原生测试门禁"
 # 同一批字节缓冲测试再走原生通道：解释器全绿不等于 LLVM 全绿。

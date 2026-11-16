@@ -104,6 +104,90 @@ struct WorkspaceTestTests {
                 """)
     }
 
+    @Test("跳过只排除名单内的用例，其余照常执行且顺序不变")
+    func skipsNamedTests() throws {
+        guard PiniTestEnvironment.requireToolchain(["PINI_CLI_BIN"]) else { return }
+        let root = try WorkspaceTestFixtures.passingWorkspace(tag: "skip")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cli = try #require(PiniTestEnvironment.cliPath())
+
+        let result = try WorkspaceTestSupport.run(
+            cli, ["test", ".", "--skip", "减法"], cwd: root)
+        #expect(result.status == 0, "跳过运行失败：\(result.stderr)")
+        #expect(
+            result.stdout
+                == """
+                测试目标: 工作区 .（2 个测试 target）
+                包 alpha / alpha-tests（2 个测试）
+                 ✓ 加法成立
+                 ✓ 负数可用
+                包 beta / beta-tests（1 个测试）
+                 ✓ 字符串长度
+                结果: 3 通过, 0 失败
+
+                """)
+
+        let equalsForm = try WorkspaceTestSupport.run(
+            cli, ["test", ".", "--skip=减法"], cwd: root)
+        #expect(equalsForm.stdout == result.stdout, "--skip 与 --skip= 应等价")
+    }
+
+    @Test("跳过名单零命中按框架错报出，不静默当成跳过")
+    func rejectsSkipWithoutMatch() throws {
+        guard PiniTestEnvironment.requireToolchain(["PINI_CLI_BIN"]) else { return }
+        let root = try WorkspaceTestFixtures.passingWorkspace(tag: "skip-miss")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cli = try #require(PiniTestEnvironment.cliPath())
+
+        let result = try WorkspaceTestSupport.run(
+            cli, ["test", ".", "--skip", "不存在"], cwd: root)
+        #expect(result.status == 2)
+        #expect(result.stdout.isEmpty)
+        #expect(
+            result.stderr.contains("没有测试名匹配 --skip '不存在'"),
+            "实际 stderr：\(result.stderr)")
+    }
+
+    @Test("筛选命中又被跳过排空时不得读成通过")
+    func rejectsEmptyAfterSkip() throws {
+        guard PiniTestEnvironment.requireToolchain(["PINI_CLI_BIN"]) else { return }
+        let root = try WorkspaceTestFixtures.passingWorkspace(tag: "skip-empty")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cli = try #require(PiniTestEnvironment.cliPath())
+
+        let result = try WorkspaceTestSupport.run(
+            cli, ["test", ".", "--filter", "减法", "--skip", "减法"], cwd: root)
+        #expect(result.status == 2)
+        #expect(result.stdout.isEmpty)
+        #expect(
+            result.stderr.contains("筛选与跳过之后没有测试可跑"),
+            "实际 stderr：\(result.stderr)")
+    }
+
+    @Test("整个 target 被跳过时不出测试，但报告说明原因")
+    func marksFullySkippedTarget() throws {
+        guard PiniTestEnvironment.requireToolchain(["PINI_CLI_BIN"]) else { return }
+        let root = try WorkspaceTestFixtures.passingWorkspace(tag: "skip-target")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cli = try #require(PiniTestEnvironment.cliPath())
+
+        let result = try WorkspaceTestSupport.run(
+            cli, ["test", ".", "--skip", "字符串"], cwd: root)
+        #expect(result.status == 0, "跳过运行失败：\(result.stderr)")
+        #expect(
+            result.stdout
+                == """
+                测试目标: 工作区 .（2 个测试 target）
+                包 alpha / alpha-tests（3 个测试）
+                 ✓ 加法成立
+                 ✓ 负数可用
+                 ✓ 减法成立
+                包 beta / beta-tests（0 个测试，--skip 全数排除）
+                结果: 3 通过, 0 失败
+
+                """)
+    }
+
     @Test("声明的测试 target 收集不到 |test 时门禁转红")
     func rejectsDeclaredTargetWithoutTests() throws {
         guard PiniTestEnvironment.requireToolchain(["PINI_CLI_BIN"]) else { return }

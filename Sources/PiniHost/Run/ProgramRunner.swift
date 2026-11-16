@@ -114,8 +114,11 @@ public final class ProgramRunner: DebugHookHost {
 
     /// 降载传 `requiresMain: false`：只有测试的文件是合法模块，强求入口会砍掉一种可用程序形状。
     /// 类型检查先行，因为 IR 是带类型的树——没有检查器的推断就无法降载。
-    public func runTests(module: Module, nameFilter: String? = nil) throws -> [TestRunResult] {
-        try runCollectedTests(lowerTests(module: module), nameFilter: nameFilter)
+    public func runTests(
+        module: Module, nameFilter: String? = nil, nameSkip: [String] = []
+    ) throws -> [TestRunResult] {
+        try runCollectedTests(
+            lowerTests(module: module), nameFilter: nameFilter, nameSkip: nameSkip)
     }
 
     /// 测试模式的降载（不执行）：两条通道的「跑哪些测试、什么顺序」都出自这一步。
@@ -140,17 +143,28 @@ public final class ProgramRunner: DebugHookHost {
     /// 跑一个包里被 `fileScope` 与 `nameFilter` 选中的 `|test`。收窄只决定跑哪些，不缩小可见范围：
     /// 整包降载为一个模块，跨文件符号仍可达，故每个降载函数都带着它的来源文件。
     public func runTests(
-        package: Package, fileScope: ((String) -> Bool)? = nil, nameFilter: String? = nil
+        package: Package, fileScope: ((String) -> Bool)? = nil, nameFilter: String? = nil,
+        nameSkip: [String] = []
     ) throws -> [TestRunResult] {
         try runCollectedTests(
-            lowerTests(package: package), fileScope: fileScope, nameFilter: nameFilter)
+            lowerTests(package: package), fileScope: fileScope, nameFilter: nameFilter,
+            nameSkip: nameSkip)
     }
 
     /// 执行一份已降载的测试模块。调用方已按声明做一致性校验时，用它避免重复降载与重复校验。
     public func runLoweredTests(
-        _ module: IRModule, nameFilter: String? = nil
+        _ module: IRModule, nameFilter: String? = nil, nameSkip: [String] = []
     ) throws -> [TestRunResult] {
-        try runCollectedTests(module, nameFilter: nameFilter)
+        try runCollectedTests(module, nameFilter: nameFilter, nameSkip: nameSkip)
+    }
+
+    /// 测试名是否被本次收窄选中：`nameFilter` 取子串命中，`nameSkip` 在其结果上排除。
+    /// 收集侧据此计数、执行侧据此跳过——规则只写这一处，两边不会各判一套。
+    public static func selectsTest(
+        name: String, nameFilter: String?, nameSkip: [String]
+    ) -> Bool {
+        if let nameFilter, !name.contains(nameFilter) { return false }
+        return !nameSkip.contains { !$0.isEmpty && name.contains($0) }
     }
 
     /// 测试模式的**降载**（不执行），包级版。理由与 `lowerTests(module:)` 逐字相同
@@ -169,7 +183,8 @@ public final class ProgramRunner: DebugHookHost {
     private func runCollectedTests(
         _ module: IRModule,
         fileScope: ((String) -> Bool)? = nil,
-        nameFilter: String? = nil
+        nameFilter: String? = nil,
+        nameSkip: [String] = []
     ) throws -> [TestRunResult] {
         let executor = IRExecutor(programBase: programBase, ffiConfig: ffiConfig)
         executor.outputSink = outputSink
@@ -178,7 +193,8 @@ public final class ProgramRunner: DebugHookHost {
         var results: [TestRunResult] = []
         for function in module.functions where function.isTest {
             if let scope = fileScope, !scope(function.sourceFile) { continue }
-            if let nameFilter, !function.name.contains(nameFilter) { continue }
+            guard Self.selectsTest(
+                name: function.name, nameFilter: nameFilter, nameSkip: nameSkip) else { continue }
             results.append(runOneTest(function, on: executor))
         }
         return results

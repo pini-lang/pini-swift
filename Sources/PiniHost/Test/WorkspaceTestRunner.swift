@@ -20,14 +20,17 @@ public struct WorkspaceTestSuiteResult {
     public let suite: WorkspaceTestSuite
     public let warnings: [SemanticWarning]
     public let results: [ProgramRunner.TestRunResult]
+    /// 该 target 收集到测试、但全数被跳过名单排除：结果为空不是「没有测试」，报告须说出来。
+    public let fullySkipped: Bool
 
     public init(
         suite: WorkspaceTestSuite, warnings: [SemanticWarning],
-        results: [ProgramRunner.TestRunResult]
+        results: [ProgramRunner.TestRunResult], fullySkipped: Bool = false
     ) {
         self.suite = suite
         self.warnings = warnings
         self.results = results
+        self.fullySkipped = fullySkipped
     }
 }
 
@@ -50,7 +53,8 @@ extension WorkspaceTestReport {
         var lines = ["测试目标: 工作区 \(rootLabel)（\(suites.count) 个测试 target）"]
         for suite in suites {
             let name = "\(suite.suite.packageName) / \(suite.suite.targetName)"
-            lines.append("包 \(name)（\(suite.results.count) 个测试）")
+            let note = suite.fullySkipped ? "，--skip 全数排除" : ""
+            lines.append("包 \(name)（\(suite.results.count) 个测试\(note)）")
             for result in suite.results {
                 lines.append(
                     result.passed ? " ✓ \(result.name)" : " ✗ \(result.name): \(result.message)")
@@ -66,6 +70,8 @@ public enum WorkspaceTestError: Error, LocalizedError, Equatable {
     case emptyTarget(package: String, target: String)
     case registrationLost(package: String, target: String, declared: Int, collected: Int)
     case noMatchingTests(filter: String)
+    case noMatchingSkip(skip: String)
+    case allSkipped(filter: String, skip: [String])
     case cannotEnterRoot(path: String)
 
     public var errorDescription: String? {
@@ -80,6 +86,11 @@ public enum WorkspaceTestError: Error, LocalizedError, Equatable {
                 + "只收集到 \(collected) 个；测试注册不完整不得读成通过"
         case .noMatchingTests(let filter):
             return "没有测试名匹配筛选条件 '\(filter)'"
+        case .noMatchingSkip(let skip):
+            return "没有测试名匹配 --skip '\(skip)'；跳过规则写了就必须命中至少一条"
+        case .allSkipped(let filter, let skip):
+            let listed = skip.map { "'\($0)'" }.joined(separator: " ")
+            return "筛选与跳过之后没有测试可跑（--filter '\(filter)'，--skip \(listed)）"
         case .cannotEnterRoot(let path):
             return "无法进入工作区根目录：\(path)"
         }
@@ -105,7 +116,7 @@ public enum WorkspaceTestRunner {
     /// 运行期工作目录切到工作区根：测试体里的 `./` 相对路径以工作区为基准，
     /// 而不带前缀的相对路径仍按 `moduleRoot()`（包根）解析。
     public static func run(
-        plan: WorkspaceBuildPlan, filter: String? = nil
+        plan: WorkspaceBuildPlan, filter: String? = nil, skip: [String] = []
     ) throws -> WorkspaceTestReport {
         let declaredSuites = suites(in: plan)
         guard !declaredSuites.isEmpty else {
@@ -118,6 +129,7 @@ public enum WorkspaceTestRunner {
         defer { _ = FileManager.default.changeCurrentDirectoryPath(previous) }
 
         var executed: [WorkspaceTestSuiteResult] = []
+        var collectedNames: [String] = []
         for package in plan.packages {
             for target in package.targets where target.kind == .test {
                 let suite = WorkspaceTestSuite(
@@ -141,16 +153,42 @@ public enum WorkspaceTestRunner {
                         package: package.name, target: target.name,
                         declared: declaredTests, collected: collected)
                 }
-                let outcomes = try runner.runLoweredTests(lowered, nameFilter: filter)
+                let names = lowered.functions.filter(\.isTest).map(\.name)
+                collectedNames.append(contentsOf: names)
+                // 选中面与执行面用同一判定：这里算「该不该跑」，执行器按同一条规则跳过。
+                let selected = names.filter {
+                    ProgramRunner.selectsTest(
+                        name: $0, nameFilter: filter, nameSkip: skip)
+                }
+                let fullySkipped = !names.isEmpty && selected.isEmpty
+                let outcomes = try runner.runLoweredTests(
+                    lowered, nameFilter: filter, nameSkip: skip)
                 if outcomes.isEmpty {
+                    // 筛选未命中的 target 不进报告（与筛选单独生效时的呈现一致）；
+                    // 只有跳过名单把它排空时才留下一条说明，空结果不得冒充「没有测试」。
                     guard filter == nil else { continue }
+                    guard skip.isEmpty else {
+                        executed.append(
+                            WorkspaceTestSuiteResult(
+                                suite: suite, warnings: analyzer.warnings, results: [],
+                                fullySkipped: fullySkipped))
+                        continue
+                    }
                     throw WorkspaceTestError.emptyTarget(
                         package: package.name, target: target.name)
                 }
                 executed.append(
                     WorkspaceTestSuiteResult(
-                        suite: suite, warnings: analyzer.warnings, results: outcomes))
+                        suite: suite, warnings: analyzer.warnings, results: outcomes,
+                        fullySkipped: fullySkipped))
             }
+        }
+        // 跳过规则写了就必须真的命中：拼错的名字会让「以为跳过了」与「实际没跳」长得一样。
+        for text in skip where !collectedNames.contains(where: { $0.contains(text) }) {
+            throw WorkspaceTestError.noMatchingSkip(skip: text)
+        }
+        if let filter, !skip.isEmpty, executed.allSatisfy({ $0.results.isEmpty }) {
+            throw WorkspaceTestError.allSkipped(filter: filter, skip: skip)
         }
         if let filter, executed.isEmpty {
             throw WorkspaceTestError.noMatchingTests(filter: filter)

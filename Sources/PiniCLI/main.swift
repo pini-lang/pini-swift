@@ -713,8 +713,9 @@ func printHelp() {
     print(" build <path> Check a package, or build a workspace's targets in dependency order")
     print(" build <path> --print-plan Print the build plan without running any translation")
     print(" build --shared <path> [-o out] Link the export block's |c entries into lib<file>.{dylib,so}")
-    print(" test [path] [--filter <text>] Run |test blocks; a workspace root runs every [[test]] target")
-    print(" test-llvm [path] [--filter <text>] Same collection and report as `test`, emitted as a native binary (single module)")
+    print(" test [path] [--filter <text>] [--skip <text>]... Run |test blocks; a workspace root runs every [[test]] target")
+    print(" test-llvm [path] [--filter <text>] [--skip <text>]... Same collection and report as `test`, emitted as a native binary (single module)")
+    print("   --skip excludes by name substring; repeatable, applied after --filter. A workspace root rejects a skip rule that matches nothing")
     print(" parse <file.pini> Parse and print the AST")
     print(" parse --sig <file.pini> Parse and print statement signature (SIG) lines")
     print(" fmt <path>... Reformat sources; -w writes in place, --check lists files that need formatting")
@@ -1419,15 +1420,18 @@ enum TestChannel {
     }
 }
 
-// 测试执行的收窄选项：位置参数至多一个（文件 / 目录 / 工作区根），`--filter` 按测试名子串收窄。
+// 测试执行的收窄选项：位置参数至多一个（文件 / 目录 / 工作区根），`--filter` 按测试名子串收窄，
+// `--skip` 在同一面上排除；两者可同时给，先筛选后排除。`--skip` 可重复，空值忽略。
 struct TestInvocation {
     let path: String?
     let filter: String?
+    let skip: [String]
 }
 
 func parseTestInvocation(_ args: [String]) -> TestInvocation {
     var path: String?
     var filter: String?
+    var skip: [String] = []
     var cursor = 2
     while cursor < args.count {
         let argument = args[cursor]
@@ -1445,6 +1449,20 @@ func parseTestInvocation(_ args: [String]) -> TestInvocation {
             cursor += 1
             continue
         }
+        if argument == "--skip" {
+            guard cursor + 1 < args.count else {
+                printError("Error: --skip 需要一个参数")
+                exit(2)
+            }
+            skip.append(args[cursor + 1])
+            cursor += 2
+            continue
+        }
+        if argument.hasPrefix("--skip=") {
+            skip.append(String(argument.dropFirst("--skip=".count)))
+            cursor += 1
+            continue
+        }
         guard !argument.hasPrefix("-") else {
             printError("Error: 未知选项 \(argument)")
             exit(2)
@@ -1457,20 +1475,24 @@ func parseTestInvocation(_ args: [String]) -> TestInvocation {
         cursor += 1
     }
     let normalized = (filter?.isEmpty ?? true) ? nil : filter
-    return TestInvocation(path: path, filter: normalized)
+    let skipList = skip.filter { !$0.isEmpty }
+    return TestInvocation(path: path, filter: normalized, skip: skipList)
 }
 
 // `pini test [path]`：收集顶级 `|test` 逐条执行并汇总；path 可为工作区根、模块、目录或文件。
 // 工作区根按 `[[test]]` target 的拓扑序执行；模块内可再用路径收窄（显式路径可加回 `[build] exclude`）。
 // 全通过 0、有失败测试 1、文件/解析/框架/收集错误 2。
-func runTestPath(_ path: String?, filter: String? = nil, channel: TestChannel = .interpreter) {
+func runTestPath(
+    _ path: String?, filter: String? = nil, skip: [String] = [],
+    channel: TestChannel = .interpreter
+) {
     do {
         // 工作区根先于模块根判定：根清单本身就是测试收集单位，不按单模块装载。
         if let plan = try WorkspaceBuilder.plan(
             rootDirectory: path ?? FileManager.default.currentDirectoryPath)
         {
             try runWorkspaceTests(
-                plan: plan, rootLabel: path ?? ".", filter: filter, channel: channel)
+                plan: plan, rootLabel: path ?? ".", filter: filter, skip: skip, channel: channel)
             return
         }
 
@@ -1481,7 +1503,8 @@ func runTestPath(_ path: String?, filter: String? = nil, channel: TestChannel = 
                 printError("Error: \(cwd) 不属于任何模块（向上未找到清单）；请在模块内运行 `pini \(channel.commandName)`，或显式指定路径")
                 exit(1)
             }
-            try runModuleTests(moduleRoot: root, scopePath: nil, filter: filter, channel: channel)
+            try runModuleTests(
+                moduleRoot: root, scopePath: nil, filter: filter, skip: skip, channel: channel)
             return
         }
 
@@ -1495,7 +1518,7 @@ func runTestPath(_ path: String?, filter: String? = nil, channel: TestChannel = 
         // 模块内（文件或目录）：模块模式
         if let root = try FileLoader.locateModuleRoot(for: abs) {
             try runModuleTests(
-                moduleRoot: root, scopePath: abs, filter: filter, channel: channel)
+                moduleRoot: root, scopePath: abs, filter: filter, skip: skip, channel: channel)
             return
         }
 
@@ -1504,12 +1527,12 @@ func runTestPath(_ path: String?, filter: String? = nil, channel: TestChannel = 
             let pkg = try FileLoader.loadDirectory(path: abs)
             try gateAndRunTests(
                 pkg: pkg, scope: nil, scopeLabel: nil, ffiConfig: .default,
-                programBase: absoluteProgramBase(abs), filter: filter, channel: channel)
+                programBase: absoluteProgramBase(abs), filter: filter, skip: skip, channel: channel)
             return
         }
 
         // 模块外单文件：单文件行为（G41 原语义，向后兼容）
-        try runSingleFileTests(path: abs, filter: filter, channel: channel)
+        try runSingleFileTests(path: abs, filter: filter, skip: skip, channel: channel)
     } catch let err as SemanticError {
         handleSemanticError(err); exit(1)
     } catch let err as TypeError {
@@ -1522,13 +1545,14 @@ func runTestPath(_ path: String?, filter: String? = nil, channel: TestChannel = 
 
 /// 工作区测试入口：发现与执行在 `WorkspaceTestRunner`，这里只呈现报告并落退出码。
 private func runWorkspaceTests(
-    plan: WorkspaceBuildPlan, rootLabel: String, filter: String?, channel: TestChannel
+    plan: WorkspaceBuildPlan, rootLabel: String, filter: String?, skip: [String],
+    channel: TestChannel
 ) throws {
     guard channel == .interpreter else {
         throw SharedBuildError(
             message: "工作区测试聚合走解释器通道；单模块原生测试请用 `pini test-llvm <path>`")
     }
-    let report = try WorkspaceTestRunner.run(plan: plan, filter: filter)
+    let report = try WorkspaceTestRunner.run(plan: plan, filter: filter, skip: skip)
     for suite in report.suites {
         for warning in suite.warnings { emitSemanticWarning(warning) }
     }
@@ -1538,7 +1562,8 @@ private func runWorkspaceTests(
 
 /// G49：模块模式测试——整包加载（`[build] exclude` 生效）+ 显式路径加回 + 收集范围限定。
 private func runModuleTests(
-    moduleRoot: String, scopePath: String?, filter: String?, channel: TestChannel
+    moduleRoot: String, scopePath: String?, filter: String?, skip: [String],
+    channel: TestChannel
 ) throws {
     let manifest = try FileLoader.loadManifest(directory: moduleRoot)
     var pkg = try loadPackageWithGenerated(path: moduleRoot, manifest: manifest)
@@ -1572,7 +1597,7 @@ private func runModuleTests(
     try gateAndRunTests(
         pkg: pkg, scope: scope, scopeLabel: scopeLabel,
         ffiConfig: foreignConfigFor(root: moduleRoot, manifest: manifest),
-        programBase: absoluteProgramBase(moduleRoot), filter: filter, channel: channel)
+        programBase: absoluteProgramBase(moduleRoot), filter: filter, skip: skip, channel: channel)
 }
 
 /// G49：语义/类型门禁（整包，与 check 目录模式一致）→ 包级测试 → 汇总报告。
@@ -1581,7 +1606,7 @@ private func runModuleTests(
 private func gateAndRunTests(
     pkg: Package, scope: ((String) -> Bool)?, scopeLabel: String?,
     ffiConfig: FFIConfig, programBase: String? = nil,
-    filter: String? = nil, channel: TestChannel = .interpreter
+    filter: String? = nil, skip: [String] = [], channel: TestChannel = .interpreter
 ) throws {
     emitLexerWarnings(pkg.warnings)
     do {
@@ -1610,8 +1635,12 @@ private func gateAndRunTests(
 
     switch channel {
     case .interpreter:
-        let results = try runner.runTests(package: pkg, fileScope: scope, nameFilter: filter)
-        if let filter, results.isEmpty { reportEmptyFilter(filter) }
+        let results = try runner.runTests(
+            package: pkg, fileScope: scope, nameFilter: filter, nameSkip: skip)
+        if results.isEmpty {
+            if let filter, !skip.isEmpty { reportAllSkipped(filter: filter, skip: skip) }
+            if let filter { reportEmptyFilter(filter) }
+        }
         print(header)
         var passed = 0, failed = 0
         for r in results {
@@ -1632,7 +1661,7 @@ private func gateAndRunTests(
         let lowered = try runner.lowerTests(package: pkg)
         try emitAndRunLLVMTests(
             module: lowered, fileScope: scope, header: header, programBase: programBase,
-            ffiConfig: ffiConfig, nameFilter: filter)
+            ffiConfig: ffiConfig, nameFilter: filter, nameSkip: skip)
     }
 }
 
@@ -1642,9 +1671,21 @@ private func reportEmptyFilter(_ filter: String) -> Never {
     exit(2)
 }
 
+/// 筛选命中、却被跳过名单全数排空：同样落框架错，消息要说出是跳过造成的。
+private func reportAllSkipped(filter: String? = nil, skip: [String]) -> Never {
+    let listed = skip.map { "'\($0)'" }.joined(separator: " ")
+    if let filter {
+        printError("Error: 筛选与跳过之后没有测试可跑（--filter '\(filter)'，--skip \(listed)）")
+    } else {
+        printError("Error: 跳过之后没有测试可跑（--skip \(listed)）")
+    }
+    exit(2)
+}
+
 /// G41 原单文件语义（模块外单文件向后兼容路径）。
 private func runSingleFileTests(
-    path: String, filter: String? = nil, channel: TestChannel = .interpreter
+    path: String, filter: String? = nil, skip: [String] = [],
+    channel: TestChannel = .interpreter
 ) throws {
     let source = try readFile(path)
     let checkResult = checkSingleFileDiagnostics(source: source, fileName: path)
@@ -1667,8 +1708,11 @@ private func runSingleFileTests(
 
     switch channel {
     case .interpreter:
-        let results = try runner.runTests(module: module, nameFilter: filter)
-        if let filter, results.isEmpty { reportEmptyFilter(filter) }
+        let results = try runner.runTests(module: module, nameFilter: filter, nameSkip: skip)
+        if results.isEmpty {
+            if let filter, !skip.isEmpty { reportAllSkipped(filter: filter, skip: skip) }
+            if let filter { reportEmptyFilter(filter) }
+        }
         var passed = 0, failed = 0
         print(header)
         for r in results {
@@ -1689,7 +1733,7 @@ private func runSingleFileTests(
         try emitAndRunLLVMTests(
             module: lowered, fileScope: nil, header: header,
             programBase: absoluteProgramBase(path),
-            ffiConfig: manifest?.ffi, nameFilter: filter)
+            ffiConfig: manifest?.ffi, nameFilter: filter, nameSkip: skip)
     }
 }
 
@@ -1698,7 +1742,7 @@ private func runSingleFileTests(
 // 退出码必须透传（丢掉会让 abort 被读成 rc=0、判据恒绿）；测试模式允许模块无 `main`，入口由发射器合成。
 func emitAndRunLLVMTests(
     module: IRModule, fileScope: ((String) -> Bool)?, header: String, programBase: String?,
-    ffiConfig: FFIConfig? = nil, nameFilter: String? = nil
+    ffiConfig: FFIConfig? = nil, nameFilter: String? = nil, nameSkip: [String] = []
 ) throws {
     // 选中面：与解释器同规 —— 按文件收窄的是**跑哪些**， 行不通  不是「能看到什么」。
     //  注意  清单顺序即执行顺序；取不到时（`fileScope` 为空）为 nil，由发射器按模块声明序全收。
@@ -1706,12 +1750,20 @@ func emitAndRunLLVMTests(
     let scoped: [String]? = fileScope.map { scope in
         module.functions.filter { $0.isTest && scope($0.sourceFile) }.map { $0.name }
     }
-    // 名字筛选在这个清单上二次收窄；筛选后为空必须落成框架错，不能发射一个空跑驱动器。
+    // 名字筛选与跳过在同一份清单上先后生效；收窄后为空必须落成框架错，不能发射一个空跑驱动器。
     let selection: [String]?
-    if let nameFilter {
-        let names = (scoped ?? module.functions.filter(\.isTest).map(\.name))
-            .filter { $0.contains(nameFilter) }
-        if names.isEmpty { reportEmptyFilter(nameFilter) }
+    if nameFilter != nil || !nameSkip.isEmpty {
+        let base = scoped ?? module.functions.filter(\.isTest).map(\.name)
+        let names = base.filter {
+            ProgramRunner.selectsTest(name: $0, nameFilter: nameFilter, nameSkip: nameSkip)
+        }
+        if names.isEmpty {
+            if let nameFilter, !nameSkip.isEmpty {
+                reportAllSkipped(filter: nameFilter, skip: nameSkip)
+            }
+            if let nameFilter { reportEmptyFilter(nameFilter) }
+            reportAllSkipped(skip: nameSkip)
+        }
         selection = names
     } else {
         selection = scoped
@@ -2672,12 +2724,13 @@ case "build":
 case "test":
     // 测试子命令：path 可选；无参 = 收集当前目录所属模块或工作区。
     let invocation = parseTestInvocation(args)
-    runTestPath(invocation.path, filter: invocation.filter)
+    runTestPath(invocation.path, filter: invocation.filter, skip: invocation.skip)
 case "test-llvm":
     // 与 `test` **同一套**收集范围、门禁与报告；差别只在最后一步跑在 LLVM 通道上
     // （发射成原生程序再运行）。命名照 `run` / `run-llvm` 的既有惯例。
     let invocation = parseTestInvocation(args)
-    runTestPath(invocation.path, filter: invocation.filter, channel: .llvm)
+    runTestPath(
+        invocation.path, filter: invocation.filter, skip: invocation.skip, channel: .llvm)
 case "backends":
     printBackendMatrix(tsv: args.contains("--tsv"))
 case "emit":
