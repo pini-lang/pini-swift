@@ -1443,6 +1443,68 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
         }
     }
 
+    /// 自追加形态 `x = x.append(v)`：元素先求值（它可能读同名变量），再取走槽里的数组就地追加写回。
+    /// 命中返回 true；接收者不是数组时按内建原路径算出新值，报同一个错。
+    private func storeVarByAppending(name: String, value: IRExpr) throws -> Bool {
+        guard case .call(let function, let arguments, _) = value,
+            function == "Array.append",
+            arguments.count == 2,
+            case .load(let receiver, _) = arguments[0],
+            receiver == name
+        else { return false }
+        let element = try evaluate(arguments[1])
+        guard var slot = try currentEnv.take(name: name) else { return false }
+        if RuntimeOps.appendConsuming(&slot, element) {
+            try currentEnv.assign(name: name, value: slot)
+            return true
+        }
+        let appended = try RuntimeOps.builtinArrayAppend([slot, element])
+        try currentEnv.assign(name: name, value: appended)
+        return true
+    }
+
+    /// 字段位的自追加形态 `obj.f = obj.f.append(v)`：只认接收者与目标同一处，接收者求值两次会多跑副作用。
+    private func storeFieldByAppending(base: IRExpr, field: String, value: IRExpr) throws -> Bool {
+        guard case .call(let function, let arguments, _) = value,
+            function == "Array.append",
+            arguments.count == 2,
+            case .fieldGet(let receiverBase, let receiverField, _) = arguments[0],
+            receiverField == field,
+            receiverBase == base
+        else { return false }
+        let element = try evaluate(arguments[1])
+        let receiver = try evaluate(base)
+        if case .load(let rootName, _) = base, rootName != "self",
+            case .structInstance = receiver,
+            let mutable = currentEnv.isMutable(name: rootName), !mutable
+        {
+            throw RuntimeError.immutableVariable(name: rootName, location: IRExecutor.noLocation)
+        }
+        // 字段先让出：槽位不空则数组存两份引用，就地增长永远判不成立。
+        switch receiver {
+        case .structInstance(let instance):
+            guard var slot = instance.fields[field] else { return false }
+            instance.fields[field] = .null
+            if RuntimeOps.appendConsuming(&slot, element) {
+                instance.fields[field] = slot
+                return true
+            }
+            instance.fields[field] = try RuntimeOps.builtinArrayAppend([slot, element])
+            return true
+        case .objectReference(let object):
+            guard var slot = object.fields[field] else { return false }
+            object.fields[field] = .null
+            if RuntimeOps.appendConsuming(&slot, element) {
+                object.fields[field] = slot
+                return true
+            }
+            object.fields[field] = try RuntimeOps.builtinArrayAppend([slot, element])
+            return true
+        default:
+            return false
+        }
+    }
+
     /// `base.field = value` — the write half of the interpreter's `performMemberAssign`, arm for arm.
     /// The `let`-bound struct rule triggers on a receiver written as an identifier other than `self`; `self` is exempt.
     /// Not mirrored: the deep copy of the incoming value (no fixture observes it) and the `_` gate (rejected statically).
@@ -1688,9 +1750,11 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
             currentEnv.define(name: name, value: value, isMutable: mutable)
 
         case .storeVar(let name, _, let value, _, _):
-            // Structs are copied field by field, the interpreter's rule at the same point.
-            // Without it both engines share one storage, and a write through the copy surfaces in the original, silently.
-            try currentEnv.assign(name: name, value: RuntimeOps.copyIfStruct(try evaluate(value)))
+            // 自追加形态走消费路径：槽位清空后数组只剩一份引用，就地增长。
+            // 其余形态照旧深拷结构体 —— 否则写穿副本会悄悄改到原值。
+            if try !storeVarByAppending(name: name, value: value) {
+                try currentEnv.assign(name: name, value: RuntimeOps.copyIfStruct(try evaluate(value)))
+            }
 
         case .ifStmt(let label, let condition, let thenBody, let elseBody):
             // Each branch is its own defer scope: `elif` chains fold into a nested `ifStmt`, so three branches are three scopes.
@@ -1809,8 +1873,10 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
         case .fieldStore(let base, let field, let value, _, _, _):
             // Right-hand side first, receiver second — the order the interpreter's assignment path uses.
             // Observable only when both have effects, which is exactly when a guessed mirror would be caught late.
-            // Structs are copied field by field; without it a write through the copy reaches the original, silently.
-            try storeField(base: base, field: field, value: RuntimeOps.copyIfStruct(try evaluate(value)))
+            // 字段位的自追加形态同样走消费路径；其余形态照旧深拷结构体。
+            if try !storeFieldByAppending(base: base, field: field, value: value) {
+                try storeField(base: base, field: field, value: RuntimeOps.copyIfStruct(try evaluate(value)))
+            }
         }
     }
 
