@@ -1,0 +1,21 @@
+; 文本池：只增，下标即文本身份。引用语义承载 —— 各函数传的是同一份存储，追加就地增长；
+; 值语义的池每次传参都留下别名，追加退化成整份复制，文本一多就成了平方。
+{IrTextPool}
+items: Array<String> = []
+
+; 文本驻留：同内容复用下标，池序即首次出现序。倒着扫 —— 重名多在近处，命中即返；
+; 未命中才追加，追加靠字段清槽后的就地增长，不复制整池。
+internText|func(texts: IrTextPool, value: String,) -> (TextInsert,):
+    var i = len(texts.items) - 1
+    while i >= 0:
+        if texts.items[i] == value:
+            var hit = TextInsert()
+            hit.texts = texts
+            hit.id = i
+            return hit
+        i = i - 1
+    texts.items = texts.items.append(value)
+    var out = TextInsert()
+    out.texts = texts
+    out.id = len(texts.items) - 1
+    return out

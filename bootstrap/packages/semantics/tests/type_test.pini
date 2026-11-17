@@ -240,3 +240,17 @@ firstField: I32 = -1
     assert(样例.table.isOK(), "嵌套结果糖应无错")
     assert(样例.table.textOf(unit = 0, decl = 字段下标(sample = 样例, index = 0)) == "^Array<I32>", "实得 " + 样例.table.textOf(unit = 0, decl = 字段下标(sample = 样例, index = 0)))
     return
+
+; 单元起点：绑定按单元分段，第二个单元里的声明也要查得到。
+跨单元查类型|test() -> ():
+    let a = 造类型单元(path = "packages/p/src/api/a.pini", text = "(A)\nx: I32 = 0\n")
+    let b = 造类型单元(path = "packages/p/src/api/b.pini", text = "(B)\ny: String = \"\"\n")
+    let symbols = registerPackage([a, b])
+    let types = resolvePackage(units = [a, b], table = symbols)
+    let declA: I32 = a.ast.items[0]
+    let declB: I32 = b.ast.items[0]
+    let fieldA: I32 = a.ast.decls[declA].kids[0]
+    let fieldB: I32 = b.ast.decls[declB].kids[0]
+    assert(types.typeOf(unit = 0, decl = fieldA) >= 0, "首单元应查到")
+    assert(types.typeOf(unit = 1, decl = fieldB) >= 0, "次单元应查到")
+    return

@@ -43,13 +43,13 @@ irLogicalOr
 
 ; 文本驻留结果：池与下标。
 (TextInsert)
-texts: Array<String> = []
+texts: IrTextPool = IrTextPool()
 id: I32 = -1
 
 ; 表达式降载结果：节点池、文本池、帧、节点下标与失败原因。
 (LowerExpr)
 pool: IrNodePool = IrNodePool()
-texts: Array<String> = []
+texts: IrTextPool = IrTextPool()
 frame: LowerFrame = LowerFrame()
 id: I32 = -1
 failed: Bool = false
@@ -166,22 +166,6 @@ unaryTagOf|func(spelling: String,) -> (I32,):
     if spelling == "~":
         return irUnaryTag(.irBitwiseNot)
     return 0
-
-; 文本驻留：同内容复用下标，池序即首次出现序。
-internText|func(texts: Array<String>, value: String,) -> (TextInsert,):
-    var out = TextInsert()
-    out.texts = texts
-    var i = 0
-    while i < len(texts):
-        if texts[i] == value:
-            out.id = i
-            return out
-        i = i + 1
-    var grown = texts
-    grown = grown.append(value)
-    out.texts = grown
-    out.id = len(grown) - 1
-    return out
 
 ; 整数拼写转值：认十进制与 0x / 0b / 0o 前缀，下划线跳过，非法字符按 0 进值。
 ; 只处理非负写法：源里的负数是取负一元节点，不在拼写里。
@@ -449,7 +433,7 @@ takesReceiver: Bool = false
 ; 读节点结果：池、文本池与节点下标；读改写先把目标读一次。
 (IrLoadNode)
 pool: IrNodePool = IrNodePool()
-texts: Array<String> = []
+texts: IrTextPool = IrTextPool()
 id: I32 = -1
 
 ; 字段类型：所有者名加字段名查符号，命中的字段声明给出语义类型下标。
@@ -477,7 +461,7 @@ receiverOwner|func(map: TypeMap, typeId: I32,) -> (String,):
     return ""
 
 ; 读节点：名字与类型给定，造一个按名读并把名字驻留进文本池。
-makeLoadNode|func(pool: IrNodePool, texts: Array<String>, name: String, typeId: I32,) -> (IrLoadNode,):
+makeLoadNode|func(pool: IrNodePool, texts: IrTextPool, name: String, typeId: I32,) -> (IrLoadNode,):
     let placed = internText(texts = texts, value = name)
     var node = irMakeNode(kind = irExprTag(.irLoad), typeId = typeId)
     node.text = placed.id
@@ -1029,7 +1013,7 @@ lowerArrayLiteral|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, 
     return done
 
 ; 表达式入口：按类别分派；未知类别报缺口。
-lowerExpr|func(pool: IrNodePool, texts: Array<String>, map: TypeMap, types: ExprTypes, unit: CompilationUnit, unitIndex: I32, bytes: Array<U8>, frame: LowerFrame, id: I32,) -> (LowerExpr,):
+lowerExpr|func(pool: IrNodePool, texts: IrTextPool, map: TypeMap, types: ExprTypes, unit: CompilationUnit, unitIndex: I32, bytes: Array<U8>, frame: LowerFrame, id: I32,) -> (LowerExpr,):
     var out = LowerExpr()
     out.pool = pool
     out.texts = texts

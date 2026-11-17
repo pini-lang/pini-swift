@@ -249,3 +249,15 @@ module: IrModule = IrModule()
     assert(len(节点.kids) == 3, "接收者加两个边界")
     assert(irTypeText(pool = 样例.module.types, id = 节点.typeId) == "array<i32>", "结果类型应与接收者同形")
     return
+
+; 文本池：同内容复用下标，新内容追加到末尾，池只增不复制。
+文本驻留|test() -> ():
+    var pool = IrTextPool()
+    let first = internText(texts = pool, value = "alpha")
+    let again = internText(texts = pool, value = "alpha")
+    let second = internText(texts = pool, value = "beta")
+    assert(first.id == 0, "首条应为 0")
+    assert(again.id == 0, "同内容应复用下标")
+    assert(second.id == 1, "新内容应追加")
+    assert(len(pool.items) == 2, "池里应只有两条")
+    return
