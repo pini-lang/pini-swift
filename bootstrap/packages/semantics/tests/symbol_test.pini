@@ -12,20 +12,20 @@
 
 ; 次序与取严：private < internal < package < public，两级取窄者。
 次序与取严|test() -> ():
-    assert(visibilityRank(visibilityPrivate) == 0, "private 最严")
-    assert(visibilityRank(visibilityPublic) == 3, "public 最宽")
-    let 窄 = stricter(first = visibilityPublic, second = visibilityPackage)
+    assert(visibilityRank(.visibilityPrivate) == 0, "private 最严")
+    assert(visibilityRank(.visibilityPublic) == 3, "public 最宽")
+    let 窄 = stricter(first = .visibilityPublic, second = .visibilityPackage)
     assert(visibilityName(窄) == "package", "取更窄的一侧")
-    let 同 = stricter(first = visibilityInternal, second = visibilityInternal)
+    let 同 = stricter(first = .visibilityInternal, second = .visibilityInternal)
     assert(visibilityName(同) == "internal", "同级不变")
     return
 
 ; 跨模块可见只有 public：其余三级都不可被别的模块引入。
 导出判定|test() -> ():
-    assert(isExported(visibilityPublic), "public 可引入")
-    assert(!isExported(visibilityPackage), "package 不可引入")
-    assert(!isExported(visibilityInternal), "internal 不可引入")
-    assert(!isExported(visibilityPrivate), "private 不可引入")
+    assert(isExported(.visibilityPublic), "public 可引入")
+    assert(!isExported(.visibilityPackage), "package 不可引入")
+    assert(!isExported(.visibilityInternal), "internal 不可引入")
+    assert(!isExported(.visibilityPrivate), "private 不可引入")
     return
 
 ; 键相等只看 NFC：预组合字与 Jamo 序列同键，拼写不同不判同一符号。

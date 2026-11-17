@@ -136,7 +136,7 @@ lowerFunction|func(state: LowerState, unit: CompilationUnit, declId: I32, owner:
         out.nodes = body.pool
         out.texts = body.texts
         if body.failed:
-            out.errors = appendLowerError(errors = out.errors, error = makeLowerError(kind = lowerMissingCapability, file = unit.path, offset = body.offset, detail = fn.name + "：" + body.detail))
+            out.errors = appendLowerError(errors = out.errors, error = makeLowerError(kind = .lowerMissingCapability, file = unit.path, offset = body.offset, detail = fn.name + "：" + body.detail))
             out.functions = out.functions.append(fn)
             return out
         fn.body = body.ids

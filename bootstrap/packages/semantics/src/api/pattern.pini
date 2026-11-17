@@ -136,7 +136,7 @@ enumNameOf|func(pool: TypePool, id: I32,) -> (String,):
     if id < 0 || id >= len(pool.entries):
         return ""
     let entry = pool.entries[id]
-    if !isTypeClass(kind = entry.kind, expected = typeClassEnum):
+    if !isTypeClass(kind = entry.kind, expected = .typeClassEnum):
         return ""
     return entry.name
 
@@ -144,7 +144,7 @@ enumNameOf|func(pool: TypePool, id: I32,) -> (String,):
 isOptionalType|func(pool: TypePool, id: I32,) -> (Bool,):
     if id < 0 || id >= len(pool.entries):
         return false
-    return isTypeClass(kind = pool.entries[id].kind, expected = typeClassOptional)
+    return isTypeClass(kind = pool.entries[id].kind, expected = .typeClassOptional)
 
 ; 可选内层：非可选或实参缺失答 -1。
 optionalInner|func(pool: TypePool, id: I32,) -> (I32,):
@@ -360,31 +360,31 @@ missingCases|func(all: Array<String>, covered: Array<String>,) -> (Array<String>
 
 ; 单臂判定：按主体类别分流，返回累积后的结果；错误不中断后续臂。
 checkOneArm|func(world: MemberWorld, unit: CompilationUnit, enumName: String, subjectType: I32, info: PatternInfo, out: MatchResult,) -> (MatchResult,):
-    if isPatternForm(form = info.form, expected = patternWildcard):
+    if isPatternForm(form = info.form, expected = .patternWildcard):
         var wild = out
         wild.hasWildcard = true
         return wild
-    if isPatternForm(form = info.form, expected = patternLiteral):
+    if isPatternForm(form = info.form, expected = .patternLiteral):
         if len(enumName) > 0:
-            return appendMatchError(out = out, unit = unit, offset = info.offset, kind = matchLiteralOnEnum, caseName = info.name, detail = enumName)
+            return appendMatchError(out = out, unit = unit, offset = info.offset, kind = .matchLiteralOnEnum, caseName = info.name, detail = enumName)
         return out
-    if isPatternForm(form = info.form, expected = patternNil):
+    if isPatternForm(form = info.form, expected = .patternNil):
         if !isNullableType(pool = world.types.pool, id = subjectType):
-            return appendMatchError(out = out, unit = unit, offset = info.offset, kind = matchNilOnNonNullable, caseName = info.name, detail = typeText(pool = world.types.pool, id = subjectType))
+            return appendMatchError(out = out, unit = unit, offset = info.offset, kind = .matchNilOnNonNullable, caseName = info.name, detail = typeText(pool = world.types.pool, id = subjectType))
         return addCovered(out = out, name = "none")
-    if !isPatternForm(form = info.form, expected = patternEnumCase):
-        return appendMatchError(out = out, unit = unit, offset = info.offset, kind = matchBadPattern, caseName = info.name, detail = "")
+    if !isPatternForm(form = info.form, expected = .patternEnumCase):
+        return appendMatchError(out = out, unit = unit, offset = info.offset, kind = .matchBadPattern, caseName = info.name, detail = "")
     if len(enumName) > 0:
         if len(info.owner) > 0 && info.owner != enumName:
-            return appendMatchError(out = out, unit = unit, offset = info.offset, kind = matchUnknownCase, caseName = info.name, detail = info.owner)
+            return appendMatchError(out = out, unit = unit, offset = info.offset, kind = .matchUnknownCase, caseName = info.name, detail = info.owner)
         let slots = variantSlotCount(world = world, enumName = enumName, caseName = info.name)
         if slots < 0:
-            return appendMatchError(out = out, unit = unit, offset = info.offset, kind = matchUnknownCase, caseName = info.name, detail = enumName)
+            return appendMatchError(out = out, unit = unit, offset = info.offset, kind = .matchUnknownCase, caseName = info.name, detail = enumName)
         if len(info.bindings) != slots:
-            return appendMatchError(out = out, unit = unit, offset = info.offset, kind = matchBindingCount, caseName = info.name, detail = countText(slots) + " / " + countText(len(info.bindings)))
+            return appendMatchError(out = out, unit = unit, offset = info.offset, kind = .matchBindingCount, caseName = info.name, detail = countText(slots) + " / " + countText(len(info.bindings)))
         let dup = duplicateBinding(info)
         if len(dup) > 0:
-            return appendMatchError(out = out, unit = unit, offset = info.offset, kind = matchBindingDuplicated, caseName = dup, detail = info.name)
+            return appendMatchError(out = out, unit = unit, offset = info.offset, kind = .matchBindingDuplicated, caseName = dup, detail = info.name)
         return addCovered(out = out, name = info.name)
     if isOptionalType(pool = world.types.pool, id = subjectType):
         if info.name == "some" || info.name == "none":
@@ -392,10 +392,10 @@ checkOneArm|func(world: MemberWorld, unit: CompilationUnit, enumName: String, su
             if info.name == "some":
                 slots = 1
             if len(info.bindings) != slots:
-                return appendMatchError(out = out, unit = unit, offset = info.offset, kind = matchBindingCount, caseName = info.name, detail = countText(slots) + " / " + countText(len(info.bindings)))
+                return appendMatchError(out = out, unit = unit, offset = info.offset, kind = .matchBindingCount, caseName = info.name, detail = countText(slots) + " / " + countText(len(info.bindings)))
             return addCovered(out = out, name = info.name)
-        return appendMatchError(out = out, unit = unit, offset = info.offset, kind = matchUnknownCase, caseName = info.name, detail = "可选")
-    return appendMatchError(out = out, unit = unit, offset = info.offset, kind = matchUnknownCase, caseName = info.name, detail = typeText(pool = world.types.pool, id = subjectType))
+        return appendMatchError(out = out, unit = unit, offset = info.offset, kind = .matchUnknownCase, caseName = info.name, detail = "可选")
+    return appendMatchError(out = out, unit = unit, offset = info.offset, kind = .matchUnknownCase, caseName = info.name, detail = typeText(pool = world.types.pool, id = subjectType))
 
 ; 判定入口：主体类型未定即待定；枚举主体在收尾处补穷尽性。
 checkMatch|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmt: I32, types: ExprTypes,) -> (MatchResult,):
@@ -421,15 +421,15 @@ checkMatch|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmt:
         if len(out.missing) > 0:
             var offset = 0
             offset = unit.ast.stmtAt(stmt).start
-            out = appendMatchError(out = out, unit = unit, offset = offset, kind = matchNotExhaustive, caseName = "", detail = typeText(pool = world.types.pool, id = subjectType))
+            out = appendMatchError(out = out, unit = unit, offset = offset, kind = .matchNotExhaustive, caseName = "", detail = typeText(pool = world.types.pool, id = subjectType))
     return out
 
 ; 绑定入臂：进匹配臂帧后逐位声明，`_` 与空位不占局部，类型取变体形参。
 bindArm|func(world: MemberWorld, unit: CompilationUnit, subjectType: I32, patternNode: I32, scope: ScopeStack,) -> (ArmBinding,):
     var out = ArmBinding()
     let info = classifyPattern(unit = unit, node = patternNode)
-    out.scope = enterScope(stack = scope, kind = scopeArm, file = unit.path, offset = info.offset)
-    if !isPatternForm(form = info.form, expected = patternEnumCase):
+    out.scope = enterScope(stack = scope, kind = .scopeArm, file = unit.path, offset = info.offset)
+    if !isPatternForm(form = info.form, expected = .patternEnumCase):
         return out
     var paramTypes: Array<I32> = []
     let enumName = enumNameOf(pool = world.types.pool, id = subjectType)
@@ -444,9 +444,9 @@ bindArm|func(world: MemberWorld, unit: CompilationUnit, subjectType: I32, patter
             var typeId = -1
             if slot < len(paramTypes):
                 typeId = paramTypes[slot]
-            let declared = declareLocal(stack = out.scope, kind = localBinding, spelling = name, typeId = typeId, mutable = false, file = unit.path, offset = info.offset, decl = -1)
+            let declared = declareLocal(stack = out.scope, kind = .localBinding, spelling = name, typeId = typeId, mutable = false, file = unit.path, offset = info.offset, decl = -1)
             if declared.failed:
-                out.errors = out.errors.append(makeMatchError(kind = matchBindingDuplicated, file = declared.error.file, offset = declared.error.offset, caseName = declared.error.spelling, detail = ""))
+                out.errors = out.errors.append(makeMatchError(kind = .matchBindingDuplicated, file = declared.error.file, offset = declared.error.offset, caseName = declared.error.spelling, detail = ""))
             else:
                 out.scope = declared.stack
                 out.boundCount = out.boundCount + 1

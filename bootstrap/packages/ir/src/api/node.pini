@@ -419,19 +419,19 @@ irNominalType|func(pool: IrTypePool, name: String, isObject: Bool,) -> (IrTypeIn
     var flags = 0
     if isObject:
         flags = 1
-    return irInternType(pool = pool, kind = irTypeNominal, name = name, kids = [], ret = -1, uses = [], flags = flags)
+    return irInternType(pool = pool, kind = .irTypeNominal, name = name, kids = [], ret = -1, uses = [], flags = flags)
 
 ; 枚举类型驻留：引用语义，载荷按用例另存形态表，池内只记名字。
 irEnumType|func(pool: IrTypePool, name: String,) -> (IrTypeInsert,):
-    return irInternType(pool = pool, kind = irTypeEnumeration, name = name, kids = [], ret = -1, uses = [], flags = 0)
+    return irInternType(pool = pool, kind = .irTypeEnumeration, name = name, kids = [], ret = -1, uses = [], flags = 0)
 
 ; 函数类型驻留：形参、返回与取用位一并入池；取用位不进运行时表示，但参与驻留判等。
 irFunctionType|func(pool: IrTypePool, params: Array<I32>, ret: I32, uses: Array<I32>,) -> (IrTypeInsert,):
-    return irInternType(pool = pool, kind = irTypeFunction, name = "", kids = params, ret = ret, uses = uses, flags = 0)
+    return irInternType(pool = pool, kind = .irTypeFunction, name = "", kids = params, ret = ret, uses = uses, flags = 0)
 
 ; 元组类型驻留：分量按声明序，标签不进池（标签只供诊断，槽序即分量序）。
 irTupleType|func(pool: IrTypePool, fields: Array<I32>,) -> (IrTypeInsert,):
-    return irInternType(pool = pool, kind = irTypeTuple, name = "", kids = fields, ret = -1, uses = [], flags = 0)
+    return irInternType(pool = pool, kind = .irTypeTuple, name = "", kids = fields, ret = -1, uses = [], flags = 0)
 
 ; 池长：下标合法区间是 0 到 count - 1。
 irTypeCount|func(_pool: IrTypePool,) -> (I32,):
@@ -446,7 +446,7 @@ irIsObjectType|func(pool: IrTypePool, id: I32,) -> (Bool,):
     if id < 0 || id >= len(pool.entries):
         return false
     let entry = pool.entries[id]
-    if irTypeTag(entry.kind) != irTypeTag(irTypeNominal):
+    if irTypeTag(entry.kind) != irTypeTag(.irTypeNominal):
         return false
     return entry.flags % 2 == 1
 
@@ -462,51 +462,51 @@ irTypeText|func(pool: IrTypePool, id: I32,) -> (String,):
         return "<无效>"
     let entry = pool.entries[id]
     let tag = irTypeTag(entry.kind)
-    if tag == irTypeTag(irTypeI32):
+    if tag == irTypeTag(.irTypeI32):
         return "i32"
-    if tag == irTypeTag(irTypeI64):
+    if tag == irTypeTag(.irTypeI64):
         return "i64"
-    if tag == irTypeTag(irTypeU64):
+    if tag == irTypeTag(.irTypeU64):
         return "u64"
-    if tag == irTypeTag(irTypeU8):
+    if tag == irTypeTag(.irTypeU8):
         return "u8"
-    if tag == irTypeTag(irTypeI8):
+    if tag == irTypeTag(.irTypeI8):
         return "i8"
-    if tag == irTypeTag(irTypeF64):
+    if tag == irTypeTag(.irTypeF64):
         return "f64"
-    if tag == irTypeTag(irTypeBoolean):
+    if tag == irTypeTag(.irTypeBoolean):
         return "boolean"
-    if tag == irTypeTag(irTypeString):
+    if tag == irTypeTag(.irTypeString):
         return "string"
-    if tag == irTypeTag(irTypeChar):
+    if tag == irTypeTag(.irTypeChar):
         return "char"
-    if tag == irTypeTag(irTypeNominal):
+    if tag == irTypeTag(.irTypeNominal):
         return entry.name
-    if tag == irTypeTag(irTypeEnumeration):
+    if tag == irTypeTag(.irTypeEnumeration):
         return entry.name
-    if tag == irTypeTag(irTypeStringHandle):
+    if tag == irTypeTag(.irTypeStringHandle):
         return "stringHandle"
-    if tag == irTypeTag(irTypeResult):
+    if tag == irTypeTag(.irTypeResult):
         return "result<" + irTypeList(pool = pool, ids = entry.kids) + ">"
-    if tag == irTypeTag(irTypeFuture):
+    if tag == irTypeTag(.irTypeFuture):
         return "future<" + irTypeList(pool = pool, ids = entry.kids) + ">"
-    if tag == irTypeTag(irTypeArray):
+    if tag == irTypeTag(.irTypeArray):
         return "array<" + irTypeList(pool = pool, ids = entry.kids) + ">"
-    if tag == irTypeTag(irTypeOptional):
+    if tag == irTypeTag(.irTypeOptional):
         return "optional<" + irTypeList(pool = pool, ids = entry.kids) + ">"
-    if tag == irTypeTag(irTypeDict):
+    if tag == irTypeTag(.irTypeDict):
         return "dict<" + irTypeList(pool = pool, ids = entry.kids) + ">"
-    if tag == irTypeTag(irTypeSet):
+    if tag == irTypeTag(.irTypeSet):
         return "set<" + irTypeList(pool = pool, ids = entry.kids) + ">"
-    if tag == irTypeTag(irTypeLazyRef):
+    if tag == irTypeTag(.irTypeLazyRef):
         return "lazyRef<" + irTypeList(pool = pool, ids = entry.kids) + ">"
-    if tag == irTypeTag(irTypeTuple):
+    if tag == irTypeTag(.irTypeTuple):
         return "(" + irTypeList(pool = pool, ids = entry.kids) + ",)"
-    if tag == irTypeTag(irTypePointer):
+    if tag == irTypeTag(.irTypePointer):
         return "*" + irTypeText(pool = pool, id = entry.kids[0])
-    if tag == irTypeTag(irTypeFunction):
+    if tag == irTypeTag(.irTypeFunction):
         return "(" + irTypeList(pool = pool, ids = entry.kids) + ",) -> " + irTypeText(pool = pool, id = entry.ret)
-    if tag == irTypeTag(irTypeCFunction):
+    if tag == irTypeTag(.irTypeCFunction):
         return "cFunction(" + irTypeList(pool = pool, ids = entry.kids) + ",) -> " + irTypeText(pool = pool, id = entry.ret)
     return "<无效>"
 

@@ -63,18 +63,18 @@ module: IrModule = IrModule()
     assert(len(方法.params) == 2, "自身加一个形参")
     assert(方法.params[0].name == "self", "首位应是自身")
     assert(方法.params[1].name == "_other", "次位应是声明里的形参")
-    let 调用 = 取节点(样例 = 样例, kind = irExprTag(irCall), text = "plus__Point")
+    let 调用 = 取节点(样例 = 样例, kind = irExprTag(.irCall), text = "plus__Point")
     assert(调用 >= 0, "调用点应指向方法符号")
     let 节点 = irNodeAt(pool = 样例.module.nodes, id = 调用)
     assert(len(节点.kids) == 2, "实参应是接收者加一个形参")
-    assert(irNodeAt(pool = 样例.module.nodes, id = 节点.kids[0]).kind == irExprTag(irLoad), "首实参应是接收者的读")
+    assert(irNodeAt(pool = 样例.module.nodes, id = 节点.kids[0]).kind == irExprTag(.irLoad), "首实参应是接收者的读")
     return
 
 ; 标签实参：源序乱写时按形参声明序归位，节点里的实参顺序随之落定。
 标签归位|test() -> ():
     let src = "add|func(a: I32, b: I32,) -> (I32,):\n    return a + b\n\nrun|func() -> (I32,):\n    return add(b = 2, a = 1)\n"
     let 样例 = 造样例(src)
-    let 调用 = 取节点(样例 = 样例, kind = irExprTag(irCall), text = "add")
+    let 调用 = 取节点(样例 = 样例, kind = irExprTag(.irCall), text = "add")
     assert(调用 >= 0, "调用点应在节点池里")
     let 节点 = irNodeAt(pool = 样例.module.nodes, id = 调用)
     assert(len(节点.kids) == 2, "两个实参都应落位")
@@ -88,24 +88,24 @@ module: IrModule = IrModule()
 变量复合赋值|test() -> ():
     let src = "bump|func(_n: I32,) -> (I32,):\n    var i = 0\n    i += _n\n    return i\n"
     let 样例 = 造样例(src)
-    let store = 取节点(样例 = 样例, kind = irStmtTag(irStoreVar), text = "i")
+    let store = 取节点(样例 = 样例, kind = irStmtTag(.irStoreVar), text = "i")
     assert(store >= 0, "复合赋值应落成一次写入")
     let 写 = irNodeAt(pool = 样例.module.nodes, id = store)
     let 值: I32 = 写.kids[0]
     let 二元 = irNodeAt(pool = 样例.module.nodes, id = 值)
-    assert(二元.kind == irExprTag(irBinary), "写入的值应是二元节点")
-    assert(二元.op == irBinaryTag(irAdd), "加法赋值应映射成加法")
+    assert(二元.kind == irExprTag(.irBinary), "写入的值应是二元节点")
+    assert(二元.op == irBinaryTag(.irAdd), "加法赋值应映射成加法")
     let 左: I32 = 二元.kids[0]
-    assert(irNodeAt(pool = 样例.module.nodes, id = 左).kind == irExprTag(irLoad), "左操作数应是目标读")
+    assert(irNodeAt(pool = 样例.module.nodes, id = 左).kind == irExprTag(.irLoad), "左操作数应是目标读")
     return
 
 ; 字段与下标：复合赋值先读后写，两个节点指向同一个接收者或容器。
 字段与下标复合赋值|test() -> ():
     let src = "(Box)\nn: I32 = 0\n\n((Box))\nbump|self(_step: I32,) -> (I32,):\n    self.n += _step\n    return self.n\n\nshift|func(_arr: [I32,],) -> (I32,):\n    _arr[0] += 2\n    return _arr[0]\n"
     let 样例 = 造样例(src)
-    assert(countNodes(module = 样例.module, kind = irStmtTag(irFieldStore)) == 1, "字段赋值应有一个写节点")
-    assert(countNodes(module = 样例.module, kind = irStmtTag(irSubscriptStore)) == 1, "下标赋值应有一个写节点")
-    assert(countNodes(module = 样例.module, kind = irExprTag(irFieldGet)) == 2, "字段读两处：复合赋值的读与返回值的读")
+    assert(countNodes(module = 样例.module, kind = irStmtTag(.irFieldStore)) == 1, "字段赋值应有一个写节点")
+    assert(countNodes(module = 样例.module, kind = irStmtTag(.irSubscriptStore)) == 1, "下标赋值应有一个写节点")
+    assert(countNodes(module = 样例.module, kind = irExprTag(.irFieldGet)) == 2, "字段读两处：复合赋值的读与返回值的读")
     return
 
 ; 普通赋值：字段与下标各写一次，目标不是标识符也不再报缺口。
@@ -114,8 +114,8 @@ module: IrModule = IrModule()
     let 样例 = 造样例(src)
     assert(len(样例.module.errors) == 0, "两个函数都应降载成功")
     assert(emptyBodyCount(module = 样例.module) == 0, "不应留空体")
-    assert(countNodes(module = 样例.module, kind = irStmtTag(irFieldStore)) == 1, "字段写应有一个节点")
-    assert(countNodes(module = 样例.module, kind = irStmtTag(irSubscriptStore)) == 1, "下标写应有一个节点")
+    assert(countNodes(module = 样例.module, kind = irStmtTag(.irFieldStore)) == 1, "字段写应有一个节点")
+    assert(countNodes(module = 样例.module, kind = irStmtTag(.irSubscriptStore)) == 1, "下标写应有一个节点")
     return
 
 ; 字符串取值：去引号、按转义表还原，`\0` 之后的内容丢弃。
@@ -136,8 +136,8 @@ module: IrModule = IrModule()
     assert(irTypeText(pool = 样例.module.types, id = 分配.typeId) == "i64", "分配类型应取标注")
     assert(len(分配.kids) == 1, "初值应有一个子节点")
     let 初值 = irNodeAt(pool = 样例.module.nodes, id = 分配.kids[0])
-    assert(初值.kind == irExprTag(irUnary), "窄初值应包成转换节点")
-    assert(初值.op == irUnaryTag(irCast), "转换节点应是显式转换")
+    assert(初值.kind == irExprTag(.irUnary), "窄初值应包成转换节点")
+    assert(初值.op == irUnaryTag(.irCast), "转换节点应是显式转换")
     return
 
 ; 字符串与数组字面量：值驻留文本池，数组元素保序，空数组按标注定型。
@@ -145,14 +145,14 @@ module: IrModule = IrModule()
     let src = "f|func() -> (I32,):\n    let s = \"ab\"\n    let xs = [1, 2]\n    var out: Array<I32> = []\n    return len(xs)\n"
     let 样例 = 造样例(src)
     assert(len(样例.module.errors) == 0, "字面量应全部降载")
-    assert(countNodes(module = 样例.module, kind = irExprTag(irStringConst)) == 1, "字符串应有一个常量节点")
-    assert(countNodes(module = 样例.module, kind = irExprTag(irArrayLiteral)) == 2, "两个数组字面量各一个节点")
+    assert(countNodes(module = 样例.module, kind = irExprTag(.irStringConst)) == 1, "字符串应有一个常量节点")
+    assert(countNodes(module = 样例.module, kind = irExprTag(.irArrayLiteral)) == 2, "两个数组字面量各一个节点")
     var 空数组 = -1
     var 有元素 = -1
     var i = 0
     while i < irNodeCount(样例.module.nodes):
         let 节点 = irNodeAt(pool = 样例.module.nodes, id = i)
-        if 节点.kind == irExprTag(irArrayLiteral):
+        if 节点.kind == irExprTag(.irArrayLiteral):
             if len(节点.kids) == 0:
                 空数组 = i
             else:
@@ -168,11 +168,11 @@ module: IrModule = IrModule()
     let src = "(Label)\nstart: I32 = 0\n\nf|func() -> (Label,):\n    let one = Label()\n    return one\n"
     let 样例 = 造样例(src)
     assert(len(样例.module.errors) == 0, "零参构造应降载成功")
-    assert(countNodes(module = 样例.module, kind = irExprTag(irConstruct)) == 1, "应有一个构造节点")
+    assert(countNodes(module = 样例.module, kind = irExprTag(.irConstruct)) == 1, "应有一个构造节点")
     var at = -1
     var i = 0
     while i < irNodeCount(样例.module.nodes):
-        if irNodeAt(pool = 样例.module.nodes, id = i).kind == irExprTag(irConstruct):
+        if irNodeAt(pool = 样例.module.nodes, id = i).kind == irExprTag(.irConstruct):
             at = i
         i = i + 1
     assert(at >= 0, "构造节点应在池里")
@@ -184,7 +184,7 @@ module: IrModule = IrModule()
     let src = "f|func() -> (I32,):\n    let bytes = tempUtf8Bytes(\"ab\")\n    return len(bytes)\n"
     let 样例 = 造样例(src)
     assert(len(样例.module.errors) == 0, "内建调用应降载成功")
-    let at = 取节点(样例 = 样例, kind = irExprTag(irCall), text = "tempUtf8Bytes")
+    let at = 取节点(样例 = 样例, kind = irExprTag(.irCall), text = "tempUtf8Bytes")
     assert(at >= 0, "调用节点应指向内建名")
     assert(irTypeText(pool = 样例.module.types, id = irNodeAt(pool = 样例.module.nodes, id = at).typeId) == "array<u8>", "返回类型应按形状定为 array<u8>")
     return
@@ -194,7 +194,7 @@ module: IrModule = IrModule()
     let src = "[Flags]\n甲\n乙\n\nf|func() -> (Flags,):\n    return .乙\n"
     let 样例 = 造样例(src)
     assert(len(样例.module.errors) == 0, "前导点用例应降载成功")
-    let at = 取节点(样例 = 样例, kind = irExprTag(irEnumConstruct), text = "乙")
+    let at = 取节点(样例 = 样例, kind = irExprTag(.irEnumConstruct), text = "乙")
     assert(at >= 0, "应有一个枚举构造节点")
     let 节点 = irNodeAt(pool = 样例.module.nodes, id = at)
     assert(节点.op == 1, "tag 应取声明序，乙是第二个")

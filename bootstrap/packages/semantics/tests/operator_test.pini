@@ -9,7 +9,7 @@ ids: Array<I32> = []
     var ids: Array<I32> = []
     var i = 0
     while i < len(_names):
-        let inserted = intern(pool = pool, kind = typeClassScalar, name = _names[i], kids = [], ret = -1)
+        let inserted = intern(pool = pool, kind = .typeClassScalar, name = _names[i], kids = [], ret = -1)
         pool = inserted.pool
         ids = ids.append(inserted.id)
         i = i + 1
@@ -155,7 +155,7 @@ try解包|test() -> ():
     var kids: Array<I32> = []
     kids = kids.append(池.ids[0])
     kids = kids.append(池.ids[1])
-    let 结果 = intern(pool = 池.pool, kind = typeClassResult, name = "Result", kids = kids, ret = -1)
+    let 结果 = intern(pool = 池.pool, kind = .typeClassResult, name = "Result", kids = kids, ret = -1)
     let 解包 = checkUnary(pool = 结果.pool, op = "^", operand = 结果.id, file = "", offset = 0)
     assert(!解包.failed, "结果解包应通过")
     assert(typeText(pool = 解包.pool, id = 解包.typeId) == "I32", "实得 " + typeText(pool = 解包.pool, id = 解包.typeId))

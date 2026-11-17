@@ -74,7 +74,7 @@ deferOp|func(_out: OpResult,) -> (OpResult,):
 
 ; 布尔类型：比较与逻辑的结果统一从这里取。
 boolType|func(_pool: TypePool,) -> (TypeInsert,):
-    return intern(pool = _pool, kind = typeClassScalar, name = "Bool", kids = [], ret = -1)
+    return intern(pool = _pool, kind = .typeClassScalar, name = "Bool", kids = [], ret = -1)
 
 ; 判据包装：结果直接写成功类型，调用方只关心失败分支。
 acceptType|func(out: OpResult, typeId: I32,) -> (OpResult,):
@@ -91,28 +91,28 @@ checkUnary|func(pool: TypePool, op: String, operand: I32, file: String, offset: 
     if op == "-" || op == "+" || op == "++" || op == "--":
         if isNumericType(pool = out.pool, id = operand):
             return acceptType(out = out, typeId = operand)
-        return failOp(out = out, file = file, offset = offset, op = op, kind = opOperandType, expected = "数值", got = typeText(pool = out.pool, id = operand))
+        return failOp(out = out, file = file, offset = offset, op = op, kind = .opOperandType, expected = "数值", got = typeText(pool = out.pool, id = operand))
     if op == "!":
         if isBoolType(pool = out.pool, id = operand):
             return acceptType(out = out, typeId = operand)
-        return failOp(out = out, file = file, offset = offset, op = op, kind = opOperandType, expected = "布尔", got = typeText(pool = out.pool, id = operand))
+        return failOp(out = out, file = file, offset = offset, op = op, kind = .opOperandType, expected = "布尔", got = typeText(pool = out.pool, id = operand))
     if op == "~":
         if isIntegerType(pool = out.pool, id = operand):
             return acceptType(out = out, typeId = operand)
-        return failOp(out = out, file = file, offset = offset, op = op, kind = opOperandType, expected = "整数", got = typeText(pool = out.pool, id = operand))
+        return failOp(out = out, file = file, offset = offset, op = op, kind = .opOperandType, expected = "整数", got = typeText(pool = out.pool, id = operand))
     if op == "&":
         var kids: Array<I32> = []
         kids = kids.append(operand)
-        let pointer = intern(pool = out.pool, kind = typeClassPointer, name = "", kids = kids, ret = -1)
+        let pointer = intern(pool = out.pool, kind = .typeClassPointer, name = "", kids = kids, ret = -1)
         var done = out
         done.pool = pointer.pool
         done.typeId = pointer.id
         return done
     if op == "^":
         let entry = out.pool.entries[operand]
-        if isTypeClass(kind = entry.kind, expected = typeClassResult) && len(entry.kids) > 0:
+        if isTypeClass(kind = entry.kind, expected = .typeClassResult) && len(entry.kids) > 0:
             return acceptType(out = out, typeId = entry.kids[0])
-        return failOp(out = out, file = file, offset = offset, op = op, kind = opOperandType, expected = "结果", got = typeText(pool = out.pool, id = operand))
+        return failOp(out = out, file = file, offset = offset, op = op, kind = .opOperandType, expected = "结果", got = typeText(pool = out.pool, id = operand))
     return deferOp(out)
 
 ; 二元分派：先按符号归类，再交给各自的判据。
@@ -142,9 +142,9 @@ checkBinary|func(pool: TypePool, op: String, left: I32, right: I32, file: String
 ; 逻辑：两侧都必须是布尔，结果布尔。
 checkLogical|func(out: OpResult, op: String, left: I32, right: I32, file: String, offset: I32,) -> (OpResult,):
     if !isBoolType(pool = out.pool, id = left):
-        return failOp(out = out, file = file, offset = offset, op = op, kind = opLogicalOperand, expected = "Bool", got = typeText(pool = out.pool, id = left))
+        return failOp(out = out, file = file, offset = offset, op = op, kind = .opLogicalOperand, expected = "Bool", got = typeText(pool = out.pool, id = left))
     if !isBoolType(pool = out.pool, id = right):
-        return failOp(out = out, file = file, offset = offset, op = op, kind = opLogicalOperand, expected = "Bool", got = typeText(pool = out.pool, id = right))
+        return failOp(out = out, file = file, offset = offset, op = op, kind = .opLogicalOperand, expected = "Bool", got = typeText(pool = out.pool, id = right))
     let made = boolType(out.pool)
     var done = out
     done.pool = made.pool
@@ -157,22 +157,22 @@ checkPlus|func(out: OpResult, op: String, left: I32, right: I32, file: String, o
         let promoted = promoteNumeric(pool = out.pool, left = left, right = right)
         if promoted >= 0:
             return acceptType(out = out, typeId = promoted)
-        return failOp(out = out, file = file, offset = offset, op = op, kind = opOperandType, expected = "同族数值", got = typeText(pool = out.pool, id = left) + " 与 " + typeText(pool = out.pool, id = right))
+        return failOp(out = out, file = file, offset = offset, op = op, kind = .opOperandType, expected = "同族数值", got = typeText(pool = out.pool, id = left) + " 与 " + typeText(pool = out.pool, id = right))
     if isTextType(pool = out.pool, id = left) && isTextType(pool = out.pool, id = right):
-        let text = intern(pool = out.pool, kind = typeClassScalar, name = "String", kids = [], ret = -1)
+        let text = intern(pool = out.pool, kind = .typeClassScalar, name = "String", kids = [], ret = -1)
         var done = out
         done.pool = text.pool
         done.typeId = text.id
         return done
-    return failOp(out = out, file = file, offset = offset, op = op, kind = opOperandType, expected = "数值或文本", got = typeText(pool = out.pool, id = left) + " 与 " + typeText(pool = out.pool, id = right))
+    return failOp(out = out, file = file, offset = offset, op = op, kind = .opOperandType, expected = "数值或文本", got = typeText(pool = out.pool, id = left) + " 与 " + typeText(pool = out.pool, id = right))
 
 ; 算术：减乘除余只认数值，同族才提升。
 checkArithmetic|func(out: OpResult, op: String, left: I32, right: I32, file: String, offset: I32,) -> (OpResult,):
     if !isNumericType(pool = out.pool, id = left) || !isNumericType(pool = out.pool, id = right):
-        return failOp(out = out, file = file, offset = offset, op = op, kind = opOperandType, expected = "数值", got = typeText(pool = out.pool, id = left) + " 与 " + typeText(pool = out.pool, id = right))
+        return failOp(out = out, file = file, offset = offset, op = op, kind = .opOperandType, expected = "数值", got = typeText(pool = out.pool, id = left) + " 与 " + typeText(pool = out.pool, id = right))
     let promoted = promoteNumeric(pool = out.pool, left = left, right = right)
     if promoted < 0:
-        return failOp(out = out, file = file, offset = offset, op = op, kind = opOperandType, expected = "同族数值", got = typeText(pool = out.pool, id = left) + " 与 " + typeText(pool = out.pool, id = right))
+        return failOp(out = out, file = file, offset = offset, op = op, kind = .opOperandType, expected = "同族数值", got = typeText(pool = out.pool, id = left) + " 与 " + typeText(pool = out.pool, id = right))
     return acceptType(out = out, typeId = promoted)
 
 ; 相等：同类型、同族数值与文本三路可比，其余拒绝。
@@ -183,7 +183,7 @@ checkEquality|func(out: OpResult, op: String, left: I32, right: I32, file: Strin
     if !ok && isTextType(pool = out.pool, id = left) && isTextType(pool = out.pool, id = right):
         ok = true
     if !ok:
-        return failOp(out = out, file = file, offset = offset, op = op, kind = opOperandType, expected = "同类型或同族数值", got = typeText(pool = out.pool, id = left) + " 与 " + typeText(pool = out.pool, id = right))
+        return failOp(out = out, file = file, offset = offset, op = op, kind = .opOperandType, expected = "同类型或同族数值", got = typeText(pool = out.pool, id = left) + " 与 " + typeText(pool = out.pool, id = right))
     let made = boolType(out.pool)
     var done = out
     done.pool = made.pool
@@ -200,7 +200,7 @@ checkOrdering|func(out: OpResult, op: String, left: I32, right: I32, file: Strin
     if !ok && isCharType(pool = out.pool, id = left) && isCharType(pool = out.pool, id = right):
         ok = true
     if !ok:
-        return failOp(out = out, file = file, offset = offset, op = op, kind = opOperandType, expected = "同族数值、两串或两字符", got = typeText(pool = out.pool, id = left) + " 与 " + typeText(pool = out.pool, id = right))
+        return failOp(out = out, file = file, offset = offset, op = op, kind = .opOperandType, expected = "同族数值、两串或两字符", got = typeText(pool = out.pool, id = left) + " 与 " + typeText(pool = out.pool, id = right))
     let made = boolType(out.pool)
     var done = out
     done.pool = made.pool
@@ -210,16 +210,16 @@ checkOrdering|func(out: OpResult, op: String, left: I32, right: I32, file: Strin
 ; 位运算：两侧同族整数才成立，结果取提升后的整型。
 checkBitwise|func(out: OpResult, op: String, left: I32, right: I32, file: String, offset: I32,) -> (OpResult,):
     if !isIntegerType(pool = out.pool, id = left) || !isIntegerType(pool = out.pool, id = right):
-        return failOp(out = out, file = file, offset = offset, op = op, kind = opOperandType, expected = "整数", got = typeText(pool = out.pool, id = left) + " 与 " + typeText(pool = out.pool, id = right))
+        return failOp(out = out, file = file, offset = offset, op = op, kind = .opOperandType, expected = "整数", got = typeText(pool = out.pool, id = left) + " 与 " + typeText(pool = out.pool, id = right))
     let promoted = promoteNumeric(pool = out.pool, left = left, right = right)
     if promoted < 0:
-        return failOp(out = out, file = file, offset = offset, op = op, kind = opOperandType, expected = "同族整数", got = typeText(pool = out.pool, id = left) + " 与 " + typeText(pool = out.pool, id = right))
+        return failOp(out = out, file = file, offset = offset, op = op, kind = .opOperandType, expected = "同族整数", got = typeText(pool = out.pool, id = left) + " 与 " + typeText(pool = out.pool, id = right))
     return acceptType(out = out, typeId = promoted)
 
 ; 移位：左操作数定结果类型，计数只需是整数，族别不要求一致。
 checkShift|func(out: OpResult, op: String, left: I32, right: I32, file: String, offset: I32,) -> (OpResult,):
     if !isIntegerType(pool = out.pool, id = left):
-        return failOp(out = out, file = file, offset = offset, op = op, kind = opOperandType, expected = "整数", got = typeText(pool = out.pool, id = left))
+        return failOp(out = out, file = file, offset = offset, op = op, kind = .opOperandType, expected = "整数", got = typeText(pool = out.pool, id = left))
     if !isIntegerType(pool = out.pool, id = right):
-        return failOp(out = out, file = file, offset = offset, op = op, kind = opOperandType, expected = "整数", got = typeText(pool = out.pool, id = right))
+        return failOp(out = out, file = file, offset = offset, op = op, kind = .opOperandType, expected = "整数", got = typeText(pool = out.pool, id = right))
     return acceptType(out = out, typeId = left)

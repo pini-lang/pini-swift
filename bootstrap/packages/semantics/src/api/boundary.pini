@@ -164,12 +164,12 @@ checkImportBlock|func(ws: WorkspaceUnits, group: PackageUnits, unit: Compilation
             let alias = decodeRange(bytes = bytes, start = entry.nameStart, end = entry.nameEnd)
             let at = packageIndexAt(ws = ws, target = target)
             if at < 0:
-                working = appendBoundaryError(out = working, unit = unit, offset = entry.start, kind = boundaryUnknownTarget, alias = alias, target = target)
+                working = appendBoundaryError(out = working, unit = unit, offset = entry.start, kind = .boundaryUnknownTarget, alias = alias, target = target)
             elif ws.packages[at].name != group.name:
                 if internalWithin(rootPath = ws.packages[at].rootPath, target = target):
-                    working = appendBoundaryError(out = working, unit = unit, offset = entry.start, kind = boundaryInternal, alias = alias, target = target)
+                    working = appendBoundaryError(out = working, unit = unit, offset = entry.start, kind = .boundaryInternal, alias = alias, target = target)
                 elif !hasRequirement(requires = group.requires, name = ws.packages[at].name):
-                    working = appendBoundaryError(out = working, unit = unit, offset = entry.start, kind = boundaryUndeclared, alias = alias, target = target)
+                    working = appendBoundaryError(out = working, unit = unit, offset = entry.start, kind = .boundaryUndeclared, alias = alias, target = target)
         i = i + 1
     return working
 

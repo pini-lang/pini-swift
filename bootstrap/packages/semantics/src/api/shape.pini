@@ -101,11 +101,11 @@ shapeOfDecl|func(world: MemberWorld, ref: DeclRef, typeId: I32,) -> (ShapeEntry,
     let decl = unit.ast.decls[ref.decl]
     let bytes = unitBytes(unit)
     if isStructDeclCode(decl.kind):
-        out.kind = shapeStruct
+        out.kind = .shapeStruct
     elif isObjectDeclCode(decl.kind):
-        out.kind = shapeObject
+        out.kind = .shapeObject
     else:
-        out.kind = shapeEnum
+        out.kind = .shapeEnum
     var i = 0
     while i < len(decl.kids):
         let kid = decl.kids[i]

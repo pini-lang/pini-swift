@@ -124,15 +124,15 @@ keywordKind|func(language: KeywordLanguage, bytes: Array<U8>, start: I32, end: I
 keywordKindIn|func(table: KeywordTable, bytes: Array<U8>, start: I32, end: I32,) -> (TokenKind,):
     let width = end - start
     if width == 4 && matchesWord(bytes = bytes, start = start, end = end, word = "true"):
-        return trueLiteral
+        return .trueLiteral
     if width == 5 && matchesWord(bytes = bytes, start = start, end = end, word = "false"):
-        return falseLiteral
+        return .falseLiteral
     var index = 0
     while index < len(table.widths):
         if matchesTableWord(table = table, index = index, bytes = bytes, start = start, end = end):
             return kindFromTag(8 + index)
         index = index + 1
-    return identifier
+    return .identifier
 
 ; 整词比对：宽度不等先剪掉，再逐字节比。
 matchesTableWord|func(table: KeywordTable, index: I32, bytes: Array<U8>, start: I32, end: I32,) -> (Bool,):

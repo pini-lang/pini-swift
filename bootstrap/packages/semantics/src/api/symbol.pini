@@ -101,7 +101,7 @@ sameKey|func(first: Array<U8>, second: Array<U8>,) -> (Bool,):
 
 ; 跨模块可见：只有 public 能被别的模块引入。
 isExported|func(_level: Visibility,) -> (Bool,):
-    return visibilityRank(_level) == visibilityRank(visibilityPublic)
+    return visibilityRank(_level) == visibilityRank(.visibilityPublic)
 
 ; 区间解码：包外读声明名与字段名时用，产出原始拼写；非法序列就地收尾。
 ; 解码只此一份，语法层不复制文本，下游也不另写一套字节到文本的转换。

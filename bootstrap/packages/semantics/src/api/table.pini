@@ -62,7 +62,7 @@ importIndex|self(file: String, key: Array<U8>,) -> (I32,):
 defineTop|func(table: SymbolTable, symbol: Symbol,) -> (SymbolTable,):
     var out = table
     if table.topIndex(symbol.key) >= 0:
-        out.errors = out.errors.append(makeSymbolError(kind = symbolRedeclared, file = symbol.file, offset = symbol.offset, name = symbol.spelling))
+        out.errors = out.errors.append(makeSymbolError(kind = .symbolRedeclared, file = symbol.file, offset = symbol.offset, name = symbol.spelling))
         return out
     out.symbols = out.symbols.append(symbol)
     return out
@@ -76,10 +76,10 @@ defineForeign|func(table: SymbolTable, symbol: Symbol,) -> (SymbolTable,):
         return out
     let existing = table.symbols[at]
     if !existing.isForeign:
-        out.errors = out.errors.append(makeForeignError(kind = symbolForeignClash, file = symbol.file, offset = symbol.offset, name = symbol.spelling, detail = existing.file))
+        out.errors = out.errors.append(makeForeignError(kind = .symbolForeignClash, file = symbol.file, offset = symbol.offset, name = symbol.spelling, detail = existing.file))
         return out
     if existing.foreignShape != symbol.foreignShape || !sameFlags(first = existing.foreignFlags, second = symbol.foreignFlags):
-        out.errors = out.errors.append(makeForeignError(kind = symbolForeignMismatch, file = symbol.file, offset = symbol.offset, name = symbol.spelling, detail = existing.file))
+        out.errors = out.errors.append(makeForeignError(kind = .symbolForeignMismatch, file = symbol.file, offset = symbol.offset, name = symbol.spelling, detail = existing.file))
         return out
     return out
 
@@ -98,7 +98,7 @@ sameFlags|func(first: Array<String>, second: Array<String>,) -> (Bool,):
 defineMember|func(table: SymbolTable, symbol: Symbol,) -> (SymbolTable,):
     var out = table
     if table.memberIndex(owner = symbol.owner, key = symbol.key) >= 0:
-        out.errors = out.errors.append(makeSymbolError(kind = symbolMemberDuplicated, file = symbol.file, offset = symbol.offset, name = symbol.spelling))
+        out.errors = out.errors.append(makeSymbolError(kind = .symbolMemberDuplicated, file = symbol.file, offset = symbol.offset, name = symbol.spelling))
         return out
     out.symbols = out.symbols.append(symbol)
     return out
@@ -124,10 +124,10 @@ addError|func(table: SymbolTable, error: SymbolError,) -> (SymbolTable,):
 defineImport|func(table: SymbolTable, symbol: Symbol,) -> (SymbolTable,):
     var out = table
     if table.importIndex(file = symbol.file, key = symbol.key) >= 0:
-        out.errors = out.errors.append(makeSymbolError(kind = symbolImportAmbiguous, file = symbol.file, offset = symbol.offset, name = symbol.spelling))
+        out.errors = out.errors.append(makeSymbolError(kind = .symbolImportAmbiguous, file = symbol.file, offset = symbol.offset, name = symbol.spelling))
         return out
     if table.fileTopIndex(file = symbol.file, key = symbol.key) >= 0:
-        out.errors = out.errors.append(makeSymbolError(kind = symbolImportAmbiguous, file = symbol.file, offset = symbol.offset, name = symbol.spelling))
+        out.errors = out.errors.append(makeSymbolError(kind = .symbolImportAmbiguous, file = symbol.file, offset = symbol.offset, name = symbol.spelling))
         return out
     out.imports = out.imports.append(symbol)
     return out

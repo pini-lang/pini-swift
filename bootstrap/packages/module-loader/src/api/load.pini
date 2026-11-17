@@ -68,7 +68,7 @@ collectTarget|func(packageAbs: String, packageRel: String, target: TargetPlan, e
         let rootRel = roots[i]
         let rootAbs = packageAbs + "/" + rootRel
         if !isDir(rootAbs):
-            out.errors = out.errors.append(makeLoadError(kind = errorRootMissing, path = joinRel(parent = packageRel, child = rootRel), detail = ""))
+            out.errors = out.errors.append(makeLoadError(kind = .errorRootMissing, path = joinRel(parent = packageRel, child = rootRel), detail = ""))
         else:
             let state = scan(absDir = rootAbs, rootRel = rootRel, relDir = "", excludes = excludes, state = ScanState())
             var e = 0
@@ -90,7 +90,7 @@ loadUnitFile|func(absPath: String, unitPath: String,) -> (UnitLoad,):
     var out = UnitLoad()
     if !exists(absPath):
         out.failed = true
-        out.error = makeLoadError(kind = errorFileMissing, path = unitPath, detail = "")
+        out.error = makeLoadError(kind = .errorFileMissing, path = unitPath, detail = "")
         return out
     let read = tryReadFile(absPath)
     match read:
@@ -98,7 +98,7 @@ loadUnitFile|func(absPath: String, unitPath: String,) -> (UnitLoad,):
             return loadUnit(path = unitPath, text = text)
         case err(reason,):
             out.failed = true
-            out.error = makeLoadError(kind = errorFileUnreadable, path = unitPath, detail = "读取内建拒绝该文件")
+            out.error = makeLoadError(kind = .errorFileUnreadable, path = unitPath, detail = "读取内建拒绝该文件")
             return out
 
 ; 装载单个 target：先收集再逐个建单元；单个文件失败不中断其余。

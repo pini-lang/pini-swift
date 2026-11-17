@@ -13,7 +13,7 @@ package = "../../package"
     let 单元 = 造单元(path = "packages/p/src/api/a.pini", text = "foo|func() -> ():\n    return\n\nfoo|func() -> ():\n    return\n")
     let 表 = registerPackage([单元])
     assert(!表.isOK(), "同名顶层应报错")
-    assert(isSymbolError(error = 表.errorAt(0), kind = symbolRedeclared), "类别应为顶层重复")
+    assert(isSymbolError(error = 表.errorAt(0), kind = .symbolRedeclared), "类别应为顶层重复")
     assert(表.errorAt(0).name == "foo", "错误应带名字")
     assert(表.symbolCount() == 1, "只保留先声明的那一个")
     return
@@ -23,7 +23,7 @@ package = "../../package"
     let 单元 = 造单元(path = "packages/p/src/api/a.pini", text = "(Point)\nx: I32 = 0\nx: I32 = 0\n")
     let 表 = registerPackage([单元])
     assert(!表.isOK(), "同名字段应报错")
-    assert(isSymbolError(error = 表.errorAt(0), kind = symbolMemberDuplicated), "类别应为成员同名")
+    assert(isSymbolError(error = 表.errorAt(0), kind = .symbolMemberDuplicated), "类别应为成员同名")
     return
 
 ; 扩展块内同名：同一块里两个同名方法按成员同名报错。
@@ -31,7 +31,7 @@ package = "../../package"
     let 单元 = 造单元(path = "packages/p/src/api/a.pini", text = "(Point)\nx: I32 = 0\n\n((Point))\ndup|self() -> ():\n    return\ndup|self() -> ():\n    return\n")
     let 表 = registerPackage([单元])
     assert(!表.isOK(), "块内同名应报错")
-    assert(isSymbolError(error = 表.errorAt(0), kind = symbolMemberDuplicated), "类别应为成员同名")
+    assert(isSymbolError(error = 表.errorAt(0), kind = .symbolMemberDuplicated), "类别应为成员同名")
     return
 
 ; 扩展跨块同名：按「后声明者覆盖」，不报错，符号数不增。
@@ -53,7 +53,7 @@ package = "../../package"
     let 单元 = 造单元(path = "packages/p/src/api/a.pini", text = "[a|import]\n工具 = \"../x\"\n\n工具|func() -> ():\n    return\n")
     let 表 = registerPackage([单元])
     assert(!表.isOK(), "别名与本地名字相撞应报错")
-    assert(isSymbolError(error = 表.errorAt(0), kind = symbolImportAmbiguous), "类别应为导入歧义")
+    assert(isSymbolError(error = 表.errorAt(0), kind = .symbolImportAmbiguous), "类别应为导入歧义")
     return
 
 ; 导入别名跨文件同名：不同文件用同一个别名互不影响，只在各自文件内判重。
@@ -71,7 +71,7 @@ package = "../../package"
     let 乙 = 造单元(path = "packages/p/src/api/b.pini", text = "foo|func() -> ():\n    return\n")
     let 表 = registerPackage([甲, 乙])
     assert(!表.isOK(), "跨文件同名应报错")
-    assert(isSymbolError(error = 表.errorAt(0), kind = symbolRedeclared), "类别应为顶层重复")
+    assert(isSymbolError(error = 表.errorAt(0), kind = .symbolRedeclared), "类别应为顶层重复")
     assert(表.symbolCount() == 1, "只保留先声明的那一个")
     return
 

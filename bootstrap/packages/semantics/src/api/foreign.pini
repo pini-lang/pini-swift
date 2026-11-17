@@ -119,7 +119,7 @@ isCIdentByte|func(code: I32, head: Bool,) -> (Bool,):
 makeForeignSymbol|func(unit: CompilationUnit, bytes: Array<U8>, decl: DeclNode, kind: SymbolKind,) -> (Symbol,):
     var out = makeSymbol(unit = unit, bytes = bytes, decl = decl, kind = kind)
     out.isForeign = true
-    out.visibility = visibilityPackage
+    out.visibility = .visibilityPackage
     out.foreignShape = foreignShape(ast = unit.ast, bytes = bytes, typeId = decl.typeId)
     out.foreignFlags = foreignFlagTexts(ast = unit.ast, bytes = bytes, decl = decl)
     return out
@@ -133,11 +133,11 @@ registerForeign|func(table: SymbolTable, unit: CompilationUnit, bytes: Array<U8>
         if isForeignSymbolCode(entry.kind) && entry.typeId >= 0:
             let name = decodeRange(bytes = bytes, start = entry.nameStart, end = entry.nameEnd)
             if !isCIdentifier(name):
-                out = addError(table = out, error = makeSymbolError(kind = symbolForeignName, file = unit.path, offset = entry.start, name = name))
+                out = addError(table = out, error = makeSymbolError(kind = .symbolForeignName, file = unit.path, offset = entry.start, name = name))
             else:
-                var kind = symbolVariable
+                var kind = .symbolVariable
                 if isFunctionTypeCode(unit.ast.types[entry.typeId].kind):
-                    kind = symbolFunction
+                    kind = .symbolFunction
                 out = defineForeign(table = out, symbol = makeForeignSymbol(unit = unit, bytes = bytes, decl = entry, kind = kind))
         i = i + 1
     return out

@@ -11,9 +11,9 @@ tailTypeReason|func(pool: TypePool, id: I32,) -> (String,):
     if id < 0 || id >= len(pool.entries):
         return "类型未定"
     let entry = pool.entries[id]
-    if isTypeClass(kind = entry.kind, expected = typeClassPointer):
+    if isTypeClass(kind = entry.kind, expected = .typeClassPointer):
         return ""
-    if !isTypeClass(kind = entry.kind, expected = typeClassScalar):
+    if !isTypeClass(kind = entry.kind, expected = .typeClassScalar):
         return "C 变参只收标量、指针与 String"
     if entry.name == "String":
         return ""
@@ -49,7 +49,7 @@ callbackTarget|func(world: MemberWorld, site: CallSite, node: I32,) -> (Callback
         out.reason = "名字未解析到顶层函数"
         return out
     let entry = world.table.symbolAt(symbol)
-    if !isSymbolKind(kind = entry.kind, expected = symbolFunction):
+    if !isSymbolKind(kind = entry.kind, expected = .symbolFunction):
         out.reason = "名字不是函数"
         return out
     if len(entry.owner) > 0:
@@ -97,17 +97,17 @@ checkCallbackArgs|func(world: MemberWorld, out: CallResult, site: CallSite, sig:
     var i = 0
     while i < len(sig.kids) && i < len(site.args):
         let slot = sig.kids[i]
-        if slot >= 0 && slot < len(working.pool.entries) && isTypeClass(kind = working.pool.entries[slot].kind, expected = typeClassFunction):
+        if slot >= 0 && slot < len(working.pool.entries) && isTypeClass(kind = working.pool.entries[slot].kind, expected = .typeClassFunction):
             let arg = site.args[i]
             let target = callbackTarget(world = world, site = site, node = arg.node)
             if len(target.reason) > 0:
-                return failCall(out = working, site = site, offset = arg.offset, kind = callCallback, expected = "顶层自由函数名", got = target.reason)
+                return failCall(out = working, site = site, offset = arg.offset, kind = .callCallback, expected = "顶层自由函数名", got = target.reason)
             if target.symbol >= 0:
                 let ref = symbolDecl(world = world, symbol = target.symbol)
                 if ref.unit >= 0:
                     let mismatch = callbackSignatureReason(world = world, ref = ref, sig = working.pool.entries[slot])
                     if len(mismatch) > 0:
-                        return failCall(out = working, site = site, offset = arg.offset, kind = callCallback, expected = "签名逐位相同", got = mismatch)
+                        return failCall(out = working, site = site, offset = arg.offset, kind = .callCallback, expected = "签名逐位相同", got = mismatch)
         i = i + 1
     return working
 
@@ -120,7 +120,7 @@ readonlyWriteReason|func(world: MemberWorld, name: String,) -> (String,):
     let entry = world.table.symbolAt(symbol)
     if !entry.isForeign:
         return ""
-    if !isSymbolKind(kind = entry.kind, expected = symbolVariable):
+    if !isSymbolKind(kind = entry.kind, expected = .symbolVariable):
         return ""
     if containsFlagText(items = entry.foreignFlags, name = "readonly"):
         return "外部数据符号标为只读"
@@ -136,7 +136,7 @@ checkTailArgs|func(out: CallResult, site: CallSite, fixed: I32,) -> (CallResult,
             let reason = tailTypeReason(pool = working.pool, id = arg.typeId)
             if len(reason) > 0:
                 let got = typeText(pool = working.pool, id = arg.typeId) + "（" + reason + "）"
-                return failCall(out = working, site = site, offset = arg.offset, kind = callVarargsTail, expected = "C 标量、指针或 String", got = got)
+                return failCall(out = working, site = site, offset = arg.offset, kind = .callVarargsTail, expected = "C 标量、指针或 String", got = got)
         i = i + 1
     return working
 
@@ -147,8 +147,8 @@ checkForeignCall|func(world: MemberWorld, out: CallResult, site: CallSite, ref: 
     if sigId < 0 || sigId >= len(working.pool.entries):
         return deferCall(working)
     let sig = working.pool.entries[sigId]
-    if !isTypeClass(kind = sig.kind, expected = typeClassFunction):
-        return failCall(out = working, site = site, offset = site.offset, kind = callNotCallable, expected = "外部函数", got = "数据符号")
+    if !isTypeClass(kind = sig.kind, expected = .typeClassFunction):
+        return failCall(out = working, site = site, offset = site.offset, kind = .callNotCallable, expected = "外部函数", got = "数据符号")
     let symbol = world.table.symbolAt(site.symbol)
     let varargs = containsFlagText(items = symbol.foreignFlags, name = "varargs")
     var params: Array<CallParam> = []

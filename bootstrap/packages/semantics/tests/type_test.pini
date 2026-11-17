@@ -130,10 +130,10 @@ firstField: I32 = -1
 泛型个数|test() -> ():
     let 多给 = 采样(path = "packages/p/src/api/a.pini", src = "(P)\nx: Array<I32, I32>\n")
     assert(!多给.table.isOK(), "多给实参应报错")
-    assert(isTypeError(error = 多给.table.errorAt(0), kind = typeErrorArityMismatch), "类别应为个数不符")
+    assert(isTypeError(error = 多给.table.errorAt(0), kind = .typeErrorArityMismatch), "类别应为个数不符")
     let 裸名 = 采样(path = "packages/p/src/api/b.pini", src = "(P)\nx: Array\n")
     assert(!裸名.table.isOK(), "缺实参应报错")
-    assert(isTypeError(error = 裸名.table.errorAt(0), kind = typeErrorArityMismatch), "类别应为个数不符")
+    assert(isTypeError(error = 裸名.table.errorAt(0), kind = .typeErrorArityMismatch), "类别应为个数不符")
     return
 
 ; 结果约束：错误实参只认内建 Error，省略错误实参按 Error 补齐。
@@ -143,14 +143,14 @@ firstField: I32 = -1
     assert(标注文本(正例) == "^I32", "实得 " + 标注文本(正例))
     let 反例 = 采样(path = "packages/p/src/api/b.pini", src = "(P)\nx: Result<I32, String>\n")
     assert(!反例.table.isOK(), "错误实参非 Error 应报错")
-    assert(isTypeError(error = 反例.table.errorAt(0), kind = typeErrorConstraint), "类别应为约束不满足")
+    assert(isTypeError(error = 反例.table.errorAt(0), kind = .typeErrorConstraint), "类别应为约束不满足")
     return
 
 ; 未声明类型：具名类型查不到即报，位置取标注起点。
 未声明类型|test() -> ():
     let 样例 = 采样(path = "packages/p/src/api/a.pini", src = "(P)\nx: Foo\n")
     assert(!样例.table.isOK(), "未声明类型应报错")
-    assert(isTypeError(error = 样例.table.errorAt(0), kind = typeErrorUnknownName), "类别应为未声明")
+    assert(isTypeError(error = 样例.table.errorAt(0), kind = .typeErrorUnknownName), "类别应为未声明")
     assert(样例.table.errorAt(0).name == "Foo", "错误应带名字")
     return
 
@@ -158,21 +158,21 @@ firstField: I32 = -1
 名字非类型|test() -> ():
     let 样例 = 采样(path = "packages/p/src/api/a.pini", src = "foo|func() -> ():\n    return\n\n(Q)\nx: foo\n")
     assert(!样例.table.isOK(), "函数名作类型应报错")
-    assert(isTypeError(error = 样例.table.errorAt(0), kind = typeErrorNotTypeName), "类别应为名字不是类型")
+    assert(isTypeError(error = 样例.table.errorAt(0), kind = .typeErrorNotTypeName), "类别应为名字不是类型")
     return
 
 ; 直接自引用：结构字段直接回到自身，值类型大小无法确定。
 直接自引用|test() -> ():
     let 样例 = 采样(path = "packages/p/src/api/a.pini", src = "(A)\nx: A\n")
     assert(!样例.table.isOK(), "直接自引用应报错")
-    assert(isTypeError(error = 样例.table.errorAt(0), kind = typeErrorSelfReference), "类别应为自引用")
+    assert(isTypeError(error = 样例.table.errorAt(0), kind = .typeErrorSelfReference), "类别应为自引用")
     return
 
 ; 间接成环：两个结构互相持有，环只在起点报一条。
 间接成环|test() -> ():
     let 样例 = 采样(path = "packages/p/src/api/a.pini", src = "(A)\nx: B\n\n(B)\ny: A\n")
     assert(!样例.table.isOK(), "间接环应报错")
-    assert(isTypeError(error = 样例.table.errorAt(0), kind = typeErrorRecursiveCycle), "类别应为成环")
+    assert(isTypeError(error = 样例.table.errorAt(0), kind = .typeErrorRecursiveCycle), "类别应为成环")
     assert(样例.table.errorCount() == 1, "同一环只报一条，实得 " + "\(样例.table.errorCount())")
     return
 

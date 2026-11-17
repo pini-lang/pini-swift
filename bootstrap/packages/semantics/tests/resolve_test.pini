@@ -49,7 +49,7 @@ _module_loader = "../../module-loader"
     let table = makeResolveTable([unit])
     assert(unitResolveCount(table = table, unit = 0) == unit.ast.exprCount(), "表长应等于表达式数")
     assert(resolvedCount(table = table, unit = 0) == 0, "初值应全为未解析")
-    assert(isResolveForm(form = resolveAt(table = table, unit = 0, node = 首个标识符(unit)).form, expected = resolveNone), "初值形态应为空")
+    assert(isResolveForm(form = resolveAt(table = table, unit = 0, node = 首个标识符(unit)).form, expected = .resolveNone), "初值形态应为空")
     return
 
 ; 写入与读取：原地写入目标节点；新建的表不带旧写入。
@@ -58,14 +58,14 @@ _module_loader = "../../module-loader"
     let table = makeResolveTable([unit])
     let at = 首个标识符(unit)
     var entry = ResolveEntry()
-    entry.form = resolveLocal
+    entry.form = .resolveLocal
     entry.symbol = 3
     entry.decl = 4
     let changed = writeResolve(table = table, unit = 0, node = at, entry = entry)
-    assert(isResolveForm(form = resolveAt(table = changed, unit = 0, node = at).form, expected = resolveLocal), "目标节点应写入")
+    assert(isResolveForm(form = resolveAt(table = changed, unit = 0, node = at).form, expected = .resolveLocal), "目标节点应写入")
     assert(resolveAt(table = changed, unit = 0, node = at).symbol == 3, "符号下标应原样保留")
     let fresh = makeResolveTable([unit])
-    assert(isResolveForm(form = resolveAt(table = fresh, unit = 0, node = at).form, expected = resolveNone), "新建表不得带旧写入")
+    assert(isResolveForm(form = resolveAt(table = fresh, unit = 0, node = at).form, expected = .resolveNone), "新建表不得带旧写入")
     return
 
 ; 越界：单元或节点越界时写入无效，读取答空记录。
@@ -73,12 +73,12 @@ _module_loader = "../../module-loader"
     let unit = 造解析单元(path = "packages/p/src/api/a.pini", src = 单名字源码())
     let table = makeResolveTable([unit])
     var entry = ResolveEntry()
-    entry.form = resolveTop
+    entry.form = .resolveTop
     let same = writeResolve(table = table, unit = 99, node = 0, entry = entry)
     assert(unitResolveCount(table = same, unit = 99) == 0, "越界单元不应有表")
-    assert(isResolveForm(form = resolveAt(table = same, unit = 99, node = 0).form, expected = resolveNone), "越界读取应答空")
+    assert(isResolveForm(form = resolveAt(table = same, unit = 99, node = 0).form, expected = .resolveNone), "越界读取应答空")
     let also = writeResolve(table = table, unit = 0, node = 999999, entry = entry)
-    assert(isResolveForm(form = resolveAt(table = also, unit = 0, node = 999999).form, expected = resolveNone), "越界节点不应写入")
+    assert(isResolveForm(form = resolveAt(table = also, unit = 0, node = 999999).form, expected = .resolveNone), "越界节点不应写入")
     return
 
 ; 标识符覆盖：未写时首个缺失指向该节点，写入后覆盖完整。
@@ -91,7 +91,7 @@ _module_loader = "../../module-loader"
     assert(before.covered == 0, "初值不应覆盖")
     assert(before.firstMissing == at, "首个缺失应指向标识符")
     var entry = ResolveEntry()
-    entry.form = resolveLocal
+    entry.form = .resolveLocal
     let after = resolveCoverage(table = writeResolve(table = table, unit = 0, node = at, entry = entry), unit = unit, unitIndex = 0)
     assert(after.covered == 1, "写入后应覆盖")
     assert(after.firstMissing < 0, "不应再有缺失")
@@ -108,14 +108,14 @@ _module_loader = "../../module-loader"
     let before = resolveCoverage(table = table, unit = unit, unitIndex = 0)
     assert(before.required == 3, "应有三条必填")
     var callEntry = ResolveEntry()
-    callEntry.form = resolveTop
+    callEntry.form = .resolveTop
     let partial = resolveCoverage(table = writeResolve(table = table, unit = 0, node = call, entry = callEntry), unit = unit, unitIndex = 0)
     assert(partial.covered == 1, "只写调用应覆盖一条")
     assert(partial.firstMissing == ident, "首个缺失应按池序指向标识符")
     var memberEntry = ResolveEntry()
-    memberEntry.form = resolveMember
+    memberEntry.form = .resolveMember
     var identEntry = ResolveEntry()
-    identEntry.form = resolveLocal
+    identEntry.form = .resolveLocal
     let 中间 = writeResolve(table = table, unit = 0, node = member, entry = memberEntry)
     let full = writeResolve(table = 中间, unit = 0, node = ident, entry = identEntry)
     let after = resolveCoverage(table = full, unit = unit, unitIndex = 0)
@@ -125,9 +125,9 @@ _module_loader = "../../module-loader"
 
 ; 形式名：同一形态按名称判等，空形态不与其他形态混同。
 形式名|test() -> ():
-    assert(isResolveForm(form = resolveNone, expected = resolveNone), "空形态应自等")
-    assert(!isResolveForm(form = resolveNone, expected = resolveTop), "空形态不得等于顶层")
-    assert(resolveFormName(resolveLocal) == "局部", "局部形态名应固定")
+    assert(isResolveForm(form = .resolveNone, expected = .resolveNone), "空形态应自等")
+    assert(!isResolveForm(form = .resolveNone, expected = .resolveTop), "空形态不得等于顶层")
+    assert(resolveFormName(.resolveLocal) == "局部", "局部形态名应固定")
     return
 
 ; 单元分表：按路径排序后单元下标固定，写一个单元不碰另一个。
@@ -141,10 +141,10 @@ _module_loader = "../../module-loader"
     assert(unitResolveCount(table = table, unit = 1) == units[1].ast.exprCount(), "次单元表长应相等")
     let at = 首个标识符(units[0])
     var entry = ResolveEntry()
-    entry.form = resolveTop
+    entry.form = .resolveTop
     let changed = writeResolve(table = table, unit = 0, node = at, entry = entry)
     assert(isResolved(resolveAt(table = changed, unit = 0, node = at)), "首单元应写入")
-    assert(isResolveForm(form = resolveAt(table = changed, unit = 1, node = at).form, expected = resolveNone), "次单元不得被写")
+    assert(isResolveForm(form = resolveAt(table = changed, unit = 1, node = at).form, expected = .resolveNone), "次单元不得被写")
     return
 
 ; 表确定：同一单元建两次，表长与已解析数相同。

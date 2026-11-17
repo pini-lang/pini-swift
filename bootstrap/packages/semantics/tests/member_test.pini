@@ -33,15 +33,15 @@ world: MemberWorld = MemberWorld()
 id: I32 = -1
 
 造元组样例|func(_world: MemberWorld,) -> (元组样例,):
-    let first = intern(pool = _world.types.pool, kind = typeClassScalar, name = "I32", kids = [], ret = -1)
+    let first = intern(pool = _world.types.pool, kind = .typeClassScalar, name = "I32", kids = [], ret = -1)
     var grown = _world
     grown.types.pool = first.pool
-    let second = intern(pool = grown.types.pool, kind = typeClassScalar, name = "Bool", kids = [], ret = -1)
+    let second = intern(pool = grown.types.pool, kind = .typeClassScalar, name = "Bool", kids = [], ret = -1)
     grown.types.pool = second.pool
     var kids: Array<I32> = []
     kids = kids.append(first.id)
     kids = kids.append(second.id)
-    let tuple = intern(pool = grown.types.pool, kind = typeClassTuple, name = "", kids = kids, ret = -1)
+    let tuple = intern(pool = grown.types.pool, kind = .typeClassTuple, name = "", kids = kids, ret = -1)
     grown.types.pool = tuple.pool
     var out = 元组样例()
     out.world = grown
@@ -55,7 +55,7 @@ id: I32 = -1
     assert(point >= 0, "结构类型应已驻留")
     let plain = 查样例(sample = sample, receiver = point, name = "x", isTypeName = false, owner = "")
     assert(!plain.failed, "字段应命中")
-    assert(isMemberKind(kind = plain.kind, expected = memberField), "应判作字段")
+    assert(isMemberKind(kind = plain.kind, expected = .memberField), "应判作字段")
     assert(typeText(pool = plain.pool, id = plain.typeId) == "I32", "实得 " + typeText(pool = plain.pool, id = plain.typeId))
     let listed = 查样例(sample = sample, receiver = point, name = "xs", isTypeName = false, owner = "")
     assert(!listed.failed, "容器字段应命中")
@@ -69,7 +69,7 @@ id: I32 = -1
     let point = nominalTypeId(world = sample.world, name = "点")
     let hit = 查样例(sample = sample, receiver = point, name = "取", isTypeName = false, owner = "")
     assert(!hit.failed, "方法应命中")
-    assert(isMemberKind(kind = hit.kind, expected = memberMethod), "应判作方法")
+    assert(isMemberKind(kind = hit.kind, expected = .memberMethod), "应判作方法")
     assert(typeText(pool = hit.pool, id = hit.typeId) == "(I32, Bool,) -> I32", "实得 " + typeText(pool = hit.pool, id = hit.typeId))
     return
 
@@ -80,7 +80,7 @@ id: I32 = -1
     let point = nominalTypeId(world = sample.world, name = "点")
     let byName = 查样例(sample = sample, receiver = point, name = "造", isTypeName = true, owner = "")
     assert(!byName.failed, "类型名访问本型方法应命中")
-    assert(isMemberKind(kind = byName.kind, expected = memberOwnMethod), "应判作本型方法")
+    assert(isMemberKind(kind = byName.kind, expected = .memberOwnMethod), "应判作本型方法")
     assert(typeText(pool = byName.pool, id = byName.typeId) == "() -> I32", "实得 " + typeText(pool = byName.pool, id = byName.typeId))
     let byValue = 查样例(sample = sample, receiver = point, name = "造", isTypeName = false, owner = "")
     assert(!byValue.failed, "值位访问本型方法同样命中")
@@ -103,7 +103,7 @@ id: I32 = -1
     let color = nominalTypeId(world = sample.world, name = "颜色")
     let plain = 查样例(sample = sample, receiver = color, name = "红", isTypeName = true, owner = "")
     assert(!plain.failed, "无载荷用例应命中")
-    assert(isMemberKind(kind = plain.kind, expected = memberEnumCase), "应判作枚举项")
+    assert(isMemberKind(kind = plain.kind, expected = .memberEnumCase), "应判作枚举项")
     assert(typeText(pool = plain.pool, id = plain.typeId) == "颜色", "实得 " + typeText(pool = plain.pool, id = plain.typeId))
     let payload = 查样例(sample = sample, receiver = color, name = "绿", isTypeName = true, owner = "")
     assert(!payload.failed, "带载荷用例应命中")
@@ -116,7 +116,7 @@ id: I32 = -1
     let tuple = 造元组样例(sample.world)
     let first = 查成员(world = tuple.world, file = sample.file, receiver = tuple.id, name = "0", isTypeName = false, owner = "")
     assert(!first.failed, "首个分量应命中")
-    assert(isMemberKind(kind = first.kind, expected = memberTupleIndex), "应判作元组序号")
+    assert(isMemberKind(kind = first.kind, expected = .memberTupleIndex), "应判作元组序号")
     assert(typeText(pool = first.pool, id = first.typeId) == "I32", "实得 " + typeText(pool = first.pool, id = first.typeId))
     let second = 查成员(world = tuple.world, file = sample.file, receiver = tuple.id, name = "1", isTypeName = false, owner = "")
     assert(typeText(pool = second.pool, id = second.typeId) == "Bool", "实得 " + typeText(pool = second.pool, id = second.typeId))
@@ -137,7 +137,7 @@ id: I32 = -1
     let world = withTupleLabels(world = tuple.world, typeId = tuple.id, labels = labels)
     let hit = 查成员(world = world, file = sample.file, receiver = tuple.id, name = "b", isTypeName = false, owner = "")
     assert(!hit.failed, "标签应命中")
-    assert(isMemberKind(kind = hit.kind, expected = memberTupleLabel), "应判作元组标签")
+    assert(isMemberKind(kind = hit.kind, expected = .memberTupleLabel), "应判作元组标签")
     assert(typeText(pool = hit.pool, id = hit.typeId) == "Bool", "实得 " + typeText(pool = hit.pool, id = hit.typeId))
     let missing = 查成员(world = world, file = sample.file, receiver = tuple.id, name = "c", isTypeName = false, owner = "")
     assert(missing.failed, "未知标签应报错")

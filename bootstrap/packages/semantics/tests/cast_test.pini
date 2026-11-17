@@ -9,7 +9,7 @@ ids: Array<I32> = []
     var ids: Array<I32> = []
     var i = 0
     while i < len(_names):
-        let inserted = intern(pool = pool, kind = typeClassScalar, name = _names[i], kids = [], ret = -1)
+        let inserted = intern(pool = pool, kind = .typeClassScalar, name = _names[i], kids = [], ret = -1)
         pool = inserted.pool
         ids = ids.append(inserted.id)
         i = i + 1
@@ -36,12 +36,12 @@ ids: Array<I32> = []
     let 池 = 造转换池(["I32", "Bool", "Char", "String"])
     let 布尔 = checkCast(pool = 池.pool, source = 池.ids[0], target = 池.ids[1], file = "", offset = 5)
     assert(布尔.failed, "Bool 目标应拒绝")
-    assert(isCastError(error = 布尔.error, kind = castTargetNotNumeric), "类别是目标不合法")
+    assert(isCastError(error = 布尔.error, kind = .castTargetNotNumeric), "类别是目标不合法")
     assert(castErrorCode(布尔.error.kind) == "E4-001", "码取 E4-001")
     assert(布尔.error.offset == 5, "位置照传")
     let 字符 = checkCast(pool = 池.pool, source = 池.ids[1], target = 池.ids[2], file = "", offset = 0)
     assert(字符.failed, "Char 目标应拒绝")
-    assert(isCastError(error = 字符.error, kind = castTargetNotNumeric), "类别是目标不合法")
+    assert(isCastError(error = 字符.error, kind = .castTargetNotNumeric), "类别是目标不合法")
     let 文本 = checkCast(pool = 池.pool, source = 池.ids[0], target = 池.ids[3], file = "", offset = 0)
     assert(文本.failed, "String 目标应拒绝")
     return
@@ -51,7 +51,7 @@ ids: Array<I32> = []
     let 池 = 造转换池(["I64", "Bool"])
     let 结果 = checkCast(pool = 池.pool, source = 池.ids[1], target = 池.ids[0], file = "a.pini", offset = 3)
     assert(结果.failed, "Bool 操作数应拒绝")
-    assert(isCastError(error = 结果.error, kind = castOperandNotNumeric), "类别是操作数不合法")
+    assert(isCastError(error = 结果.error, kind = .castOperandNotNumeric), "类别是操作数不合法")
     assert(结果.error.file == "a.pini", "文件照传")
     return
 

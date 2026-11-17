@@ -336,6 +336,12 @@ public final class SemanticAnalyzer {
         currentInjectNames = []
     }
 
+    /// 包级用例判定：跨文件的用例声明在包索引里，按可见性与种类两关确认。
+    private func packageDeclaresCase(_ name: String) -> Bool {
+        guard let ctx = packageContext, let entry = ctx.index.lookup(name) else { return false }
+        return entry.kind == .enumCase && entry.isVisible(from: ctx.currentFileName)
+    }
+
     /// 引用点解析单点：先查当前文件作用域；未命中且处于多文件包时查包级索引，
     /// 按 spec enforce 可见性（private/internal 跨文件不可见 → `inaccessibleSymbol`）。
     /// 单文件模式下 `packageContext` 为 nil，行为与原 `symbolTable.resolve` 判定完全一致。
@@ -1166,7 +1172,8 @@ public final class SemanticAnalyzer {
         case .dotCaseRef(let name, let location):
             // 点号用例构造（成员意图）：名字须为某枚举的用例；本地位遮蔽不影响成员解析
             // （前导点已声明成员归属，期望类型决议在类型层完成，不经 requireDefined）。
-            if !enumCaseNames.contains(name) {
+            // 用例归属按包级索引判：枚举声明在别的文件时本单元的名字集里没有它。
+            if !enumCaseNames.contains(name), !packageDeclaresCase(name) {
                 throw SemanticError.undefinedVariable(name: ".\(name)", location: location)
             }
 

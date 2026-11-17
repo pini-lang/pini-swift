@@ -48,5 +48,5 @@ _module_loader = "../../module-loader"
     环境.imageSymbols = 映像
     let 解析 = resolveForeignPackage(units = loaded.units, types = types, env = 环境)
     assert(解析.isOK(), "运行时段符号应全部落到进程映像")
-    assert(解析.countBy(foreignSourceImage) == 120, "120 条都应命中映像")
+    assert(解析.countBy(.foreignSourceImage) == 120, "120 条都应命中映像")
     return

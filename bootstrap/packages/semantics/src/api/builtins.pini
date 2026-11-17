@@ -162,65 +162,65 @@ makeFunction|func(name: String, params: Array<BuiltinParam>, ret: BuiltinShape, 
 ; 成员表：三类所有者按字符串、数组、字典顺序排。
 builtinMemberTable|func() -> (Array<BuiltinMember>,):
     var out: Array<BuiltinMember> = []
-    out = out.append(makeBuiltin(owner = "String", name = "upper", params = noParams(), ret = builtinString))
-    out = out.append(makeBuiltin(owner = "String", name = "lower", params = noParams(), ret = builtinString))
-    out = out.append(makeBuiltin(owner = "String", name = "trimLeft", params = noParams(), ret = builtinString))
-    out = out.append(makeBuiltin(owner = "String", name = "trimRight", params = noParams(), ret = builtinString))
-    out = out.append(makeBuiltin(owner = "String", name = "contains", params = oneParam(name = "sub", shape = builtinString), ret = builtinBool))
-    out = out.append(makeBuiltin(owner = "String", name = "substring", params = twoParams(first = "start", firstShape = builtinI32, second = "end", secondShape = builtinI32), ret = builtinString))
-    out = out.append(makeBuiltin(owner = "String", name = "slice", params = twoParams(first = "start", firstShape = builtinOptionalI32, second = "end", secondShape = builtinOptionalI32), ret = builtinString))
-    out = out.append(makeBuiltin(owner = "String", name = "split", params = oneParam(name = "sep", shape = builtinString), ret = builtinArrayString))
-    out = out.append(makeBuiltin(owner = "String", name = "indexOf", params = oneParam(name = "needle", shape = builtinString), ret = builtinI32))
-    out = out.append(makeBuiltin(owner = "String", name = "get", params = oneParam(name = "index", shape = builtinI32), ret = builtinOptionalChar))
-    out = out.append(makeBuiltin(owner = "String", name = "getUnchecked", params = oneParam(name = "index", shape = builtinI32), ret = builtinChar))
-    out = out.append(makeBuiltin(owner = "Array", name = "join", params = oneParam(name = "sep", shape = builtinString), ret = builtinString))
-    out = out.append(makeBuiltin(owner = "Array", name = "append", params = oneParam(name = "value", shape = builtinSameElem), ret = builtinArrayElem))
-    out = out.append(makeBuiltin(owner = "Array", name = "slice", params = twoParams(first = "start", firstShape = builtinOptionalI32, second = "end", secondShape = builtinOptionalI32), ret = builtinArrayElem))
-    out = out.append(makeBuiltin(owner = "Array", name = "last", params = noParams(), ret = builtinSameElem))
-    out = out.append(makeBuiltin(owner = "Array", name = "pop", params = noParams(), ret = builtinPopTuple))
-    out = out.append(makeBuiltin(owner = "Array", name = "get", params = oneParam(name = "index", shape = builtinI32), ret = builtinOptionalElem))
-    out = out.append(makeBuiltin(owner = "Array", name = "getUnchecked", params = oneParam(name = "index", shape = builtinI32), ret = builtinSameElem))
-    out = out.append(makeBuiltin(owner = "Dictionary", name = "get", params = oneParam(name = "key", shape = builtinDictKey), ret = builtinOptionalValue))
-    out = out.append(makeBuiltin(owner = "Dictionary", name = "getUnchecked", params = oneParam(name = "key", shape = builtinDictKey), ret = builtinDictValue))
+    out = out.append(makeBuiltin(owner = "String", name = "upper", params = noParams(), ret = .builtinString))
+    out = out.append(makeBuiltin(owner = "String", name = "lower", params = noParams(), ret = .builtinString))
+    out = out.append(makeBuiltin(owner = "String", name = "trimLeft", params = noParams(), ret = .builtinString))
+    out = out.append(makeBuiltin(owner = "String", name = "trimRight", params = noParams(), ret = .builtinString))
+    out = out.append(makeBuiltin(owner = "String", name = "contains", params = oneParam(name = "sub", shape = .builtinString), ret = .builtinBool))
+    out = out.append(makeBuiltin(owner = "String", name = "substring", params = twoParams(first = "start", firstShape = .builtinI32, second = "end", secondShape = .builtinI32), ret = .builtinString))
+    out = out.append(makeBuiltin(owner = "String", name = "slice", params = twoParams(first = "start", firstShape = .builtinOptionalI32, second = "end", secondShape = .builtinOptionalI32), ret = .builtinString))
+    out = out.append(makeBuiltin(owner = "String", name = "split", params = oneParam(name = "sep", shape = .builtinString), ret = .builtinArrayString))
+    out = out.append(makeBuiltin(owner = "String", name = "indexOf", params = oneParam(name = "needle", shape = .builtinString), ret = .builtinI32))
+    out = out.append(makeBuiltin(owner = "String", name = "get", params = oneParam(name = "index", shape = .builtinI32), ret = .builtinOptionalChar))
+    out = out.append(makeBuiltin(owner = "String", name = "getUnchecked", params = oneParam(name = "index", shape = .builtinI32), ret = .builtinChar))
+    out = out.append(makeBuiltin(owner = "Array", name = "join", params = oneParam(name = "sep", shape = .builtinString), ret = .builtinString))
+    out = out.append(makeBuiltin(owner = "Array", name = "append", params = oneParam(name = "value", shape = .builtinSameElem), ret = .builtinArrayElem))
+    out = out.append(makeBuiltin(owner = "Array", name = "slice", params = twoParams(first = "start", firstShape = .builtinOptionalI32, second = "end", secondShape = .builtinOptionalI32), ret = .builtinArrayElem))
+    out = out.append(makeBuiltin(owner = "Array", name = "last", params = noParams(), ret = .builtinSameElem))
+    out = out.append(makeBuiltin(owner = "Array", name = "pop", params = noParams(), ret = .builtinPopTuple))
+    out = out.append(makeBuiltin(owner = "Array", name = "get", params = oneParam(name = "index", shape = .builtinI32), ret = .builtinOptionalElem))
+    out = out.append(makeBuiltin(owner = "Array", name = "getUnchecked", params = oneParam(name = "index", shape = .builtinI32), ret = .builtinSameElem))
+    out = out.append(makeBuiltin(owner = "Dictionary", name = "get", params = oneParam(name = "key", shape = .builtinDictKey), ret = .builtinOptionalValue))
+    out = out.append(makeBuiltin(owner = "Dictionary", name = "getUnchecked", params = oneParam(name = "key", shape = .builtinDictKey), ret = .builtinDictValue))
     return out
 
 ; 函数表：按收集、值、字符、读写、数学、并发、C 边界的次序排。
 builtinFunctionTable|func() -> (Array<BuiltinFunction>,):
     var out: Array<BuiltinFunction> = []
-    out = out.append(makeFunction(name = "len", params = oneSizedParam("value"), ret = builtinI32, variadic = false))
-    out = out.append(makeFunction(name = "print", params = oneParam(name = "value", shape = builtinAny), ret = builtinVoid, variadic = true))
-    out = out.append(makeFunction(name = "assert", params = twoParams(first = "条件", firstShape = builtinBool, second = "消息", secondShape = builtinString), ret = builtinVoid, variadic = true))
-    out = out.append(makeFunction(name = "F64", params = oneParam(name = "value", shape = builtinAny), ret = builtinF64, variadic = false))
-    out = out.append(makeFunction(name = "is_letter", params = oneParam(name = "value", shape = builtinChar), ret = builtinBool, variadic = false))
-    out = out.append(makeFunction(name = "is_ascii_digit", params = oneParam(name = "value", shape = builtinChar), ret = builtinBool, variadic = false))
-    out = out.append(makeFunction(name = "is_number", params = oneParam(name = "value", shape = builtinChar), ret = builtinBool, variadic = false))
-    out = out.append(makeFunction(name = "chars", params = oneParam(name = "value", shape = builtinString), ret = builtinArrayChar, variadic = false))
-    out = out.append(makeFunction(name = "tempUtf8Bytes", params = oneParam(name = "value", shape = builtinString), ret = builtinArrayU8, variadic = false))
-    out = out.append(makeFunction(name = "tempByteToInt", params = oneParam(name = "value", shape = builtinU8), ret = builtinI32, variadic = false))
-    out = out.append(makeFunction(name = "tempIntToByte", params = oneParam(name = "value", shape = builtinI32), ret = builtinU8, variadic = false))
-    out = out.append(makeFunction(name = "ord", params = oneParam(name = "value", shape = builtinChar), ret = builtinI32, variadic = false))
-    out = out.append(makeFunction(name = "chr", params = oneParam(name = "code", shape = builtinI32), ret = builtinChar, variadic = false))
-    out = out.append(makeFunction(name = "moduleRoot", params = noParams(), ret = builtinString, variadic = false))
-    out = out.append(makeFunction(name = "argv", params = noParams(), ret = builtinArrayString, variadic = false))
-    out = out.append(makeFunction(name = "readFile", params = oneParam(name = "path", shape = builtinString), ret = builtinString, variadic = false))
-    out = out.append(makeFunction(name = "writeFile", params = twoParams(first = "path", firstShape = builtinString, second = "content", secondShape = builtinString), ret = builtinVoid, variadic = false))
-    out = out.append(makeFunction(name = "appendFile", params = twoParams(first = "path", firstShape = builtinString, second = "content", secondShape = builtinString), ret = builtinVoid, variadic = false))
-    out = out.append(makeFunction(name = "readLine", params = noParams(), ret = builtinString, variadic = false))
-    out = out.append(makeFunction(name = "listDir", params = oneParam(name = "path", shape = builtinString), ret = builtinArrayString, variadic = false))
-    out = out.append(makeFunction(name = "exists", params = oneParam(name = "path", shape = builtinString), ret = builtinBool, variadic = false))
-    out = out.append(makeFunction(name = "isDir", params = oneParam(name = "path", shape = builtinString), ret = builtinBool, variadic = false))
-    out = out.append(makeFunction(name = "tryReadFile", params = oneParam(name = "path", shape = builtinString), ret = builtinResultString, variadic = false))
-    out = out.append(makeFunction(name = "tryWriteFile", params = twoParams(first = "path", firstShape = builtinString, second = "content", secondShape = builtinString), ret = builtinResultVoid, variadic = false))
-    out = out.append(makeFunction(name = "tryAppendFile", params = twoParams(first = "path", firstShape = builtinString, second = "content", secondShape = builtinString), ret = builtinResultVoid, variadic = false))
-    out = out.append(makeFunction(name = "abs", params = oneParam(name = "x", shape = builtinI32), ret = builtinI32, variadic = false))
-    out = out.append(makeFunction(name = "min", params = twoParams(first = "a", firstShape = builtinI32, second = "b", secondShape = builtinI32), ret = builtinI32, variadic = false))
-    out = out.append(makeFunction(name = "max", params = twoParams(first = "a", firstShape = builtinI32, second = "b", secondShape = builtinI32), ret = builtinI32, variadic = false))
-    out = out.append(makeFunction(name = "sqrt", params = oneParam(name = "x", shape = builtinF64), ret = builtinF64, variadic = false))
-    out = out.append(makeFunction(name = "sin", params = oneParam(name = "x", shape = builtinF64), ret = builtinF64, variadic = false))
-    out = out.append(makeFunction(name = "cos", params = oneParam(name = "x", shape = builtinF64), ret = builtinF64, variadic = false))
-    out = out.append(makeFunction(name = "tan", params = oneParam(name = "x", shape = builtinF64), ret = builtinF64, variadic = false))
-    out = out.append(makeFunction(name = "sleep", params = oneParam(name = "ms", shape = builtinI32), ret = builtinVoid, variadic = false))
-    out = out.append(makeFunction(name = "fromCString", params = oneParam(name = "p", shape = builtinPointerU8), ret = builtinString, variadic = false))
+    out = out.append(makeFunction(name = "len", params = oneSizedParam("value"), ret = .builtinI32, variadic = false))
+    out = out.append(makeFunction(name = "print", params = oneParam(name = "value", shape = .builtinAny), ret = .builtinVoid, variadic = true))
+    out = out.append(makeFunction(name = "assert", params = twoParams(first = "条件", firstShape = .builtinBool, second = "消息", secondShape = .builtinString), ret = .builtinVoid, variadic = true))
+    out = out.append(makeFunction(name = "F64", params = oneParam(name = "value", shape = .builtinAny), ret = .builtinF64, variadic = false))
+    out = out.append(makeFunction(name = "is_letter", params = oneParam(name = "value", shape = .builtinChar), ret = .builtinBool, variadic = false))
+    out = out.append(makeFunction(name = "is_ascii_digit", params = oneParam(name = "value", shape = .builtinChar), ret = .builtinBool, variadic = false))
+    out = out.append(makeFunction(name = "is_number", params = oneParam(name = "value", shape = .builtinChar), ret = .builtinBool, variadic = false))
+    out = out.append(makeFunction(name = "chars", params = oneParam(name = "value", shape = .builtinString), ret = .builtinArrayChar, variadic = false))
+    out = out.append(makeFunction(name = "tempUtf8Bytes", params = oneParam(name = "value", shape = .builtinString), ret = .builtinArrayU8, variadic = false))
+    out = out.append(makeFunction(name = "tempByteToInt", params = oneParam(name = "value", shape = .builtinU8), ret = .builtinI32, variadic = false))
+    out = out.append(makeFunction(name = "tempIntToByte", params = oneParam(name = "value", shape = .builtinI32), ret = .builtinU8, variadic = false))
+    out = out.append(makeFunction(name = "ord", params = oneParam(name = "value", shape = .builtinChar), ret = .builtinI32, variadic = false))
+    out = out.append(makeFunction(name = "chr", params = oneParam(name = "code", shape = .builtinI32), ret = .builtinChar, variadic = false))
+    out = out.append(makeFunction(name = "moduleRoot", params = noParams(), ret = .builtinString, variadic = false))
+    out = out.append(makeFunction(name = "argv", params = noParams(), ret = .builtinArrayString, variadic = false))
+    out = out.append(makeFunction(name = "readFile", params = oneParam(name = "path", shape = .builtinString), ret = .builtinString, variadic = false))
+    out = out.append(makeFunction(name = "writeFile", params = twoParams(first = "path", firstShape = .builtinString, second = "content", secondShape = .builtinString), ret = .builtinVoid, variadic = false))
+    out = out.append(makeFunction(name = "appendFile", params = twoParams(first = "path", firstShape = .builtinString, second = "content", secondShape = .builtinString), ret = .builtinVoid, variadic = false))
+    out = out.append(makeFunction(name = "readLine", params = noParams(), ret = .builtinString, variadic = false))
+    out = out.append(makeFunction(name = "listDir", params = oneParam(name = "path", shape = .builtinString), ret = .builtinArrayString, variadic = false))
+    out = out.append(makeFunction(name = "exists", params = oneParam(name = "path", shape = .builtinString), ret = .builtinBool, variadic = false))
+    out = out.append(makeFunction(name = "isDir", params = oneParam(name = "path", shape = .builtinString), ret = .builtinBool, variadic = false))
+    out = out.append(makeFunction(name = "tryReadFile", params = oneParam(name = "path", shape = .builtinString), ret = .builtinResultString, variadic = false))
+    out = out.append(makeFunction(name = "tryWriteFile", params = twoParams(first = "path", firstShape = .builtinString, second = "content", secondShape = .builtinString), ret = .builtinResultVoid, variadic = false))
+    out = out.append(makeFunction(name = "tryAppendFile", params = twoParams(first = "path", firstShape = .builtinString, second = "content", secondShape = .builtinString), ret = .builtinResultVoid, variadic = false))
+    out = out.append(makeFunction(name = "abs", params = oneParam(name = "x", shape = .builtinI32), ret = .builtinI32, variadic = false))
+    out = out.append(makeFunction(name = "min", params = twoParams(first = "a", firstShape = .builtinI32, second = "b", secondShape = .builtinI32), ret = .builtinI32, variadic = false))
+    out = out.append(makeFunction(name = "max", params = twoParams(first = "a", firstShape = .builtinI32, second = "b", secondShape = .builtinI32), ret = .builtinI32, variadic = false))
+    out = out.append(makeFunction(name = "sqrt", params = oneParam(name = "x", shape = .builtinF64), ret = .builtinF64, variadic = false))
+    out = out.append(makeFunction(name = "sin", params = oneParam(name = "x", shape = .builtinF64), ret = .builtinF64, variadic = false))
+    out = out.append(makeFunction(name = "cos", params = oneParam(name = "x", shape = .builtinF64), ret = .builtinF64, variadic = false))
+    out = out.append(makeFunction(name = "tan", params = oneParam(name = "x", shape = .builtinF64), ret = .builtinF64, variadic = false))
+    out = out.append(makeFunction(name = "sleep", params = oneParam(name = "ms", shape = .builtinI32), ret = .builtinVoid, variadic = false))
+    out = out.append(makeFunction(name = "fromCString", params = oneParam(name = "p", shape = .builtinPointerU8), ret = .builtinString, variadic = false))
     return out
 
 ; 查表：所有者与成员名都按整串比；未命中答 -1。
@@ -270,11 +270,11 @@ wrapArg|func(pool: TypePool, kind: TypeClass, name: String, child: I32,) -> (Typ
 
 ; 标量返回：内建名逐个驻留，同形复用已有下标。
 scalarType|func(pool: TypePool, name: String,) -> (TypeInsert,):
-    return intern(pool = pool, kind = typeClassScalar, name = name, kids = [], ret = -1)
+    return intern(pool = pool, kind = .typeClassScalar, name = name, kids = [], ret = -1)
 
 ; 数组返回：元素形状逐个驻留成 `Array<T>`。
 arrayType|func(pool: TypePool, elem: I32,) -> (TypeInsert,):
-    return wrapArg(pool = pool, kind = typeClassCollection, name = "Array", child = elem)
+    return wrapArg(pool = pool, kind = .typeClassCollection, name = "Array", child = elem)
 
 ; 数组标量：内建名先驻留标量再包一层。
 arrayOf|func(pool: TypePool, name: String,) -> (TypeInsert,):
@@ -289,17 +289,17 @@ resultType|func(pool: TypePool, elem: I32,) -> (TypeInsert,):
     var kids: Array<I32> = []
     kids = kids.append(elem)
     kids = kids.append(errorType.id)
-    return intern(pool = errorType.pool, kind = typeClassResult, name = "Result", kids = kids, ret = -1)
+    return intern(pool = errorType.pool, kind = .typeClassResult, name = "Result", kids = kids, ret = -1)
 
 ; 空结果：`^()` 的元素是空元组。
 resultVoid|func(_pool: TypePool,) -> (TypeInsert,):
-    let unit = intern(pool = _pool, kind = typeClassTuple, name = "", kids = [], ret = -1)
+    let unit = intern(pool = _pool, kind = .typeClassTuple, name = "", kids = [], ret = -1)
     return resultType(pool = unit.pool, elem = unit.id)
 
 ; 指针返回：`*U8`。
 pointerU8|func(_pool: TypePool,) -> (TypeInsert,):
     let byteType = scalarType(pool = _pool, name = "U8")
-    return wrapArg(pool = byteType.pool, kind = typeClassPointer, name = "", child = byteType.id)
+    return wrapArg(pool = byteType.pool, kind = .typeClassPointer, name = "", child = byteType.id)
 
 ; 弹出元组：数组与其元素各占一位，顺序与运行时返回值一致。
 popTupleType|func(pool: TypePool, elem: I32,) -> (TypeInsert,):
@@ -309,58 +309,58 @@ popTupleType|func(pool: TypePool, elem: I32,) -> (TypeInsert,):
     var kids: Array<I32> = []
     kids = kids.append(array.id)
     kids = kids.append(elem)
-    return intern(pool = array.pool, kind = typeClassTuple, name = "", kids = kids, ret = -1)
+    return intern(pool = array.pool, kind = .typeClassTuple, name = "", kids = kids, ret = -1)
 
 ; 形状定型：按形状驻留类型，占位取自接收者实参；Any 答 -1 表示不约束。
 builtinShapeType|func(pool: TypePool, shape: BuiltinShape, kids: Array<I32>,) -> (TypeInsert,):
-    if isBuiltinShape(shape = shape, expected = builtinAny):
+    if isBuiltinShape(shape = shape, expected = .builtinAny):
         return hitType(pool = pool, id = -1)
-    if isBuiltinShape(shape = shape, expected = builtinVoid):
-        return intern(pool = pool, kind = typeClassTuple, name = "", kids = [], ret = -1)
-    if isBuiltinShape(shape = shape, expected = builtinString):
+    if isBuiltinShape(shape = shape, expected = .builtinVoid):
+        return intern(pool = pool, kind = .typeClassTuple, name = "", kids = [], ret = -1)
+    if isBuiltinShape(shape = shape, expected = .builtinString):
         return scalarType(pool = pool, name = "String")
-    if isBuiltinShape(shape = shape, expected = builtinBool):
+    if isBuiltinShape(shape = shape, expected = .builtinBool):
         return scalarType(pool = pool, name = "Bool")
-    if isBuiltinShape(shape = shape, expected = builtinI32):
+    if isBuiltinShape(shape = shape, expected = .builtinI32):
         return scalarType(pool = pool, name = "I32")
-    if isBuiltinShape(shape = shape, expected = builtinChar):
+    if isBuiltinShape(shape = shape, expected = .builtinChar):
         return scalarType(pool = pool, name = "Char")
-    if isBuiltinShape(shape = shape, expected = builtinU8):
+    if isBuiltinShape(shape = shape, expected = .builtinU8):
         return scalarType(pool = pool, name = "U8")
-    if isBuiltinShape(shape = shape, expected = builtinF64):
+    if isBuiltinShape(shape = shape, expected = .builtinF64):
         return scalarType(pool = pool, name = "F64")
-    if isBuiltinShape(shape = shape, expected = builtinOptionalChar):
+    if isBuiltinShape(shape = shape, expected = .builtinOptionalChar):
         let charType = scalarType(pool = pool, name = "Char")
-        return wrapArg(pool = charType.pool, kind = typeClassOptional, name = "", child = charType.id)
-    if isBuiltinShape(shape = shape, expected = builtinOptionalI32):
+        return wrapArg(pool = charType.pool, kind = .typeClassOptional, name = "", child = charType.id)
+    if isBuiltinShape(shape = shape, expected = .builtinOptionalI32):
         let numberType = scalarType(pool = pool, name = "I32")
-        return wrapArg(pool = numberType.pool, kind = typeClassOptional, name = "", child = numberType.id)
-    if isBuiltinShape(shape = shape, expected = builtinSameElem):
+        return wrapArg(pool = numberType.pool, kind = .typeClassOptional, name = "", child = numberType.id)
+    if isBuiltinShape(shape = shape, expected = .builtinSameElem):
         return hitType(pool = pool, id = firstArg(kids))
-    if isBuiltinShape(shape = shape, expected = builtinOptionalElem):
-        return wrapArg(pool = pool, kind = typeClassOptional, name = "", child = firstArg(kids))
-    if isBuiltinShape(shape = shape, expected = builtinArrayElem):
+    if isBuiltinShape(shape = shape, expected = .builtinOptionalElem):
+        return wrapArg(pool = pool, kind = .typeClassOptional, name = "", child = firstArg(kids))
+    if isBuiltinShape(shape = shape, expected = .builtinArrayElem):
         return arrayType(pool = pool, elem = firstArg(kids))
-    if isBuiltinShape(shape = shape, expected = builtinArrayChar):
+    if isBuiltinShape(shape = shape, expected = .builtinArrayChar):
         return arrayOf(pool = pool, name = "Char")
-    if isBuiltinShape(shape = shape, expected = builtinArrayString):
+    if isBuiltinShape(shape = shape, expected = .builtinArrayString):
         return arrayOf(pool = pool, name = "String")
-    if isBuiltinShape(shape = shape, expected = builtinArrayU8):
+    if isBuiltinShape(shape = shape, expected = .builtinArrayU8):
         return arrayOf(pool = pool, name = "U8")
-    if isBuiltinShape(shape = shape, expected = builtinPopTuple):
+    if isBuiltinShape(shape = shape, expected = .builtinPopTuple):
         return popTupleType(pool = pool, elem = firstArg(kids))
-    if isBuiltinShape(shape = shape, expected = builtinDictKey):
+    if isBuiltinShape(shape = shape, expected = .builtinDictKey):
         return hitType(pool = pool, id = firstArg(kids))
-    if isBuiltinShape(shape = shape, expected = builtinDictValue):
+    if isBuiltinShape(shape = shape, expected = .builtinDictValue):
         return hitType(pool = pool, id = secondArg(kids))
-    if isBuiltinShape(shape = shape, expected = builtinOptionalValue):
-        return wrapArg(pool = pool, kind = typeClassOptional, name = "", child = secondArg(kids))
-    if isBuiltinShape(shape = shape, expected = builtinResultString):
+    if isBuiltinShape(shape = shape, expected = .builtinOptionalValue):
+        return wrapArg(pool = pool, kind = .typeClassOptional, name = "", child = secondArg(kids))
+    if isBuiltinShape(shape = shape, expected = .builtinResultString):
         let text = scalarType(pool = pool, name = "String")
         return resultType(pool = text.pool, elem = text.id)
-    if isBuiltinShape(shape = shape, expected = builtinResultVoid):
+    if isBuiltinShape(shape = shape, expected = .builtinResultVoid):
         return resultVoid(pool)
-    if isBuiltinShape(shape = shape, expected = builtinPointerU8):
+    if isBuiltinShape(shape = shape, expected = .builtinPointerU8):
         return pointerU8(pool)
     return hitType(pool = pool, id = -1)
 
@@ -379,4 +379,4 @@ builtinMemberSignature|func(pool: TypePool, member: BuiltinMember, kids: Array<I
     let ret = builtinShapeType(pool = working, shape = member.ret, kids = kids)
     if ret.id < 0:
         return hitType(pool = ret.pool, id = -1)
-    return intern(pool = ret.pool, kind = typeClassFunction, name = "", kids = params, ret = ret.id)
+    return intern(pool = ret.pool, kind = .typeClassFunction, name = "", kids = params, ret = ret.id)

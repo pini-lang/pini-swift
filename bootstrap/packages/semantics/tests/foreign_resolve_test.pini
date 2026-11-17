@@ -31,12 +31,12 @@ shim优先|test() -> ():
     let 单元 = 造次序单元(path = "packages/p/src/api/a.pini", text = "[libc|foreign]\nmalloc: (I64,) -> (*I8,)\n")
     let 类型 = 解析采样(units = [单元])
     var 环境 = ForeignEnvironment()
-    环境.shims = [造shim(name = "malloc", params = [shimInteger])]
+    环境.shims = [造shim(name = "malloc", params = [.shimInteger])]
     环境.imageSymbols = ["malloc"]
     let 结果 = resolveForeignPackage(units = [单元], types = 类型, env = 环境)
     assert(结果.isOK(), "shim 命中不应有错")
-    assert(isForeignSource(source = 结果.resolutionAt(0).source, expected = foreignSourceShim), "来源应为 shim")
-    assert(结果.countBy(foreignSourceShim) == 1, "一条 shim")
+    assert(isForeignSource(source = 结果.resolutionAt(0).source, expected = .foreignSourceShim), "来源应为 shim")
+    assert(结果.countBy(.foreignSourceShim) == 1, "一条 shim")
     return
 
 ; 形状不符：名字对上但形状不是整数，不许套 shim，落到进程映像。
@@ -44,11 +44,11 @@ shim优先|test() -> ():
     let 单元 = 造次序单元(path = "packages/p/src/api/a.pini", text = "[libc|foreign]\nmalloc: (I64,) -> (*I8,)\n")
     let 类型 = 解析采样(units = [单元])
     var 环境 = ForeignEnvironment()
-    环境.shims = [造shim(name = "malloc", params = [shimString])]
+    环境.shims = [造shim(name = "malloc", params = [.shimString])]
     环境.imageSymbols = ["malloc"]
     let 结果 = resolveForeignPackage(units = [单元], types = 类型, env = 环境)
     assert(结果.isOK(), "落到映像不应有错")
-    assert(isForeignSource(source = 结果.resolutionAt(0).source, expected = foreignSourceImage), "来源应为映像")
+    assert(isForeignSource(source = 结果.resolutionAt(0).source, expected = .foreignSourceImage), "来源应为映像")
     return
 
 ; 库优先：符号同时在预加载库与映像里，来源取库，不落到映像。
@@ -61,7 +61,7 @@ shim优先|test() -> ():
     环境.imageSymbols = ["malloc"]
     let 结果 = resolveForeignPackage(units = [单元], types = 类型, env = 环境)
     assert(结果.isOK(), "库命中不应有错")
-    assert(isForeignSource(source = 结果.resolutionAt(0).source, expected = foreignSourceLibrary), "来源应为库")
+    assert(isForeignSource(source = 结果.resolutionAt(0).source, expected = .foreignSourceLibrary), "来源应为库")
     assert(结果.resolutionAt(0).sourceIndex == 0, "库下标为首个")
     return
 
@@ -85,7 +85,7 @@ shim优先|test() -> ():
     环境.imageSymbols = ["strlen"]
     let 结果 = resolveForeignPackage(units = [单元], types = 类型, env = 环境)
     assert(结果.isOK(), "映像命中不应有错")
-    assert(isForeignSource(source = 结果.resolutionAt(0).source, expected = foreignSourceImage), "来源应为映像")
+    assert(isForeignSource(source = 结果.resolutionAt(0).source, expected = .foreignSourceImage), "来源应为映像")
     return
 
 ; 库缺失：清单写了库却没有对应句柄，先报库缺失，码取 E5-016。
@@ -97,10 +97,10 @@ shim优先|test() -> ():
     环境.imageSymbols = ["foo"]
     let 结果 = resolveForeignPackage(units = [单元], types = 类型, env = 环境)
     assert(!结果.isOK(), "库缺失应报错")
-    assert(isForeignResolutionError(error = 结果.errorAt(0), kind = foreignResolutionLibraryMissing), "类别为库缺失")
+    assert(isForeignResolutionError(error = 结果.errorAt(0), kind = .foreignResolutionLibraryMissing), "类别为库缺失")
     assert(结果.errorAt(0).name == "m", "错误带库名")
     assert(foreignResolutionErrorCode(结果.errorAt(0).kind) == "E5-016", "码为 E5-016")
-    assert(结果.countBy(foreignSourceImage) == 1, "符号仍可落到映像")
+    assert(结果.countBy(.foreignSourceImage) == 1, "符号仍可落到映像")
     return
 
 ; 符号缺失：三层都没有即在注册期报错，位置指向符号条目，已查清单带库名与映像。
@@ -112,7 +112,7 @@ shim优先|test() -> ():
     环境.libraries = [造库(name = "m", symbols = ["bar"])]
     let 结果 = resolveForeignPackage(units = [单元], types = 类型, env = 环境)
     assert(!结果.isOK(), "符号缺失应报错")
-    assert(isForeignResolutionError(error = 结果.errorAt(0), kind = foreignResolutionSymbolMissing), "类别为符号缺失")
+    assert(isForeignResolutionError(error = 结果.errorAt(0), kind = .foreignResolutionSymbolMissing), "类别为符号缺失")
     assert(结果.errorAt(0).name == "foo", "错误带符号名")
     let 块 = 单元.ast.decls[单元.ast.items[0]]
     let 符号 = 单元.ast.decls[块.kids[0]]
@@ -128,7 +128,7 @@ shim优先|test() -> ():
     环境.imageSymbols = ["errno"]
     let 结果 = resolveForeignPackage(units = [单元], types = 类型, env = 环境)
     assert(结果.isOK(), "数据符号应可命中映像")
-    assert(isForeignSource(source = 结果.resolutionAt(0).source, expected = foreignSourceImage), "来源为映像")
+    assert(isForeignSource(source = 结果.resolutionAt(0).source, expected = .foreignSourceImage), "来源为映像")
     return
 
 ; 布尔不进整数：shim 的整数形状不认 Bool，命中不了就落映像。
@@ -136,9 +136,9 @@ shim优先|test() -> ():
     let 单元 = 造次序单元(path = "packages/p/src/api/a.pini", text = "[libc|foreign]\nflag: (Bool,) -> ()\n")
     let 类型 = 解析采样(units = [单元])
     var 环境 = ForeignEnvironment()
-    环境.shims = [造shim(name = "flag", params = [shimInteger])]
+    环境.shims = [造shim(name = "flag", params = [.shimInteger])]
     环境.imageSymbols = ["flag"]
     let 结果 = resolveForeignPackage(units = [单元], types = 类型, env = 环境)
     assert(结果.isOK(), "落映像不应有错")
-    assert(isForeignSource(source = 结果.resolutionAt(0).source, expected = foreignSourceImage), "Bool 不应套整数 shim")
+    assert(isForeignSource(source = 结果.resolutionAt(0).source, expected = .foreignSourceImage), "Bool 不应套整数 shim")
     return

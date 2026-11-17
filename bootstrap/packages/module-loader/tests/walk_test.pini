@@ -1,13 +1,13 @@
 ; 条目分类：点前缀跳过、`_` 前缀照常、只认 .pini 后缀。
 条目分类|test() -> ():
-    assert(isEntryKind(kind = classifyEntry(name = ".git", isDirectory = true), expected = entrySkip), "点前缀目录跳过")
-    assert(isEntryKind(kind = classifyEntry(name = ".hidden.pini", isDirectory = false), expected = entrySkip), "点前缀文件跳过")
-    assert(isEntryKind(kind = classifyEntry(name = "_internal", isDirectory = true), expected = entryDirectory), "下划线目录不跳过")
-    assert(isEntryKind(kind = classifyEntry(name = "api", isDirectory = true), expected = entryDirectory), "普通目录")
-    assert(isEntryKind(kind = classifyEntry(name = "lexer.pini", isDirectory = false), expected = entrySource), "源文件")
-    assert(isEntryKind(kind = classifyEntry(name = "pini.toml", isDirectory = false), expected = entrySkip), "清单不是源文件")
-    assert(isEntryKind(kind = classifyEntry(name = "a.pini.bak", isDirectory = false), expected = entrySkip), "中间含后缀不算")
-    assert(isEntryKind(kind = classifyEntry(name = "pini", isDirectory = false), expected = entrySkip), "长度不足不算")
+    assert(isEntryKind(kind = classifyEntry(name = ".git", isDirectory = true), expected = .entrySkip), "点前缀目录跳过")
+    assert(isEntryKind(kind = classifyEntry(name = ".hidden.pini", isDirectory = false), expected = .entrySkip), "点前缀文件跳过")
+    assert(isEntryKind(kind = classifyEntry(name = "_internal", isDirectory = true), expected = .entryDirectory), "下划线目录不跳过")
+    assert(isEntryKind(kind = classifyEntry(name = "api", isDirectory = true), expected = .entryDirectory), "普通目录")
+    assert(isEntryKind(kind = classifyEntry(name = "lexer.pini", isDirectory = false), expected = .entrySource), "源文件")
+    assert(isEntryKind(kind = classifyEntry(name = "pini.toml", isDirectory = false), expected = .entrySkip), "清单不是源文件")
+    assert(isEntryKind(kind = classifyEntry(name = "a.pini.bak", isDirectory = false), expected = .entrySkip), "中间含后缀不算")
+    assert(isEntryKind(kind = classifyEntry(name = "pini", isDirectory = false), expected = .entrySkip), "长度不足不算")
     return
 
 ; 排除项：等于声明项或以「声明项 + 斜杠」开头即为排除。

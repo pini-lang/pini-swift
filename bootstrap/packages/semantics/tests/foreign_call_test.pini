@@ -65,7 +65,7 @@ id: I32 = -1
 
 ; 驻留标量：按名字驻留，重复驻留命中同一下标。
 驻留标量|func(pool: TypePool, name: String,) -> (驻留号,):
-    let inserted = intern(pool = pool, kind = typeClassScalar, name = name, kids = [], ret = -1)
+    let inserted = intern(pool = pool, kind = .typeClassScalar, name = name, kids = [], ret = -1)
     var out = 驻留号()
     out.pool = inserted.pool
     out.id = inserted.id
@@ -73,7 +73,7 @@ id: I32 = -1
 
 ; 驻留指针：目标类型作唯一子节点。
 驻留指针|func(pool: TypePool, target: I32,) -> (驻留号,):
-    let inserted = intern(pool = pool, kind = typeClassPointer, name = "", kids = [target], ret = -1)
+    let inserted = intern(pool = pool, kind = .typeClassPointer, name = "", kids = [target], ret = -1)
     var out = 驻留号()
     out.pool = inserted.pool
     out.id = inserted.id
@@ -81,7 +81,7 @@ id: I32 = -1
 
 ; 驻留结构：空字段的结构类型，作「变参尾不收聚集」的负例。
 驻留结构|func(pool: TypePool, name: String,) -> (驻留号,):
-    let inserted = intern(pool = pool, kind = typeClassStruct, name = name, kids = [], ret = -1)
+    let inserted = intern(pool = pool, kind = .typeClassStruct, name = name, kids = [], ret = -1)
     var out = 驻留号()
     out.pool = inserted.pool
     out.id = inserted.id
@@ -132,8 +132,8 @@ id: I32 = -1
     args = args.append(外调实参(typeId = -1, node = 找整数(样例)))
     let hit = checkCall(world = 样例.world, site = 外调点(sample = 样例, name = "qsort", args = args))
     assert(hit.failed, "字面量不能作回调")
-    assert(isCallError(error = hit.error, kind = callCallback), "实得 " + callErrorName(hit.error.kind))
-    assert(callErrorCode(callCallback) == "E4-031", "回调用 E4-031")
+    assert(isCallError(error = hit.error, kind = .callCallback), "实得 " + callErrorName(hit.error.kind))
+    assert(callErrorCode(.callCallback) == "E4-031", "回调用 E4-031")
     return
 
 ; 回调签名不符：形参个数不同即报。
@@ -148,7 +148,7 @@ id: I32 = -1
     args = args.append(外调实参(typeId = -1, node = 别样))
     let hit = checkCall(world = 样例.world, site = 外调点(sample = 样例, name = "qsort", args = args))
     assert(hit.failed, "签名不同应报")
-    assert(isCallError(error = hit.error, kind = callCallback), "实得 " + callErrorName(hit.error.kind))
+    assert(isCallError(error = hit.error, kind = .callCallback), "实得 " + callErrorName(hit.error.kind))
     assert(hit.error.got.contains("形参个数"), "实得 " + hit.error.got)
     return
 
@@ -179,8 +179,8 @@ id: I32 = -1
     args = args.append(外调实参(typeId = 结构.id, node = -1))
     let hit = checkCall(world = 样例.world, site = 外调点(sample = 样例, name = "printf", args = args))
     assert(hit.failed, "聚集值不能进变参尾")
-    assert(isCallError(error = hit.error, kind = callVarargsTail), "实得 " + callErrorName(hit.error.kind))
-    assert(callErrorCode(callVarargsTail) == "E4-034", "变参尾用 E4-034")
+    assert(isCallError(error = hit.error, kind = .callVarargsTail), "实得 " + callErrorName(hit.error.kind))
+    assert(callErrorCode(.callVarargsTail) == "E4-034", "变参尾用 E4-034")
     return
 
 ; 变参固定前缀：少给固定前缀报个数。
@@ -189,7 +189,7 @@ id: I32 = -1
     var args: Array<CallArg> = []
     let hit = checkCall(world = 样例.world, site = 外调点(sample = 样例, name = "printf", args = args))
     assert(hit.failed, "缺固定前缀应报")
-    assert(isCallError(error = hit.error, kind = callArity), "实得 " + callErrorName(hit.error.kind))
+    assert(isCallError(error = hit.error, kind = .callArity), "实得 " + callErrorName(hit.error.kind))
     return
 
 ; 只读拒写：只读数据符号答原因，可写数据符号答空串。
@@ -207,6 +207,6 @@ id: I32 = -1
     assert(id >= 0, "应有 写只读")
     let check = checkFunctionStores(world = 样例.world, unitIndex = 0, declId = id, types = 样例.types, bytes = tempUtf8Bytes(样例.world.units[0].text))
     assert(len(check.errors) == 1, "应报一条，实得 " + "\(len(check.errors))")
-    assert(isStoreError(error = check.errors[0], kind = storeForeignReadonly), "实得 " + storeErrorName(check.errors[0].kind))
-    assert(storeErrorCode(storeForeignReadonly) == "E4-039", "只读用 E4-039")
+    assert(isStoreError(error = check.errors[0], kind = .storeForeignReadonly), "实得 " + storeErrorName(check.errors[0].kind))
+    assert(storeErrorCode(.storeForeignReadonly) == "E4-039", "只读用 E4-039")
     return

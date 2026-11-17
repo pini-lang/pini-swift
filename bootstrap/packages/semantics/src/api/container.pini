@@ -86,7 +86,7 @@ containerNameOf|func(pool: TypePool, id: I32,) -> (String,):
     if id < 0 || id >= len(pool.entries):
         return ""
     let entry = pool.entries[id]
-    if !isTypeClass(kind = entry.kind, expected = typeClassCollection):
+    if !isTypeClass(kind = entry.kind, expected = .typeClassCollection):
         return ""
     return entry.name
 
@@ -198,7 +198,7 @@ finishContainer|func(out: ContainerResult, unitIndex: I32, node: I32, typeId: I3
 finishSingle|func(out: ContainerResult, unitIndex: I32, node: I32, name: String, elem: I32,) -> (ContainerResult,):
     var args: Array<I32> = []
     args = args.append(elem)
-    let inserted = intern(pool = out.pool, kind = typeClassCollection, name = name, kids = args, ret = -1)
+    let inserted = intern(pool = out.pool, kind = .typeClassCollection, name = name, kids = args, ret = -1)
     var done = out
     done.pool = inserted.pool
     return finishContainer(out = done, unitIndex = unitIndex, node = node, typeId = inserted.id)
@@ -209,7 +209,7 @@ checkSequenceLiteral|func(unit: CompilationUnit, unitIndex: I32, node: I32, expe
     out.pool = pool
     out.types = types
     if node < 0 || node >= unit.ast.exprCount():
-        return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = containerElementMismatch, expected = name + " 字面量", got = "越界节点")
+        return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = .containerElementMismatch, expected = name + " 字面量", got = "越界节点")
     var expectedElem = -1
     var expectedResult = -1
     if expectation.hasExpected && containerNameOf(pool = pool, id = expectation.typeId) == name:
@@ -223,22 +223,22 @@ checkSequenceLiteral|func(unit: CompilationUnit, unitIndex: I32, node: I32, expe
         out.pool = probe.pool
         out.types = probe.types
         if probe.typeId == errorTypeId():
-            return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = containerElementMismatch, expected = "同类型元素", got = "已判错的元素")
+            return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = .containerElementMismatch, expected = "同类型元素", got = "已判错的元素")
         if probe.typeId < 0:
             return deferContainer(out)
         if expectedElem >= 0:
             if !isAssignable(pool = out.pool, from = probe.typeId, to = expectedElem):
-                return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = containerElementMismatch, expected = typeText(pool = out.pool, id = expectedElem), got = typeText(pool = out.pool, id = probe.typeId))
+                return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = .containerElementMismatch, expected = typeText(pool = out.pool, id = expectedElem), got = typeText(pool = out.pool, id = probe.typeId))
         else:
             let joined = unifyElement(pool = out.pool, current = merged, next = probe.typeId)
             if joined < 0:
-                return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = containerElementMismatch, expected = typeText(pool = out.pool, id = merged), got = typeText(pool = out.pool, id = probe.typeId))
+                return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = .containerElementMismatch, expected = typeText(pool = out.pool, id = merged), got = typeText(pool = out.pool, id = probe.typeId))
             merged = joined
         i = i + 1
     if expectedResult >= 0:
         return finishContainer(out = out, unitIndex = unitIndex, node = node, typeId = expectedResult)
     if merged < 0:
-        return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = containerNeedsExpectation, expected = "", got = emptyLabel)
+        return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = .containerNeedsExpectation, expected = "", got = emptyLabel)
     return finishSingle(out = out, unitIndex = unitIndex, node = node, name = name, elem = merged)
 
 ; 数组字面量：元素缺省 I32 一类由字面量判定给出，空表必须有期望。
@@ -255,7 +255,7 @@ checkDictionaryLiteral|func(unit: CompilationUnit, unitIndex: I32, node: I32, ex
     out.pool = pool
     out.types = types
     if node < 0 || node >= unit.ast.exprCount():
-        return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = containerElementMismatch, expected = "字典字面量", got = "越界节点")
+        return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = .containerElementMismatch, expected = "字典字面量", got = "越界节点")
     var expectedKey = -1
     var expectedValue = -1
     var expectedResult = -1
@@ -270,48 +270,48 @@ checkDictionaryLiteral|func(unit: CompilationUnit, unitIndex: I32, node: I32, ex
     while i < len(entries):
         let entry = unit.ast.exprAt(entries[i])
         if len(entry.kids) < 2:
-            return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = containerElementMismatch, expected = "键值成对", got = "条目缺项")
+            return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = .containerElementMismatch, expected = "键值成对", got = "条目缺项")
         let keyNode = entry.kids[0]
         let valueNode = entry.kids[1]
         let keyStep = elementTypeAt(unit = unit, unitIndex = unitIndex, node = keyNode, expected = expectedKey, pool = out.pool, types = out.types)
         out.pool = keyStep.pool
         out.types = keyStep.types
         if keyStep.typeId == errorTypeId():
-            return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = containerElementMismatch, expected = "同类型键", got = "已判错的键")
+            return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = .containerElementMismatch, expected = "同类型键", got = "已判错的键")
         if keyStep.typeId < 0:
             return deferContainer(out)
         if expectedKey >= 0:
             if !isAssignable(pool = out.pool, from = keyStep.typeId, to = expectedKey):
-                return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = containerElementMismatch, expected = typeText(pool = out.pool, id = expectedKey), got = typeText(pool = out.pool, id = keyStep.typeId))
+                return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = .containerElementMismatch, expected = typeText(pool = out.pool, id = expectedKey), got = typeText(pool = out.pool, id = keyStep.typeId))
         else:
             let joined = unifyElement(pool = out.pool, current = mergedKey, next = keyStep.typeId)
             if joined < 0:
-                return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = containerElementMismatch, expected = typeText(pool = out.pool, id = mergedKey), got = typeText(pool = out.pool, id = keyStep.typeId))
+                return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = .containerElementMismatch, expected = typeText(pool = out.pool, id = mergedKey), got = typeText(pool = out.pool, id = keyStep.typeId))
             mergedKey = joined
         let valueStep = elementTypeAt(unit = unit, unitIndex = unitIndex, node = valueNode, expected = expectedValue, pool = out.pool, types = out.types)
         out.pool = valueStep.pool
         out.types = valueStep.types
         if valueStep.typeId == errorTypeId():
-            return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = containerElementMismatch, expected = "同类型值", got = "已判错的值")
+            return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = .containerElementMismatch, expected = "同类型值", got = "已判错的值")
         if valueStep.typeId < 0:
             return deferContainer(out)
         if expectedValue >= 0:
             if !isAssignable(pool = out.pool, from = valueStep.typeId, to = expectedValue):
-                return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = containerElementMismatch, expected = typeText(pool = out.pool, id = expectedValue), got = typeText(pool = out.pool, id = valueStep.typeId))
+                return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = .containerElementMismatch, expected = typeText(pool = out.pool, id = expectedValue), got = typeText(pool = out.pool, id = valueStep.typeId))
         else:
             let joinedValue = unifyElement(pool = out.pool, current = mergedValue, next = valueStep.typeId)
             if joinedValue < 0:
-                return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = containerElementMismatch, expected = typeText(pool = out.pool, id = mergedValue), got = typeText(pool = out.pool, id = valueStep.typeId))
+                return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = .containerElementMismatch, expected = typeText(pool = out.pool, id = mergedValue), got = typeText(pool = out.pool, id = valueStep.typeId))
             mergedValue = joinedValue
         i = i + 1
     if expectedResult >= 0:
         return finishContainer(out = out, unitIndex = unitIndex, node = node, typeId = expectedResult)
     if mergedKey < 0 || mergedValue < 0:
-        return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = containerNeedsExpectation, expected = "", got = "空字典")
+        return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = .containerNeedsExpectation, expected = "", got = "空字典")
     var args: Array<I32> = []
     args = args.append(mergedKey)
     args = args.append(mergedValue)
-    let inserted = intern(pool = out.pool, kind = typeClassCollection, name = "Dictionary", kids = args, ret = -1)
+    let inserted = intern(pool = out.pool, kind = .typeClassCollection, name = "Dictionary", kids = args, ret = -1)
     var done = out
     done.pool = inserted.pool
     return finishContainer(out = done, unitIndex = unitIndex, node = node, typeId = inserted.id)
@@ -323,7 +323,7 @@ checkIndexType|func(out: ContainerResult, unit: CompilationUnit, unitIndex: I32,
     working.pool = probe.pool
     working.types = probe.types
     if probe.typeId == errorTypeId():
-        return failContainer(out = working, unit = unit, unitIndex = unitIndex, node = node, kind = containerIndexType, expected = "下标", got = "已判错的下标")
+        return failContainer(out = working, unit = unit, unitIndex = unitIndex, node = node, kind = .containerIndexType, expected = "下标", got = "已判错的下标")
     if probe.typeId < 0:
         return deferContainer(working)
     working.typeId = probe.typeId
@@ -335,24 +335,24 @@ checkSubscript|func(unit: CompilationUnit, unitIndex: I32, node: I32, pool: Type
     out.pool = pool
     out.types = types
     if node < 0 || node >= unit.ast.exprCount():
-        return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = containerNotIndexable, expected = "下标", got = "越界节点")
+        return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = .containerNotIndexable, expected = "下标", got = "越界节点")
     let target = unit.ast.exprAt(node).kids[0]
     let targetType = exprTypeAt(table = out.types, unit = unitIndex, node = target)
     if targetType == errorTypeId():
-        return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = containerElementMismatch, expected = "可下标类型", got = "已判错的接收者")
+        return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = .containerElementMismatch, expected = "可下标类型", got = "已判错的接收者")
     if targetType < 0 || targetType >= len(out.pool.entries):
         return deferContainer(out)
     if len(unit.ast.exprAt(node).kids) < 2 || unit.ast.exprAt(node).kids[1] < 0:
-        return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = containerMissingIndex, expected = "下标", got = "缺失")
+        return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = .containerMissingIndex, expected = "下标", got = "缺失")
     let name = containerNameOf(pool = out.pool, id = targetType)
     if name == "Array":
-        let number = intern(pool = out.pool, kind = typeClassScalar, name = "I32", kids = [], ret = -1)
+        let number = intern(pool = out.pool, kind = .typeClassScalar, name = "I32", kids = [], ret = -1)
         out.pool = number.pool
         let typed = checkIndexType(out = out, unit = unit, unitIndex = unitIndex, node = node, expected = number.id, index = unit.ast.exprAt(node).kids[1])
         if typed.failed || typed.deferred:
             return typed
         if !isIntegerType(pool = typed.pool, id = typed.typeId):
-            return failContainer(out = typed, unit = unit, unitIndex = unitIndex, node = node, kind = containerIndexType, expected = "I32", got = typeText(pool = typed.pool, id = typed.typeId))
+            return failContainer(out = typed, unit = unit, unitIndex = unitIndex, node = node, kind = .containerIndexType, expected = "I32", got = typeText(pool = typed.pool, id = typed.typeId))
         let elem = elementTypeOf(pool = typed.pool, id = targetType)
         if elem < 0:
             return deferContainer(typed)
@@ -366,21 +366,21 @@ checkSubscript|func(unit: CompilationUnit, unitIndex: I32, node: I32, pool: Type
         if typed.failed || typed.deferred:
             return typed
         if !isAssignable(pool = typed.pool, from = typed.typeId, to = key):
-            return failContainer(out = typed, unit = unit, unitIndex = unitIndex, node = node, kind = containerIndexType, expected = typeText(pool = typed.pool, id = key), got = typeText(pool = typed.pool, id = typed.typeId))
+            return failContainer(out = typed, unit = unit, unitIndex = unitIndex, node = node, kind = .containerIndexType, expected = typeText(pool = typed.pool, id = key), got = typeText(pool = typed.pool, id = typed.typeId))
         return finishContainer(out = typed, unitIndex = unitIndex, node = node, typeId = value)
     if isStringType(pool = out.pool, id = targetType):
-        let number = intern(pool = out.pool, kind = typeClassScalar, name = "I32", kids = [], ret = -1)
+        let number = intern(pool = out.pool, kind = .typeClassScalar, name = "I32", kids = [], ret = -1)
         out.pool = number.pool
         let typed = checkIndexType(out = out, unit = unit, unitIndex = unitIndex, node = node, expected = number.id, index = unit.ast.exprAt(node).kids[1])
         if typed.failed || typed.deferred:
             return typed
         if !isIntegerType(pool = typed.pool, id = typed.typeId):
-            return failContainer(out = typed, unit = unit, unitIndex = unitIndex, node = node, kind = containerIndexType, expected = "I32", got = typeText(pool = typed.pool, id = typed.typeId))
-        let char = intern(pool = typed.pool, kind = typeClassScalar, name = "Char", kids = [], ret = -1)
+            return failContainer(out = typed, unit = unit, unitIndex = unitIndex, node = node, kind = .containerIndexType, expected = "I32", got = typeText(pool = typed.pool, id = typed.typeId))
+        let char = intern(pool = typed.pool, kind = .typeClassScalar, name = "Char", kids = [], ret = -1)
         var done = typed
         done.pool = char.pool
         return finishContainer(out = done, unitIndex = unitIndex, node = node, typeId = char.id)
-    return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = containerNotIndexable, expected = typeText(pool = out.pool, id = targetType), got = "[]")
+    return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = .containerNotIndexable, expected = typeText(pool = out.pool, id = targetType), got = "[]")
 
 ; 单边界：缺失即跳过，存在则必须是整型。
 checkBoundType|func(out: ContainerResult, unit: CompilationUnit, unitIndex: I32, node: I32, bound: I32, numberType: I32,) -> (ContainerResult,):
@@ -390,7 +390,7 @@ checkBoundType|func(out: ContainerResult, unit: CompilationUnit, unitIndex: I32,
     if typed.failed || typed.deferred:
         return typed
     if !isIntegerType(pool = typed.pool, id = typed.typeId):
-        return failContainer(out = typed, unit = unit, unitIndex = unitIndex, node = node, kind = containerIndexType, expected = "I32", got = typeText(pool = typed.pool, id = typed.typeId))
+        return failContainer(out = typed, unit = unit, unitIndex = unitIndex, node = node, kind = .containerIndexType, expected = "I32", got = typeText(pool = typed.pool, id = typed.typeId))
     return typed
 
 ; 切片：数组切出同一数组类型，字符串切出字符串；两个边界都可省略，省略即开放边界。
@@ -399,21 +399,21 @@ checkSlice|func(unit: CompilationUnit, unitIndex: I32, node: I32, pool: TypePool
     out.pool = pool
     out.types = types
     if node < 0 || node >= unit.ast.exprCount():
-        return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = containerNotIndexable, expected = "切片", got = "越界节点")
+        return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = .containerNotIndexable, expected = "切片", got = "越界节点")
     let target = unit.ast.exprAt(node).kids[0]
     let targetType = exprTypeAt(table = out.types, unit = unitIndex, node = target)
     if targetType == errorTypeId():
-        return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = containerElementMismatch, expected = "可切片类型", got = "已判错的接收者")
+        return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = .containerElementMismatch, expected = "可切片类型", got = "已判错的接收者")
     if targetType < 0 || targetType >= len(out.pool.entries):
         return deferContainer(out)
     var result = targetType
     if !isSliceableType(pool = out.pool, id = targetType):
-        return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = containerNotIndexable, expected = typeText(pool = out.pool, id = targetType), got = "[:]")
+        return failContainer(out = out, unit = unit, unitIndex = unitIndex, node = node, kind = .containerNotIndexable, expected = typeText(pool = out.pool, id = targetType), got = "[:]")
     if isStringType(pool = out.pool, id = targetType):
-        let text = intern(pool = out.pool, kind = typeClassScalar, name = "String", kids = [], ret = -1)
+        let text = intern(pool = out.pool, kind = .typeClassScalar, name = "String", kids = [], ret = -1)
         out.pool = text.pool
         result = text.id
-    let number = intern(pool = out.pool, kind = typeClassScalar, name = "I32", kids = [], ret = -1)
+    let number = intern(pool = out.pool, kind = .typeClassScalar, name = "I32", kids = [], ret = -1)
     out.pool = number.pool
     var working = out
     if len(unit.ast.exprAt(node).kids) > 1:

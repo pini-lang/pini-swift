@@ -83,19 +83,19 @@ isLocalKind|func(kind: LocalKind, expected: LocalKind,) -> (Bool,):
 
 ; 跨包判定：枚举项不能跨包引用，下游按种类逐个问。
 isParamLocal|func(_kind: LocalKind,) -> (Bool,):
-    return localKindName(_kind) == localKindName(localParam)
+    return localKindName(_kind) == localKindName(.localParam)
 
 isSelfLocal|func(_kind: LocalKind,) -> (Bool,):
-    return localKindName(_kind) == localKindName(localSelf)
+    return localKindName(_kind) == localKindName(.localSelf)
 
 isVariableLocal|func(_kind: LocalKind,) -> (Bool,):
-    return localKindName(_kind) == localKindName(localVariable)
+    return localKindName(_kind) == localKindName(.localVariable)
 
 isLoopVarLocal|func(_kind: LocalKind,) -> (Bool,):
-    return localKindName(_kind) == localKindName(localLoopVar)
+    return localKindName(_kind) == localKindName(.localLoopVar)
 
 isBindingLocal|func(_kind: LocalKind,) -> (Bool,):
-    return localKindName(_kind) == localKindName(localBinding)
+    return localKindName(_kind) == localKindName(.localBinding)
 
 ; 帧种类名：与计划件的四类帧同名。
 scopeKindName|func(_kind: ScopeKind,) -> (String,):
@@ -157,7 +157,7 @@ leaveScope|func(_stack: ScopeStack,) -> (ScopeStack,):
     var out = _stack
     out.frames = keepFrames(values = out.frames, count = last)
     out.locals = keepLocals(values = out.locals, count = frame.start)
-    if isScopeKind(kind = frame.kind, expected = scopeFunction):
+    if isScopeKind(kind = frame.kind, expected = .scopeFunction):
         out.nextSlot = frame.baseSlot
     return out
 
@@ -201,12 +201,12 @@ declareLocal|func(stack: ScopeStack, kind: LocalKind, spelling: String, typeId: 
     out.stack = stack
     if len(stack.frames) == 0:
         out.failed = true
-        out.error = makeScopeError(kind = scopeNoFrame, file = file, offset = offset, spelling = spelling)
+        out.error = makeScopeError(kind = .scopeNoFrame, file = file, offset = offset, spelling = spelling)
         return out
     let key = keyOfText(spelling)
     if sameFrameHas(stack = stack, key = key):
         out.failed = true
-        out.error = makeScopeError(kind = scopeLocalDuplicated, file = file, offset = offset, spelling = spelling)
+        out.error = makeScopeError(kind = .scopeLocalDuplicated, file = file, offset = offset, spelling = spelling)
         return out
     var local = LocalSymbol()
     local.key = key
@@ -229,11 +229,11 @@ declareLocal|func(stack: ScopeStack, kind: LocalKind, spelling: String, typeId: 
 ; 声明参数：名字从声明区间解码，参数默认可变。
 declareParam|func(stack: ScopeStack, decl: DeclNode, declId: I32, typeId: I32, file: String, bytes: Array<U8>,) -> (ScopeDeclare,):
     let spelling = decodeRange(bytes = bytes, start = decl.nameStart, end = decl.nameEnd)
-    return declareLocal(stack = stack, kind = localParam, spelling = spelling, typeId = typeId, mutable = true, file = file, offset = decl.start, decl = declId)
+    return declareLocal(stack = stack, kind = .localParam, spelling = spelling, typeId = typeId, mutable = true, file = file, offset = decl.start, decl = declId)
 
 ; 声明自身：self 与 own 共用一条，默认不可赋值。
 declareSelf|func(stack: ScopeStack, spelling: String, typeId: I32, file: String, offset: I32,) -> (ScopeDeclare,):
-    return declareLocal(stack = stack, kind = localSelf, spelling = spelling, typeId = typeId, mutable = false, file = file, offset = offset, decl = -1)
+    return declareLocal(stack = stack, kind = .localSelf, spelling = spelling, typeId = typeId, mutable = false, file = file, offset = offset, decl = -1)
 
 ; 查找局部：由内向外逐帧、帧内由后向前；命中答局部表下标，未命中答 -1。
 lookupLocal|func(stack: ScopeStack, key: Array<U8>,) -> (I32,):

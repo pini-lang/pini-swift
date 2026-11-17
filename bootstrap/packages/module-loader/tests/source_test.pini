@@ -11,15 +11,15 @@ bytesOf|func(_values: Array<I32>,) -> (Array<U8>,):
 类别专用|test() -> ():
     let bom = checkSourceBytes(bytesOf([239, 187, 191, 65]))
     assert(!bom.passed, "BOM 应被拒绝")
-    assert(isLoadErrorKind(kind = bom.kind, expected = errorSourceBom), "BOM 应报专用类别")
+    assert(isLoadErrorKind(kind = bom.kind, expected = .errorSourceBom), "BOM 应报专用类别")
     assert(bom.offset == 0, "BOM 偏移应在起点")
     let nul = checkSourceBytes(bytesOf([65, 0, 66]))
     assert(!nul.passed, "NUL 应被拒绝")
-    assert(isLoadErrorKind(kind = nul.kind, expected = errorSourceNul), "NUL 应报专用类别")
+    assert(isLoadErrorKind(kind = nul.kind, expected = .errorSourceNul), "NUL 应报专用类别")
     assert(nul.offset == 1, "NUL 偏移应指向该字节")
     let broken = checkSourceBytes(bytesOf([65, 255, 66]))
     assert(!broken.passed, "非法 UTF-8 应被拒绝")
-    assert(isLoadErrorKind(kind = broken.kind, expected = errorSourceNotUtf8), "非法 UTF-8 应报专用类别")
+    assert(isLoadErrorKind(kind = broken.kind, expected = .errorSourceNotUtf8), "非法 UTF-8 应报专用类别")
     assert(broken.offset == 1, "偏移应指向坏字节")
     return
 
@@ -55,6 +55,6 @@ bytesOf|func(_values: Array<I32>,) -> (Array<U8>,):
     assert(len(good.unit.text) > 0, "单元应携带源文本")
     let bad = loadUnit(path = "b.pini", text = "main|func() -> ():\n    return" + chr(0) + "\n")
     assert(bad.failed, "含 NUL 的源不成单元")
-    assert(isLoadErrorKind(kind = bad.error.kind, expected = errorSourceNul), "应报 NUL 类别")
+    assert(isLoadErrorKind(kind = bad.error.kind, expected = .errorSourceNul), "应报 NUL 类别")
     assert(bad.error.path == "b.pini", "错误应带单元路径")
     return

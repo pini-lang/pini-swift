@@ -12,11 +12,11 @@
 ; 码对齐：枚举给出的码与清单表按名字查到的码逐条相同，含无参节点。
 节点码对齐|test() -> ():
     let table = contractTable()
-    assert(irExprTag(irIntConst) == contractTagOf(table = table, name = "intConst"), "首个表达式节点码应一致")
-    assert(irExprTag(irShortCircuit) == 56, "末个表达式节点码应为 56")
-    assert(irExprTag(irReadLine) == contractTagOf(table = table, name = "readLine"), "无参节点码应一致")
-    assert(irStmtTag(irAllocVar) == 101, "首个语句节点码应为 101")
-    assert(irStmtTag(irDetachStmt) == 117, "末个语句节点码应为 117")
+    assert(irExprTag(.irIntConst) == contractTagOf(table = table, name = "intConst"), "首个表达式节点码应一致")
+    assert(irExprTag(.irShortCircuit) == 56, "末个表达式节点码应为 56")
+    assert(irExprTag(.irReadLine) == contractTagOf(table = table, name = "readLine"), "无参节点码应一致")
+    assert(irStmtTag(.irAllocVar) == 101, "首个语句节点码应为 101")
+    assert(irStmtTag(.irDetachStmt) == 117, "末个语句节点码应为 117")
     return
 
 ; 码段判定：表达式与语句两段互不重叠，段外一律不认。
@@ -41,24 +41,24 @@
 ; 类型驻留：同形复用同一下标，异形新增；池只增不改。
 标量驻留复用|test() -> ():
     var pool = IrTypePool()
-    let first = irScalarType(pool = pool, kind = irTypeI32, name = "i32")
+    let first = irScalarType(pool = pool, kind = .irTypeI32, name = "i32")
     pool = first.pool
-    let second = irScalarType(pool = pool, kind = irTypeI32, name = "i32")
+    let second = irScalarType(pool = pool, kind = .irTypeI32, name = "i32")
     assert(first.id == 0, "首次驻留应在 0")
     assert(second.id == first.id, "同形应复用同一下标")
     assert(irTypeCount(second.pool) == 1, "同形不应新增条目")
-    let other = irScalarType(pool = second.pool, kind = irTypeF64, name = "f64")
+    let other = irScalarType(pool = second.pool, kind = .irTypeF64, name = "f64")
     assert(other.id == 1, "异形应追加到池尾")
     return
 
 ; 类型文本：标量写名字，容器写尖括号，逐层拼出可比较的形状。
 类型文本|test() -> ():
     var pool = IrTypePool()
-    let inner = irScalarType(pool = pool, kind = irTypeU8, name = "u8")
+    let inner = irScalarType(pool = pool, kind = .irTypeU8, name = "u8")
     pool = inner.pool
-    let array = irWrapType(pool = pool, kind = irTypeArray, name = "", inner = inner.id)
+    let array = irWrapType(pool = pool, kind = .irTypeArray, name = "", inner = inner.id)
     pool = array.pool
-    let optional = irWrapType(pool = pool, kind = irTypeOptional, name = "", inner = inner.id)
+    let optional = irWrapType(pool = pool, kind = .irTypeOptional, name = "", inner = inner.id)
     assert(irTypeText(pool = pool, id = inner.id) == "u8", "标量应写名字")
     assert(irTypeText(pool = pool, id = array.id) == "array<u8>", "容器应写尖括号")
     assert(irTypeText(pool = optional.pool, id = optional.id) == "optional<u8>", "可选应写尖括号")
@@ -73,7 +73,7 @@
     pool = 引用类型.pool
     assert(!irIsObjectType(pool = pool, id = value.id), "值语义结构不应判为对象")
     assert(irIsObjectType(pool = pool, id = 引用类型.id), "对象应判为对象")
-    let scalar = irScalarType(pool = pool, kind = irTypeI32, name = "i32")
+    let scalar = irScalarType(pool = pool, kind = .irTypeI32, name = "i32")
     assert(!irIsObjectType(pool = scalar.pool, id = scalar.id), "标量不应判为对象")
     return
 

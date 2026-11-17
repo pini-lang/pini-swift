@@ -43,7 +43,7 @@ result: LiteralResult = LiteralResult()
     var pool = TypePool()
     var expectation = noExpectation()
     if len(expectedName) > 0:
-        let inserted = intern(pool = pool, kind = typeClassScalar, name = expectedName, kids = [], ret = -1)
+        let inserted = intern(pool = pool, kind = .typeClassScalar, name = expectedName, kids = [], ret = -1)
         pool = inserted.pool
         expectation = expectType(inserted.id)
     var out = 字面样例()
@@ -56,8 +56,8 @@ result: LiteralResult = LiteralResult()
 可选样例|func(_src: String,) -> (字面样例,):
     let unit = 造字面单元(_src)
     let node = 取字面量(unit = unit, kind = "空值")
-    let i32 = intern(pool = TypePool(), kind = typeClassScalar, name = "I32", kids = [], ret = -1)
-    let opt = intern(pool = i32.pool, kind = typeClassOptional, name = "", kids = [i32.id], ret = -1)
+    let i32 = intern(pool = TypePool(), kind = .typeClassScalar, name = "I32", kids = [], ret = -1)
+    let opt = intern(pool = i32.pool, kind = .typeClassOptional, name = "", kids = [i32.id], ret = -1)
     var out = 字面样例()
     out.unit = unit
     out.node = node
@@ -68,8 +68,8 @@ result: LiteralResult = LiteralResult()
 指针样例|func(_src: String,) -> (字面样例,):
     let unit = 造字面单元(_src)
     let node = 取字面量(unit = unit, kind = "空值")
-    let i32 = intern(pool = TypePool(), kind = typeClassScalar, name = "I32", kids = [], ret = -1)
-    let ptr = intern(pool = i32.pool, kind = typeClassPointer, name = "", kids = [i32.id], ret = -1)
+    let i32 = intern(pool = TypePool(), kind = .typeClassScalar, name = "I32", kids = [], ret = -1)
+    let ptr = intern(pool = i32.pool, kind = .typeClassPointer, name = "", kids = [i32.id], ret = -1)
     var out = 字面样例()
     out.unit = unit
     out.node = node
@@ -115,7 +115,7 @@ result: LiteralResult = LiteralResult()
     assert(!narrow.result.failed, "浮点应接受 F32")
     assert(typeText(pool = narrow.result.pool, id = narrow.result.typeId) == "F32", "应取 F32")
     assert(wrong.result.failed, "浮点不得落进整型")
-    assert(isLiteralError(error = wrong.result.error, kind = literalExpectedMismatch), "应报类型不匹配")
+    assert(isLiteralError(error = wrong.result.error, kind = .literalExpectedMismatch), "应报类型不匹配")
     assert(wrong.result.error.expected == "I32", "期望名应为 I32")
     assert(wrong.result.error.got == "F64", "实得名应为 F64")
     return
@@ -128,9 +128,9 @@ result: LiteralResult = LiteralResult()
     assert(integer.result.failed, "整数不得落进 String")
     assert(string.result.failed, "字符串不得落进 Char")
     assert(yes.result.failed, "布尔不得落进 I32")
-    assert(isLiteralError(error = integer.result.error, kind = literalExpectedMismatch), "整数应报不匹配")
-    assert(isLiteralError(error = string.result.error, kind = literalExpectedMismatch), "字符串应报不匹配")
-    assert(isLiteralError(error = yes.result.error, kind = literalExpectedMismatch), "布尔应报不匹配")
+    assert(isLiteralError(error = integer.result.error, kind = .literalExpectedMismatch), "整数应报不匹配")
+    assert(isLiteralError(error = string.result.error, kind = .literalExpectedMismatch), "字符串应报不匹配")
+    assert(isLiteralError(error = yes.result.error, kind = .literalExpectedMismatch), "布尔应报不匹配")
     return
 
 ; 空值：无望报无法推断；可选与指针各自接受；普通标量拒绝。
@@ -140,14 +140,14 @@ result: LiteralResult = LiteralResult()
     let ptr = 指针样例("f|func() -> ():\n    return nil\n")
     let wrong = 判样例(src = "f|func() -> ():\n    return nil\n", kind = "空值", expectedName = "I32")
     assert(none.result.failed, "无望空值应失败")
-    assert(isLiteralError(error = none.result.error, kind = literalNeedsExpectation), "应报缺少期望")
+    assert(isLiteralError(error = none.result.error, kind = .literalNeedsExpectation), "应报缺少期望")
     assert(none.result.error.got == "nil", "实得名应为 nil")
     assert(!opt.result.failed, "空值应接受可选")
     assert(typeText(pool = opt.result.pool, id = opt.result.typeId) == "I32?", "可选文本应为 I32?")
     assert(!ptr.result.failed, "空值应接受指针")
     assert(typeText(pool = ptr.result.pool, id = ptr.result.typeId) == "*I32", "指针文本应为 *I32")
     assert(wrong.result.failed, "空值不得落进 I32")
-    assert(isLiteralError(error = wrong.result.error, kind = literalExpectedMismatch), "应报不匹配")
+    assert(isLiteralError(error = wrong.result.error, kind = .literalExpectedMismatch), "应报不匹配")
     return
 
 ; 插值：整体答 String；段内表达式尚未进语法树，本批判定不涉及段。
@@ -163,7 +163,7 @@ result: LiteralResult = LiteralResult()
 非字面量|test() -> ():
     let sample = 判样例(src = "f|func() -> ():\n    return x\n", kind = "标识符", expectedName = "")
     assert(sample.result.failed, "标识符应被拒")
-    assert(isLiteralError(error = sample.result.error, kind = literalNotLiteral), "应报非字面量")
+    assert(isLiteralError(error = sample.result.error, kind = .literalNotLiteral), "应报非字面量")
     assert(exprTypeAt(table = sample.result.types, unit = 0, node = sample.node) == errorTypeId(), "错误应落表")
     return
 
@@ -184,7 +184,7 @@ result: LiteralResult = LiteralResult()
 
 ; 码表：三类错误各映射到已有诊断码。
 码表|test() -> ():
-    assert(literalErrorCode(literalExpectedMismatch) == "E4-001", "不匹配应为 E4-001")
-    assert(literalErrorCode(literalNeedsExpectation) == "E4-003", "缺少期望应为 E4-003")
-    assert(literalErrorCode(literalNotLiteral) == "E6-002", "非字面量应为 E6-002")
+    assert(literalErrorCode(.literalExpectedMismatch) == "E4-001", "不匹配应为 E4-001")
+    assert(literalErrorCode(.literalNeedsExpectation) == "E4-003", "缺少期望应为 E4-003")
+    assert(literalErrorCode(.literalNotLiteral) == "E6-002", "非字面量应为 E6-002")
     return

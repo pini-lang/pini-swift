@@ -237,9 +237,9 @@ checkUnitRefs|func(symbols: Array<PackageSymbols>, group: PackageUnits, bindings
                     let memberName = decodeRange(bytes = bytes, start = member.nameStart, end = member.nameEnd)
                     let lookup = lookupPackageSymbol(rows = symbols, packageName = target, key = keyOfText(memberName))
                     if !lookup.found:
-                        working = appendCrossRef(out = working, unit = unit, offset = member.start, kind = crossMissing, name = memberName, detail = target + " 没有导出该名")
+                        working = appendCrossRef(out = working, unit = unit, offset = member.start, kind = .crossMissing, name = memberName, detail = target + " 没有导出该名")
                     elif !isExported(lookup.symbol.visibility):
-                        working = appendCrossRef(out = working, unit = unit, offset = member.start, kind = crossNotPublic, name = memberName, detail = target + " 只导出 public 声明")
+                        working = appendCrossRef(out = working, unit = unit, offset = member.start, kind = .crossNotPublic, name = memberName, detail = target + " 只导出 public 声明")
         i = i + 1
     return working
 
@@ -371,9 +371,9 @@ checkUnitShadows|func(table: Array<PackagePublic>, bindings: Array<ImportBinding
             while j < len(publics):
                 let name = publics[j]
                 if _containsCrossRefText(items = locals, value = name):
-                    working = appendCrossRef(out = working, unit = unit, offset = binding.offset, kind = crossInjectedShadow, name = name, detail = "与本文件顶层声明同名")
+                    working = appendCrossRef(out = working, unit = unit, offset = binding.offset, kind = .crossInjectedShadow, name = name, detail = "与本文件顶层声明同名")
                 elif _containsCrossRefText(items = seen, value = name):
-                    working = appendCrossRef(out = working, unit = unit, offset = binding.offset, kind = crossInjectedShadow, name = name, detail = "另一条注入导入已引入同名符号")
+                    working = appendCrossRef(out = working, unit = unit, offset = binding.offset, kind = .crossInjectedShadow, name = name, detail = "另一条注入导入已引入同名符号")
                 else:
                     seen = seen.append(name)
                 j = j + 1

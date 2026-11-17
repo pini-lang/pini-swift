@@ -181,17 +181,17 @@ shimAccepts|func(shape: ShimShape, pool: TypePool, id: I32,) -> (Bool,):
     if id < 0 || id >= len(pool.entries):
         return false
     let entry = pool.entries[id]
-    if isShimShape(shape = shape, expected = shimPointer):
-        return isTypeClass(kind = entry.kind, expected = typeClassPointer)
-    if !isTypeClass(kind = entry.kind, expected = typeClassScalar):
+    if isShimShape(shape = shape, expected = .shimPointer):
+        return isTypeClass(kind = entry.kind, expected = .typeClassPointer)
+    if !isTypeClass(kind = entry.kind, expected = .typeClassScalar):
         return false
-    if isShimShape(shape = shape, expected = shimString):
+    if isShimShape(shape = shape, expected = .shimString):
         return entry.name == "String"
-    if isShimShape(shape = shape, expected = shimInteger):
+    if isShimShape(shape = shape, expected = .shimInteger):
         if entry.name == "I8" || entry.name == "U8":
             return true
         return entry.name == "I32" || entry.name == "I64" || entry.name == "U64"
-    if isShimShape(shape = shape, expected = shimBoolean):
+    if isShimShape(shape = shape, expected = .shimBoolean):
         return entry.name == "Bool"
     return entry.name == "F64"
 
@@ -243,21 +243,21 @@ resolveOneForeign|func(env: ForeignEnvironment, pool: TypePool, name: String, pa
     if isFunction:
         let shim = shimForSymbol(env = env, pool = pool, name = name, paramIds = paramIds)
         if shim >= 0:
-            out.resolution.source = foreignSourceShim
+            out.resolution.source = .foreignSourceShim
             out.resolution.sourceIndex = shim
             return out
     var i = 0
     while i < len(env.libraries):
         if libraryHasSymbol(entry = env.libraries[i], name = name):
-            out.resolution.source = foreignSourceLibrary
+            out.resolution.source = .foreignSourceLibrary
             out.resolution.sourceIndex = i
             return out
         i = i + 1
     if containsName(names = env.imageSymbols, name = name):
-        out.resolution.source = foreignSourceImage
+        out.resolution.source = .foreignSourceImage
         return out
     out.failed = true
-    out.error = makeResolutionError(kind = foreignResolutionSymbolMissing, file = file, offset = offset, name = name, detail = searchedText(env))
+    out.error = makeResolutionError(kind = .foreignResolutionSymbolMissing, file = file, offset = offset, name = name, detail = searchedText(env))
     return out
 
 ; 一个外部块：逐条解析；块名不参与，条目序即记录序。
@@ -294,7 +294,7 @@ checkRequiredLibraries|func(env: ForeignEnvironment, out: ForeignResolutionCheck
         if !containsName(names = seen, name = name):
             seen = seen.append(name)
             if libraryIndexOf(libraries = env.libraries, name = name) < 0:
-                working = appendResolutionError(out = working, kind = foreignResolutionLibraryMissing, file = "", offset = 0, name = name, detail = name)
+                working = appendResolutionError(out = working, kind = .foreignResolutionLibraryMissing, file = "", offset = 0, name = name, detail = name)
         i = i + 1
     return working
 
