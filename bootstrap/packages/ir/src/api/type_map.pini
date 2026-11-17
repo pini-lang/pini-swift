@@ -6,11 +6,13 @@ _semantics = "../../../semantics"
 ; 标量只收 IR 有宽度的九种；I16、U16、U32、F32 与用户泛型实例不在其中，照宿主同规拒绝。
 
 ; 映射表：IR 池、逐语义下标的像、布尔类型下标与错误；未映射答 -1。
-; `booleanId` 供降载的类型后备用：比较与逻辑的结果类型不依赖语义池里是否驻留过布尔。
+; `booleanId` 与 `charId` 供降载的类型后备用：比较与逻辑的结果、字符串下标的元素
+; 都不依赖语义池里是否驻留过这两种标量。
 (TypeMap)
 pool: IrTypePool = IrTypePool()
 ids: Array<I32> = []
 booleanId: I32 = -1
+charId: I32 = -1
 errors: Array<LowerError> = []
 
 ; 取像：越界或未映射答 -1，调用方据此报能力缺口。
@@ -235,6 +237,9 @@ buildTypeMap|func(world: MemberWorld,) -> (TypeMap,):
     let flag = irScalarType(pool = out.pool, kind = irTypeBoolean, name = "boolean")
     out.pool = flag.pool
     out.booleanId = flag.id
+    let letter = irScalarType(pool = out.pool, kind = irTypeChar, name = "char")
+    out.pool = letter.pool
+    out.charId = letter.id
     return out
 
 ; 映射计数：已映射的条目数，供回执与测试对照。

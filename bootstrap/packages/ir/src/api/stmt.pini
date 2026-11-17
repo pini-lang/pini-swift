@@ -33,44 +33,63 @@ takeStmtFailure|func(out: LowerStmt, detail: String, offset: I32,) -> (LowerStmt
     done.offset = offset
     return done
 
-; 变量声明：无标注声明取初值类型，槽位由帧分配。
-; 带标注的声明本切片不降：标注与初值可能不同宽，取谁都会让另一半错。
+; 变量声明：有标注按标注定型，无标注取初值类型；无初值的声明必须有标注。
+; 标注类型由语义层写在模式节点上，降载只做映射；初值与标注不同宽时包一层转换。
 lowerVariableStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32,) -> (LowerStmt,):
     let stmt = unit.ast.stmtAt(stmtId)
-    if stmt.typeId >= 0:
-        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "带标注的变量声明")
     let pattern: I32 = unit.ast.stmtChild(id = stmtId, index = 0)
     let init: I32 = unit.ast.stmtChild(id = stmtId, index = 1)
     if pattern < 0 || !unit.ast.isIdentifierExpr(pattern):
         return missStmt(out = out, unit = unit, stmtId = stmtId, what = "非标识符的声明模式")
-    if init < 0:
-        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "无初值的变量声明")
     var done = out
-    let one = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = init)
-    done.pool = one.pool
-    done.texts = one.texts
-    done.frame = one.frame
-    if one.failed:
-        return takeStmtFailure(out = done, detail = one.detail, offset = one.offset)
-    let valueNode = irNodeAt(pool = done.pool, id = one.id)
-    if valueNode.typeId < 0:
-        return missStmt(out = done, unit = unit, stmtId = stmtId, what = "初值类型未定")
+    var typeId = -1
+    if stmt.typeId >= 0:
+        typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = pattern)
+        if typeId < 0:
+            return missStmt(out = done, unit = unit, stmtId = stmtId, what = "标注类型不可映射")
+    var valueId = -1
+    if init >= 0:
+        if typeId >= 0 && unit.ast.isArrayExpr(init) && len(unit.ast.exprAt(init).kids) == 0:
+            let empty = addIrNode(pool = done.pool, kind = irExprTag(irArrayLiteral), typeId = typeId, op = 0, kids = [])
+            done.pool = empty.pool
+            valueId = empty.id
+        else:
+            let one = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = init)
+            done.pool = one.pool
+            done.texts = one.texts
+            done.frame = one.frame
+            if one.failed:
+                return takeStmtFailure(out = done, detail = one.detail, offset = one.offset)
+            valueId = one.id
+    if valueId >= 0:
+        let valueType = irNodeAt(pool = done.pool, id = valueId).typeId
+        if typeId < 0:
+            typeId = valueType
+        elif valueType >= 0 && valueType != typeId:
+            let cast = addIrNode(pool = done.pool, kind = irExprTag(irUnary), typeId = typeId, op = irUnaryTag(irCast), kids = [valueId])
+            done.pool = cast.pool
+            valueId = cast.id
+    if typeId < 0:
+        return missStmt(out = done, unit = unit, stmtId = stmtId, what = "声明类型未定")
     let expr = unit.ast.exprAt(pattern)
     let name = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
     let placed = internText(texts = done.texts, value = name)
     var mutable = false
     if unit.ast.isMutableVariableStmt(stmtId):
         mutable = true
-    var node = irMakeNode(kind = irStmtTag(irAllocVar), typeId = valueNode.typeId)
+    var kids: Array<I32> = []
+    if valueId >= 0:
+        kids = kids.append(valueId)
+    var node = irMakeNode(kind = irStmtTag(irAllocVar), typeId = typeId)
     node.text = placed.id
     if mutable:
         node.op = 1
-    node.kids = [one.id]
+    node.kids = kids
     let inserted = irAppendNode(pool = done.pool, node = node)
     done.texts = placed.texts
     done.pool = inserted.pool
     done.ids = done.ids.append(inserted.id)
-    done.frame = declareIrLocal(frame = done.frame, name = name, typeId = valueNode.typeId, mutable = mutable)
+    done.frame = declareIrLocal(frame = done.frame, name = name, typeId = typeId, mutable = mutable)
     return done
 
 ; 右值结果：池、文本池、帧、节点下标与失败原因；六条写路共用一次右值降载。

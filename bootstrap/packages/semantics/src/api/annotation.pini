@@ -346,6 +346,14 @@ isBuiltinError|func(id: I32, pool: TypePool,) -> (Bool,):
     return isTypeClass(kind = entry.kind, expected = typeClassScalar) && entry.name == "Error"
 
 ; 解析一个单元：按顶层序走，声明上的全部标注各留一条绑定。
+; 标注解析（带游标）：调用方复用同一游标时不必为每条声明重建类型世界。
+; 游标里的源与单元由调用方按单元切换；池只读，增长由返回值带回。
+resolveAnnotationIn|func(cursor: TypeCursor, pool: TypePool, node: I32,) -> (TypeInsert,):
+    if node < 0:
+        return hitType(pool = pool, id = -1)
+    let resolved = resolveNode(cursor = cursor, pool = pool, typeId = node)
+    return hitType(pool = resolved.pool, id = resolved.root)
+
 resolveUnit|func(stage: TypePass, world: TypeWorld, unitIndex: I32,) -> (TypePass,):
     let unit = world.units[unitIndex]
     var cursor = TypeCursor()
