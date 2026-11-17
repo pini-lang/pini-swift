@@ -154,6 +154,22 @@ public enum RuntimeOps {
         return .array(arr + [args[1]])
     }
 
+    /// 消费式追加：调用方已把槽位清空，交进来的是唯一候选。
+    /// 数组只剩这一份引用时就地增长；否则由数组自身的写时复制兜底，代价与拼接相同。
+    /// 返回 false 表示接收者不是数组，调用方走原路径报同一个错。
+    @discardableResult
+    static func appendConsuming(_ slot: inout Value, _ element: Value) -> Bool {
+        guard case .array(var items) = slot else { return false }
+        slot = .null
+        items.append(element)
+        slot = .array(items)
+        consumingAppendHits += 1
+        return true
+    }
+
+    /// 消费式追加的命中计数：只服务判据，不进语义；测试读它证明快路真在跑。
+    nonisolated(unsafe) public static var consumingAppendHits = 0
+
     /// `xs.last()` -- the final element, or `null` when the array is empty.
     /// `xs.last()` -- 末元素。空数组走安全断言通道，与 `xs[len(xs) - 1]` 同一条退出。
     ///  注意  返回的是元素本身而非 `Optional`：静态类型是元素类型，用 null 兜底会让类型与值脱钩。

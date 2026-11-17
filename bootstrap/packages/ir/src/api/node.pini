@@ -139,10 +139,6 @@ text: I32 = -1
 tail: I32 = -1
 kids: Array<I32> = []
 
-; 节点池：只追加，下标即节点身份。
-(IrNodePool)
-nodes: Array<IrNode> = []
-
 ; 表达式类别码：与枚举项序一致，从 1 起。
 irExprTag|func(_kind: IrExprKind,) -> (I32,):
     match _kind:

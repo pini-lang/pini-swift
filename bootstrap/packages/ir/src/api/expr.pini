@@ -739,6 +739,8 @@ lowerCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: Typ
     var done = out
     var resolved = IrCallee()
     var receiver = -1
+    var builtinMember = ""
+    var builtinType = -1
     if unit.ast.isMemberExpr(callee):
         let member = unit.ast.exprAt(callee)
         if len(member.kids) < 1:
@@ -760,8 +762,13 @@ lowerCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: Typ
             receiver = recvOne.id
             resolved = calleeOfMethod(frame = done.frame, map = map, pool = done.pool, receiver = receiver, memberName = memberName)
             if !resolved.found:
-                return missExpr(out = done, unit = unit, id = id, what = "成员被调 " + memberName)
-            if !resolved.takesReceiver:
+                let recvType = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = recvNode)
+                if isArrayMember(memberName = memberName, receiverType = recvType, map = map):
+                    builtinMember = memberName
+                    builtinType = recvType
+                else:
+                    return missExpr(out = done, unit = unit, id = id, what = "成员被调 " + memberName)
+            if resolved.found && !resolved.takesReceiver:
                 receiver = -1
     elif unit.ast.isIdentifierExpr(callee):
         let calleeExpr = unit.ast.exprAt(callee)
@@ -807,9 +814,40 @@ lowerCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: Typ
         actual.id = one.id
         actuals = actuals.append(actual)
         i = i + 1
+    if len(builtinMember) > 0:
+        return lowerArrayMember(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id, member = builtinMember, receiver = receiver, receiverType = builtinType, actuals = actuals)
     if resolved.found && resolved.ordered:
         return lowerNamedCall(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id, name = resolved.name, actuals = actuals, params = resolved.params, leading = receiver, ret = resolved.ret)
     return lowerPlainCall(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id, name = resolved.name, actuals = actuals, leading = receiver)
+
+; 数组成员判定：名字在两类之内且接收者类型是数组 —— 字串的同名成员归字串批。
+isArrayMember|func(memberName: String, receiverType: I32, map: TypeMap,) -> (Bool,):
+    if memberName != "append" && memberName != "slice":
+        return false
+    if receiverType < 0 || receiverType >= irTypeCount(map.pool):
+        return false
+    return irTypeTag(irTypeAt(pool = map.pool, id = receiverType).kind) == irTypeTag(.irTypeArray)
+
+; 数组成员：append 发「Array.append」命名调用（与宿主同形），slice 发切片节点。
+; 结果类型取接收者；数目不符或名字不认识时照旧报「成员被调」，不猜。
+lowerArrayMember|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32, member: String, receiver: I32, receiverType: I32, actuals: Array<IrActual>,) -> (LowerExpr,):
+    var done = out
+    if member == "append" && len(actuals) == 1:
+        let placed = internText(texts = done.texts, value = "Array.append")
+        var node = irMakeNode(kind = irExprTag(.irCall), typeId = receiverType)
+        node.text = placed.id
+        node.kids = [receiver, actuals[0].id]
+        let inserted = irAppendNode(pool = done.pool, node = node)
+        done.texts = placed.texts
+        done.pool = inserted.pool
+        done.id = inserted.id
+        return done
+    if member == "slice" && len(actuals) == 2:
+        let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irSliceCall), typeId = receiverType, op = 0, kids = [receiver, actuals[0].id, actuals[1].id])
+        done.pool = inserted.pool
+        done.id = inserted.id
+        return done
+    return missExpr(out = done, unit = unit, id = id, what = "成员被调 " + member)
 
 ; 成员读：接收者一个子节点，字段名驻留进文本池；方法值不走这条。
 lowerMember|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):

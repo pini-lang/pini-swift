@@ -58,6 +58,25 @@ public class Environment {
         throw RuntimeError.undefinedVariable(name: name, location: SourceLocation(line: 0, column: 0, fileName: ""))
     }
 
+    /// 取走绑定：交出旧值并把槽位置空，供「读—改—写回同一槽」的形态省掉一次整表复制。
+    /// 可变性检查与 `assign` 同规；作用域链里没有该名字时返回 nil，由调用方回退到通用路径。
+    public func take(name: String) throws -> Value? {
+        for i in (0..<scopes.count).reversed() {
+            if let binding = scopes[i][name] {
+                if !binding.isMutable {
+                    throw RuntimeError.immutableVariable(
+                        name: name, location: SourceLocation(line: 0, column: 0, fileName: ""))
+                }
+                scopes[i][name] = Binding(value: .null, isMutable: true)
+                return binding.value
+            }
+        }
+        if let enclosing = enclosing {
+            return try enclosing.take(name: name)
+        }
+        return nil
+    }
+
     /// 就地初始化一个已声明的绑定并保留其可变性。与 `assign` 的唯一差别是不做可变性检查：这里写的是
     /// 声明处的那一次初始化（`let x = ...`），用 `assign` 会把「初始化 `let`」误判成「给 `let` 赋值」。
     /// `let x = try ... else e:` 降载后 ok 臂要写进已声明的槽；查找顺序同 `assign`，未找到抛 undefinedVariable。
