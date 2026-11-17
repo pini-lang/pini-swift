@@ -45,6 +45,15 @@ module: IrModule = IrModule()
         i = i + 1
     return -1
 
+; 取首个指定类别的节点：切片这类节点不带文本，按文本查不到。
+取节点按类别|func(样例: 降载样例, kind: I32,) -> (I32,):
+    var i = 0
+    while i < irNodeCount(样例.module.nodes):
+        if irNodeAt(pool = 样例.module.nodes, id = i).kind == kind:
+            return i
+        i = i + 1
+    return -1
+
 ; 名字编码：非 ASCII 标量按 `_u` 加四位大写十六进制，与宿主同一规则。
 方法名编码|test() -> ():
     assert(mangleName(name = "plus") == "plus", "ASCII 名应原样返回")
@@ -215,4 +224,28 @@ module: IrModule = IrModule()
     let 样例 = 造样例(src)
     assert(len(样例.module.errors) == 1, "歧义应报一条缺口")
     assert(样例.module.errors[0].detail.indexOf("候选枚举 2 个") >= 0, "缺口应报候选数")
+    return
+
+; 数组成员：append 走「Array.append」命名调用（与宿主同形，不加节点类别），结果类型取接收者。
+数组追加|test() -> ():
+    let src = "f|func(_items: Array<I32>,) -> (Array<I32>,):\n    let grown = _items.append(2)\n    return grown\n"
+    let 样例 = 造样例(src)
+    assert(len(样例.module.errors) == 0, "数组成员调用应降载成功")
+    let at = 取节点(样例 = 样例, kind = irExprTag(.irCall), text = "Array.append")
+    assert(at >= 0, "append 应降成命名调用")
+    let 节点 = irNodeAt(pool = 样例.module.nodes, id = at)
+    assert(len(节点.kids) == 2, "接收者加一个实参")
+    assert(irTypeText(pool = 样例.module.types, id = 节点.typeId) == "array<i32>", "结果类型应与接收者同形")
+    return
+
+; 数组成员：slice 发切片节点，两个边界按位落成三子节点，结果类型取接收者。
+数组切片|test() -> ():
+    let src = "f|func(_items: Array<I32>,) -> (Array<I32>,):\n    let part = _items.slice(0, 1)\n    return part\n"
+    let 样例 = 造样例(src)
+    assert(len(样例.module.errors) == 0, "slice 应降载成功")
+    let at = 取节点按类别(样例 = 样例, kind = irExprTag(.irSliceCall))
+    assert(at >= 0, "slice 应发切片节点")
+    let 节点 = irNodeAt(pool = 样例.module.nodes, id = at)
+    assert(len(节点.kids) == 3, "接收者加两个边界")
+    assert(irTypeText(pool = 样例.module.types, id = 节点.typeId) == "array<i32>", "结果类型应与接收者同形")
     return
