@@ -76,6 +76,7 @@ types: ExprTypes = ExprTypes()
 pool: TypePool = TypePool()
 table: NameTable = NameTable()
 bytes: Array<U8> = []
+returnType: I32 = -1
 
 ; 函数名表：自身与参数先入表；方法体里的局部声明在语句序里增量加入。
 ; 自身按所属类型的池下标入表，`self.字段` 的接收者因此有型可查；非方法传 -1。
@@ -96,19 +97,43 @@ functionNameTable|func(world: MemberWorld, unit: CompilationUnit, declId: I32, o
         i = i + 1
     return out
 
+; 枚举名：类型池条目属枚举类别才答名字，其余答空串 —— 期望类型不是枚举就没有归属可言。
+enumNameOfType|func(pool: TypePool, id: I32,) -> (String,):
+    if id < 0 || id >= len(pool.entries):
+        return ""
+    let entry = pool.entries[id]
+    if !isTypeClass(kind = entry.kind, expected = typeClassEnum):
+        return ""
+    return entry.name
+
+; 用例归属：期望类型是枚举且确实声明了该用例时优先，其次退回唯一候选。
+; 期望优先是主路 —— 同名用例只靠唯一候选分不出来。
+caseOwnerFor|func(world: MemberWorld, name: String, expected: Expectation,) -> (String,):
+    if expected.hasExpected:
+        let named = enumNameOfType(pool = world.types.pool, id = expected.typeId)
+        if len(named) > 0:
+            let symbol = lookupMemberByName(index = world.symbols, owner = named, name = name)
+            let ref = symbolDecl(world = world, symbol = symbol)
+            if ref.unit >= 0:
+                let decl = world.units[ref.unit].ast.decls[ref.decl]
+                if isVariantDeclCode(decl.kind):
+                    return named
+    return uniqueCaseOwner(index = world.symbols, name = name)
+
 ; 推一个表达式节点：缺位与已定型都直接返回；推不出不拦，后续语句照走。
-inferAtNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, state: WalkState,) -> (WalkState,):
+inferAtNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, state: WalkState, expected: Expectation,) -> (WalkState,):
     var out = state
     if node < 0 || node >= unit.ast.exprCount():
         return out
-    let one = inferNode(world = world, unit = unit, unitIndex = unitIndex, node = node, names = out.table, pool = out.pool, types = out.types, bytes = out.bytes)
+    let one = inferNode(world = world, unit = unit, unitIndex = unitIndex, node = node, names = out.table, pool = out.pool, types = out.types, bytes = out.bytes, expected = expected)
     out.pool = one.pool
     out.types = one.types
     return out
 
 ; 推语句的第 n 个子节点：子节点按源序排，缺位由 inferAtNode 挡掉。
+; 语句子节点：默认无期望；要带期望的调用方直接走 inferAtNode。
 inferStmtKid|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmtId: I32, index: I32, state: WalkState,) -> (WalkState,):
-    return inferAtNode(world = world, unit = unit, unitIndex = unitIndex, node = unit.ast.stmtChild(id = stmtId, index = index), state = state)
+    return inferAtNode(world = world, unit = unit, unitIndex = unitIndex, node = unit.ast.stmtChild(id = stmtId, index = index), state = state, expected = noExpectation())
 
 ; 模式登记：按被遍历表达式的容器分量给模式变量定型并入表；分量不够就少登记。
 registerLoopPattern|func(unit: CompilationUnit, unitIndex: I32, pattern: I32, source: I32, state: WalkState,) -> (WalkState,):
@@ -140,16 +165,22 @@ walkInferBlock|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, b
 ; 写回是给降载用的：降载读模式节点取声明类型，不必再解一次标注。
 walkInferVariable|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmtId: I32, state: WalkState,) -> (WalkState,):
     let stmt = unit.ast.stmtAt(stmtId)
-    var out = inferStmtKid(world = world, unit = unit, unitIndex = unitIndex, stmtId = stmtId, index = 1, state = state)
-    let pattern = unit.ast.stmtChild(id = stmtId, index = 0)
-    if pattern < 0 || !unit.ast.isIdentifierExpr(pattern):
-        return out
-    var typeId = -1
+    var out = state
+    var declared = -1
     if stmt.typeId >= 0:
         let resolved = annotationType(world = world, unit = unit, node = stmt.typeId, pool = out.pool)
         out.pool = resolved.pool
-        typeId = resolved.id
-    else:
+        declared = resolved.id
+    ; 初值：有标注就按标注作期望推 —— 前导点用例靠这一条定型，不是靠唯一候选。
+    var wanted = noExpectation()
+    if declared >= 0:
+        wanted = expectType(declared)
+    out = inferAtNode(world = world, unit = unit, unitIndex = unitIndex, node = unit.ast.stmtChild(id = stmtId, index = 1), state = out, expected = wanted)
+    let pattern = unit.ast.stmtChild(id = stmtId, index = 0)
+    if pattern < 0 || !unit.ast.isIdentifierExpr(pattern):
+        return out
+    var typeId = declared
+    if typeId < 0:
         typeId = exprTypeAt(table = out.types, unit = unitIndex, node = unit.ast.stmtChild(id = stmtId, index = 1))
     if typeId < 0:
         return out
@@ -214,6 +245,11 @@ walkInferStmt|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, st
     if ast.isAssignStmt(stmtId):
         let target = inferStmtKid(world = world, unit = unit, unitIndex = unitIndex, stmtId = stmtId, index = 0, state = state)
         return inferStmtKid(world = world, unit = unit, unitIndex = unitIndex, stmtId = stmtId, index = 1, state = target)
+    if ast.isReturnStmt(stmtId):
+        var wanted = noExpectation()
+        if state.returnType >= 0:
+            wanted = expectType(state.returnType)
+        return inferAtNode(world = world, unit = unit, unitIndex = unitIndex, node = unit.ast.stmtChild(id = stmtId, index = 0), state = state, expected = wanted)
     return inferStmtKid(world = world, unit = unit, unitIndex = unitIndex, stmtId = stmtId, index = 0, state = state)
 
 ; 连走若干语句子节点：从 from 起到末尾，缺位由 walkInferStmt 挡掉。
@@ -235,6 +271,10 @@ walkInferFunction|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32
     var inner = state
     inner.pool = built.pool
     inner.table = built.table
+    if decl.typeId >= 0:
+        let ret = annotationType(world = world, unit = unit, node = decl.typeId, pool = inner.pool)
+        inner.pool = ret.pool
+        inner.returnType = ret.id
     let walked = walkInferStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = decl.body, state = inner)
     var out = state
     out.pool = walked.pool
@@ -279,7 +319,7 @@ inferKids|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
     var kids = unit.ast.exprAt(node).kids
     var i = 0
     while i < len(kids):
-        let one = inferNode(world = world, unit = unit, unitIndex = unitIndex, node = kids[i], names = names, pool = out.pool, types = out.types, bytes = bytes)
+        let one = inferNode(world = world, unit = unit, unitIndex = unitIndex, node = kids[i], names = names, pool = out.pool, types = out.types, bytes = bytes, expected = noExpectation())
         out.pool = one.pool
         out.types = one.types
         i = i + 1
@@ -287,7 +327,7 @@ inferKids|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
     return out
 
 ; 推导一个节点：已定型的直接复用，其余按类别后序求值并写表。
-inferNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, pool: TypePool, types: ExprTypes, bytes: Array<U8>,) -> (InferResult,):
+inferNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, pool: TypePool, types: ExprTypes, bytes: Array<U8>, expected: Expectation,) -> (InferResult,):
     var out = InferResult()
     out.pool = pool
     out.types = types
@@ -308,7 +348,7 @@ inferNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
     if unit.ast.isCaseExpr(node):
         let expr = unit.ast.exprAt(node)
         let name = decodeRange(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
-        let owner = uniqueCaseOwner(index = world.symbols, name = name)
+        let owner = caseOwnerFor(world = world, name = name, expected = expected)
         if len(owner) > 0:
             out.typeId = nominalTypeId(world = world, name = owner)
             if out.typeId >= 0:
@@ -344,7 +384,7 @@ inferNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
 ; 成员：接收者先推；类型已知才问成员面，成员不存在答未写。
 inferMember|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, out: InferResult, bytes: Array<U8>,) -> (InferResult,):
     let receiver = unit.ast.childOf(id = node, index = 0)
-    let inner = inferNode(world = world, unit = unit, unitIndex = unitIndex, node = receiver, names = names, pool = out.pool, types = out.types, bytes = bytes)
+    let inner = inferNode(world = world, unit = unit, unitIndex = unitIndex, node = receiver, names = names, pool = out.pool, types = out.types, bytes = bytes, expected = noExpectation())
     var done = out
     done.pool = inner.pool
     done.types = inner.types
@@ -362,24 +402,54 @@ inferMember|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node
     return done
 
 ; 调用：先推被调与实参，顶层函数取声明返回类型，内建交给调用面。
-inferCall|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, out: InferResult, bytes: Array<U8>,) -> (InferResult,):
-    let kids = inferKids(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, pool = out.pool, types = out.types, bytes = bytes)
+; 实参：形参表可用且全为位置实参时逐个传期望；有标签就不传 —— 位置对不上会把用例定错枚举。
+inferActuals|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, params: Array<CallParam>, names: NameTable, out: InferResult, bytes: Array<U8>,) -> (InferResult,):
     var done = out
-    done.pool = kids.pool
-    done.types = kids.types
-    let callee = calleeNode(unit = unit, node = node)
-    if callee < 0 || !unit.ast.isIdentifierExpr(callee):
+    let expr = unit.ast.exprAt(node)
+    var labeled = false
+    var i = 1
+    while i < len(expr.kids):
+        if unit.ast.isLabeledArgument(expr.kids[i]):
+            labeled = true
+        i = i + 1
+    var positional = !labeled && len(params) > 0 && len(expr.kids) - 1 <= len(params)
+    i = 1
+    while i < len(expr.kids):
+        var wanted = noExpectation()
+        let at = i - 1
+        if positional && at < len(params) && params[at].typeId >= 0:
+            wanted = expectType(params[at].typeId)
+        let one = inferNode(world = world, unit = unit, unitIndex = unitIndex, node = expr.kids[i], names = names, pool = done.pool, types = done.types, bytes = bytes, expected = wanted)
+        done.pool = one.pool
+        done.types = one.types
+        i = i + 1
+    done.typeId = unsetTypeId()
+    return done
+
+inferCall|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, out: InferResult, bytes: Array<U8>,) -> (InferResult,):
+    var done = out
+    let expr = unit.ast.exprAt(node)
+    if len(expr.kids) < 1:
         return done
+    let callee = expr.kids[0]
+    let head = inferNode(world = world, unit = unit, unitIndex = unitIndex, node = callee, names = names, pool = done.pool, types = done.types, bytes = bytes, expected = noExpectation())
+    done.pool = head.pool
+    done.types = head.types
+    if !unit.ast.isIdentifierExpr(callee):
+        return inferActuals(world = world, unit = unit, unitIndex = unitIndex, node = node, params = [], names = names, out = done, bytes = bytes)
     let calleeExpr = unit.ast.exprAt(callee)
     let name = decodeRange(bytes = bytes, start = calleeExpr.nameStart, end = calleeExpr.nameEnd)
     let symbol = world.table.topIndex(keyOfText(name))
     if symbol >= 0:
+        let ref = symbolDecl(world = world, symbol = symbol)
+        done = inferActuals(world = world, unit = unit, unitIndex = unitIndex, node = node, params = declParams(world = world, ref = ref), names = names, out = done, bytes = bytes)
         let ret = returnTypeOf(world = world, symbol = symbol, pool = done.pool)
         done.pool = ret.pool
         if ret.id >= 0:
             done.typeId = ret.id
             done.types = writeExprType(table = done.types, unit = unitIndex, node = node, typeId = done.typeId)
         return done
+    done = inferActuals(world = world, unit = unit, unitIndex = unitIndex, node = node, params = [], names = names, out = done, bytes = bytes)
     let builtin = findBuiltinFunction(functions = world.functions, name = name)
     if builtin < 0:
         return done
@@ -492,7 +562,7 @@ inferUnitExprs|func(world: MemberWorld, unitIndex: I32, types: ExprTypes,) -> (I
     var i = 0
     while i < unit.ast.exprCount():
         if exprTypeAt(table = out.types, unit = unitIndex, node = i) < 0:
-            let one = inferNode(world = world, unit = unit, unitIndex = unitIndex, node = i, names = spare, pool = out.pool, types = out.types, bytes = bytes)
+            let one = inferNode(world = world, unit = unit, unitIndex = unitIndex, node = i, names = spare, pool = out.pool, types = out.types, bytes = bytes, expected = noExpectation())
             out.pool = one.pool
             out.types = one.types
         i = i + 1

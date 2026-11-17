@@ -183,3 +183,40 @@ types: ExprTypes = ExprTypes()
             assert(未定, "未定型的只应是被调名或循环模式，节点 " + countText(i))
         i = i + 1
     return
+
+; 首个前导点用例节点：`.<用例>` 形态，用于点验期望送没送到。
+首个用例节点|func(_unit: CompilationUnit,) -> (I32,):
+    var i = 0
+    while i < _unit.ast.exprCount():
+        if _unit.ast.isCaseExpr(i):
+            return i
+        i = i + 1
+    return -1
+
+; 期望下推·标注位：`let v: 甲 = .x` 的用例归属由标注给出。
+; 样例里两个枚举各有一个 x，唯一候选不成立 —— 这条只能由期望通过。
+期望下推标注位|test() -> ():
+    let 样例 = 造推导样例("[甲]\nx\n\n[乙]\nx\n\n取|func() -> (甲,):\n    let v: 甲 = .x\n    return v\n")
+    let 推 = inferUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
+    let 用例 = 首个用例节点(样例.unit)
+    assert(用例 >= 0, "样例应含前导点用例")
+    assert(typeText(pool = 推.pool, id = exprTypeAt(table = 推.types, unit = 0, node = 用例)) == "甲", "标注位应把期望送到用例")
+    return
+
+; 期望下推·实参位：`收(.x)` 的用例归属由形参 `_a: 乙` 给出。
+期望下推实参位|test() -> ():
+    let 样例 = 造推导样例("[甲]\nx\n\n[乙]\nx\n\n收|func(_a: 乙,) -> (I32,):\n    return 1\n\n用|func() -> (I32,):\n    return 收(.x)\n")
+    let 推 = inferUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
+    let 用例 = 首个用例节点(样例.unit)
+    assert(用例 >= 0, "样例应含前导点用例")
+    assert(typeText(pool = 推.pool, id = exprTypeAt(table = 推.types, unit = 0, node = 用例)) == "乙", "实参位应按形参送期望")
+    return
+
+; 期望下推·返回位：`return .x` 的用例归属由函数的返回类型给出。
+期望下推返回位|test() -> ():
+    let 样例 = 造推导样例("[甲]\nx\n\n[乙]\nx\n\n取|func() -> (乙,):\n    return .x\n")
+    let 推 = inferUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
+    let 用例 = 首个用例节点(样例.unit)
+    assert(用例 >= 0, "样例应含前导点用例")
+    assert(typeText(pool = 推.pool, id = exprTypeAt(table = 推.types, unit = 0, node = 用例)) == "乙", "返回位应按返回类型送期望")
+    return
