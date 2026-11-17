@@ -1,6 +1,7 @@
 [expr|import]
 _syntax = "../../../syntax"
 _semantics = "../../../semantics"
+_module_loader = "../../../module-loader"
 
 ; 表达式降载：AST 节点 + 推导表 + 局部帧 → IR 节点。
 ; 运算符按符号映射，不看记号码；类型一律取自推导表经映射后的下标。
@@ -292,6 +293,15 @@ exprIrType|func(map: TypeMap, types: ExprTypes, unit: CompilationUnit, unitIndex
             return frame.locals[at].typeId
     return fallbackIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = frame, bytes = bytes, id = id)
 
+; 报写法需改：与 missExpr 分开，因为这句话不是能力缺口，而是调用点该换写法。
+missNeed|func(out: LowerExpr, unit: CompilationUnit, id: I32, what: String,) -> (LowerExpr,):
+    var done = out
+    done.failed = true
+    done.detail = what
+    if id >= 0 && id < unit.ast.exprCount():
+        done.offset = unit.ast.exprAt(id).start
+    return done
+
 ; 缺类型：类型未定或不可映射；偏移记在结果上，由调用方写进错误表。
 ; 细节带类别名，标识符另带拼写：同一句「类型未定」的修法按类别与名字分，分不出就分不出批。
 missType|func(out: LowerExpr, unit: CompilationUnit, id: I32, bytes: Array<U8>,) -> (LowerExpr,):
@@ -327,9 +337,16 @@ takeFailure|func(out: LowerExpr, one: LowerExpr,) -> (LowerExpr,):
     return done
 
 ; 标识符：局部与顶层符号同形，都降成按名读；槽位由帧给出。
+; 裸标识符：名字表命中即按变量读；未命中但命中用例表，说明写成了裸名用例。
+; 裸名用例不成立：用例是枚举的成员，必须写成前导点或限定形式，故报缺口推动改写。
 lowerIdentifier|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
     let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = out.frame, bytes = bytes, id = id)
     if typeId < 0:
+        let expr = unit.ast.exprAt(id)
+        let name = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
+        let candidates = caseCandidateCount(index = out.frame.world.symbols, name = name)
+        if candidates > 0:
+            return missNeed(out = out, unit = unit, id = id, what = "裸名用例 " + name + " 须写成 ." + name + "（候选枚举 " + countText(candidates) + " 个）")
         return missType(out = out, unit = unit, id = id, bytes = bytes)
     let expr = unit.ast.exprAt(id)
     let name = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
@@ -845,6 +862,54 @@ lowerSubscript|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map
     done.id = inserted.id
     return done
 
+; 用例声明序：枚举体里按声明顺序数，从 0 起，与宿主 tag 同一口径。
+; 不按符号表下标数：符号登记还含方法，下标与声明序不等。
+enumCaseTag|func(frame: LowerFrame, owner: String, caseName: String,) -> (I32,):
+    let symbol = lookupTopByName(index = frame.world.symbols, name = owner)
+    let ref = symbolDecl(world = frame.world, symbol = symbol)
+    if ref.unit < 0:
+        return -1
+    let unit = frame.world.units[ref.unit]
+    let decl = unit.ast.decls[ref.decl]
+    let bytes = unitBytes(unit)
+    var tag = 0
+    var i = 0
+    while i < len(decl.kids):
+        let child = unit.ast.decls[decl.kids[i]]
+        if isVariantDeclCode(child.kind):
+            let name = decodeSpelling(bytes = bytes, start = child.nameStart, end = child.nameEnd)
+            if name == caseName:
+                return tag
+            tag = tag + 1
+        i = i + 1
+    return -1
+
+; 前导点用例：候选枚举恰一个才定型并发构造，其余按缺口报。
+; 用例是枚举的成员，知道所属枚举才知道类型 —— 前导点只是把枚举名写成糖。
+lowerCaseValue|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
+    let expr = unit.ast.exprAt(id)
+    let name = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
+    let candidates = caseCandidateCount(index = out.frame.world.symbols, name = name)
+    if candidates != 1:
+        return missNeed(out = out, unit = unit, id = id, what = "用例 ." + name + " 缺类型信息：候选枚举 " + countText(candidates) + " 个")
+    let owner = caseCandidateOwner(index = out.frame.world.symbols, name = name, nth = 0)
+    let tag = enumCaseTag(frame = out.frame, owner = owner, caseName = name)
+    if tag < 0:
+        return missNeed(out = out, unit = unit, id = id, what = "用例 ." + name + " 不在枚举 " + owner + " 的声明序里")
+    let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = out.frame, bytes = bytes, id = id)
+    if typeId < 0:
+        return missType(out = out, unit = unit, id = id, bytes = bytes)
+    let placed = internText(texts = out.texts, value = name)
+    var node = irMakeNode(kind = irExprTag(irEnumConstruct), typeId = typeId)
+    node.op = tag
+    node.text = placed.id
+    let inserted = irAppendNode(pool = out.pool, node = node)
+    var done = out
+    done.texts = placed.texts
+    done.pool = inserted.pool
+    done.id = inserted.id
+    return done
+
 ; 字符串字面量取值：去首尾引号并按转义表还原；`\0` 之后的内容全部丢弃。
 ; 字节先拼再整体解码：逐段解码会把转义切开的序列变成替换字符。
 stringLiteralText|func(bytes: Array<U8>, start: I32, end: I32,) -> (String,):
@@ -962,6 +1027,8 @@ lowerExpr|func(pool: IrNodePool, texts: Array<String>, map: TypeMap, types: Expr
         return lowerStringLiteral(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
     if unit.ast.isArrayExpr(id):
         return lowerArrayLiteral(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
+    if unit.ast.isCaseExpr(id):
+        return lowerCaseValue(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
     if unit.ast.isIdentifierExpr(id):
         return lowerIdentifier(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
     if unit.ast.isBinaryExpr(id):
