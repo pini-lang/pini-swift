@@ -46,7 +46,7 @@ typeErrors: Array<LowerError> = []
 (LowerState)
 map: TypeMap = TypeMap()
 nodes: IrNodePool = IrNodePool()
-texts: Array<String> = []
+texts: IrTextPool = IrTextPool()
 functions: Array<IrFunction> = []
 errors: Array<LowerError> = []
 world: MemberWorld = MemberWorld()
@@ -184,7 +184,7 @@ lowerWorkspace|func(input: LowerWorld,) -> (IrModule,):
     var out = IrModule()
     out.types = state.map.pool
     out.nodes = state.nodes
-    out.texts = state.texts
+    out.texts = state.texts.items
     out.functions = state.functions
     out.errors = state.errors
     out.typeErrors = state.map.errors

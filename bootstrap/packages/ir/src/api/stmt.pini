@@ -9,7 +9,7 @@ _semantics = "../../../semantics"
 ; 语句降载结果：池、文本池、帧、语句产出的节点序列与失败原因。
 (LowerStmt)
 pool: IrNodePool = IrNodePool()
-texts: Array<String> = []
+texts: IrTextPool = IrTextPool()
 frame: LowerFrame = LowerFrame()
 ids: Array<I32> = []
 failed: Bool = false
@@ -95,7 +95,7 @@ lowerVariableStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, 
 ; 右值结果：池、文本池、帧、节点下标与失败原因；六条写路共用一次右值降载。
 (RhsResult)
 pool: IrNodePool = IrNodePool()
-texts: Array<String> = []
+texts: IrTextPool = IrTextPool()
 frame: LowerFrame = LowerFrame()
 id: I32 = -1
 failed: Bool = false
@@ -130,7 +130,7 @@ appendStmtNode|func(out: LowerStmt, node: IrNode,) -> (LowerStmt,):
     return done
 
 ; 字段读：接收者与字段名给定，造一个按声明序取的字段读。
-makeFieldGet|func(pool: IrNodePool, texts: Array<String>, fieldName: String, typeId: I32, base: I32,) -> (IrLoadNode,):
+makeFieldGet|func(pool: IrNodePool, texts: IrTextPool, fieldName: String, typeId: I32, base: I32,) -> (IrLoadNode,):
     let placed = internText(texts = texts, value = fieldName)
     var node = irMakeNode(kind = irExprTag(.irFieldGet), typeId = typeId)
     node.text = placed.id

@@ -47,11 +47,24 @@ last: I32 = -1
 state: Array<I32> = []
 cycle: Bool = false
 
-; 类型表：池、按路径与声明序排好的绑定、聚合成员；错误统一挂在池上。
+; 类型表：池、按路径与声明序排好的绑定、聚合成员与每单元的绑定起点；错误统一挂在池上。
 (TypeTable)
 pool: TypePool = TypePool()
 bindings: Array<TypeBinding> = []
 members: Array<TypeMember> = []
+unitStart: Array<I32> = []
+
+; 每单元的绑定起点：绑定按单元升序连续追加，扫一遍即得各单元首条下标。
+unitStarts|func(bindings: Array<TypeBinding>, unitCount: I32,) -> (Array<I32>,):
+    var out: Array<I32> = []
+    var at = 0
+    var u = 0
+    while u < unitCount:
+        while at < len(bindings) && bindings[at].unit < u:
+            at = at + 1
+        out = out.append(at)
+        u = u + 1
+    return out
 
 ((TypeTable))
 ; 可用：池没有类型错误。
@@ -63,10 +76,15 @@ errorAt|self(_index: I32,) -> (TypeError,):
     return self.pool.errorAt(_index)
 bindingCount|self() -> (I32,):
     return len(self.bindings)
-; 声明查类型：同一单元内同一声明只留一条绑定；找不到答 -1。
+; 声明查类型：绑定按单元升序连续追加，先跳到该单元的首条再顺序扫，越过单元即止。
+; 同一单元内同一声明只留一条绑定；找不到答 -1。
 typeOf|self(unit: I32, decl: I32,) -> (I32,):
     var i = 0
+    if unit >= 0 && unit < len(self.unitStart):
+        i = self.unitStart[unit]
     while i < len(self.bindings):
+        if self.bindings[i].unit > unit:
+            return -1
         if self.bindings[i].unit == unit && self.bindings[i].decl == decl:
             return self.bindings[i].typeId
         i = i + 1
@@ -504,6 +522,7 @@ resolvePackage|func(units: Array<CompilationUnit>, table: SymbolTable,) -> (Type
     out.pool = stage.pool
     out.bindings = stage.bindings
     out.members = stage.members
+    out.unitStart = unitStarts(bindings = stage.bindings, unitCount = len(world.units))
     return out
 
 ; 字段环：先判直接自引用，再沿值语义链走一遍间接环；对象与堆容器到此为止。
