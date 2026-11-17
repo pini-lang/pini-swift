@@ -47,6 +47,7 @@ main|func() -> ():
         input.world = 世界
         input.types = 填.types
         let module = lowerWorkspace(input = input)
+        print("types-ok", typedExprCount(table = 填.types))
         print("lower-ok", len(module.functions), len(module.errors), emptyBodyCount(module = module), len(module.typeErrors))
         printGapSummary(module = module)
         return
@@ -124,3 +125,13 @@ printGapSummary|func(module: IrModule,) -> ():
         shown = shown + 1
         i = i + 1
     return
+
+; 定型读数：全工作区已定型的表达式槽数；分母是表达式池总长，两者相减即未定槽。
+; 这条读数只用于比对推理面改动前后的覆盖面，不参与任何判定。
+typedExprCount|func(table: ExprTypes,) -> (I32,):
+    var total = 0
+    var u = 0
+    while u < len(table.units):
+        total = total + validCount(table = table, unit = u)
+        u = u + 1
+    return total

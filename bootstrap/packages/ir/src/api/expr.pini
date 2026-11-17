@@ -293,14 +293,17 @@ exprIrType|func(map: TypeMap, types: ExprTypes, unit: CompilationUnit, unitIndex
     return fallbackIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = frame, bytes = bytes, id = id)
 
 ; 缺类型：类型未定或不可映射；偏移记在结果上，由调用方写进错误表。
-; 细节带类别名：同一句「类型未定」在各类别上的修法不同，不带名字就分不出批。
-missType|func(out: LowerExpr, unit: CompilationUnit, id: I32,) -> (LowerExpr,):
+; 细节带类别名，标识符另带拼写：同一句「类型未定」的修法按类别与名字分，分不出就分不出批。
+missType|func(out: LowerExpr, unit: CompilationUnit, id: I32, bytes: Array<U8>,) -> (LowerExpr,):
     var done = out
     done.failed = true
     done.detail = "表达式类型未定"
     if id >= 0 && id < unit.ast.exprCount():
         done.offset = unit.ast.exprAt(id).start
         done.detail = done.detail + " " + exprKindName(unit.ast.exprAt(id).kind)
+        if unit.ast.isIdentifierExpr(id):
+            let node = unit.ast.exprAt(id)
+            done.detail = done.detail + " " + decodeSpelling(bytes = bytes, start = node.nameStart, end = node.nameEnd)
     return done
 
 ; 缺能力：类别尚未降载，带类别与位置，不产占位节点。
@@ -327,7 +330,7 @@ takeFailure|func(out: LowerExpr, one: LowerExpr,) -> (LowerExpr,):
 lowerIdentifier|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
     let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = out.frame, bytes = bytes, id = id)
     if typeId < 0:
-        return missType(out = out, unit = unit, id = id)
+        return missType(out = out, unit = unit, id = id, bytes = bytes)
     let expr = unit.ast.exprAt(id)
     let name = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
     let placed = internText(texts = out.texts, value = name)
@@ -359,7 +362,7 @@ lowerBinary|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: T
         i = i + 1
     let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
     if typeId < 0:
-        return missType(out = done, unit = unit, id = id)
+        return missType(out = done, unit = unit, id = id, bytes = bytes)
     let spelling = opSymbol(expr.op)
     if spelling == "&&":
         let inserted = addIrNode(pool = done.pool, kind = irExprTag(irShortCircuit), typeId = typeId, op = irLogicalTag(irLogicalAnd), kids = kids)
@@ -400,7 +403,7 @@ lowerUnary|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: Ty
         return missExpr(out = done, unit = unit, id = id, what = "一元运算符 " + spelling)
     let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
     if typeId < 0:
-        return missType(out = done, unit = unit, id = id)
+        return missType(out = done, unit = unit, id = id, bytes = bytes)
     let inserted = addIrNode(pool = done.pool, kind = irExprTag(irUnary), typeId = typeId, op = op, kids = kids)
     done.pool = inserted.pool
     done.id = inserted.id
@@ -662,7 +665,7 @@ lowerNamedCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map
         return missExpr(out = done, unit = unit, id = id, what = order.detail)
     let typeId = callResultType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id, ret = ret)
     if typeId == -2:
-        return missType(out = done, unit = unit, id = id)
+        return missType(out = done, unit = unit, id = id, bytes = bytes)
     var kids: Array<I32> = []
     if leading >= 0:
         kids = kids.append(leading)
@@ -690,7 +693,7 @@ lowerPlainCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map
         return done
     let typeId = callResultType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id, ret = -1)
     if typeId == -2:
-        return missType(out = done, unit = unit, id = id)
+        return missType(out = done, unit = unit, id = id, bytes = bytes)
     var kids: Array<I32> = []
     if leading >= 0:
         kids = kids.append(leading)
@@ -805,7 +808,7 @@ lowerMember|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: T
         return takeFailure(out = done, one = one)
     let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
     if typeId < 0:
-        return missType(out = done, unit = unit, id = id)
+        return missType(out = done, unit = unit, id = id, bytes = bytes)
     let fieldName = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
     let placed = internText(texts = done.texts, value = fieldName)
     var node = irMakeNode(kind = irExprTag(irFieldGet), typeId = typeId)
@@ -836,7 +839,7 @@ lowerSubscript|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map
         i = i + 1
     let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
     if typeId < 0:
-        return missType(out = done, unit = unit, id = id)
+        return missType(out = done, unit = unit, id = id, bytes = bytes)
     let inserted = addIrNode(pool = done.pool, kind = irExprTag(irSubscriptGet), typeId = typeId, op = 0, kids = kids)
     done.pool = inserted.pool
     done.id = inserted.id
@@ -886,7 +889,7 @@ stringLiteralText|func(bytes: Array<U8>, start: I32, end: I32,) -> (String,):
 lowerStringLiteral|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
     let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = out.frame, bytes = bytes, id = id)
     if typeId < 0:
-        return missType(out = out, unit = unit, id = id)
+        return missType(out = out, unit = unit, id = id, bytes = bytes)
     let expr = unit.ast.exprAt(id)
     let value = stringLiteralText(bytes = bytes, start = expr.start, end = expr.end)
     let placed = internText(texts = out.texts, value = value)
@@ -916,7 +919,7 @@ lowerArrayLiteral|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, 
         i = i + 1
     let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
     if typeId < 0:
-        return missType(out = done, unit = unit, id = id)
+        return missType(out = done, unit = unit, id = id, bytes = bytes)
     let inserted = addIrNode(pool = done.pool, kind = irExprTag(irArrayLiteral), typeId = typeId, op = 0, kids = kids)
     done.pool = inserted.pool
     done.id = inserted.id
@@ -935,7 +938,7 @@ lowerExpr|func(pool: IrNodePool, texts: Array<String>, map: TypeMap, types: Expr
     if unit.ast.isIntegerExpr(id):
         let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = frame, bytes = bytes, id = id)
         if typeId < 0:
-            return missType(out = out, unit = unit, id = id)
+            return missType(out = out, unit = unit, id = id, bytes = bytes)
         let expr = unit.ast.exprAt(id)
         let spelling = decodeSpelling(bytes = bytes, start = expr.start, end = expr.end)
         var node = irMakeNode(kind = irExprTag(irIntConst), typeId = typeId)
@@ -947,7 +950,7 @@ lowerExpr|func(pool: IrNodePool, texts: Array<String>, map: TypeMap, types: Expr
     if unit.ast.isBoolExpr(id):
         let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = frame, bytes = bytes, id = id)
         if typeId < 0:
-            return missType(out = out, unit = unit, id = id)
+            return missType(out = out, unit = unit, id = id, bytes = bytes)
         var node = irMakeNode(kind = irExprTag(irBoolConst), typeId = typeId)
         if unit.ast.isTrueExpr(id):
             node.intValue = 1

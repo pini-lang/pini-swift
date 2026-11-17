@@ -2,9 +2,9 @@
 _syntax = "../../../syntax"
 _module_loader = "../../../module-loader"
 
-; 类型推导：后序求每个表达式节点的类型，写进表达式类型表，不产诊断。
-; 只推能唯一确定类型的节点：名字同名不同类型记为歧义，宁可不推也不误报。
-; 推不出的节点留未写，调用方的判定面按既有「未定即放过」口径处理。
+; 类型推导：按函数、按语句序求表达式类型，写进类型表，不产诊断。
+; 名字表按函数分组并在语句序里增量登记，`let a = f(x)` 之后 a 及其下游因此可推。
+; 同一函数内同名异型仍记歧义；推不出的节点留未写，调用方按「未定即放过」处理。
 
 ; 名字类型：名字、类型下标与歧义标记；歧义来自同名不同型的绑定。
 (NameType)
@@ -70,16 +70,79 @@ probeWorld|func(world: MemberWorld, pool: TypePool,) -> (MemberWorld,):
     out.types = table
     return out
 
-; 变量声明入表：有标注按标注，无标注且初值是字面量按字面量，其余跳过。
-; 字节视图由调用方传：整单元只转一次，逐语句复用。
-noteVariable|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmtId: I32, bytes: Array<U8>, out: NameBuild,) -> (NameBuild,):
+; 推导状态：类型表、池、函数级名字表与字节视图一并传递；名字表出函数即弃，不跨函数复用。
+(WalkState)
+types: ExprTypes = ExprTypes()
+pool: TypePool = TypePool()
+table: NameTable = NameTable()
+bytes: Array<U8> = []
+
+; 函数名表：自身与参数先入表；方法体里的局部声明在语句序里增量加入。
+; 自身按所属类型的池下标入表，`self.字段` 的接收者因此有型可查；非方法传 -1。
+functionNameTable|func(world: MemberWorld, unit: CompilationUnit, declId: I32, ownerType: I32, pool: TypePool, bytes: Array<U8>,) -> (NameBuild,):
+    var out = NameBuild()
+    out.pool = pool
+    let decl = unit.ast.decls[declId]
+    if decl.isSelf:
+        out.table = noteName(table = out.table, name = "self", typeId = ownerType)
+    var i = 0
+    while i < len(decl.kids):
+        let param = unit.ast.decls[decl.kids[i]]
+        if isParamDeclCode(param.kind):
+            let name = decodeRange(bytes = bytes, start = param.nameStart, end = param.nameEnd)
+            let resolved = annotationType(world = world, unit = unit, node = param.typeId, pool = out.pool)
+            out.pool = resolved.pool
+            out.table = noteName(table = out.table, name = name, typeId = resolved.id)
+        i = i + 1
+    return out
+
+; 推一个表达式节点：缺位与已定型都直接返回；推不出不拦，后续语句照走。
+inferAtNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, state: WalkState,) -> (WalkState,):
+    var out = state
+    if node < 0 || node >= unit.ast.exprCount():
+        return out
+    let one = inferNode(world = world, unit = unit, unitIndex = unitIndex, node = node, names = out.table, pool = out.pool, types = out.types, bytes = out.bytes)
+    out.pool = one.pool
+    out.types = one.types
+    return out
+
+; 推语句的第 n 个子节点：子节点按源序排，缺位由 inferAtNode 挡掉。
+inferStmtKid|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmtId: I32, index: I32, state: WalkState,) -> (WalkState,):
+    return inferAtNode(world = world, unit = unit, unitIndex = unitIndex, node = unit.ast.stmtChild(id = stmtId, index = index), state = state)
+
+; 模式登记：按被遍历表达式的容器分量给模式变量定型并入表；分量不够就少登记。
+registerLoopPattern|func(unit: CompilationUnit, unitIndex: I32, pattern: I32, source: I32, state: WalkState,) -> (WalkState,):
+    var out = state
+    let sourceType = exprTypeAt(table = out.types, unit = unitIndex, node = source)
+    let components = loopComponents(pool = out.pool, id = sourceType)
+    let fields = loopPatternFields(unit = unit, pattern = pattern)
+    var i = 0
+    while i < len(fields):
+        if i < len(components) && unit.ast.isIdentifierExpr(fields[i]):
+            let expr = unit.ast.exprAt(fields[i])
+            let name = decodeRange(bytes = out.bytes, start = expr.nameStart, end = expr.nameEnd)
+            out.types = writeExprType(table = out.types, unit = unitIndex, node = fields[i], typeId = components[i])
+            out.table = noteName(table = out.table, name = name, typeId = components[i])
+        i = i + 1
+    return out
+
+; 块：逐条语句按源序走；语句之间共享同一张函数级名字表，增量的用处正在这里。
+walkInferBlock|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, blockId: I32, state: WalkState,) -> (WalkState,):
+    var out = state
+    let kids = unit.ast.stmtAt(blockId).kids
+    var i = 0
+    while i < len(kids):
+        out = walkInferStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = kids[i], state = out)
+        i = i + 1
+    return out
+
+; 变量声明：先推初值，再按标注或初值类型登记名字，标注类型同时写回模式节点。
+; 写回是给降载用的：降载读模式节点取声明类型，不必再解一次标注。
+walkInferVariable|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmtId: I32, state: WalkState,) -> (WalkState,):
     let stmt = unit.ast.stmtAt(stmtId)
+    var out = inferStmtKid(world = world, unit = unit, unitIndex = unitIndex, stmtId = stmtId, index = 1, state = state)
     let pattern = unit.ast.stmtChild(id = stmtId, index = 0)
     if pattern < 0 || !unit.ast.isIdentifierExpr(pattern):
-        return out
-    let expr = unit.ast.exprAt(pattern)
-    let name = decodeRange(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
-    if name == "_":
         return out
     var typeId = -1
     if stmt.typeId >= 0:
@@ -87,33 +150,115 @@ noteVariable|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stm
         out.pool = resolved.pool
         typeId = resolved.id
     else:
-        let init = unit.ast.stmtChild(id = stmtId, index = 1)
-        if init >= 0 && init < unit.ast.exprCount() && unit.ast.isLiteralExpr(init):
-            let typed = checkLiteral(unit = unit, unitIndex = unitIndex, node = init, expectation = noExpectation(), pool = out.pool, types = ExprTypes())
-            out.pool = typed.pool
-            if !typed.failed:
-                typeId = typed.typeId
-    out.table = noteName(table = out.table, name = name, typeId = typeId)
+        typeId = exprTypeAt(table = out.types, unit = unitIndex, node = unit.ast.stmtChild(id = stmtId, index = 1))
+    if typeId < 0:
+        return out
+    let expr = unit.ast.exprAt(pattern)
+    let name = decodeRange(bytes = out.bytes, start = expr.nameStart, end = expr.nameEnd)
+    out.types = writeExprType(table = out.types, unit = unitIndex, node = pattern, typeId = typeId)
+    if name != "_":
+        out.table = noteName(table = out.table, name = name, typeId = typeId)
     return out
 
-; 建名字表：先收全部参数，再收顶层语句里的变量声明；字节视图只转一次。
-buildNameTable|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, bytes: Array<U8>,) -> (NameBuild,):
-    var out = NameBuild()
-    out.pool = world.types.pool
+; 遍历与展开：被遍历表先推，模式变量按分量定型，体与步进随后走。
+walkInferLoopLike|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmtId: I32, state: WalkState,) -> (WalkState,):
+    var out = inferStmtKid(world = world, unit = unit, unitIndex = unitIndex, stmtId = stmtId, index = 1, state = state)
+    out = registerLoopPattern(unit = unit, unitIndex = unitIndex, pattern = unit.ast.stmtChild(id = stmtId, index = 0), source = unit.ast.stmtChild(id = stmtId, index = 1), state = out)
+    out = walkInferStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = unit.ast.stmtChild(id = stmtId, index = 2), state = out)
+    return walkInferStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = unit.ast.stmtChild(id = stmtId, index = 3), state = out)
+
+; 条件语句：kids 交替是「条件、块」，末尾可能是孤立的分支块；由奇偶定尾部，不按节点池猜。
+walkInferIf|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmtId: I32, state: WalkState,) -> (WalkState,):
+    var out = state
+    let count = len(unit.ast.stmtAt(stmtId).kids)
+    var k = 0
+    while 2 * k + 1 < count:
+        out = inferStmtKid(world = world, unit = unit, unitIndex = unitIndex, stmtId = stmtId, index = 2 * k, state = out)
+        out = walkInferStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = unit.ast.stmtChild(id = stmtId, index = 2 * k + 1), state = out)
+        k = k + 1
+    var rest = count
+    while rest >= 2:
+        rest = rest - 2
+    if rest == 1 && count >= 3:
+        out = walkInferStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = unit.ast.stmtChild(id = stmtId, index = count - 1), state = out)
+    return out
+
+; 匹配语句：只推主题与各分支块；模式里的绑定名不猜类型 —— 枚举载荷不在推导面。
+walkInferMatch|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmtId: I32, state: WalkState,) -> (WalkState,):
+    var out = inferStmtKid(world = world, unit = unit, unitIndex = unitIndex, stmtId = stmtId, index = 0, state = state)
+    let count = len(unit.ast.stmtAt(stmtId).kids)
+    var i = 1
+    while i + 1 < count:
+        out = walkInferStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = unit.ast.stmtChild(id = stmtId, index = i + 1), state = out)
+        i = i + 2
+    return out
+
+; 语句分派：语句序即源序，分支与块递归；未列的类别没有要推的表达式，直接过。
+walkInferStmt|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmtId: I32, state: WalkState,) -> (WalkState,):
+    if stmtId < 0 || stmtId >= unit.ast.stmtCount():
+        return state
+    let ast = unit.ast
+    if ast.isBlockStmt(stmtId):
+        return walkInferBlock(world = world, unit = unit, unitIndex = unitIndex, blockId = stmtId, state = state)
+    if ast.isVariableStmt(stmtId):
+        return walkInferVariable(world = world, unit = unit, unitIndex = unitIndex, stmtId = stmtId, state = state)
+    if ast.isIfStmt(stmtId):
+        return walkInferIf(world = world, unit = unit, unitIndex = unitIndex, stmtId = stmtId, state = state)
+    if ast.isForStmt(stmtId) || ast.isUnrollStmt(stmtId):
+        return walkInferLoopLike(world = world, unit = unit, unitIndex = unitIndex, stmtId = stmtId, state = state)
+    if ast.isMatchStmt(stmtId):
+        return walkInferMatch(world = world, unit = unit, unitIndex = unitIndex, stmtId = stmtId, state = state)
+    if ast.isWhileStmt(stmtId) || ast.isDeferStmt(stmtId):
+        let cond = inferStmtKid(world = world, unit = unit, unitIndex = unitIndex, stmtId = stmtId, index = 0, state = state)
+        return walkStmtKidsFrom(world = world, unit = unit, unitIndex = unitIndex, stmtId = stmtId, from = 1, state = cond)
+    if ast.isAssignStmt(stmtId):
+        let target = inferStmtKid(world = world, unit = unit, unitIndex = unitIndex, stmtId = stmtId, index = 0, state = state)
+        return inferStmtKid(world = world, unit = unit, unitIndex = unitIndex, stmtId = stmtId, index = 1, state = target)
+    return inferStmtKid(world = world, unit = unit, unitIndex = unitIndex, stmtId = stmtId, index = 0, state = state)
+
+; 连走若干语句子节点：从 from 起到末尾，缺位由 walkInferStmt 挡掉。
+walkStmtKidsFrom|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmtId: I32, from: I32, state: WalkState,) -> (WalkState,):
+    var out = state
+    let count = len(unit.ast.stmtAt(stmtId).kids)
+    var i = from
+    while i < count:
+        out = walkInferStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = unit.ast.stmtChild(id = stmtId, index = i), state = out)
+        i = i + 1
+    return out
+
+; 函数体：本函数的名字表先建好再走体，走过即弃 —— 名字表按函数分组，跨函数不再互相干扰。
+walkInferFunction|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, declId: I32, ownerType: I32, state: WalkState,) -> (WalkState,):
+    let decl = unit.ast.decls[declId]
+    if decl.isForeign || decl.body < 0:
+        return state
+    let built = functionNameTable(world = world, unit = unit, declId = declId, ownerType = ownerType, pool = state.pool, bytes = state.bytes)
+    var inner = state
+    inner.pool = built.pool
+    inner.table = built.table
+    let walked = walkInferStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = decl.body, state = inner)
+    var out = state
+    out.pool = walked.pool
+    out.types = walked.types
+    return out
+
+; 逐声明走体：顶层函数直接走，类型与扩展块下钻到成员函数，所属类型按块名解一次。
+walkInferDecls|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, state: WalkState,) -> (WalkState,):
+    var out = state
     var d = 0
     while d < unit.ast.declCount():
         let decl = unit.ast.decls[d]
-        if isParamDeclCode(decl.kind):
-            let name = decodeRange(bytes = bytes, start = decl.nameStart, end = decl.nameEnd)
-            let resolved = annotationType(world = world, unit = unit, node = decl.typeId, pool = out.pool)
-            out.pool = resolved.pool
-            out.table = noteName(table = out.table, name = name, typeId = resolved.id)
+        if isFunctionDeclCode(decl.kind):
+            out = walkInferFunction(world = world, unit = unit, unitIndex = unitIndex, declId = d, ownerType = -1, state = out)
+        elif isOwnerDeclCode(decl.kind):
+            let ownerName = decodeRange(bytes = out.bytes, start = decl.nameStart, end = decl.nameEnd)
+            let ownerType = nominalTypeId(world = world, name = ownerName)
+            var i = 0
+            while i < len(decl.kids):
+                let child = decl.kids[i]
+                if isFunctionDeclCode(unit.ast.decls[child].kind):
+                    out = walkInferFunction(world = world, unit = unit, unitIndex = unitIndex, declId = child, ownerType = ownerType, state = out)
+                i = i + 1
         d = d + 1
-    var s = 0
-    while s < unit.ast.stmtCount():
-        if unit.ast.isVariableStmt(s):
-            out = noteVariable(world = world, unit = unit, unitIndex = unitIndex, stmtId = s, bytes = bytes, out = out)
-        s = s + 1
     return out
 
 ; 函数返回类型：按声明上的类型节点解析；顶层函数才有这一位。
@@ -315,7 +460,7 @@ inferIndex|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node:
 types: ExprTypes = ExprTypes()
 pool: TypePool = TypePool()
 
-; 单元推导：建名字表后逐个表达式节点后序推，表与池一起交回调用方。
+; 单元推导：逐函数按语句序推，再兜底扫一遍全池；表与池一起交回调用方。
 ; 整单元文本只转一次字节，逐节点复用；否则标识符与成员名会反复复制全文。
 inferUnitExprs|func(world: MemberWorld, unitIndex: I32, types: ExprTypes,) -> (InferUnit,):
     var out = InferUnit()
@@ -325,13 +470,22 @@ inferUnitExprs|func(world: MemberWorld, unitIndex: I32, types: ExprTypes,) -> (I
         return out
     let unit = world.units[unitIndex]
     let bytes = unitBytes(unit)
-    let built = buildNameTable(world = world, unit = unit, unitIndex = unitIndex, bytes = bytes)
-    out.pool = built.pool
+    var state = WalkState()
+    state.types = out.types
+    state.pool = out.pool
+    state.bytes = bytes
+    let walked = walkInferDecls(world = world, unit = unit, unitIndex = unitIndex, state = state)
+    out.types = walked.types
+    out.pool = walked.pool
+    ; 兜底扫描：语句序走不到的节点（字段初值、处理器体、函数字面量体）在这里补一次。
+    ; 空表只做「由已定型处向外传播」：漏推不会拉低覆盖面，也不会把未登记名当已知。
+    let spare = NameTable()
     var i = 0
     while i < unit.ast.exprCount():
-        let one = inferNode(world = world, unit = unit, unitIndex = unitIndex, node = i, names = built.table, pool = out.pool, types = out.types, bytes = bytes)
-        out.pool = one.pool
-        out.types = one.types
+        if exprTypeAt(table = out.types, unit = unitIndex, node = i) < 0:
+            let one = inferNode(world = world, unit = unit, unitIndex = unitIndex, node = i, names = spare, pool = out.pool, types = out.types, bytes = bytes)
+            out.pool = one.pool
+            out.types = one.types
         i = i + 1
     return out
 
@@ -362,11 +516,14 @@ fillDeclaredTypes|func(world: MemberWorld, units: Array<CompilationUnit>, types:
         while s < unit.ast.stmtCount():
             if unit.ast.isVariableStmt(s):
                 let stmt = unit.ast.stmtAt(s)
-                if stmt.typeId >= 0:
+                let pattern = unit.ast.stmtChild(id = s, index = 0)
+                var needed = stmt.typeId >= 0 && pattern >= 0 && unit.ast.isIdentifierExpr(pattern)
+                if needed && exprTypeAt(table = out.types, unit = u, node = pattern) >= 0:
+                    needed = false
+                if needed:
                     let resolved = resolveAnnotationIn(cursor = cursor, pool = out.pool, node = stmt.typeId)
                     out.pool = resolved.pool
-                    let pattern = unit.ast.stmtChild(id = s, index = 0)
-                    if resolved.id >= 0 && pattern >= 0 && unit.ast.isIdentifierExpr(pattern):
+                    if resolved.id >= 0:
                         out.types = writeExprType(table = out.types, unit = u, node = pattern, typeId = resolved.id)
             s = s + 1
         u = u + 1
