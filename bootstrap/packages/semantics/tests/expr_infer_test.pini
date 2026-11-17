@@ -3,7 +3,7 @@ _syntax = "../../syntax"
 _module_loader = "../../module-loader"
 
 ; 类型推导：字面量、参数、变量初值、函数返回与二元运算各一条正例。
-; 反例是「同名不同类型」：名字表标歧义，推导器答未写而不是猜一个。
+; 名字表按函数分组，同名局部各推各的；同一函数内异型同名仍标歧义，宁可不推也不误报。
 
 ; 推导样例：世界、单元与表达式类型表；单元序与类型表下标一致。
 (推导样例)
@@ -58,6 +58,38 @@ types: ExprTypes = ExprTypes()
         i = i + 1
     return -1
 
+; 同名标识符：按名收集池里所有同名标识符，判据逐处点验而不是「有一处能推」就算过。
+同名标识符|func(_unit: CompilationUnit, _name: String,) -> (Array<I32>,):
+    var out: Array<I32> = []
+    let bytes = unitBytes(_unit)
+    var i = 0
+    while i < _unit.ast.exprCount():
+        if _unit.ast.isIdentifierExpr(i):
+            let node = _unit.ast.exprAt(i)
+            let name = decodeRange(bytes = bytes, start = node.nameStart, end = node.nameEnd)
+            if name == _name:
+                out = out.append(i)
+        i = i + 1
+    return out
+
+; 首个下标节点：`a[i]` 形态，用于点验容器分量的传递。
+首个下标节点|func(_unit: CompilationUnit,) -> (I32,):
+    var i = 0
+    while i < _unit.ast.exprCount():
+        if _unit.ast.isSubscriptExpr(i):
+            return i
+        i = i + 1
+    return -1
+
+; 首个成员节点：`a.b` 形态，用于点验字段类型的传递。
+首个成员节点|func(_unit: CompilationUnit,) -> (I32,):
+    var i = 0
+    while i < _unit.ast.exprCount():
+        if _unit.ast.isMemberExpr(i):
+            return i
+        i = i + 1
+    return -1
+
 ; 字面量：整数与字符串各按默认类型定型。
 字面量定型|test() -> ():
     let 样例 = 造推导样例("f|func() -> ():\n    let a = 1\n    let b = \"x\"\n")
@@ -87,21 +119,67 @@ types: ExprTypes = ExprTypes()
     assert(typeText(pool = 推.pool, id = exprTypeAt(table = 推.types, unit = 0, node = 调用)) == "I32", "调用应取返回类型")
     return
 
-; 同名异型：两个函数的参数同名不同型，名字表标歧义，推导器不猜。
-同名异型不推|test() -> ():
-    let 样例 = 造推导样例("甲|func(v: I32,) -> ():\n    let a = v\n\n乙|func(v: String,) -> ():\n    let b = v\n")
+; 初值非字面量：`let xs = 取表()` 的局部按初值定型，其下标读与后续引用一并可推。
+; 名字表按初值类型登记局部，初值是不是字面量都照登记。
+初值非字面量|test() -> ():
+    let 样例 = 造推导样例("取表|func() -> (Array<I32>,):\n    return [1]\n\n用|func() -> (I32,):\n    let xs = 取表()\n    return xs[0]\n")
     let 推 = inferUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
-    var 命中 = 0
-    var 未写 = 0
+    let 处 = 同名标识符(样例.unit, "xs")
+    assert(len(处) == 2, "样例应有两处 xs，实得 " + countText(len(处)))
     var i = 0
-    while i < 样例.unit.ast.exprCount():
-        if 样例.unit.ast.isIdentifierExpr(i):
-            let id = exprTypeAt(table = 推.types, unit = 0, node = i)
-            if id < 0:
-                未写 = 未写 + 1
-            else:
-                命中 = 命中 + 1
+    while i < len(处):
+        let id = exprTypeAt(table = 推.types, unit = 0, node = 处[i])
+        assert(typeText(pool = 推.pool, id = id) == "Array<I32>", "xs 的每处都应按初值定型")
         i = i + 1
-    assert(命中 == 0, "歧义名字不该推出类型")
-    assert(未写 > 0, "样例应含标识符节点")
+    let 下标 = 首个下标节点(样例.unit)
+    assert(下标 >= 0, "样例应含下标读")
+    let 元素 = exprTypeAt(table = 推.types, unit = 0, node = 下标)
+    assert(typeText(pool = 推.pool, id = 元素) == "I32", "元素类型应由容器分量给出")
+    return
+
+; 同名局部：分处两个函数时各推各的；这条否掉「单元级单表」，那是歧义的来源。
+同名局部|test() -> ():
+    let 样例 = 造推导样例("甲|func() -> (I32,):\n    let out = 一()\n    return out\n\n乙|func() -> (String,):\n    let out = 二()\n    return out\n\n一|func() -> (I32,):\n    return 1\n\n二|func() -> (String,):\n    return \"s\"\n")
+    let 推 = inferUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
+    let 处 = 同名标识符(样例.unit, "out")
+    assert(len(处) == 4, "样例应有四处 out，实得 " + countText(len(处)))
+    assert(typeText(pool = 推.pool, id = exprTypeAt(table = 推.types, unit = 0, node = 处[0])) == "I32", "甲的 out 应推 I32")
+    assert(typeText(pool = 推.pool, id = exprTypeAt(table = 推.types, unit = 0, node = 处[2])) == "String", "乙的 out 应推 String")
+    return
+
+; 自身成员：方法里的 `self` 入名字表，`self.字段` 由字段声明定型。
+自身成员|test() -> ():
+    let 样例 = 造推导样例("(P)\nx: I32 = 0\n\n((P))\nget|self() -> (I32,):\n    return self.x\n")
+    let 推 = inferUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
+    let 自身 = 同名标识符(样例.unit, "self")
+    assert(len(自身) == 1, "样例应有一处 self")
+    assert(typeText(pool = 推.pool, id = exprTypeAt(table = 推.types, unit = 0, node = 自身[0])) == "P", "self 应推所属类型")
+    let 成员 = 首个成员节点(样例.unit)
+    assert(成员 >= 0, "样例应含成员读")
+    assert(typeText(pool = 推.pool, id = exprTypeAt(table = 推.types, unit = 0, node = 成员)) == "I32", "字段读应推 I32")
+    return
+
+; 循环模式：`for (v,) in xs` 的 v 按容器分量定型，模式变量与声明变量同表。
+循环模式|test() -> ():
+    let 样例 = 造推导样例("用|func(_xs: Array<I32>,) -> (I32,):\n    var 合计 = 0\n    for (v,) in _xs:\n        合计 += v\n    return 合计\n")
+    let 推 = inferUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
+    let 处 = 同名标识符(样例.unit, "v")
+    assert(len(处) == 2, "样例应有两处 v，实得 " + countText(len(处)))
+    assert(typeText(pool = 推.pool, id = exprTypeAt(table = 推.types, unit = 0, node = 处[1])) == "I32", "模式变量应按元素定型")
+    return
+
+; 推导全覆盖：语句序走完再把漏掉的节点扫一遍，本例每个表达式节点都必须定型。
+; 字段初值不挂在任何语句下，是兜底扫描必须兜住的形态。
+推导全覆盖|test() -> ():
+    let 样例 = 造推导样例("(P)\nn: I32 = 1 + 2\n\n((P))\nbump|self(_v: I32,) -> (I32,):\n    var acc = self.n\n    acc += _v\n    return acc\n\n取表|func() -> (Array<I32>,):\n    return [1, 2]\n\n用|func(_k: I32,) -> (I32,):\n    let xs = 取表()\n    let 首 = xs[0]\n    var 合计 = 首\n    for (v,) in xs:\n        合计 += v\n    return 合计 + _k\n")
+    let 推 = inferUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
+    let 总 = 样例.unit.ast.exprCount()
+    let 定型 = validCount(table = 推.types, unit = 0)
+    assert(定型 == 总 - 2, "除被调名与循环模式外都应定型，实得 " + countText(定型) + "/" + countText(总))
+    var i = 0
+    while i < 总:
+        if exprTypeAt(table = 推.types, unit = 0, node = i) < 0:
+            let 未定 = 样例.unit.ast.isIdentifierExpr(i) || 样例.unit.ast.isTupleExpr(i)
+            assert(未定, "未定型的只应是被调名或循环模式，节点 " + countText(i))
+        i = i + 1
     return
