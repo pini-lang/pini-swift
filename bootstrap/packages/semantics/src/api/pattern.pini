@@ -161,7 +161,7 @@ findEnumDecl|func(world: MemberWorld, name: String,) -> (DeclRef,):
     var u = 0
     while u < len(world.units):
         let unit = world.units[u]
-        let bytes = tempUtf8Bytes(unit.text)
+        let bytes = unitBytes(unit)
         var i = 0
         while i < len(unit.ast.items):
             let id = unit.ast.items[i]
@@ -183,7 +183,7 @@ enumVariantNames|func(world: MemberWorld, enumName: String,) -> (Array<String>,)
     if ref.unit < 0:
         return out
     let unit = world.units[ref.unit]
-    let bytes = tempUtf8Bytes(unit.text)
+    let bytes = unitBytes(unit)
     let decl = unit.ast.decls[ref.decl]
     var i = 0
     while i < len(decl.kids):
@@ -199,7 +199,7 @@ findVariant|func(world: MemberWorld, enumName: String, caseName: String,) -> (De
     if ref.unit < 0:
         return out
     let unit = world.units[ref.unit]
-    let bytes = tempUtf8Bytes(unit.text)
+    let bytes = unitBytes(unit)
     let decl = unit.ast.decls[ref.decl]
     var i = 0
     while i < len(decl.kids):
@@ -264,7 +264,7 @@ classifyPattern|func(unit: CompilationUnit, node: I32,) -> (PatternInfo,):
         return out
     let ast = unit.ast
     let expr = ast.exprAt(node)
-    let bytes = tempUtf8Bytes(unit.text)
+    let bytes = unitBytes(unit)
     out.offset = expr.start
     out.name = decodeRange(bytes = bytes, start = expr.start, end = expr.end)
     if ast.isIdentifierExpr(node):

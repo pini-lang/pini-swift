@@ -189,7 +189,7 @@ buildImportBindings|func(_ws: WorkspaceUnits,) -> (Array<ImportBinding>,):
         var u = 0
         while u < len(group.units):
             let unit = group.units[u]
-            let bytes = tempUtf8Bytes(unit.text)
+            let bytes = unitBytes(unit)
             var i = 0
             while i < len(unit.ast.items):
                 let decl = unit.ast.decls[unit.ast.items[i]]
@@ -222,7 +222,7 @@ aliasTargetOf|func(bindings: Array<ImportBinding>, alias: String,) -> (String,):
 ; 引用判定：接收者是本文件导入别名、目标在别的包、名字按目标包归属查，三者齐备才判。
 ; 同包别名与本地变量接收者不在这里判；目标包没有该名同样报，不静默放行。
 checkUnitRefs|func(symbols: Array<PackageSymbols>, group: PackageUnits, bindings: Array<ImportBinding>, unit: CompilationUnit, out: CrossRefCheck,) -> (CrossRefCheck,):
-    let bytes = tempUtf8Bytes(unit.text)
+    let bytes = unitBytes(unit)
     var working = out
     var i = 0
     while i < unit.ast.exprCount():
@@ -250,7 +250,7 @@ packagePublicNames|func(group: PackageUnits,) -> (Array<String>,):
     while u < len(group.units):
         let unit = group.units[u]
         if !isTestUnit(group = group, path = unit.path):
-            let bytes = tempUtf8Bytes(unit.text)
+            let bytes = unitBytes(unit)
             var i = 0
             while i < len(unit.ast.items):
                 let name = publicNameOf(unit = unit, bytes = bytes, decl = unit.ast.decls[unit.ast.items[i]])
@@ -316,7 +316,7 @@ patternNames|func(unit: CompilationUnit, bytes: Array<U8>, node: I32,) -> (Array
 ; 可裸引用名：顶层声明、全部参数与语句里的绑定名；注入名与其中任一相撞即为歧义。
 ; 语句按整池扫，不区分所在函数：同一文件内的名字都算本文件的可裸引用面。
 unitBareNames|func(unit: CompilationUnit,) -> (Array<String>,):
-    let bytes = tempUtf8Bytes(unit.text)
+    let bytes = unitBytes(unit)
     var out: Array<String> = []
     var i = 0
     while i < len(unit.ast.items):

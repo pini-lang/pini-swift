@@ -352,7 +352,7 @@ resolveUnit|func(stage: TypePass, world: TypeWorld, unitIndex: I32,) -> (TypePas
     cursor.world = world
     cursor.file = unit.path
     cursor.ast = unit.ast
-    cursor.bytes = tempUtf8Bytes(unit.text)
+    cursor.bytes = unitBytes(unit)
     var out = stage
     var i = 0
     while i < len(unit.ast.items):

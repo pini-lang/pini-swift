@@ -40,7 +40,7 @@ callbackTarget|func(world: MemberWorld, site: CallSite, node: I32,) -> (Callback
         out.reason = "回调实参只能写顶层自由函数的名字"
         return out
     let expr = unit.ast.exprAt(node)
-    let name = decodeRange(bytes = tempUtf8Bytes(unit.text), start = expr.nameStart, end = expr.nameEnd)
+    let name = decodeRange(bytes = unitBytes(unit), start = expr.nameStart, end = expr.nameEnd)
     if name == "main":
         out.reason = "main 不作回调"
         return out

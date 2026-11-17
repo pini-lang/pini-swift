@@ -76,7 +76,7 @@ typeOfExprNode|func(unit: CompilationUnit, unitIndex: I32, node: I32, scope: Sco
     if !unit.ast.isIdentifierExpr(node):
         return unsetTypeId()
     let expr = unit.ast.exprAt(node)
-    let name = decodeRange(bytes = tempUtf8Bytes(unit.text), start = expr.nameStart, end = expr.nameEnd)
+    let name = decodeRange(bytes = unitBytes(unit), start = expr.nameStart, end = expr.nameEnd)
     let at = lookupName(stack = scope, spelling = name)
     if at < 0:
         return unsetTypeId()

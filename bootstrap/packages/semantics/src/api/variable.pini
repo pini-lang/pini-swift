@@ -53,7 +53,7 @@ failed: Bool = false
 storeBytes|func(unit: CompilationUnit, out: StoreCheck,) -> (Array<U8>,):
     if len(out.bytes) > 0:
         return out.bytes
-    return tempUtf8Bytes(unit.text)
+    return unitBytes(unit)
 
 ; 初值定型结果：检查状态与类型下标；-2 表示已判错。
 (TypedValue)

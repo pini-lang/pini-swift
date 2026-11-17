@@ -3,12 +3,20 @@ _syntax = "../../../syntax"
 _diagnostics = "../../../diagnostics"
 
 ; 编译单元：归一后的源文本、工作区相对路径、语法树与语法诊断、词法问题分列。
+; 字节视图在装载时填一次：语义各层按单元取用，不再各自转换整份文本。
 (CompilationUnit)
 path: String = ""
 text: String = ""
+bytes: Array<U8> = []
 ast: Ast = Ast()
 diagnostics: Array<Diagnostic> = []
 issues: Array<LexIssue> = []
+
+; 字节视图：装载时已填则直接取；测试等手工构造的单元现转一次，与旧口径一致。
+unitBytes|func(_unit: CompilationUnit,) -> (Array<U8>,):
+    if len(_unit.bytes) > 0:
+        return _unit.bytes
+    return tempUtf8Bytes(_unit.text)
 
 ; 单元装载结果：失败时 unit 无效，成功时 error 无效；调用方只看 failed 分流。
 (UnitLoad)
@@ -55,6 +63,7 @@ loadUnit|func(path: String, text: String,) -> (UnitLoad,):
     var unit = CompilationUnit()
     unit.path = path
     unit.text = normalized
+    unit.bytes = tempUtf8Bytes(normalized)
     unit.ast = parsed.ast
     unit.diagnostics = parsed.diagnostics
     unit.issues = parsed.issues

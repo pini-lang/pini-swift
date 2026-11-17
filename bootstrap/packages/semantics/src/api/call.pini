@@ -142,7 +142,7 @@ callArguments|func(unit: CompilationUnit, unitIndex: I32, node: I32, types: Expr
     if node < 0 || node >= unit.ast.exprCount():
         return out
     let ast = unit.ast
-    let bytes = tempUtf8Bytes(unit.text)
+    let bytes = unitBytes(unit)
     var i = 1
     while i < len(ast.exprAt(node).kids):
         let kid = ast.exprAt(node).kids[i]
@@ -268,7 +268,7 @@ matchCall|func(out: CallResult, site: CallSite, params: Array<CallParam>, variad
 declParams|func(world: MemberWorld, ref: DeclRef,) -> (Array<CallParam>,):
     var out: Array<CallParam> = []
     let unit = world.units[ref.unit]
-    let bytes = tempUtf8Bytes(unit.text)
+    let bytes = unitBytes(unit)
     let decl = unit.ast.decls[ref.decl]
     var i = 0
     while i < len(decl.kids):

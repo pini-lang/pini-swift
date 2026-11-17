@@ -55,7 +55,7 @@ collectPublicNames|func(_units: Array<CompilationUnit>,) -> (Array<String>,):
     var u = 0
     while u < len(_units):
         let unit = _units[u]
-        let bytes = tempUtf8Bytes(unit.text)
+        let bytes = unitBytes(unit)
         var i = 0
         while i < len(unit.ast.items):
             let name = publicNameOf(unit = unit, bytes = bytes, decl = unit.ast.decls[unit.ast.items[i]])
@@ -131,7 +131,7 @@ collectSignatures|func(_units: Array<CompilationUnit>,) -> (Array<String>,):
     var u = 0
     while u < len(_units):
         let unit = _units[u]
-        let bytes = tempUtf8Bytes(unit.text)
+        let bytes = unitBytes(unit)
         var i = 0
         while i < len(unit.ast.items):
             let decl = unit.ast.decls[unit.ast.items[i]]

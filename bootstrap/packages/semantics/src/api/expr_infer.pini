@@ -324,7 +324,7 @@ inferUnitExprs|func(world: MemberWorld, unitIndex: I32, types: ExprTypes,) -> (I
     if unitIndex < 0 || unitIndex >= len(world.units):
         return out
     let unit = world.units[unitIndex]
-    let bytes = tempUtf8Bytes(unit.text)
+    let bytes = unitBytes(unit)
     let built = buildNameTable(world = world, unit = unit, unitIndex = unitIndex, bytes = bytes)
     out.pool = built.pool
     var i = 0

@@ -81,7 +81,7 @@ knownName|func(world: MemberWorld, unit: CompilationUnit, locals: Array<String>,
 
 ; 局部绑定名：参数、变量、遍历与匹配绑定；不含顶层声明名，供排除遮蔽用。
 localOnlyNames|func(unit: CompilationUnit,) -> (Array<String>,):
-    let bytes = tempUtf8Bytes(unit.text)
+    let bytes = unitBytes(unit)
     var out: Array<String> = []
     var d = 0
     while d < unit.ast.declCount():
@@ -178,7 +178,7 @@ checkUnitExprs|func(world: MemberWorld, unitIndex: I32, types: ExprTypes,) -> (E
     if unitIndex < 0 || unitIndex >= len(world.units):
         return out
     let unit = world.units[unitIndex]
-    let bytes = tempUtf8Bytes(unit.text)
+    let bytes = unitBytes(unit)
     let known = unitBareNames(unit = unit)
     let shadow = localOnlyNames(unit = unit)
     var i = 0

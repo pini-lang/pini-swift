@@ -175,7 +175,7 @@ checkImportBlock|func(ws: WorkspaceUnits, group: PackageUnits, unit: Compilation
 
 ; 单元导入：只认导入块，其余声明不归本层。
 checkUnitImports|func(ws: WorkspaceUnits, group: PackageUnits, unit: CompilationUnit, out: BoundaryCheck,) -> (BoundaryCheck,):
-    let bytes = tempUtf8Bytes(unit.text)
+    let bytes = unitBytes(unit)
     var working = out
     var i = 0
     while i < len(unit.ast.items):
