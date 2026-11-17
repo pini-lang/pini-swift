@@ -2,9 +2,9 @@
 _syntax = "../../../syntax"
 _module_loader = "../../../module-loader"
 
-; 类型推导：按函数、按语句序求表达式类型，写进类型表，不产诊断。
+; 类型推导：按函数、按语句序求表达式类型，写进类型表，不产诊断；推不出的留未写，调用方按「未定即放过」处理。
 ; 名字表按函数分组并在语句序里增量登记，`let a = f(x)` 之后 a 及其下游因此可推。
-; 同一函数内同名异型仍记歧义；推不出的节点留未写，调用方按「未定即放过」处理。
+; 前导点用例按「候选枚举唯一」定型：用例是枚举的成员，知道所属枚举才知道类型。
 
 ; 名字类型：名字、类型下标与歧义标记；歧义来自同名不同型的绑定。
 (NameType)
@@ -304,6 +304,15 @@ inferNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
         out.types = typed.types
         if !typed.failed:
             out.typeId = typed.typeId
+        return out
+    if unit.ast.isCaseExpr(node):
+        let expr = unit.ast.exprAt(node)
+        let name = decodeRange(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
+        let owner = uniqueCaseOwner(index = world.symbols, name = name)
+        if len(owner) > 0:
+            out.typeId = nominalTypeId(world = world, name = owner)
+            if out.typeId >= 0:
+                out.types = writeExprType(table = out.types, unit = unitIndex, node = node, typeId = out.typeId)
         return out
     if unit.ast.isIdentifierExpr(node):
         let expr = unit.ast.exprAt(node)

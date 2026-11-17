@@ -11,6 +11,12 @@ ownerKey: Array<U8> = []
 key: Array<U8> = []
 symbol: I32 = -1
 
+; 用例槽：只按用例名建键，所有者是它所属的枚举名。
+; 反查按用例名走，故不带所有者键 —— 同名用例正是要靠「候选有几个」判出来的。
+(CaseSlot)
+key: Array<U8> = []
+owner: String = ""
+
 ; 导入槽：文件键与别名键；别名只在该文件内可见。
 (ImportSlot)
 fileKey: Array<U8> = []
@@ -21,6 +27,7 @@ symbol: I32 = -1
 (SymbolIndex)
 slots: Array<SymbolSlot> = []
 imports: Array<ImportSlot> = []
+cases: Array<CaseSlot> = []
 
 ; 声明槽：文件键与源内偏移定位到单元与声明下标。
 (DeclSlot)
@@ -197,6 +204,7 @@ sortDeclSlots|func(_values: Array<DeclSlot>,) -> (Array<DeclSlot>,):
 ; 建符号索引：符号与导入各扫一遍，排序后只读。
 makeSymbolIndex|func(_table: SymbolTable,) -> (SymbolIndex,):
     var slots: Array<SymbolSlot> = []
+    var cases: Array<CaseSlot> = []
     var i = 0
     while i < _table.symbolCount():
         let symbol = _table.symbolAt(i)
@@ -205,6 +213,11 @@ makeSymbolIndex|func(_table: SymbolTable,) -> (SymbolIndex,):
         slot.key = symbol.key
         slot.symbol = i
         slots = slots.append(slot)
+        if isSymbolKind(kind = symbol.kind, expected = symbolVariant):
+            var row = CaseSlot()
+            row.key = symbol.key
+            row.owner = symbol.owner
+            cases = cases.append(row)
         i = i + 1
     var imports: Array<ImportSlot> = []
     var j = 0
@@ -219,6 +232,7 @@ makeSymbolIndex|func(_table: SymbolTable,) -> (SymbolIndex,):
     var out = SymbolIndex()
     out.slots = sortSymbolSlots(slots)
     out.imports = sortImportSlots(imports)
+    out.cases = sortCaseSlots(cases)
     return out
 
 ; 建声明索引：逐单元扫声明池；单元次序即 type 面的单元下标。
@@ -370,3 +384,85 @@ slotCount|self() -> (I32,):
 ; 槽读取：与 SymbolIndex.slotAt 同规。
 slotAt|self(_index: I32,) -> (DeclSlot,):
     return self.slots[_index]
+
+; 取区间：用例槽版本。
+takeCaseSlots|func(values: Array<CaseSlot>, start: I32, end: I32,) -> (Array<CaseSlot>,):
+    var out: Array<CaseSlot> = []
+    var i = start
+    while i < end && i < len(values):
+        out = out.append(values[i])
+        i = i + 1
+    return out
+
+; 用例槽比较：只比名字键，同名者保持登记序。
+compareCaseSlots|func(first: CaseSlot, second: CaseSlot,) -> (I32,):
+    return compareKeys(first = first.key, second = second.key)
+
+; 归并：两段已有序，稳定取小者。
+mergeCaseSlots|func(left: Array<CaseSlot>, right: Array<CaseSlot>,) -> (Array<CaseSlot>,):
+    var out: Array<CaseSlot> = []
+    var i = 0
+    var j = 0
+    while i < len(left) && j < len(right):
+        if compareCaseSlots(first = left[i], second = right[j]) <= 0:
+            out = out.append(left[i])
+            i = i + 1
+        else:
+            out = out.append(right[j])
+            j = j + 1
+    while i < len(left):
+        out = out.append(left[i])
+        i = i + 1
+    while j < len(right):
+        out = out.append(right[j])
+        j = j + 1
+    return out
+
+; 排序：两路归并。
+sortCaseSlots|func(_values: Array<CaseSlot>,) -> (Array<CaseSlot>,):
+    if len(_values) <= 1:
+        return _values
+    let mid = len(_values) / 2
+    let left = sortCaseSlots(takeCaseSlots(values = _values, start = 0, end = mid))
+    let right = sortCaseSlots(takeCaseSlots(values = _values, start = mid, end = len(_values)))
+    return mergeCaseSlots(left = left, right = right)
+
+; 用例下界：第一个不小于给定用例名键的槽位。
+lowerBoundCase|func(slots: Array<CaseSlot>, key: Array<U8>,) -> (I32,):
+    var lo = 0
+    var hi = len(slots)
+    while lo < hi:
+        let mid = (lo + hi) / 2
+        if compareKeys(first = slots[mid].key, second = key) < 0:
+            lo = mid + 1
+        else:
+            hi = mid
+    return lo
+
+; 用例候选数：同名用例跨枚举的个数；零个说明这个名字不是任何枚举的用例。
+caseCandidateCount|func(index: SymbolIndex, name: String,) -> (I32,):
+    let key = keyOfText(name)
+    let lo = lowerBoundCase(slots = index.cases, key = key)
+    var n = 0
+    var i = lo
+    while i < len(index.cases) && sameKey(first = index.cases[i].key, second = key):
+        n = n + 1
+        i = i + 1
+    return n
+
+; 候选所有者：第 nth 个同名用例所属的枚举名；越界或键不符答空串。
+caseCandidateOwner|func(index: SymbolIndex, name: String, nth: I32,) -> (String,):
+    let key = keyOfText(name)
+    let lo = lowerBoundCase(slots = index.cases, key = key)
+    let at = lo + nth
+    if at < 0 || at >= len(index.cases):
+        return ""
+    if !sameKey(first = index.cases[at].key, second = key):
+        return ""
+    return index.cases[at].owner
+
+; 唯一候选：恰一个才答枚举名；零个或多个都答空串 —— 歧义不猜。
+uniqueCaseOwner|func(index: SymbolIndex, name: String,) -> (String,):
+    if caseCandidateCount(index = index, name = name) != 1:
+        return ""
+    return caseCandidateOwner(index = index, name = name, nth = 0)

@@ -5,8 +5,8 @@ _semantics = "../../../semantics"
 _ir = "../../../ir"
 
 ; 驱动主程序：无参数只装配清单并打印产物行，毫秒级；`check` 跑完整检查，`lower` 走降载。
-; 两个子命令的根取第二个参数，缺省从模块根上溯；检查有诊断即非零退出，降载只报计数。
-; 降载前先填表达式类型表并把池换成填表后的池，否则类型下标越界。
+; `cases` 只列裸名用例位置。三个子命令的根取第二个参数，缺省从模块根上溯。
+; 检查有诊断即非零退出，降载只报计数；降载前先填表达式类型表并把池换成填表后的池。
 main|func() -> ():
     let args = argv()
     var root = workspaceRootOf(start = moduleRoot())
@@ -20,6 +20,18 @@ main|func() -> ():
         降载 = true
         if len(args) > 1:
             root = args[1]
+    if len(args) > 0 && args[0] == "cases":
+        if len(args) > 1:
+            root = args[1]
+        let plan = planWorkspace(root)
+        if !plan.isOK():
+            print("workspace-plan-failed", plan.errorCount())
+            return
+        let ws = loadWorkspaceGrouped(plan)
+        let units = collectWorkspaceUnits(ws)
+        let build = buildWorld(units = units, packages = ws.packages)
+        printBareCases(units = units, world = build.world)
+        return
     if 全量:
         let report = checkWorkspace(root = root)
         if len(report.text) > 0:
@@ -135,3 +147,29 @@ typedExprCount|func(table: ExprTypes,) -> (I32,):
         total = total + validCount(table = table, unit = u)
         u = u + 1
     return total
+
+; 裸名用例清单：逐单元扫表达式池，命中用例表又不在文件级可裸引用名面里的标识符即列出。
+; 只扫不降载：降载缺口按函数首错报，一个函数里有多处裸名时拿不到完整清单。
+printBareCases|func(units: Array<CompilationUnit>, world: MemberWorld,) -> ():
+    var total = 0
+    var files = 0
+    var u = 0
+    while u < len(units):
+        let unit = units[u]
+        let bytes = unitBytes(unit)
+        let bare = unitBareNames(unit = unit)
+        var hit = 0
+        var i = 0
+        while i < unit.ast.exprCount():
+            if unit.ast.isIdentifierExpr(i):
+                let node = unit.ast.exprAt(i)
+                let name = decodeSpelling(bytes = bytes, start = node.nameStart, end = node.nameEnd)
+                if caseCandidateCount(index = world.symbols, name = name) > 0 && !hasName(items = bare, value = name):
+                    print("裸名用例", unit.path + ":" + countText(node.start) + ":" + name)
+                    total = total + 1
+                    hit = hit + 1
+            i = i + 1
+        if hit > 0:
+            files = files + 1
+        u = u + 1
+    print("cases-ok", total, files)
