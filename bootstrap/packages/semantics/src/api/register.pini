@@ -50,7 +50,7 @@ registerWorkspace|func(plan: BuildPlan, root: String,) -> (SymbolTable,):
         let loaded = loadPackage(packageAbs = root + "/" + pkg.rootPath, plan = pkg)
         var e = 0
         while e < len(loaded.errors):
-            out.errors = out.errors.append(makeSymbolError(kind = symbolExtensionUnknown, file = plan.packages[i].rootPath, offset = 0, name = "装载失败"))
+            out.errors = out.errors.append(makeSymbolError(kind = .symbolExtensionUnknown, file = plan.packages[i].rootPath, offset = 0, name = "装载失败"))
             e = e + 1
         out = registerInto(table = out, units = loaded.units)
         i = i + 1
@@ -129,12 +129,12 @@ isTypeDecl|func(_decl: DeclNode,) -> (Bool,):
 registerTopDecl|func(table: SymbolTable, unit: CompilationUnit, bytes: Array<U8>, decl: DeclNode,) -> (SymbolTable,):
     var out = table
     if isTypeDecl(decl):
-        let symbol = makeSymbol(unit = unit, bytes = bytes, decl = decl, kind = symbolType)
+        let symbol = makeSymbol(unit = unit, bytes = bytes, decl = decl, kind = .symbolType)
         out = defineTop(table = out, symbol = symbol)
         out = registerTypeMembers(table = out, unit = unit, bytes = bytes, decl = decl, owner = symbol.spelling)
         return out
     if isFunctionDeclCode(decl.kind):
-        let symbol = makeSymbol(unit = unit, bytes = bytes, decl = decl, kind = symbolFunction)
+        let symbol = makeSymbol(unit = unit, bytes = bytes, decl = decl, kind = .symbolFunction)
         out = defineTop(table = out, symbol = symbol)
         out = registerParams(table = out, unit = unit, bytes = bytes, decl = decl, owner = symbol.spelling)
         return out
@@ -153,16 +153,16 @@ registerTypeMembers|func(table: SymbolTable, unit: CompilationUnit, bytes: Array
     while i < len(decl.kids):
         let member = unit.ast.decls[decl.kids[i]]
         if isFieldDeclCode(member.kind):
-            var symbol = makeSymbol(unit = unit, bytes = bytes, decl = member, kind = symbolField)
+            var symbol = makeSymbol(unit = unit, bytes = bytes, decl = member, kind = .symbolField)
             symbol.owner = owner
             out = defineMember(table = out, symbol = symbol)
         if isFunctionDeclCode(member.kind):
-            var method = makeSymbol(unit = unit, bytes = bytes, decl = member, kind = symbolFunction)
+            var method = makeSymbol(unit = unit, bytes = bytes, decl = member, kind = .symbolFunction)
             method.owner = owner
             out = defineMember(table = out, symbol = method)
             out = registerParams(table = out, unit = unit, bytes = bytes, decl = member, owner = owner + "." + method.spelling)
         if isVariantDeclCode(member.kind):
-            var variant = makeSymbol(unit = unit, bytes = bytes, decl = member, kind = symbolVariant)
+            var variant = makeSymbol(unit = unit, bytes = bytes, decl = member, kind = .symbolVariant)
             variant.owner = owner
             out = defineMember(table = out, symbol = variant)
             out = registerParams(table = out, unit = unit, bytes = bytes, decl = member, owner = owner + "." + variant.spelling)
@@ -176,7 +176,7 @@ registerParams|func(table: SymbolTable, unit: CompilationUnit, bytes: Array<U8>,
     while i < len(decl.kids):
         let param = unit.ast.decls[decl.kids[i]]
         if isParamDeclCode(param.kind):
-            var symbol = makeSymbol(unit = unit, bytes = bytes, decl = param, kind = symbolParam)
+            var symbol = makeSymbol(unit = unit, bytes = bytes, decl = param, kind = .symbolParam)
             symbol.owner = owner
             out = defineMember(table = out, symbol = symbol)
         i = i + 1
@@ -191,10 +191,10 @@ registerExtension|func(table: SymbolTable, unit: CompilationUnit, bytes: Array<U
     while i < len(decl.kids):
         let member = unit.ast.decls[decl.kids[i]]
         if isFunctionDeclCode(member.kind):
-            var symbol = makeSymbol(unit = unit, bytes = bytes, decl = member, kind = symbolFunction)
+            var symbol = makeSymbol(unit = unit, bytes = bytes, decl = member, kind = .symbolFunction)
             symbol.owner = target
             if containsKey(seen = seen, key = symbol.key):
-                out = addError(table = out, error = makeSymbolError(kind = symbolMemberDuplicated, file = symbol.file, offset = symbol.offset, name = symbol.spelling))
+                out = addError(table = out, error = makeSymbolError(kind = .symbolMemberDuplicated, file = symbol.file, offset = symbol.offset, name = symbol.spelling))
             else:
                 seen = seen.append(symbol)
                 out = redefineMember(table = out, symbol = symbol)
@@ -209,7 +209,7 @@ registerImportBlock|func(table: SymbolTable, unit: CompilationUnit, bytes: Array
     while i < len(decl.kids):
         let entry = unit.ast.decls[decl.kids[i]]
         if isImportEntryCode(entry.kind):
-            var symbol = makeSymbol(unit = unit, bytes = bytes, decl = entry, kind = symbolImport)
+            var symbol = makeSymbol(unit = unit, bytes = bytes, decl = entry, kind = .symbolImport)
             out = defineImport(table = out, symbol = symbol)
         i = i + 1
     return out

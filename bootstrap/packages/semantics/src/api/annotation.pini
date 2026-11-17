@@ -119,10 +119,10 @@ containerAccepts|func(name: String, count: I32,) -> (Bool,):
 ; 容器类别：数组、字典与集合同归集合类，其余各自成类。
 containerClass|func(_name: String,) -> (TypeClass,):
     if _name == "Array" || _name == "Set" || _name == "Dictionary":
-        return typeClassCollection
+        return .typeClassCollection
     if _name == "Optional":
-        return typeClassOptional
-    return typeClassResult
+        return .typeClassOptional
+    return .typeClassResult
 
 ; 声明查类别码：按文件与源内偏移在单元里找顶层声明；找不到答 -1。
 declKindOf|func(world: TypeWorld, file: String, offset: I32,) -> (I32,):
@@ -155,9 +155,9 @@ resolveNode|func(cursor: TypeCursor, pool: TypePool, typeId: I32,) -> (TypeResol
     if isResultTypeCode(node.kind):
         return resolveContainerType(cursor = cursor, pool = pool, node = node, name = "Result")
     if isOptionalTypeCode(node.kind):
-        return wrapResolved(cursor = cursor, pool = pool, kind = typeClassOptional, name = "", child = cursor.ast.typeChild(id = typeId, index = 0))
+        return wrapResolved(cursor = cursor, pool = pool, kind = .typeClassOptional, name = "", child = cursor.ast.typeChild(id = typeId, index = 0))
     if isPointerTypeCode(node.kind):
-        return wrapResolved(cursor = cursor, pool = pool, kind = typeClassPointer, name = "", child = cursor.ast.typeChild(id = typeId, index = 0))
+        return wrapResolved(cursor = cursor, pool = pool, kind = .typeClassPointer, name = "", child = cursor.ast.typeChild(id = typeId, index = 0))
     if isTupleTypeCode(node.kind):
         return resolveTuple(cursor = cursor, pool = pool, node = node)
     if isFunctionTypeCode(node.kind):
@@ -203,7 +203,7 @@ resolveContainerType|func(cursor: TypeCursor, pool: TypePool, node: TypeNode, na
     if failed:
         return out
     if name == "Result" && len(ids) == 1:
-        let error = intern(pool = working, kind = typeClassScalar, name = "Error", kids = [], ret = -1)
+        let error = intern(pool = working, kind = .typeClassScalar, name = "Error", kids = [], ret = -1)
         working = error.pool
         ids = ids.append(error.id)
     let inserted = intern(pool = working, kind = containerClass(name), name = name, kids = ids, ret = -1)
@@ -229,7 +229,7 @@ resolveTuple|func(cursor: TypeCursor, pool: TypePool, node: TypeNode,) -> (TypeR
     out.pool = working
     if failed:
         return out
-    let inserted = intern(pool = working, kind = typeClassTuple, name = "", kids = ids, ret = -1)
+    let inserted = intern(pool = working, kind = .typeClassTuple, name = "", kids = ids, ret = -1)
     out.pool = inserted.pool
     out.root = inserted.id
     return out
@@ -256,7 +256,7 @@ resolveFunction|func(cursor: TypeCursor, pool: TypePool, node: TypeNode,) -> (Ty
     out.pool = working
     if failed:
         return out
-    let inserted = intern(pool = working, kind = typeClassFunction, name = "", kids = ids, ret = ret.root)
+    let inserted = intern(pool = working, kind = .typeClassFunction, name = "", kids = ids, ret = ret.root)
     out.pool = inserted.pool
     out.root = inserted.id
     return out
@@ -269,30 +269,30 @@ resolveNamed|func(cursor: TypeCursor, pool: TypePool, node: TypeNode, name: Stri
     out.pool = pool
     if name == "StringHandle":
         if !cursor.foreignFace:
-            out.pool = addTypeError(pool = pool, error = makeTypeError(kind = typeErrorForeignOnlyName, file = cursor.file, offset = node.start, name = name))
+            out.pool = addTypeError(pool = pool, error = makeTypeError(kind = .typeErrorForeignOnlyName, file = cursor.file, offset = node.start, name = name))
             return out
-        return internNamed(pool = pool, kind = typeClassOpaque, name = name)
+        return internNamed(pool = pool, kind = .typeClassOpaque, name = name)
     if isBuiltinType(name):
-        let inserted = intern(pool = pool, kind = typeClassScalar, name = name, kids = [], ret = -1)
+        let inserted = intern(pool = pool, kind = .typeClassScalar, name = name, kids = [], ret = -1)
         out.pool = inserted.pool
         out.root = inserted.id
         return out
     if containerMinArity(name) >= 0:
-        out.pool = addTypeError(pool = pool, error = makeTypeError(kind = typeErrorArityMismatch, file = cursor.file, offset = node.start, name = name))
+        out.pool = addTypeError(pool = pool, error = makeTypeError(kind = .typeErrorArityMismatch, file = cursor.file, offset = node.start, name = name))
         return out
     let at = cursor.world.table.topIndex(keyOfText(name))
     if at < 0:
-        out.pool = addTypeError(pool = pool, error = makeTypeError(kind = typeErrorUnknownName, file = cursor.file, offset = node.start, name = name))
+        out.pool = addTypeError(pool = pool, error = makeTypeError(kind = .typeErrorUnknownName, file = cursor.file, offset = node.start, name = name))
         return out
     let symbol = cursor.world.table.symbolAt(at)
     let code = declKindOf(world = cursor.world, file = symbol.file, offset = symbol.offset)
     if isStructDeclCode(code):
-        return internNamed(pool = pool, kind = typeClassStruct, name = name)
+        return internNamed(pool = pool, kind = .typeClassStruct, name = name)
     if isObjectDeclCode(code):
-        return internNamed(pool = pool, kind = typeClassObject, name = name)
+        return internNamed(pool = pool, kind = .typeClassObject, name = name)
     if isEnumDeclCode(code):
-        return internNamed(pool = pool, kind = typeClassEnum, name = name)
-    out.pool = addTypeError(pool = pool, error = makeTypeError(kind = typeErrorNotTypeName, file = cursor.file, offset = node.start, name = name))
+        return internNamed(pool = pool, kind = .typeClassEnum, name = name)
+    out.pool = addTypeError(pool = pool, error = makeTypeError(kind = .typeErrorNotTypeName, file = cursor.file, offset = node.start, name = name))
     return out
 
 ; 具名条目驻留：结构、对象、枚举与不透明句柄共用一条。
@@ -323,15 +323,15 @@ resolveGeneric|func(cursor: TypeCursor, pool: TypePool, node: TypeNode, name: St
         return out
     if containerMinArity(name) < 0:
         if isBuiltinType(name) || cursor.world.table.topIndex(keyOfText(name)) >= 0:
-            out.pool = addTypeError(pool = working, error = makeTypeError(kind = typeErrorArityMismatch, file = cursor.file, offset = node.start, name = name))
+            out.pool = addTypeError(pool = working, error = makeTypeError(kind = .typeErrorArityMismatch, file = cursor.file, offset = node.start, name = name))
             return out
-        out.pool = addTypeError(pool = working, error = makeTypeError(kind = typeErrorUnknownName, file = cursor.file, offset = node.start, name = name))
+        out.pool = addTypeError(pool = working, error = makeTypeError(kind = .typeErrorUnknownName, file = cursor.file, offset = node.start, name = name))
         return out
     if !containerAccepts(name = name, count = len(ids)):
-        out.pool = addTypeError(pool = working, error = makeTypeError(kind = typeErrorArityMismatch, file = cursor.file, offset = node.start, name = name))
+        out.pool = addTypeError(pool = working, error = makeTypeError(kind = .typeErrorArityMismatch, file = cursor.file, offset = node.start, name = name))
         return out
     if name == "Result" && len(ids) == 2 && !isBuiltinError(id = ids[1], pool = working):
-        out.pool = addTypeError(pool = working, error = makeTypeError(kind = typeErrorConstraint, file = cursor.file, offset = node.start, name = name))
+        out.pool = addTypeError(pool = working, error = makeTypeError(kind = .typeErrorConstraint, file = cursor.file, offset = node.start, name = name))
         return out
     let inserted = intern(pool = working, kind = containerClass(name), name = name, kids = ids, ret = -1)
     out.pool = inserted.pool
@@ -343,7 +343,7 @@ isBuiltinError|func(id: I32, pool: TypePool,) -> (Bool,):
     if id < 0 || id >= len(pool.entries):
         return false
     let entry = pool.entries[id]
-    return isTypeClass(kind = entry.kind, expected = typeClassScalar) && entry.name == "Error"
+    return isTypeClass(kind = entry.kind, expected = .typeClassScalar) && entry.name == "Error"
 
 ; 解析一个单元：按顶层序走，声明上的全部标注各留一条绑定。
 ; 标注解析（带游标）：调用方复用同一游标时不必为每条声明重建类型世界。
@@ -531,7 +531,7 @@ checkTypeCycles|func(_stage: TypePass,) -> (TypePass,):
                 let walked = walkAggregate(pool = out.pool, members = out.members, id = member.types[k], state = state)
                 state = walked.state
                 if walked.cycle:
-                    out.pool = addTypeError(pool = out.pool, error = makeTypeError(kind = typeErrorRecursiveCycle, file = member.file, offset = member.offset, name = member.owner))
+                    out.pool = addTypeError(pool = out.pool, error = makeTypeError(kind = .typeErrorRecursiveCycle, file = member.file, offset = member.offset, name = member.owner))
                     k = len(member.types)
                 k = k + 1
         j = j + 1
@@ -543,7 +543,7 @@ checkDirectCycle|func(stage: TypePass, member: TypeMember,) -> (TypePass,):
     var i = 0
     while i < len(member.types):
         if unfoldsToOrigin(pool = out.pool, id = member.types[i], originKey = member.ownerKey):
-            out.pool = addTypeError(pool = out.pool, error = makeTypeError(kind = typeErrorSelfReference, file = member.file, offset = member.offset, name = member.owner))
+            out.pool = addTypeError(pool = out.pool, error = makeTypeError(kind = .typeErrorSelfReference, file = member.file, offset = member.offset, name = member.owner))
             return out
         i = i + 1
     return out
@@ -553,9 +553,9 @@ unfoldsToOrigin|func(pool: TypePool, id: I32, originKey: Array<U8>,) -> (Bool,):
     if id < 0 || id >= len(pool.entries):
         return false
     let entry = pool.entries[id]
-    if isTypeClass(kind = entry.kind, expected = typeClassStruct) || isTypeClass(kind = entry.kind, expected = typeClassEnum):
+    if isTypeClass(kind = entry.kind, expected = .typeClassStruct) || isTypeClass(kind = entry.kind, expected = .typeClassEnum):
         return sameKey(first = entry.key, second = originKey)
-    if isTypeClass(kind = entry.kind, expected = typeClassTuple) || isTypeClass(kind = entry.kind, expected = typeClassOptional) || isTypeClass(kind = entry.kind, expected = typeClassResult):
+    if isTypeClass(kind = entry.kind, expected = .typeClassTuple) || isTypeClass(kind = entry.kind, expected = .typeClassOptional) || isTypeClass(kind = entry.kind, expected = .typeClassResult):
         var i = 0
         while i < len(entry.kids):
             if unfoldsToOrigin(pool = pool, id = entry.kids[i], originKey = originKey):
@@ -575,20 +575,20 @@ walkAggregate|func(pool: TypePool, members: Array<TypeMember>, id: I32, state: A
     if state[id] == 2:
         return out
     let entry = pool.entries[id]
-    if isTypeClass(kind = entry.kind, expected = typeClassScalar) || isTypeClass(kind = entry.kind, expected = typeClassPointer):
+    if isTypeClass(kind = entry.kind, expected = .typeClassScalar) || isTypeClass(kind = entry.kind, expected = .typeClassPointer):
         out.state[id] = 2
         return out
-    if isTypeClass(kind = entry.kind, expected = typeClassOpaque):
+    if isTypeClass(kind = entry.kind, expected = .typeClassOpaque):
         out.state[id] = 2
         return out
-    if isTypeClass(kind = entry.kind, expected = typeClassObject) || isTypeClass(kind = entry.kind, expected = typeClassCollection):
+    if isTypeClass(kind = entry.kind, expected = .typeClassObject) || isTypeClass(kind = entry.kind, expected = .typeClassCollection):
         out.state[id] = 2
         return out
-    if isTypeClass(kind = entry.kind, expected = typeClassFunction) || isTypeClass(kind = entry.kind, expected = typeClassGeneric):
+    if isTypeClass(kind = entry.kind, expected = .typeClassFunction) || isTypeClass(kind = entry.kind, expected = .typeClassGeneric):
         out.state[id] = 2
         return out
     out.state[id] = 1
-    if isTypeClass(kind = entry.kind, expected = typeClassStruct) || isTypeClass(kind = entry.kind, expected = typeClassEnum):
+    if isTypeClass(kind = entry.kind, expected = .typeClassStruct) || isTypeClass(kind = entry.kind, expected = .typeClassEnum):
         let at = memberIndexOf(members = members, key = entry.key)
         if at >= 0:
             var i = 0

@@ -213,7 +213,7 @@ makeSymbolIndex|func(_table: SymbolTable,) -> (SymbolIndex,):
         slot.key = symbol.key
         slot.symbol = i
         slots = slots.append(slot)
-        if isSymbolKind(kind = symbol.kind, expected = symbolVariant):
+        if isSymbolKind(kind = symbol.kind, expected = .symbolVariant):
             var row = CaseSlot()
             row.key = symbol.key
             row.owner = symbol.owner

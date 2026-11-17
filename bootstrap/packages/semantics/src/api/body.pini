@@ -90,7 +90,7 @@ isVoidReturn|func(pool: TypePool, id: I32,) -> (Bool,):
     if id < 0 || id >= len(pool.entries):
         return true
     let entry = pool.entries[id]
-    if !isTypeClass(kind = entry.kind, expected = typeClassTuple):
+    if !isTypeClass(kind = entry.kind, expected = .typeClassTuple):
         return false
     return len(entry.kids) == 0
 
@@ -141,16 +141,16 @@ checkReturnValue|func(unit: CompilationUnit, unitIndex: I32, stmtId: I32, types:
     if isVoidReturn(pool = out.pool, id = out.returnType):
         if value >= 0:
             let got = bodyValueText(unit = unit, unitIndex = unitIndex, node = value, types = types, pool = out.pool)
-            return appendBodyError(out = out, unit = unit, offset = offset, kind = bodyReturnValueForbidden, name = "", expected = "()", got = got)
+            return appendBodyError(out = out, unit = unit, offset = offset, kind = .bodyReturnValueForbidden, name = "", expected = "()", got = got)
         return out
     if value < 0:
-        return appendBodyError(out = out, unit = unit, offset = offset, kind = bodyReturnValueMissing, name = "", expected = typeText(pool = out.pool, id = out.returnType), got = "()")
+        return appendBodyError(out = out, unit = unit, offset = offset, kind = .bodyReturnValueMissing, name = "", expected = typeText(pool = out.pool, id = out.returnType), got = "()")
     let valueType = exprTypeAt(table = types, unit = unitIndex, node = value)
     if valueType < 0 || valueType >= len(out.pool.entries):
         return out
     if isAssignable(pool = out.pool, from = valueType, to = out.returnType):
         return out
-    return appendBodyError(out = out, unit = unit, offset = offset, kind = bodyReturnValueMismatch, name = "", expected = typeText(pool = out.pool, id = out.returnType), got = typeText(pool = out.pool, id = valueType))
+    return appendBodyError(out = out, unit = unit, offset = offset, kind = .bodyReturnValueMismatch, name = "", expected = typeText(pool = out.pool, id = out.returnType), got = typeText(pool = out.pool, id = valueType))
 
 ; 走一条语句：只查 return 的值，不声明局部；控制流节点逐个下钻到块。
 walkBodyStmt|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmtId: I32, scope: ScopeStack, known: Bool, types: ExprTypes, out: BodyCheck,) -> (BodyCheck,):
@@ -239,11 +239,11 @@ matchCoversAll|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, s
     var i = 1
     while i + 1 < len(kids):
         let info = classifyPattern(unit = unit, node = kids[i])
-        if isPatternForm(form = info.form, expected = patternWildcard):
+        if isPatternForm(form = info.form, expected = .patternWildcard):
             hasWildcard = true
-        elif isPatternForm(form = info.form, expected = patternEnumCase):
+        elif isPatternForm(form = info.form, expected = .patternEnumCase):
             covered = bodyAddName(names = covered, name = info.name)
-        elif isPatternForm(form = info.form, expected = patternNil):
+        elif isPatternForm(form = info.form, expected = .patternNil):
             covered = bodyAddName(names = covered, name = "none")
         i = i + 2
     if hasWildcard:
@@ -341,13 +341,13 @@ seedFunctionScope|func(world: MemberWorld, unitIndex: I32, declId: I32, bytes: A
     var view = bytes
     if len(view) == 0:
         view = unitBytes(unit)
-    var stack = enterScope(stack = ScopeStack(), kind = scopeFunction, file = unit.path, offset = decl.start)
+    var stack = enterScope(stack = ScopeStack(), kind = .scopeFunction, file = unit.path, offset = decl.start)
     if decl.isSelf:
         let ownerId = ownerTypeOf(world = world, unitIndex = unitIndex, declId = declId, bytes = view)
         if ownerId >= 0:
             let selfDecl = declareSelf(stack = stack, spelling = "self", typeId = ownerId, file = unit.path, offset = decl.start)
             if selfDecl.failed:
-                out.errors = out.errors.append(makeBodyError(kind = bodyParamDuplicated, file = unit.path, offset = selfDecl.error.offset, name = selfDecl.error.spelling, expected = "", got = ""))
+                out.errors = out.errors.append(makeBodyError(kind = .bodyParamDuplicated, file = unit.path, offset = selfDecl.error.offset, name = selfDecl.error.spelling, expected = "", got = ""))
             else:
                 stack = selfDecl.stack
     var i = 0
@@ -357,7 +357,7 @@ seedFunctionScope|func(world: MemberWorld, unitIndex: I32, declId: I32, bytes: A
             let typeId = world.types.typeOf(unit = unitIndex, decl = kid)
             let declared = declareParam(stack = stack, decl = unit.ast.decls[kid], declId = kid, typeId = typeId, file = unit.path, bytes = view)
             if declared.failed:
-                out.errors = out.errors.append(makeBodyError(kind = bodyParamDuplicated, file = unit.path, offset = declared.error.offset, name = declared.error.spelling, expected = "", got = ""))
+                out.errors = out.errors.append(makeBodyError(kind = .bodyParamDuplicated, file = unit.path, offset = declared.error.offset, name = declared.error.spelling, expected = "", got = ""))
             else:
                 stack = declared.stack
         i = i + 1
@@ -367,7 +367,7 @@ seedFunctionScope|func(world: MemberWorld, unitIndex: I32, declId: I32, bytes: A
         if out.returnType < 0:
             out.known = false
     else:
-        let empty = intern(pool = out.pool, kind = typeClassTuple, name = "", kids = [], ret = -1)
+        let empty = intern(pool = out.pool, kind = .typeClassTuple, name = "", kids = [], ret = -1)
         out.pool = empty.pool
         out.returnType = empty.id
     return out
@@ -396,7 +396,7 @@ checkFunctionBodyWith|func(world: MemberWorld, unitIndex: I32, declId: I32, type
         if len(view) == 0:
             view = unitBytes(unit)
         let name = decodeRange(bytes = view, start = decl.nameStart, end = decl.nameEnd)
-        out = appendBodyError(out = out, unit = unit, offset = decl.start, kind = bodyReturnMissing, name = name, expected = typeText(pool = out.pool, id = out.returnType), got = "()")
+        out = appendBodyError(out = out, unit = unit, offset = decl.start, kind = .bodyReturnMissing, name = name, expected = typeText(pool = out.pool, id = out.returnType), got = "()")
     out.failed = len(out.errors) > 0
     return out
 

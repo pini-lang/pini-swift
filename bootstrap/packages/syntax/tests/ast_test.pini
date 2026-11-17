@@ -1,21 +1,21 @@
 ; 池只追加：同类别节点依次得到连续下标，旧的仍可按原下标读回。
 节点池|test() -> ():
     var ast = Ast()
-    let first = ast.pushExpr(kind = exprInteger, start = 0, end = 3)
-    let second = ast.pushExpr(kind = exprIdentifier, start = 4, end = 5)
+    let first = ast.pushExpr(kind = .exprInteger, start = 0, end = 3)
+    let second = ast.pushExpr(kind = .exprIdentifier, start = 4, end = 5)
     assert(first == 0, "首个表达式下标为零")
     assert(second == 1, "第二个表达式下标为一")
     assert(ast.exprCount() == 2, "池长度随追加增长")
-    assert(ast.isExpr(id = second, kind = exprIdentifier), "类别判定")
+    assert(ast.isExpr(id = second, kind = .exprIdentifier), "类别判定")
     assert(ast.exprAt(first).end == 3, "旧节点跨度不变")
     return
 
 ; 跨池不串号：类型、表达式、语句与声明各自计数，互不影响。
 分池计数|test() -> ():
     var ast = Ast()
-    let typeId = ast.pushType(kind = typeNamed, start = 0, end = 3)
-    let stmtId = ast.pushStmt(kind = stmtReturn, start = 0, end = 6)
-    let declId = ast.pushDecl(kind = declFunction, start = 0, end = 10)
+    let typeId = ast.pushType(kind = .typeNamed, start = 0, end = 3)
+    let stmtId = ast.pushStmt(kind = .stmtReturn, start = 0, end = 6)
+    let declId = ast.pushDecl(kind = .declFunction, start = 0, end = 10)
     assert(typeId == 0, "类型池下标")
     assert(stmtId == 0, "语句池下标")
     assert(declId == 0, "声明池下标")
@@ -28,7 +28,7 @@
 ; 缺省子节点：越界或负下标一律答 -1，调用方据此判缺省而不判崩溃。
 缺省子节点|test() -> ():
     var ast = Ast()
-    let id = ast.pushExpr(kind = exprBinary, start = 0, end = 5)
+    let id = ast.pushExpr(kind = .exprBinary, start = 0, end = 5)
     assert(ast.childOf(id = id, index = 0) == -1, "空子表越界答 -1")
     assert(ast.childOf(id = id, index = -1) == -1, "负下标答 -1")
     return
@@ -36,9 +36,9 @@
 ; 跨包谓词：三类表达式各自判定，互不串类。
 跨包谓词|test() -> ():
     var ast = Ast()
-    let ident = ast.pushExpr(kind = exprIdentifier, start = 0, end = 1)
-    let member = ast.pushExpr(kind = exprMember, start = 0, end = 3)
-    let call = ast.pushExpr(kind = exprCall, start = 0, end = 5)
+    let ident = ast.pushExpr(kind = .exprIdentifier, start = 0, end = 1)
+    let member = ast.pushExpr(kind = .exprMember, start = 0, end = 3)
+    let call = ast.pushExpr(kind = .exprCall, start = 0, end = 5)
     assert(ast.isIdentifierExpr(ident), "标识符应命中")
     assert(!ast.isIdentifierExpr(member), "成员不得判作标识符")
     assert(ast.isMemberExpr(member), "成员应命中")
@@ -50,13 +50,13 @@
 ; 字面量谓词：六类各自命中，布尔覆盖真与假两种拼写。
 字面量谓词|test() -> ():
     var ast = Ast()
-    let integer = ast.pushExpr(kind = exprInteger, start = 0, end = 1)
-    let float = ast.pushExpr(kind = exprFloat, start = 0, end = 3)
-    let string = ast.pushExpr(kind = exprString, start = 0, end = 5)
-    let yes = ast.pushExpr(kind = exprTrue, start = 0, end = 4)
-    let no = ast.pushExpr(kind = exprFalse, start = 0, end = 5)
-    let none = ast.pushExpr(kind = exprNil, start = 0, end = 3)
-    let interp = ast.pushExpr(kind = exprInterpolated, start = 0, end = 8)
+    let integer = ast.pushExpr(kind = .exprInteger, start = 0, end = 1)
+    let float = ast.pushExpr(kind = .exprFloat, start = 0, end = 3)
+    let string = ast.pushExpr(kind = .exprString, start = 0, end = 5)
+    let yes = ast.pushExpr(kind = .exprTrue, start = 0, end = 4)
+    let no = ast.pushExpr(kind = .exprFalse, start = 0, end = 5)
+    let none = ast.pushExpr(kind = .exprNil, start = 0, end = 3)
+    let interp = ast.pushExpr(kind = .exprInterpolated, start = 0, end = 8)
     assert(ast.isIntegerExpr(integer), "整数应命中")
     assert(!ast.isIntegerExpr(float), "浮点不得判作整数")
     assert(ast.isFloatExpr(float), "浮点应命中")
@@ -72,16 +72,16 @@
 ; 标签实参：带名字区间的赋值二元节点命中，普通二元与括号组不命中。
 标签实参谓词|test() -> ():
     var ast = Ast()
-    let labeled = ast.pushExpr(kind = exprBinary, start = 0, end = 5)
+    let labeled = ast.pushExpr(kind = .exprBinary, start = 0, end = 5)
     let node = ast.exprAt(labeled)
     var named = node
     named.nameStart = 0
     named.nameEnd = 1
-    named.op = kindTag(opAssign)
+    named.op = kindTag(.opAssign)
     ast.exprs[labeled] = named
-    let plain = ast.pushExpr(kind = exprBinary, start = 6, end = 9)
+    let plain = ast.pushExpr(kind = .exprBinary, start = 6, end = 9)
     var plainNode = ast.exprAt(plain)
-    plainNode.op = kindTag(opAdd)
+    plainNode.op = kindTag(.opAdd)
     ast.exprs[plain] = plainNode
     assert(ast.isLabeledArgument(labeled), "带名字的赋值二元应命中")
     assert(!ast.isLabeledArgument(plain), "普通二元不得判作标签实参")
@@ -90,12 +90,12 @@
 ; 容器谓词：五类各自命中，互不串类；六类字面量合判只认基本字面量。
 容器谓词|test() -> ():
     var ast = Ast()
-    let array = ast.pushExpr(kind = exprArray, start = 0, end = 2)
-    let dict = ast.pushExpr(kind = exprDictionary, start = 3, end = 8)
-    let set = ast.pushExpr(kind = exprSet, start = 9, end = 12)
-    let sub = ast.pushExpr(kind = exprSubscript, start = 13, end = 17)
-    let slice = ast.pushExpr(kind = exprSlice, start = 18, end = 23)
-    let integer = ast.pushExpr(kind = exprInteger, start = 24, end = 25)
+    let array = ast.pushExpr(kind = .exprArray, start = 0, end = 2)
+    let dict = ast.pushExpr(kind = .exprDictionary, start = 3, end = 8)
+    let set = ast.pushExpr(kind = .exprSet, start = 9, end = 12)
+    let sub = ast.pushExpr(kind = .exprSubscript, start = 13, end = 17)
+    let slice = ast.pushExpr(kind = .exprSlice, start = 18, end = 23)
+    let integer = ast.pushExpr(kind = .exprInteger, start = 24, end = 25)
     assert(ast.isArrayExpr(array), "数组应命中")
     assert(!ast.isArrayExpr(set), "集合不得判作数组")
     assert(ast.isDictionaryExpr(dict), "字典应命中")
@@ -110,8 +110,8 @@
 ; 匹配语句谓词：match 命中，其余语句不命中。
 匹配语句谓词|test() -> ():
     var ast = Ast()
-    let matched = ast.pushStmt(kind = stmtMatch, start = 0, end = 6)
-    let other = ast.pushStmt(kind = stmtReturn, start = 7, end = 13)
+    let matched = ast.pushStmt(kind = .stmtMatch, start = 0, end = 6)
+    let other = ast.pushStmt(kind = .stmtReturn, start = 7, end = 13)
     assert(ast.isMatchStmt(matched), "match 应命中")
     assert(!ast.isMatchStmt(other), "return 不得判作 match")
     return
@@ -119,9 +119,9 @@
 ; 枚举项谓词：点前缀的枚举项命中，标识符与成员不命中。
 枚举项谓词|test() -> ():
     var ast = Ast()
-    let cased = ast.pushExpr(kind = exprCase, start = 0, end = 3)
-    let ident = ast.pushExpr(kind = exprIdentifier, start = 4, end = 7)
-    let member = ast.pushExpr(kind = exprMember, start = 8, end = 12)
+    let cased = ast.pushExpr(kind = .exprCase, start = 0, end = 3)
+    let ident = ast.pushExpr(kind = .exprIdentifier, start = 4, end = 7)
+    let member = ast.pushExpr(kind = .exprMember, start = 8, end = 12)
     assert(ast.isCaseExpr(cased), "枚举项应命中")
     assert(!ast.isCaseExpr(ident), "标识符不得判作枚举项")
     assert(!ast.isCaseExpr(member), "成员不得判作枚举项")
@@ -130,19 +130,19 @@
 ; 语句谓词：十三类语句各自命中，别的语句一律不命中。
 语句谓词|test() -> ():
     var ast = Ast()
-    let block = ast.pushStmt(kind = stmtBlock, start = 0, end = 1)
-    let variable = ast.pushStmt(kind = stmtVariable, start = 2, end = 3)
-    let assign = ast.pushStmt(kind = stmtAssign, start = 4, end = 5)
-    let expression = ast.pushStmt(kind = stmtExpression, start = 6, end = 7)
-    let cond = ast.pushStmt(kind = stmtIf, start = 8, end = 9)
-    let loop = ast.pushStmt(kind = stmtWhile, start = 10, end = 11)
-    let each = ast.pushStmt(kind = stmtFor, start = 12, end = 13)
-    let matched = ast.pushStmt(kind = stmtMatch, start = 14, end = 15)
-    let ret = ast.pushStmt(kind = stmtReturn, start = 16, end = 17)
-    let out = ast.pushStmt(kind = stmtBreak, start = 18, end = 19)
-    let next = ast.pushStmt(kind = stmtContinue, start = 20, end = 21)
-    let empty = ast.pushStmt(kind = stmtPass, start = 22, end = 23)
-    let later = ast.pushStmt(kind = stmtDefer, start = 24, end = 25)
+    let block = ast.pushStmt(kind = .stmtBlock, start = 0, end = 1)
+    let variable = ast.pushStmt(kind = .stmtVariable, start = 2, end = 3)
+    let assign = ast.pushStmt(kind = .stmtAssign, start = 4, end = 5)
+    let expression = ast.pushStmt(kind = .stmtExpression, start = 6, end = 7)
+    let cond = ast.pushStmt(kind = .stmtIf, start = 8, end = 9)
+    let loop = ast.pushStmt(kind = .stmtWhile, start = 10, end = 11)
+    let each = ast.pushStmt(kind = .stmtFor, start = 12, end = 13)
+    let matched = ast.pushStmt(kind = .stmtMatch, start = 14, end = 15)
+    let ret = ast.pushStmt(kind = .stmtReturn, start = 16, end = 17)
+    let out = ast.pushStmt(kind = .stmtBreak, start = 18, end = 19)
+    let next = ast.pushStmt(kind = .stmtContinue, start = 20, end = 21)
+    let empty = ast.pushStmt(kind = .stmtPass, start = 22, end = 23)
+    let later = ast.pushStmt(kind = .stmtDefer, start = 24, end = 25)
     assert(ast.isBlockStmt(block), "块应命中")
     assert(ast.isVariableStmt(variable), "变量应命中")
     assert(ast.isAssignStmt(assign), "赋值应命中")
@@ -163,14 +163,14 @@
 ; 变量语句可变性：var 记可变，let 记不可变，非变量语句一律不可变。
 变量可变性|test() -> ():
     var ast = Ast()
-    let mutable = ast.pushStmt(kind = stmtVariable, start = 0, end = 3)
-    let immutable = ast.pushStmt(kind = stmtVariable, start = 4, end = 7)
-    let other = ast.pushStmt(kind = stmtPass, start = 8, end = 11)
+    let mutable = ast.pushStmt(kind = .stmtVariable, start = 0, end = 3)
+    let immutable = ast.pushStmt(kind = .stmtVariable, start = 4, end = 7)
+    let other = ast.pushStmt(kind = .stmtPass, start = 8, end = 11)
     var first = ast.stmtAt(mutable)
-    first.op = kindTag(kwVar)
+    first.op = kindTag(.kwVar)
     ast.stmts[mutable] = first
     var second = ast.stmtAt(immutable)
-    second.op = kindTag(kwLet)
+    second.op = kindTag(.kwLet)
     ast.stmts[immutable] = second
     assert(ast.isMutableVariableStmt(mutable), "var 应判可变")
     assert(!ast.isMutableVariableStmt(immutable), "let 应判不可变")
@@ -180,9 +180,9 @@
 ; 元组谓词：元组表达式命中，数组与标识符不命中。
 元组谓词|test() -> ():
     var ast = Ast()
-    let tuple = ast.pushExpr(kind = exprTuple, start = 0, end = 5)
-    let array = ast.pushExpr(kind = exprArray, start = 6, end = 9)
-    let ident = ast.pushExpr(kind = exprIdentifier, start = 10, end = 11)
+    let tuple = ast.pushExpr(kind = .exprTuple, start = 0, end = 5)
+    let array = ast.pushExpr(kind = .exprArray, start = 6, end = 9)
+    let ident = ast.pushExpr(kind = .exprIdentifier, start = 10, end = 11)
     assert(ast.isTupleExpr(tuple), "元组应命中")
     assert(!ast.isTupleExpr(array), "数组不得判作元组")
     assert(!ast.isTupleExpr(ident), "标识符不得判作元组")

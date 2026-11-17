@@ -56,19 +56,19 @@ parseWorkspaceManifest|func(text: String, rootPath: String, path: String,) -> (W
     var manifest = WorkspaceManifest()
     manifest.rootPath = rootPath
     if !tomlHasTable(doc = doc, name = "workspace"):
-        out.errors = out.errors.append(manifestError(kind = errorTableMissing, path = path, detail = "workspace"))
+        out.errors = out.errors.append(manifestError(kind = .errorTableMissing, path = path, detail = "workspace"))
         out.manifest = manifest
         return out
     manifest.members = tomlArray(doc = doc, table = "workspace", key = "members")
     if len(manifest.members) == 0:
-        out.errors = out.errors.append(manifestError(kind = errorMembersEmpty, path = path, detail = "members"))
+        out.errors = out.errors.append(manifestError(kind = .errorMembersEmpty, path = path, detail = "members"))
     let profile = tomlValue(doc = doc, table = "workspace", key = "profile")
     if len(profile) == 0:
         manifest.profile = "debug"
     elif isPathComponent(profile):
         manifest.profile = profile
     else:
-        out.errors = out.errors.append(manifestError(kind = errorProfileInvalid, path = path, detail = profile))
+        out.errors = out.errors.append(manifestError(kind = .errorProfileInvalid, path = path, detail = profile))
     out.manifest = manifest
     return out
 
@@ -80,14 +80,14 @@ parsePackageManifest|func(text: String, rootPath: String, path: String,) -> (Pac
     var manifest = PackageManifest()
     manifest.rootPath = rootPath
     if !tomlHasTable(doc = doc, name = "package"):
-        out.errors = out.errors.append(manifestError(kind = errorTableMissing, path = path, detail = "package"))
+        out.errors = out.errors.append(manifestError(kind = .errorTableMissing, path = path, detail = "package"))
         out.manifest = manifest
         return out
     manifest.name = tomlValue(doc = doc, table = "package", key = "name")
     if len(manifest.name) == 0:
-        out.errors = out.errors.append(manifestError(kind = errorPackageName, path = path, detail = "缺 name"))
+        out.errors = out.errors.append(manifestError(kind = .errorPackageName, path = path, detail = "缺 name"))
     elif !isPathComponent(manifest.name):
-        out.errors = out.errors.append(manifestError(kind = errorPackageName, path = path, detail = manifest.name))
+        out.errors = out.errors.append(manifestError(kind = .errorPackageName, path = path, detail = manifest.name))
     manifest.requires = tomlKeys(doc = doc, table = "require")
     manifest.targets = collectTargets(doc)
     manifest.excludes = tomlArray(doc = doc, table = "build", key = "exclude")
@@ -110,7 +110,7 @@ parseFFIConfig|func(doc: TomlDocument, path: String, errors: Array<ManifestError
         if abi == "C":
             config.abi = abi
         else:
-            out.errors = out.errors.append(manifestError(kind = errorFFIABI, path = path, detail = abi))
+            out.errors = out.errors.append(manifestError(kind = .errorFFIABI, path = path, detail = abi))
     config.searchPaths = tomlArray(doc = doc, table = "ffi", key = "search_paths")
     config.libs = tomlArray(doc = doc, table = "ffi", key = "libs")
     config.headers = tomlArray(doc = doc, table = "ffi", key = "headers")
@@ -126,7 +126,7 @@ checkFFILibs|func(libs: Array<String>, path: String, errors: Array<ManifestError
     var i = 0
     while i < len(libs):
         if startsWith(text = libs[i], prefix = "-l"):
-            out = out.append(manifestError(kind = errorFFILibrary, path = path, detail = libs[i]))
+            out = out.append(manifestError(kind = .errorFFILibrary, path = path, detail = libs[i]))
         i = i + 1
     return out
 
@@ -139,8 +139,8 @@ collectTargets|func(_doc: TomlDocument,) -> (Array<TargetSpec>,):
         target.name = tomlValue(doc = _doc, table = "lib", key = "name")
         target.entry = tomlValue(doc = _doc, table = "lib", key = "entry")
         out = out.append(target)
-    out = appendRows(doc = _doc, table = "bin", kind = targetExecutable, out = out)
-    out = appendRows(doc = _doc, table = "test", kind = targetTest, out = out)
+    out = appendRows(doc = _doc, table = "bin", kind = .targetExecutable, out = out)
+    out = appendRows(doc = _doc, table = "test", kind = .targetTest, out = out)
     return out
 
 ; 数组表按行展开成 target，行序即清单里的出现顺序。
@@ -161,19 +161,19 @@ appendRows|func(doc: TomlDocument, table: String, kind: TargetKind, out: Array<T
 checkTargets|func(manifest: PackageManifest, path: String, errors: Array<ManifestError>,) -> (Array<ManifestError>,):
     var out = errors
     if len(manifest.targets) == 0:
-        out = out.append(manifestError(kind = errorMissingTargets, path = path, detail = manifest.name))
+        out = out.append(manifestError(kind = .errorMissingTargets, path = path, detail = manifest.name))
         return out
     var i = 0
     while i < len(manifest.targets):
         let target = manifest.targets[i]
         if len(target.name) == 0:
-            out = out.append(manifestError(kind = errorTargetName, path = path, detail = manifest.name + "：" + targetKindName(target.kind) + " 缺 name"))
+            out = out.append(manifestError(kind = .errorTargetName, path = path, detail = manifest.name + "：" + targetKindName(target.kind) + " 缺 name"))
         elif !isPathComponent(target.name):
-            out = out.append(manifestError(kind = errorTargetName, path = path, detail = target.name))
+            out = out.append(manifestError(kind = .errorTargetName, path = path, detail = target.name))
         elif !isCleanEntry(target.entry):
-            out = out.append(manifestError(kind = errorEntryPath, path = path, detail = target.name + "：" + target.entry))
+            out = out.append(manifestError(kind = .errorEntryPath, path = path, detail = target.name + "：" + target.entry))
         elif hasEarlierTarget(targets = manifest.targets, at = i, name = target.name):
-            out = out.append(manifestError(kind = errorDuplicateTarget, path = path, detail = manifest.name + "/" + target.name))
+            out = out.append(manifestError(kind = .errorDuplicateTarget, path = path, detail = manifest.name + "/" + target.name))
         i = i + 1
     return out
 

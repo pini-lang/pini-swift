@@ -17,8 +17,8 @@ _module_loader = "../../module-loader"
     let 符号 = 表.symbolAt(0)
     assert(符号.spelling == "malloc", "外部符号名")
     assert(符号.isForeign, "标记为外部符号")
-    assert(isVisibility(level = 符号.visibility, expected = visibilityPackage), "包级可见")
-    assert(isSymbolKind(kind = 符号.kind, expected = symbolFunction), "函数条目")
+    assert(isVisibility(level = 符号.visibility, expected = .visibilityPackage), "包级可见")
+    assert(isSymbolKind(kind = 符号.kind, expected = .symbolFunction), "函数条目")
     return
 
 ; 同名同型：两个文件各声明同一符号，签名与标志一致即合并，符号只留一份。
@@ -36,7 +36,7 @@ _module_loader = "../../module-loader"
     let 乙 = 造外部单元(path = "packages/p/src/api/b.pini", text = "[libc|foreign]\nmalloc: (I32,) -> (*I8,)\n")
     let 表 = registerPackage([甲, 乙])
     assert(!表.isOK(), "异型应报错")
-    assert(isSymbolError(error = 表.errorAt(0), kind = symbolForeignMismatch), "类别为同名异型")
+    assert(isSymbolError(error = 表.errorAt(0), kind = .symbolForeignMismatch), "类别为同名异型")
     assert(表.errorAt(0).name == "malloc", "带名字")
     assert(表.errorAt(0).detail == "packages/p/src/api/a.pini", "带首次声明文件")
     assert(表.symbolCount() == 1, "保留先声明者")
@@ -47,7 +47,7 @@ _module_loader = "../../module-loader"
     let 单元 = 造外部单元(path = "packages/p/src/api/a.pini", text = "len|func() -> ():\n    return\n\n[libc|foreign]\nlen: (String,) -> (U64,)\n")
     let 表 = registerPackage([单元])
     assert(!表.isOK(), "撞名应报错")
-    assert(isSymbolError(error = 表.errorAt(0), kind = symbolForeignClash), "类别为相撞")
+    assert(isSymbolError(error = 表.errorAt(0), kind = .symbolForeignClash), "类别为相撞")
     assert(表.errorAt(0).detail == "packages/p/src/api/a.pini", "带本地声明文件")
     return
 
@@ -56,7 +56,7 @@ _module_loader = "../../module-loader"
     let 单元 = 造外部单元(path = "packages/p/src/api/a.pini", text = "[libc|foreign]\n名字: I32\n")
     let 表 = registerPackage([单元])
     assert(!表.isOK(), "非 C 名应报错")
-    assert(isSymbolError(error = 表.errorAt(0), kind = symbolForeignName), "类别为非 C 名")
+    assert(isSymbolError(error = 表.errorAt(0), kind = .symbolForeignName), "类别为非 C 名")
     assert(表.errorAt(0).name == "名字", "带原文")
     return
 
@@ -82,5 +82,5 @@ _module_loader = "../../module-loader"
     let 单元 = 造外部单元(path = "packages/p/src/api/_internal/a.pini", text = "[libc|foreign]\n_exit: (I32,) -> ()\n")
     let 表 = registerPackage([单元])
     assert(表.isOK(), "不应有错")
-    assert(isVisibility(level = 表.symbolAt(0).visibility, expected = visibilityPackage), "包级可见")
+    assert(isVisibility(level = 表.symbolAt(0).visibility, expected = .visibilityPackage), "包级可见")
     return

@@ -29,7 +29,7 @@ parseToml|func(text: String, path: String,) -> (TomlDocument,):
         if isArrayHeader(line):
             table = trimSpace(line.substring(2, len(line) - 2))
             if len(table) == 0:
-                doc.errors = doc.errors.append(manifestError(kind = errorTomlShape, path = path, detail = line))
+                doc.errors = doc.errors.append(manifestError(kind = .errorTomlShape, path = path, detail = line))
                 continue
             row = nextRow(doc = doc, table = table)
             doc.tables = doc.tables.append(table)
@@ -37,24 +37,24 @@ parseToml|func(text: String, path: String,) -> (TomlDocument,):
         if isTableHeader(line):
             table = trimSpace(line.substring(1, len(line) - 1))
             if len(table) == 0:
-                doc.errors = doc.errors.append(manifestError(kind = errorTomlShape, path = path, detail = line))
+                doc.errors = doc.errors.append(manifestError(kind = .errorTomlShape, path = path, detail = line))
                 continue
             row = -1
             doc.tables = doc.tables.append(table)
             continue
         if len(table) == 0:
-            doc.errors = doc.errors.append(manifestError(kind = errorKeyOutsideTable, path = path, detail = line))
+            doc.errors = doc.errors.append(manifestError(kind = .errorKeyOutsideTable, path = path, detail = line))
             continue
         let eq = line.indexOf("=")
         if eq < 0:
-            doc.errors = doc.errors.append(manifestError(kind = errorTomlShape, path = path, detail = line))
+            doc.errors = doc.errors.append(manifestError(kind = .errorTomlShape, path = path, detail = line))
             continue
         let key = trimSpace(line.substring(0, eq))
         if len(key) == 0:
-            doc.errors = doc.errors.append(manifestError(kind = errorMissingKey, path = path, detail = line))
+            doc.errors = doc.errors.append(manifestError(kind = .errorMissingKey, path = path, detail = line))
             continue
         if findEntry(doc = doc, table = table, row = row, key = key) >= 0:
-            doc.errors = doc.errors.append(manifestError(kind = errorDuplicateKey, path = path, detail = table + "." + key))
+            doc.errors = doc.errors.append(manifestError(kind = .errorDuplicateKey, path = path, detail = table + "." + key))
             continue
         var entry = TomlEntry()
         entry.table = table

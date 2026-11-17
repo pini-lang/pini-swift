@@ -15,9 +15,9 @@
     assert(len(解析.manifest.requires) == 1, "一条依赖")
     assert(解析.manifest.requires[0] == "support", "依赖名")
     assert(len(解析.manifest.targets) == 3, "三类 target")
-    assert(isTargetKind(kind = 解析.manifest.targets[0].kind, expected = targetLibrary), "首个是库")
+    assert(isTargetKind(kind = 解析.manifest.targets[0].kind, expected = .targetLibrary), "首个是库")
     assert(解析.manifest.targets[1].name == "tool", "可执行名")
-    assert(isTargetKind(kind = 解析.manifest.targets[2].kind, expected = targetTest), "末个是测试")
+    assert(isTargetKind(kind = 解析.manifest.targets[2].kind, expected = .targetTest), "末个是测试")
     return
 
 ; 成员缺失、profile 带斜杠、包缺 target、入口含 ..、target 重名各有专用错误。

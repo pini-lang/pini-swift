@@ -37,10 +37,10 @@ scanAll|func(language: KeywordLanguage, bytes: Array<U8>, start: I32, issues: Ar
             else:
                 state = scanInline(state)
     if !state.atLineStart:
-        state = emitToken(state = state, kind = newline, start = state.pos, end = state.pos)
+        state = emitToken(state = state, kind = .newline, start = state.pos, end = state.pos)
     while len(state.indents) > 1:
         state = popIndent(state = state, at = state.pos)
-    state = emitToken(state = state, kind = eof, start = state.pos, end = state.pos)
+    state = emitToken(state = state, kind = .eof, start = state.pos, end = state.pos)
     var out = LexResult()
     out.tokens = state.tokens
     out.segments = state.segments
@@ -64,7 +64,7 @@ scanFragment|func(language: KeywordLanguage, bytes: Array<U8>, start: I32, end: 
         limit = total
     while state.pos < limit:
         state = scanInsideBrackets(state)
-    state = emitToken(state = state, kind = eof, start = state.pos, end = state.pos)
+    state = emitToken(state = state, kind = .eof, start = state.pos, end = state.pos)
     var out = LexResult()
     out.tokens = state.tokens
     out.segments = state.segments
@@ -100,7 +100,7 @@ scanLineStart|func(_state: LexState,) -> (LexState,):
                 width = width + 1
                 out.pos = out.pos + 1
             elif c == 9:
-                out.issues = out.issues.append(makeIssue(kind = issueTabIndent, start = out.pos, end = out.pos + 1))
+                out.issues = out.issues.append(makeIssue(kind = .issueTabIndent, start = out.pos, end = out.pos + 1))
                 width = width + 1
                 out.pos = out.pos + 1
             else:
@@ -126,7 +126,7 @@ openIndent|func(state: LexState, width: I32,) -> (LexState,):
     let top = out.indents[len(out.indents) - 1]
     if width > top:
         out.indents = out.indents.append(width)
-        return emitToken(state = out, kind = indent, start = out.pos, end = out.pos)
+        return emitToken(state = out, kind = .indent, start = out.pos, end = out.pos)
     while len(out.indents) > 1 && out.indents[len(out.indents) - 1] > width:
         out = popIndent(state = out, at = out.pos)
     return out
@@ -142,7 +142,7 @@ popIndent|func(state: LexState, at: I32,) -> (LexState,):
         kept = kept.append(out.indents[i])
         i = i + 1
     out.indents = kept
-    return emitToken(state = out, kind = dedent, start = at, end = at)
+    return emitToken(state = out, kind = .dedent, start = at, end = at)
 
 ; 行内：空白与注释跳过；换行发记号并把游标交给行首逻辑。
 scanInline|func(_state: LexState,) -> (LexState,):
@@ -152,7 +152,7 @@ scanInline|func(_state: LexState,) -> (LexState,):
         out.pos = out.pos + 1
         return out
     if c == 10:
-        out = emitToken(state = out, kind = newline, start = out.pos, end = out.pos + 1)
+        out = emitToken(state = out, kind = .newline, start = out.pos, end = out.pos + 1)
         out.pos = out.pos + 1
         out.atLineStart = true
         return out
@@ -180,7 +180,7 @@ skipComment|func(_state: LexState,) -> (LexState,):
     let start = out.pos
     while out.pos < total && byteAt(bytes = out.bytes, index = out.pos) != 10:
         out.pos = out.pos + 1
-    return scanBidiWarnings(state = out, from = start, to = out.pos, role = textComment)
+    return scanBidiWarnings(state = out, from = start, to = out.pos, role = .textComment)
 
 ; 区间内的双向控制字符：逐个标量查，命中一条记一条；游标按标量宽度推进，不落在字节中间。
 ; 只记警告、不改游标 —— 注释与字符串的消费由各自的扫描器决定。
@@ -193,7 +193,7 @@ scanBidiWarnings|func(state: LexState, from: I32, to: I32, role: LexTextRole,) -
             pos = pos + 1
         else:
             if isBidiControlScalar(unit.code):
-                out.warnings = out.warnings.append(makeWarning(kind = warningBidiControlInText, role = role, start = pos, end = pos + unit.length))
+                out.warnings = out.warnings.append(makeWarning(kind = .warningBidiControlInText, role = role, start = pos, end = pos + unit.length))
             pos = pos + unit.length
     return out
 
@@ -285,11 +285,11 @@ scanWideByte|func(_state: LexState,) -> (LexState,):
     var width = unit.length
     if width == 0:
         width = 1
-    var issue = issueUnknownByte
+    var issue = .issueUnknownByte
     if isCombiningMarkScalar(unit.code):
-        issue = issueMisplacedCombiningMark
+        issue = .issueMisplacedCombiningMark
     out.issues = out.issues.append(makeIssue(kind = issue, start = start, end = start + width))
-    out = emitToken(state = out, kind = unknown, start = start, end = start + width)
+    out = emitToken(state = out, kind = .unknown, start = start, end = start + width)
     out.pos = start + width
     return out
 
@@ -306,10 +306,10 @@ scanBacktick|func(_state: LexState,) -> (LexState,):
             break
         i = i + 1
     if close > start + 1:
-        out = emitNamed(state = out, kind = identifier, start = start, end = close + 1, nameStart = start + 1, nameEnd = close)
+        out = emitNamed(state = out, kind = .identifier, start = start, end = close + 1, nameStart = start + 1, nameEnd = close)
         out.pos = close + 1
         return out
-    out = emitToken(state = out, kind = identifier, start = start, end = start + 1)
+    out = emitToken(state = out, kind = .identifier, start = start, end = start + 1)
     out.pos = start + 1
     return out
 
@@ -319,7 +319,7 @@ scanNumber|func(_state: LexState,) -> (LexState,):
     let total = len(out.bytes)
     let start = out.pos
     var pos = start
-    var kind: TokenKind = integer
+    var kind: TokenKind = .integer
     var radix = 10
     if byteAt(bytes = out.bytes, index = pos) == 48 && pos + 1 < total:
         let prefix = byteAt(bytes = out.bytes, index = pos + 1)
@@ -336,13 +336,13 @@ scanNumber|func(_state: LexState,) -> (LexState,):
         let digitsStart = pos
         pos = scanRadixDigits(bytes = out.bytes, start = pos, radix = radix)
         if pos == digitsStart:
-            out.issues = out.issues.append(makeIssue(kind = issueNumberFormat, start = start, end = pos))
+            out.issues = out.issues.append(makeIssue(kind = .issueNumberFormat, start = start, end = pos))
         if pos < total && isAsciiWordByte(byteAt(bytes = out.bytes, index = pos)):
             let badStart = pos
             while pos < total && isAsciiWordByte(byteAt(bytes = out.bytes, index = pos)):
                 pos = pos + 1
-            out.issues = out.issues.append(makeIssue(kind = issueNumberFormat, start = badStart, end = pos))
-        kind = integer
+            out.issues = out.issues.append(makeIssue(kind = .issueNumberFormat, start = badStart, end = pos))
+        kind = .integer
     else:
         pos = scanRadixDigits(bytes = out.bytes, start = pos, radix = 10)
         var floating = false
@@ -362,10 +362,10 @@ scanNumber|func(_state: LexState,) -> (LexState,):
                     floating = true
                     pos = scanRadixDigits(bytes = out.bytes, start = probe, radix = 10)
                 else:
-                    out.issues = out.issues.append(makeIssue(kind = issueNumberFormat, start = pos, end = probe))
+                    out.issues = out.issues.append(makeIssue(kind = .issueNumberFormat, start = pos, end = probe))
                     pos = probe
         if floating:
-            kind = float
+            kind = .float
     out = emitToken(state = out, kind = kind, start = start, end = pos)
     out.pos = pos
     return out
@@ -418,7 +418,7 @@ scanString|func(_state: LexState,) -> (LexState,):
         let c = byteAt(bytes = out.bytes, index = pos)
         if c == 34:
             if !dropping && pos > segStart:
-                segments = segments.append(makeSegment(kind = segmentLiteral, start = segStart, end = pos))
+                segments = segments.append(makeSegment(kind = .segmentLiteral, start = segStart, end = pos))
             pos = pos + 1
             terminated = true
             break
@@ -430,15 +430,15 @@ scanString|func(_state: LexState,) -> (LexState,):
             let escape = byteAt(bytes = out.bytes, index = pos + 1)
             if escape == 40:
                 if !dropping && pos > segStart:
-                    segments = segments.append(makeSegment(kind = segmentLiteral, start = segStart, end = pos))
+                    segments = segments.append(makeSegment(kind = .segmentLiteral, start = segStart, end = pos))
                 let inner = pos + 2
                 let close = interpolationEnd(bytes = out.bytes, start = inner)
                 if close < 0:
-                    out.issues = out.issues.append(makeIssue(kind = issueUnterminatedInterpolation, start = pos, end = pos + 2))
+                    out.issues = out.issues.append(makeIssue(kind = .issueUnterminatedInterpolation, start = pos, end = pos + 2))
                     pos = total
                     break
                 if !dropping:
-                    segments = segments.append(makeSegment(kind = segmentInterpolation, start = inner, end = close))
+                    segments = segments.append(makeSegment(kind = .segmentInterpolation, start = inner, end = close))
                     interpolated = true
                 pos = close + 1
                 segStart = pos
@@ -446,26 +446,26 @@ scanString|func(_state: LexState,) -> (LexState,):
                 pos = pos + 2
             elif escape == 48:
                 if !dropping:
-                    segments = segments.append(makeSegment(kind = segmentLiteral, start = segStart, end = pos + 2))
+                    segments = segments.append(makeSegment(kind = .segmentLiteral, start = segStart, end = pos + 2))
                 dropping = true
                 pos = pos + 2
             else:
-                out.issues = out.issues.append(makeIssue(kind = issueBadEscape, start = pos, end = pos + 2))
+                out.issues = out.issues.append(makeIssue(kind = .issueBadEscape, start = pos, end = pos + 2))
                 pos = pos + 2
         else:
             pos = pos + 1
     if !terminated:
-        out.issues = out.issues.append(makeIssue(kind = issueUnterminatedString, start = start, end = pos))
+        out.issues = out.issues.append(makeIssue(kind = .issueUnterminatedString, start = start, end = pos))
     ; 只查字面段：插值段是代码，其中的双向控制字符按代码规则处理，不按文字记警告。
     var segIndex = 0
     while segIndex < len(segments):
         if isLiteralSegment(segments[segIndex]):
-            out = scanBidiWarnings(state = out, from = segments[segIndex].start, to = segments[segIndex].end, role = textString)
+            out = scanBidiWarnings(state = out, from = segments[segIndex].start, to = segments[segIndex].end, role = .textString)
         segIndex = segIndex + 1
     if interpolated:
-        out = emitString(state = out, kind = interpolatedString, start = start, end = pos, segments = segments)
+        out = emitString(state = out, kind = .interpolatedString, start = start, end = pos, segments = segments)
     else:
-        out = emitString(state = out, kind = string, start = start, end = pos, segments = segments)
+        out = emitString(state = out, kind = .string, start = start, end = pos, segments = segments)
     out.pos = pos
     return out
 
@@ -542,104 +542,104 @@ scanPunctuation|func(_state: LexState,) -> (LexState,):
     let start = out.pos
     if c == 43:
         if c1 == 43:
-            return emitAscii(state = out, kind = opInc, width = 2)
+            return emitAscii(state = out, kind = .opInc, width = 2)
         if c1 == 61:
-            return emitAscii(state = out, kind = opAssignAdd, width = 2)
-        return emitAscii(state = out, kind = opAdd, width = 1)
+            return emitAscii(state = out, kind = .opAssignAdd, width = 2)
+        return emitAscii(state = out, kind = .opAdd, width = 1)
     if c == 45:
         if c1 == 45:
-            return emitAscii(state = out, kind = opDec, width = 2)
+            return emitAscii(state = out, kind = .opDec, width = 2)
         if c1 == 61:
-            return emitAscii(state = out, kind = opAssignSub, width = 2)
+            return emitAscii(state = out, kind = .opAssignSub, width = 2)
         if c1 == 62:
-            return emitAscii(state = out, kind = arrow, width = 2)
-        return emitAscii(state = out, kind = opSub, width = 1)
+            return emitAscii(state = out, kind = .arrow, width = 2)
+        return emitAscii(state = out, kind = .opSub, width = 1)
     if c == 42:
         if c1 == 61:
-            return emitAscii(state = out, kind = opAssignMul, width = 2)
-        return emitAscii(state = out, kind = opMul, width = 1)
+            return emitAscii(state = out, kind = .opAssignMul, width = 2)
+        return emitAscii(state = out, kind = .opMul, width = 1)
     if c == 47:
         if c1 == 61:
-            return emitAscii(state = out, kind = opAssignDiv, width = 2)
-        return emitAscii(state = out, kind = opDiv, width = 1)
+            return emitAscii(state = out, kind = .opAssignDiv, width = 2)
+        return emitAscii(state = out, kind = .opDiv, width = 1)
     if c == 37:
         if c1 == 61:
-            return emitAscii(state = out, kind = opAssignMod, width = 2)
-        return emitAscii(state = out, kind = opMod, width = 1)
+            return emitAscii(state = out, kind = .opAssignMod, width = 2)
+        return emitAscii(state = out, kind = .opMod, width = 1)
     if c == 38:
         if c1 == 38:
-            return emitAscii(state = out, kind = opAnd, width = 2)
+            return emitAscii(state = out, kind = .opAnd, width = 2)
         if c1 == 61:
-            return emitAscii(state = out, kind = opAssignBitAnd, width = 2)
-        return emitAscii(state = out, kind = opBitAnd, width = 1)
+            return emitAscii(state = out, kind = .opAssignBitAnd, width = 2)
+        return emitAscii(state = out, kind = .opBitAnd, width = 1)
     if c == 124:
         if c1 == 124:
-            return emitAscii(state = out, kind = opOr, width = 2)
+            return emitAscii(state = out, kind = .opOr, width = 2)
         if c1 == 61:
-            return emitAscii(state = out, kind = opAssignBitOr, width = 2)
-        return emitAscii(state = out, kind = opBitOr, width = 1)
+            return emitAscii(state = out, kind = .opAssignBitOr, width = 2)
+        return emitAscii(state = out, kind = .opBitOr, width = 1)
     if c == 94:
         if c1 == 61:
-            return emitAscii(state = out, kind = opAssignBitXor, width = 2)
-        return emitAscii(state = out, kind = opBitXor, width = 1)
+            return emitAscii(state = out, kind = .opAssignBitXor, width = 2)
+        return emitAscii(state = out, kind = .opBitXor, width = 1)
     if c == 33:
         if c1 == 61:
-            return emitAscii(state = out, kind = opNe, width = 2)
-        return emitAscii(state = out, kind = opNot, width = 1)
+            return emitAscii(state = out, kind = .opNe, width = 2)
+        return emitAscii(state = out, kind = .opNot, width = 1)
     if c == 61:
         if c1 == 61:
-            return emitAscii(state = out, kind = opEq, width = 2)
+            return emitAscii(state = out, kind = .opEq, width = 2)
         if c1 == 62:
-            return emitAscii(state = out, kind = fatArrow, width = 2)
-        return emitAscii(state = out, kind = opAssign, width = 1)
+            return emitAscii(state = out, kind = .fatArrow, width = 2)
+        return emitAscii(state = out, kind = .opAssign, width = 1)
     if c == 60:
         if c1 == 60 && c2 == 61:
-            return emitAscii(state = out, kind = opAssignShl, width = 3)
+            return emitAscii(state = out, kind = .opAssignShl, width = 3)
         if c1 == 60:
-            return emitAscii(state = out, kind = opShl, width = 2)
+            return emitAscii(state = out, kind = .opShl, width = 2)
         if c1 == 61:
-            return emitAscii(state = out, kind = opLe, width = 2)
-        return emitAscii(state = out, kind = opLt, width = 1)
+            return emitAscii(state = out, kind = .opLe, width = 2)
+        return emitAscii(state = out, kind = .opLt, width = 1)
     if c == 62:
         if c1 == 62 && c2 == 61:
-            return emitAscii(state = out, kind = opAssignShr, width = 3)
+            return emitAscii(state = out, kind = .opAssignShr, width = 3)
         if c1 == 62:
-            return emitAscii(state = out, kind = opShr, width = 2)
+            return emitAscii(state = out, kind = .opShr, width = 2)
         if c1 == 61:
-            return emitAscii(state = out, kind = opGe, width = 2)
-        return emitAscii(state = out, kind = opGt, width = 1)
+            return emitAscii(state = out, kind = .opGe, width = 2)
+        return emitAscii(state = out, kind = .opGt, width = 1)
     if c == 126:
-        return emitAscii(state = out, kind = opBitNot, width = 1)
+        return emitAscii(state = out, kind = .opBitNot, width = 1)
     if c == 40:
         out = pushBracket(state = out, carrying = isBlockCarryingParen(table = out.keywords, bytes = out.bytes, openAt = start, classes = out.classes))
-        return emitAscii(state = out, kind = leftParen, width = 1)
+        return emitAscii(state = out, kind = .leftParen, width = 1)
     if c == 91:
         out = pushBracket(state = out, carrying = false)
-        return emitAscii(state = out, kind = leftBracket, width = 1)
+        return emitAscii(state = out, kind = .leftBracket, width = 1)
     if c == 123:
         out = pushBracket(state = out, carrying = false)
-        return emitAscii(state = out, kind = leftBrace, width = 1)
+        return emitAscii(state = out, kind = .leftBrace, width = 1)
     if c == 41:
         out = popBracket(out)
-        return emitAscii(state = out, kind = rightParen, width = 1)
+        return emitAscii(state = out, kind = .rightParen, width = 1)
     if c == 93:
         out = popBracket(out)
-        return emitAscii(state = out, kind = rightBracket, width = 1)
+        return emitAscii(state = out, kind = .rightBracket, width = 1)
     if c == 125:
         out = popBracket(out)
-        return emitAscii(state = out, kind = rightBrace, width = 1)
+        return emitAscii(state = out, kind = .rightBrace, width = 1)
     if c == 58:
-        return emitAscii(state = out, kind = colon, width = 1)
+        return emitAscii(state = out, kind = .colon, width = 1)
     if c == 44:
-        return emitAscii(state = out, kind = comma, width = 1)
+        return emitAscii(state = out, kind = .comma, width = 1)
     if c == 46:
-        return emitAscii(state = out, kind = dot, width = 1)
+        return emitAscii(state = out, kind = .dot, width = 1)
     if c == 63:
-        return emitAscii(state = out, kind = question, width = 1)
+        return emitAscii(state = out, kind = .question, width = 1)
     if c == 64:
-        return emitAscii(state = out, kind = atSign, width = 1)
-    out.issues = out.issues.append(makeIssue(kind = issueUnknownByte, start = start, end = start + 1))
-    out = emitToken(state = out, kind = unknown, start = start, end = start + 1)
+        return emitAscii(state = out, kind = .atSign, width = 1)
+    out.issues = out.issues.append(makeIssue(kind = .issueUnknownByte, start = start, end = start + 1))
+    out = emitToken(state = out, kind = .unknown, start = start, end = start + 1)
     out.pos = start + 1
     return out
 
@@ -651,7 +651,7 @@ isBlockCarryingParen|func(table: KeywordTable, bytes: Array<U8>, openAt: I32, cl
     let end = identifierEnd(bytes = bytes, start = i, classes = classes)
     if end == i:
         return false
-    return kindTag(keywordKindIn(table = table, bytes = bytes, start = i, end = end)) == kindTag(kwFunc)
+    return kindTag(keywordKindIn(table = table, bytes = bytes, start = i, end = end)) == kindTag(.kwFunc)
 
 ; 压括号栈：块携带括号记为真，其内部布局不被抑制。
 pushBracket|func(state: LexState, carrying: Bool,) -> (LexState,):

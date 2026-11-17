@@ -29,7 +29,7 @@ id: I32 = -1
 
 ; 容器标量：按名字驻留标量，池只增不改。
 容器标量|func(sample: 容器样例, name: String,) -> (容器号,):
-    let inserted = intern(pool = sample.pool, kind = typeClassScalar, name = name, kids = [], ret = -1)
+    let inserted = intern(pool = sample.pool, kind = .typeClassScalar, name = name, kids = [], ret = -1)
     var out = 容器号()
     out.sample = sample
     out.sample.pool = inserted.pool
@@ -38,7 +38,7 @@ id: I32 = -1
 
 ; 容器类型：按名字与实参驻留集合类类型。
 容器类型|func(sample: 容器样例, name: String, kids: Array<I32>,) -> (容器号,):
-    let inserted = intern(pool = sample.pool, kind = typeClassCollection, name = name, kids = kids, ret = -1)
+    let inserted = intern(pool = sample.pool, kind = .typeClassCollection, name = name, kids = kids, ret = -1)
     var out = 容器号()
     out.sample = sample
     out.sample.pool = inserted.pool
@@ -315,7 +315,7 @@ id: I32 = -1
 
 ; 世界标量：按名字驻留标量。
 世界标量|func(world: 容器世界, name: String,) -> (世界号,):
-    let inserted = intern(pool = world.world.types.pool, kind = typeClassScalar, name = name, kids = [], ret = -1)
+    let inserted = intern(pool = world.world.types.pool, kind = .typeClassScalar, name = name, kids = [], ret = -1)
     var out = 世界号()
     out.world = world
     out.world.world.types.pool = inserted.pool
@@ -324,7 +324,7 @@ id: I32 = -1
 
 ; 世界容器：按名字与实参驻留集合类类型。
 世界容器|func(world: 容器世界, name: String, kids: Array<I32>,) -> (世界号,):
-    let inserted = intern(pool = world.world.types.pool, kind = typeClassCollection, name = name, kids = kids, ret = -1)
+    let inserted = intern(pool = world.world.types.pool, kind = .typeClassCollection, name = name, kids = kids, ret = -1)
     var out = 世界号()
     out.world = world
     out.world.world.types.pool = inserted.pool

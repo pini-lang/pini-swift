@@ -22,14 +22,14 @@ isEntryKind|func(kind: EntryKind, expected: EntryKind,) -> (Bool,):
 ; 条目分类：点前缀目录与点前缀文件一律跳过，`_` 前缀不在跳过之列。
 classifyEntry|func(name: String, isDirectory: Bool,) -> (EntryKind,):
     if len(name) == 0:
-        return entrySkip
+        return .entrySkip
     if name.indexOf(".") == 0:
-        return entrySkip
+        return .entrySkip
     if isDirectory:
-        return entryDirectory
+        return .entryDirectory
     if isPiniSource(name):
-        return entrySource
-    return entrySkip
+        return .entrySource
+    return .entrySkip
 
 ; 源文件后缀：只认 .pini 结尾；长度不足或后缀不符都答否。
 isPiniSource|func(_name: String,) -> (Bool,):
@@ -73,11 +73,11 @@ scan|func(absDir: String, rootRel: String, relDir: String, excludes: Array<Strin
         let packagePath = joinRel(parent = rootRel, child = relPath)
         let directory = isDir(absPath)
         let kind = classifyEntry(name = name, isDirectory = directory)
-        if isEntryKind(kind = kind, expected = entryDirectory):
+        if isEntryKind(kind = kind, expected = .entryDirectory):
             if !isExcluded(packagePath = packagePath, excludes = excludes) && !hasNestedManifest(absPath):
                 out = scan(absDir = absPath, rootRel = rootRel, relDir = relPath, excludes = excludes, state = out)
         else:
-            if isEntryKind(kind = kind, expected = entrySource) && !isExcluded(packagePath = packagePath, excludes = excludes):
+            if isEntryKind(kind = kind, expected = .entrySource) && !isExcluded(packagePath = packagePath, excludes = excludes):
                 out.files = out.files.append(relPath)
         i = i + 1
     return out

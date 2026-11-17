@@ -150,79 +150,79 @@ isKnownForeignFlag|func(_name: String,) -> (Bool,):
 
 ; 类别理由：不在白名单内的名字，按类别给一句可读的原因。
 foreignClassReason|func(_kind: TypeClass,) -> (String,):
-    if isTypeClass(kind = _kind, expected = typeClassStruct):
+    if isTypeClass(kind = _kind, expected = .typeClassStruct):
         return "按值结构体没有 C 布局"
-    if isTypeClass(kind = _kind, expected = typeClassObject):
+    if isTypeClass(kind = _kind, expected = .typeClassObject):
         return "对象受 ARC 隔离"
-    if isTypeClass(kind = _kind, expected = typeClassEnum):
+    if isTypeClass(kind = _kind, expected = .typeClassEnum):
         return "枚举在 C 面没有稳定的标签布局"
-    if isTypeClass(kind = _kind, expected = typeClassOptional):
+    if isTypeClass(kind = _kind, expected = .typeClassOptional):
         return "可选需要标签"
-    if isTypeClass(kind = _kind, expected = typeClassResult):
+    if isTypeClass(kind = _kind, expected = .typeClassResult):
         return "结果需要标签"
-    if isTypeClass(kind = _kind, expected = typeClassCollection):
+    if isTypeClass(kind = _kind, expected = .typeClassCollection):
         return "集合没有 C 布局"
-    if isTypeClass(kind = _kind, expected = typeClassGeneric):
+    if isTypeClass(kind = _kind, expected = .typeClassGeneric):
         return "泛型实例在 C 面没有布局"
     return "不是 C 兼容标量或指针"
 
 ; 标量位：`String` 只在形参位借出，其余按白名单两分。
 checkForeignScalar|func(out: ForeignTypeCheck, unit: CompilationUnit, typeName: String, position: ForeignPosition, name: String, offset: I32,) -> (ForeignTypeCheck,):
     if typeName == "String":
-        if isForeignPosition(position = position, expected = foreignPositionData):
-            return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = foreignTypeNotRepresentable, name = name, detail = "外部数据符号只能是标量或指针")
-        if isForeignPosition(position = position, expected = foreignPositionResult):
-            return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = foreignStringInReturn, name = name, detail = "C 返回的指针归属不明，取回用 fromCString")
+        if isForeignPosition(position = position, expected = .foreignPositionData):
+            return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = .foreignTypeNotRepresentable, name = name, detail = "外部数据符号只能是标量或指针")
+        if isForeignPosition(position = position, expected = .foreignPositionResult):
+            return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = .foreignStringInReturn, name = name, detail = "C 返回的指针归属不明，取回用 fromCString")
         return out
     if isForeignScalarName(typeName):
         return out
     if isWidthOutsideIR(typeName):
-        return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = foreignTypeWidthNotInIR, name = name, detail = typeName)
-    return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = foreignTypeNotRepresentable, name = name, detail = typeName + " 不是 C 兼容标量")
+        return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = .foreignTypeWidthNotInIR, name = name, detail = typeName)
+    return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = .foreignTypeNotRepresentable, name = name, detail = typeName + " 不是 C 兼容标量")
 
 ; 指针目标：标量与指针可继续递归；`String`、句柄、元组与名义类型都不是 C 指针目标。
 checkForeignPointerTarget|func(out: ForeignTypeCheck, unit: CompilationUnit, pool: TypePool, id: I32, name: String, offset: I32,) -> (ForeignTypeCheck,):
     if id < 0 || id >= len(pool.entries):
         return out
     let entry = pool.entries[id]
-    if isTypeClass(kind = entry.kind, expected = typeClassScalar):
+    if isTypeClass(kind = entry.kind, expected = .typeClassScalar):
         if entry.name == "String":
-            return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = foreignTypeNotRepresentable, name = name, detail = "`String` 只在形参位借出，不能作 `*T` 的目标")
+            return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = .foreignTypeNotRepresentable, name = name, detail = "`String` 只在形参位借出，不能作 `*T` 的目标")
         if isForeignScalarName(entry.name):
             return out
         if isWidthOutsideIR(entry.name):
-            return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = foreignTypeWidthNotInIR, name = name, detail = entry.name)
-        return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = foreignTypeNotRepresentable, name = name, detail = entry.name + " 不能作 `*T` 的目标")
-    if isTypeClass(kind = entry.kind, expected = typeClassOpaque):
-        return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = foreignTypeNotRepresentable, name = name, detail = "句柄是不透明指针，不能再套一层 `*`")
-    if isTypeClass(kind = entry.kind, expected = typeClassPointer):
+            return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = .foreignTypeWidthNotInIR, name = name, detail = entry.name)
+        return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = .foreignTypeNotRepresentable, name = name, detail = entry.name + " 不能作 `*T` 的目标")
+    if isTypeClass(kind = entry.kind, expected = .typeClassOpaque):
+        return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = .foreignTypeNotRepresentable, name = name, detail = "句柄是不透明指针，不能再套一层 `*`")
+    if isTypeClass(kind = entry.kind, expected = .typeClassPointer):
         if len(entry.kids) == 0:
             return out
         return checkForeignPointerTarget(out = out, unit = unit, pool = pool, id = entry.kids[0], name = name, offset = offset)
-    return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = foreignTypeNotRepresentable, name = name, detail = "指针目标只能是 C 标量或指针")
+    return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = .foreignTypeNotRepresentable, name = name, detail = "指针目标只能是 C 标量或指针")
 
 ; 回调位：只收标量与指针；`Bool` 表示不同、`String` 与句柄没有回调侧的归属约定。
 checkForeignCallbackElement|func(out: ForeignTypeCheck, unit: CompilationUnit, pool: TypePool, id: I32, positionText: String, name: String, offset: I32,) -> (ForeignTypeCheck,):
     if id < 0 || id >= len(pool.entries):
         return out
     let entry = pool.entries[id]
-    if isTypeClass(kind = entry.kind, expected = typeClassScalar):
+    if isTypeClass(kind = entry.kind, expected = .typeClassScalar):
         if entry.name == "Bool":
-            return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = foreignCallbackBoolean, name = name, detail = positionText)
+            return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = .foreignCallbackBoolean, name = name, detail = positionText)
         if entry.name == "String":
-            return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = foreignTypeNotRepresentable, name = name, detail = "回调" + positionText + "不能写 String：C 传的是裸字节")
+            return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = .foreignTypeNotRepresentable, name = name, detail = "回调" + positionText + "不能写 String：C 传的是裸字节")
         if isForeignScalarName(entry.name):
             return out
         if isWidthOutsideIR(entry.name):
-            return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = foreignTypeWidthNotInIR, name = name, detail = entry.name)
-        return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = foreignTypeNotRepresentable, name = name, detail = "回调" + positionText + "只能是 C 标量或指针")
-    if isTypeClass(kind = entry.kind, expected = typeClassOpaque):
-        return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = foreignTypeNotRepresentable, name = name, detail = "回调" + positionText + "不能出现句柄：计数要落在说定的那一侧")
-    if isTypeClass(kind = entry.kind, expected = typeClassPointer):
+            return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = .foreignTypeWidthNotInIR, name = name, detail = entry.name)
+        return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = .foreignTypeNotRepresentable, name = name, detail = "回调" + positionText + "只能是 C 标量或指针")
+    if isTypeClass(kind = entry.kind, expected = .typeClassOpaque):
+        return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = .foreignTypeNotRepresentable, name = name, detail = "回调" + positionText + "不能出现句柄：计数要落在说定的那一侧")
+    if isTypeClass(kind = entry.kind, expected = .typeClassPointer):
         if len(entry.kids) == 0:
             return out
         return checkForeignPointerTarget(out = out, unit = unit, pool = pool, id = entry.kids[0], name = name, offset = offset)
-    return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = foreignTypeNotRepresentable, name = name, detail = "回调" + positionText + "只能是 C 标量或指针")
+    return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = .foreignTypeNotRepresentable, name = name, detail = "回调" + positionText + "只能是 C 标量或指针")
 
 ; 回调签名：逐个形参加至多一个返回；空返回按 `()` 处理，不算元组。
 checkForeignCallback|func(out: ForeignTypeCheck, unit: CompilationUnit, pool: TypePool, entry: TypeEntry, name: String, offset: I32,) -> (ForeignTypeCheck,):
@@ -234,7 +234,7 @@ checkForeignCallback|func(out: ForeignTypeCheck, unit: CompilationUnit, pool: Ty
     if entry.ret < 0 || entry.ret >= len(pool.entries):
         return working
     let ret = pool.entries[entry.ret]
-    if isTypeClass(kind = ret.kind, expected = typeClassTuple) && len(ret.kids) == 0:
+    if isTypeClass(kind = ret.kind, expected = .typeClassTuple) && len(ret.kids) == 0:
         return working
     return checkForeignCallbackElement(out = working, unit = unit, pool = pool, id = entry.ret, positionText = "返回", name = name, offset = offset)
 
@@ -243,25 +243,25 @@ checkForeignValue|func(out: ForeignTypeCheck, unit: CompilationUnit, pool: TypeP
     if id < 0 || id >= len(pool.entries):
         return out
     let entry = pool.entries[id]
-    if isTypeClass(kind = entry.kind, expected = typeClassScalar):
+    if isTypeClass(kind = entry.kind, expected = .typeClassScalar):
         return checkForeignScalar(out = out, unit = unit, typeName = entry.name, position = position, name = name, offset = offset)
-    if isTypeClass(kind = entry.kind, expected = typeClassOpaque):
-        if isForeignPosition(position = position, expected = foreignPositionData):
-            return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = foreignTypeNotRepresentable, name = name, detail = "外部数据符号只能是标量或指针")
+    if isTypeClass(kind = entry.kind, expected = .typeClassOpaque):
+        if isForeignPosition(position = position, expected = .foreignPositionData):
+            return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = .foreignTypeNotRepresentable, name = name, detail = "外部数据符号只能是标量或指针")
         return out
-    if isTypeClass(kind = entry.kind, expected = typeClassPointer):
+    if isTypeClass(kind = entry.kind, expected = .typeClassPointer):
         if len(entry.kids) == 0:
             return out
         return checkForeignPointerTarget(out = out, unit = unit, pool = pool, id = entry.kids[0], name = name, offset = offset)
-    if isTypeClass(kind = entry.kind, expected = typeClassFunction):
-        if !isForeignPosition(position = position, expected = foreignPositionParam):
-            return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = foreignCallbackOutsideParameter, name = name, detail = "返回位没有可持有的一等函数指针值")
+    if isTypeClass(kind = entry.kind, expected = .typeClassFunction):
+        if !isForeignPosition(position = position, expected = .foreignPositionParam):
+            return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = .foreignCallbackOutsideParameter, name = name, detail = "返回位没有可持有的一等函数指针值")
         return checkForeignCallback(out = out, unit = unit, pool = pool, entry = entry, name = name, offset = offset)
-    if isTypeClass(kind = entry.kind, expected = typeClassTuple):
-        if len(entry.kids) == 0 && isForeignPosition(position = position, expected = foreignPositionResult):
+    if isTypeClass(kind = entry.kind, expected = .typeClassTuple):
+        if len(entry.kids) == 0 && isForeignPosition(position = position, expected = .foreignPositionResult):
             return out
-        return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = foreignTypeNotRepresentable, name = name, detail = "元组不是 C 布局")
-    return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = foreignTypeNotRepresentable, name = name, detail = foreignClassReason(entry.kind))
+        return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = .foreignTypeNotRepresentable, name = name, detail = "元组不是 C 布局")
+    return appendForeignTypeError(out = out, unit = unit, offset = offset, kind = .foreignTypeNotRepresentable, name = name, detail = foreignClassReason(entry.kind))
 
 ; 标志：只认三个；未知、重复与放错位置各报一条，位置指向标志本身。
 checkForeignFlags|func(out: ForeignTypeCheck, unit: CompilationUnit, symbol: DeclNode, name: String, isFunction: Bool,) -> (ForeignTypeCheck,):
@@ -273,15 +273,15 @@ checkForeignFlags|func(out: ForeignTypeCheck, unit: CompilationUnit, symbol: Dec
         let flag = unit.ast.decls[symbol.kids[i]]
         let text = decodeRange(bytes = bytes, start = flag.nameStart, end = flag.nameEnd)
         if !isKnownForeignFlag(text):
-            working = appendForeignTypeError(out = working, unit = unit, offset = flag.start, kind = foreignFlagUnknown, name = text, detail = "可用的是 readonly / macro / varargs")
+            working = appendForeignTypeError(out = working, unit = unit, offset = flag.start, kind = .foreignFlagUnknown, name = text, detail = "可用的是 readonly / macro / varargs")
         elif containsFlagText(items = seen, name = text):
-            working = appendForeignTypeError(out = working, unit = unit, offset = flag.start, kind = foreignFlagDuplicated, name = text, detail = name)
+            working = appendForeignTypeError(out = working, unit = unit, offset = flag.start, kind = .foreignFlagDuplicated, name = text, detail = name)
         else:
             seen = seen.append(text)
             if isFunction && text != "varargs":
-                working = appendForeignTypeError(out = working, unit = unit, offset = flag.start, kind = foreignFlagMisplaced, name = text, detail = "`|" + text + "` 只适用于数据符号")
+                working = appendForeignTypeError(out = working, unit = unit, offset = flag.start, kind = .foreignFlagMisplaced, name = text, detail = "`|" + text + "` 只适用于数据符号")
             if !isFunction && text == "varargs":
-                working = appendForeignTypeError(out = working, unit = unit, offset = flag.start, kind = foreignVarargsOnNonFunction, name = name, detail = "数据符号没有调用点")
+                working = appendForeignTypeError(out = working, unit = unit, offset = flag.start, kind = .foreignVarargsOnNonFunction, name = name, detail = "数据符号没有调用点")
         i = i + 1
     return working
 
@@ -299,13 +299,13 @@ checkForeignSymbol|func(out: ForeignTypeCheck, unit: CompilationUnit, unitIndex:
     if typeId < 0:
         return working
     if !isFunction:
-        return checkForeignValue(out = working, unit = unit, pool = types.pool, id = typeId, position = foreignPositionData, name = name, offset = symbol.start)
+        return checkForeignValue(out = working, unit = unit, pool = types.pool, id = typeId, position = .foreignPositionData, name = name, offset = symbol.start)
     let entry = types.pool.entries[typeId]
     var i = 0
     while i < len(entry.kids):
-        working = checkForeignValue(out = working, unit = unit, pool = types.pool, id = entry.kids[i], position = foreignPositionParam, name = name, offset = symbol.start)
+        working = checkForeignValue(out = working, unit = unit, pool = types.pool, id = entry.kids[i], position = .foreignPositionParam, name = name, offset = symbol.start)
         i = i + 1
-    return checkForeignValue(out = working, unit = unit, pool = types.pool, id = entry.ret, position = foreignPositionResult, name = name, offset = symbol.start)
+    return checkForeignValue(out = working, unit = unit, pool = types.pool, id = entry.ret, position = .foreignPositionResult, name = name, offset = symbol.start)
 
 ; 外部块：逐条判符号，块名不参与；条目顺序即错误顺序，最后统一排序。
 checkForeignBlock|func(out: ForeignTypeCheck, unit: CompilationUnit, unitIndex: I32, types: TypeTable, decl: DeclNode,) -> (ForeignTypeCheck,):

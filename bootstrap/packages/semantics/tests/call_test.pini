@@ -28,7 +28,7 @@ id: I32 = -1
 
 ; 加标量：按名字驻留标量类型。
 加标量|func(sample: 调用样例, name: String,) -> (类型号,):
-    let inserted = intern(pool = sample.world.types.pool, kind = typeClassScalar, name = name, kids = [], ret = -1)
+    let inserted = intern(pool = sample.world.types.pool, kind = .typeClassScalar, name = name, kids = [], ret = -1)
     var out = 类型号()
     out.sample = sample
     out.sample.world.types.pool = inserted.pool
@@ -37,12 +37,12 @@ id: I32 = -1
 
 ; 加数组：按元素标量名驻留数组类型。
 加数组|func(sample: 调用样例, elem: String,) -> (类型号,):
-    let scalar = intern(pool = sample.world.types.pool, kind = typeClassScalar, name = elem, kids = [], ret = -1)
+    let scalar = intern(pool = sample.world.types.pool, kind = .typeClassScalar, name = elem, kids = [], ret = -1)
     var grown = sample
     grown.world.types.pool = scalar.pool
     var kids: Array<I32> = []
     kids = kids.append(scalar.id)
-    let array = intern(pool = grown.world.types.pool, kind = typeClassCollection, name = "Array", kids = kids, ret = -1)
+    let array = intern(pool = grown.world.types.pool, kind = .typeClassCollection, name = "Array", kids = kids, ret = -1)
     var out = 类型号()
     out.sample = grown
     out.sample.world.types.pool = array.pool
@@ -51,7 +51,7 @@ id: I32 = -1
 
 ; 组函数：按形参与返回的类型下标驻留函数类型。
 组函数|func(sample: 调用样例, params: Array<I32>, ret: I32,) -> (类型号,):
-    let inserted = intern(pool = sample.world.types.pool, kind = typeClassFunction, name = "", kids = params, ret = ret)
+    let inserted = intern(pool = sample.world.types.pool, kind = .typeClassFunction, name = "", kids = params, ret = ret)
     var out = 类型号()
     out.sample = sample
     out.sample.world.types.pool = inserted.pool

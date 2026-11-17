@@ -119,7 +119,7 @@ checkIdentifierNode|func(world: MemberWorld, unit: CompilationUnit, bytes: Array
     let name = decodeRange(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
     if knownName(world = world, unit = unit, locals = locals, name = name):
         return out
-    return appendExprError(out = out, unit = unit, offset = expr.start, kind = exprUndefined, name = name, detail = "文件内没有这个名字", code = "E3-003")
+    return appendExprError(out = out, unit = unit, offset = expr.start, kind = .exprUndefined, name = name, detail = "文件内没有这个名字", code = "E3-003")
 
 ; 成员缺失：接收者是顶层类型名且不是局部遮蔽时，按名义成员判一次。
 ; 类型名位不暴露字段，这与成员面的语义一致；接收者是变量时留给类型推导。
@@ -140,7 +140,7 @@ checkMemberNode|func(world: MemberWorld, unit: CompilationUnit, bytes: Array<U8>
     let result = checkMember(world = world, access = access)
     if !result.failed:
         return out
-    return appendExprError(out = out, unit = unit, offset = member.start, kind = exprMemberFailed, name = memberName, detail = recvName + " 上没有该成员", code = memberErrorCode(result.error.kind))
+    return appendExprError(out = out, unit = unit, offset = member.start, kind = .exprMemberFailed, name = memberName, detail = recvName + " 上没有该成员", code = memberErrorCode(result.error.kind))
 
 ; 调用形状：被调是顶层函数或内建时按签名对实参标签与个数。
 ; 外部符号跳过：变参尾与回调判据要实参类型，本层拿不到；未定义由标识符扫描报。
@@ -170,7 +170,7 @@ checkCallNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, by
     let result = checkCall(world = world, site = site)
     if !result.failed:
         return out
-    return appendExprError(out = out, unit = unit, offset = site.offset, kind = exprCallFailed, name = name, detail = callErrorName(result.error.kind), code = callErrorCode(result.error.kind))
+    return appendExprError(out = out, unit = unit, offset = site.offset, kind = .exprCallFailed, name = name, detail = callErrorName(result.error.kind), code = callErrorCode(result.error.kind))
 
 ; 单元检查：逐个表达式节点分派；同一节点只走一条分支。
 checkUnitExprs|func(world: MemberWorld, unitIndex: I32, types: ExprTypes,) -> (ExprCheck,):

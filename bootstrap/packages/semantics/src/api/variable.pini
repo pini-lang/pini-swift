@@ -182,10 +182,10 @@ checkInitializer|func(unit: CompilationUnit, unitIndex: I32, node: I32, expected
         working.pool = typed.pool
         working.types = typed.types
         if typed.failed:
-            if isLiteralError(error = typed.error, kind = literalNeedsExpectation):
-                working = appendStoreError(out = working, unit = unit, offset = typed.error.offset, kind = storeValueUnknown, name = name, op = "", expected = "", got = "")
+            if isLiteralError(error = typed.error, kind = .literalNeedsExpectation):
+                working = appendStoreError(out = working, unit = unit, offset = typed.error.offset, kind = .storeValueUnknown, name = name, op = "", expected = "", got = "")
             else:
-                working = appendStoreError(out = working, unit = unit, offset = typed.error.offset, kind = storeValueMismatch, name = name, op = "", expected = typed.error.expected, got = typed.error.got)
+                working = appendStoreError(out = working, unit = unit, offset = typed.error.offset, kind = .storeValueMismatch, name = name, op = "", expected = typed.error.expected, got = typed.error.got)
             typeId = errorTypeId()
         else:
             typeId = typed.typeId
@@ -196,13 +196,13 @@ checkInitializer|func(unit: CompilationUnit, unitIndex: I32, node: I32, expected
 
 ; 声明一个局部：同块重名照原样报错，成功则记入声明清单。
 declareStore|func(out: StoreCheck, unit: CompilationUnit, name: String, typeId: I32, mutable: Bool, offset: I32,) -> (StoreCheck,):
-    return declareStoreAs(out = out, unit = unit, kind = localVariable, name = name, typeId = typeId, mutable = mutable, offset = offset)
+    return declareStoreAs(out = out, unit = unit, kind = .localVariable, name = name, typeId = typeId, mutable = mutable, offset = offset)
 
 ; 按种类声明一个局部：循环变量与普通局部共用一条，只有种类与初始可变性不同。
 declareStoreAs|func(out: StoreCheck, unit: CompilationUnit, kind: LocalKind, name: String, typeId: I32, mutable: Bool, offset: I32,) -> (StoreCheck,):
     let declared = declareLocal(stack = out.scope, kind = kind, spelling = name, typeId = typeId, mutable = mutable, file = unit.path, offset = offset, decl = -1)
     if declared.failed:
-        return appendStoreError(out = out, unit = unit, offset = declared.error.offset, kind = storeDuplicateName, name = name, op = "", expected = "", got = "")
+        return appendStoreError(out = out, unit = unit, offset = declared.error.offset, kind = .storeDuplicateName, name = name, op = "", expected = "", got = "")
     var done = out
     done.scope = declared.stack
     done.declared = done.declared.append(declared.stack.localAt(declared.index))
@@ -220,16 +220,16 @@ checkDestructure|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32,
         working = typed.check
         if typed.typeId >= 0 && typed.typeId < len(working.pool.entries):
             let entry = working.pool.entries[typed.typeId]
-            if isTypeClass(kind = entry.kind, expected = typeClassTuple):
+            if isTypeClass(kind = entry.kind, expected = .typeClassTuple):
                 knownTuple = true
                 components = entry.kids
             else:
                 let got = typeText(pool = working.pool, id = typed.typeId)
-                working = appendStoreError(out = working, unit = unit, offset = offset, kind = storeDestructureArity, name = "", op = "", expected = "元组", got = got)
+                working = appendStoreError(out = working, unit = unit, offset = offset, kind = .storeDestructureArity, name = "", op = "", expected = "元组", got = got)
     if knownTuple && len(components) != len(kids):
         let expected = countText(len(components))
         let got = countText(len(kids))
-        working = appendStoreError(out = working, unit = unit, offset = offset, kind = storeDestructureArity, name = "", op = "", expected = expected, got = got)
+        working = appendStoreError(out = working, unit = unit, offset = offset, kind = .storeDestructureArity, name = "", op = "", expected = expected, got = got)
     var i = 0
     while i < len(kids):
         let kid = kids[i]
@@ -242,7 +242,7 @@ checkDestructure|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32,
                     typeId = components[i]
                 working = declareStore(out = working, unit = unit, name = name, typeId = typeId, mutable = mutable, offset = expr.start)
         else:
-            working = appendStoreError(out = working, unit = unit, offset = unit.ast.exprAt(kid).start, kind = storeBadPattern, name = "", op = "", expected = "名字", got = "其他形态")
+            working = appendStoreError(out = working, unit = unit, offset = unit.ast.exprAt(kid).start, kind = .storeBadPattern, name = "", op = "", expected = "名字", got = "其他形态")
         i = i + 1
     return working
 
@@ -263,7 +263,7 @@ checkVariableDecl|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32
     if unit.ast.isTupleExpr(pattern):
         return checkDestructure(world = world, unit = unit, unitIndex = unitIndex, pattern = pattern, init = init, mutable = mutable, offset = stmt.start, out = working)
     if !unit.ast.isIdentifierExpr(pattern):
-        return appendStoreError(out = working, unit = unit, offset = stmt.start, kind = storeBadPattern, name = "", op = "", expected = "名字或元组", got = "其他形态")
+        return appendStoreError(out = working, unit = unit, offset = stmt.start, kind = .storeBadPattern, name = "", op = "", expected = "名字或元组", got = "其他形态")
     let expr = unit.ast.exprAt(pattern)
     let name = decodeRange(bytes = storeBytes(unit = unit, out = working), start = expr.nameStart, end = expr.nameEnd)
     var initType = -1
@@ -274,7 +274,7 @@ checkVariableDecl|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32
         if annotation >= 0 && initType >= 0 && !isAssignable(pool = working.pool, from = initType, to = annotation):
             let expected = storeTypeText(pool = working.pool, id = annotation)
             let got = storeTypeText(pool = working.pool, id = initType)
-            working = appendStoreError(out = working, unit = unit, offset = unit.ast.exprAt(init).start, kind = storeValueMismatch, name = name, op = "", expected = expected, got = got)
+            working = appendStoreError(out = working, unit = unit, offset = unit.ast.exprAt(init).start, kind = .storeValueMismatch, name = name, op = "", expected = expected, got = got)
     if name == "_":
         return working
     var declaredType = annotation
@@ -303,16 +303,16 @@ checkAssignStmt|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, 
             let local = working.scope.localAt(at)
             targetType = local.typeId
             if !local.mutable:
-                return appendStoreError(out = working, unit = unit, offset = offset, kind = storeLetImmutable, name = name, op = "=", expected = "", got = "")
+                return appendStoreError(out = working, unit = unit, offset = offset, kind = .storeLetImmutable, name = name, op = "=", expected = "", got = "")
         else:
             let reason = readonlyWriteReason(world = world, name = name)
             if len(reason) > 0:
-                return appendStoreError(out = working, unit = unit, offset = offset, kind = storeForeignReadonly, name = name, op = "=", expected = "", got = reason)
+                return appendStoreError(out = working, unit = unit, offset = offset, kind = .storeForeignReadonly, name = name, op = "=", expected = "", got = reason)
     elif unit.ast.isMemberExpr(target) || unit.ast.isSubscriptExpr(target):
         targetType = exprTypeAt(table = working.types, unit = unitIndex, node = target)
     else:
         let got = storeTypeText(pool = working.pool, id = typeOfExprNode(unit = unit, unitIndex = unitIndex, node = target, scope = working.scope, types = working.types, pool = working.pool))
-        return appendStoreError(out = working, unit = unit, offset = offset, kind = storeBadTarget, name = "", op = "=", expected = "", got = got)
+        return appendStoreError(out = working, unit = unit, offset = offset, kind = .storeBadTarget, name = "", op = "=", expected = "", got = got)
     let compound = compoundBinaryTag(stmt.op)
     if compound == 0:
         let typed = checkInitializer(unit = unit, unitIndex = unitIndex, node = value, expected = targetType, name = name, out = working)
@@ -320,7 +320,7 @@ checkAssignStmt|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, 
         if targetType >= 0 && typed.typeId >= 0 && !isAssignable(pool = working.pool, from = typed.typeId, to = targetType):
             let expected = storeTypeText(pool = working.pool, id = targetType)
             let got = storeTypeText(pool = working.pool, id = typed.typeId)
-            working = appendStoreError(out = working, unit = unit, offset = unit.ast.exprAt(value).start, kind = storeValueMismatch, name = name, op = "=", expected = expected, got = got)
+            working = appendStoreError(out = working, unit = unit, offset = unit.ast.exprAt(value).start, kind = .storeValueMismatch, name = name, op = "=", expected = expected, got = got)
         return working
     let typed = checkInitializer(unit = unit, unitIndex = unitIndex, node = value, expected = targetType, name = name, out = working)
     working = typed.check
@@ -330,11 +330,11 @@ checkAssignStmt|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, 
     let result = checkBinary(pool = working.pool, op = symbol, left = targetType, right = typed.typeId, file = unit.path, offset = offset)
     working.pool = result.pool
     if result.failed:
-        return appendStoreError(out = working, unit = unit, offset = offset, kind = storeCompoundOperand, name = name, op = symbol, expected = result.error.expected, got = result.error.got)
+        return appendStoreError(out = working, unit = unit, offset = offset, kind = .storeCompoundOperand, name = name, op = symbol, expected = result.error.expected, got = result.error.got)
     if !isAssignable(pool = working.pool, from = result.typeId, to = targetType):
         let expected = storeTypeText(pool = working.pool, id = targetType)
         let got = storeTypeText(pool = working.pool, id = result.typeId)
-        return appendStoreError(out = working, unit = unit, offset = offset, kind = storeValueMismatch, name = name, op = symbol, expected = expected, got = got)
+        return appendStoreError(out = working, unit = unit, offset = offset, kind = .storeValueMismatch, name = name, op = symbol, expected = expected, got = got)
     return working
 
 ; 走一块：进块帧后按源序逐条，退出时截断局部，槽位留给同一函数的后续块。
@@ -342,7 +342,7 @@ walkStoreBlock|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, b
     if blockId < 0 || blockId >= unit.ast.stmtCount():
         return out
     var inner = out
-    inner.scope = enterScope(stack = out.scope, kind = scopeBlock, file = unit.path, offset = unit.ast.stmtAt(blockId).start)
+    inner.scope = enterScope(stack = out.scope, kind = .scopeBlock, file = unit.path, offset = unit.ast.stmtAt(blockId).start)
     let kids = unit.ast.stmtAt(blockId).kids
     var i = 0
     while i < len(kids):

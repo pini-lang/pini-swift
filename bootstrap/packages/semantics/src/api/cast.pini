@@ -63,7 +63,7 @@ isNumericScalarType|func(pool: TypePool, id: I32,) -> (Bool,):
     if id < 0 || id >= len(pool.entries):
         return false
     let entry = pool.entries[id]
-    if !isTypeClass(kind = entry.kind, expected = typeClassScalar):
+    if !isTypeClass(kind = entry.kind, expected = .typeClassScalar):
         return false
     return isNumericScalarName(entry.name)
 
@@ -75,7 +75,7 @@ checkCast|func(pool: TypePool, source: I32, target: I32, file: String, offset: I
         out.deferred = true
         return out
     if !isNumericScalarType(pool = pool, id = target):
-        out.error = makeCastError(kind = castTargetNotNumeric, file = file, offset = offset, expected = "数值标量", got = typeText(pool = pool, id = target))
+        out.error = makeCastError(kind = .castTargetNotNumeric, file = file, offset = offset, expected = "数值标量", got = typeText(pool = pool, id = target))
         out.failed = true
         return out
     if source < 0:
@@ -83,7 +83,7 @@ checkCast|func(pool: TypePool, source: I32, target: I32, file: String, offset: I
         out.typeId = target
         return out
     if !isNumericScalarType(pool = pool, id = source):
-        out.error = makeCastError(kind = castOperandNotNumeric, file = file, offset = offset, expected = "数值标量", got = typeText(pool = pool, id = source))
+        out.error = makeCastError(kind = .castOperandNotNumeric, file = file, offset = offset, expected = "数值标量", got = typeText(pool = pool, id = source))
         out.failed = true
         return out
     out.typeId = target

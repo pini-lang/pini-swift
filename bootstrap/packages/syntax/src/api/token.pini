@@ -726,94 +726,94 @@ segmentCount|self() -> (I32,):
 
 ; 运算符拼写：按类别码回符号本身，非运算符答空串；诊断与语义判定共用这一条。
 opSymbol|func(_tag: I32,) -> (String,):
-    if _tag == kindTag(opAdd):
+    if _tag == kindTag(.opAdd):
         return "+"
-    if _tag == kindTag(opSub):
+    if _tag == kindTag(.opSub):
         return "-"
-    if _tag == kindTag(opMul):
+    if _tag == kindTag(.opMul):
         return "*"
-    if _tag == kindTag(opDiv):
+    if _tag == kindTag(.opDiv):
         return "/"
-    if _tag == kindTag(opMod):
+    if _tag == kindTag(.opMod):
         return "%"
-    if _tag == kindTag(opInc):
+    if _tag == kindTag(.opInc):
         return "++"
-    if _tag == kindTag(opDec):
+    if _tag == kindTag(.opDec):
         return "--"
-    if _tag == kindTag(opAnd):
+    if _tag == kindTag(.opAnd):
         return "&&"
-    if _tag == kindTag(opOr):
+    if _tag == kindTag(.opOr):
         return "||"
-    if _tag == kindTag(opNot):
+    if _tag == kindTag(.opNot):
         return "!"
-    if _tag == kindTag(opEq):
+    if _tag == kindTag(.opEq):
         return "=="
-    if _tag == kindTag(opNe):
+    if _tag == kindTag(.opNe):
         return "!="
-    if _tag == kindTag(opLe):
+    if _tag == kindTag(.opLe):
         return "<="
-    if _tag == kindTag(opGe):
+    if _tag == kindTag(.opGe):
         return ">="
-    if _tag == kindTag(opLt):
+    if _tag == kindTag(.opLt):
         return "<"
-    if _tag == kindTag(opGt):
+    if _tag == kindTag(.opGt):
         return ">"
-    if _tag == kindTag(opBitAnd):
+    if _tag == kindTag(.opBitAnd):
         return "&"
-    if _tag == kindTag(opBitOr):
+    if _tag == kindTag(.opBitOr):
         return "|"
-    if _tag == kindTag(opBitXor):
+    if _tag == kindTag(.opBitXor):
         return "^"
-    if _tag == kindTag(opBitNot):
+    if _tag == kindTag(.opBitNot):
         return "~"
-    if _tag == kindTag(opShl):
+    if _tag == kindTag(.opShl):
         return "<<"
-    if _tag == kindTag(opShr):
+    if _tag == kindTag(.opShr):
         return ">>"
-    if _tag == kindTag(opAssign):
+    if _tag == kindTag(.opAssign):
         return "="
-    if _tag == kindTag(opAssignAdd):
+    if _tag == kindTag(.opAssignAdd):
         return "+="
-    if _tag == kindTag(opAssignSub):
+    if _tag == kindTag(.opAssignSub):
         return "-="
-    if _tag == kindTag(opAssignMul):
+    if _tag == kindTag(.opAssignMul):
         return "*="
-    if _tag == kindTag(opAssignDiv):
+    if _tag == kindTag(.opAssignDiv):
         return "/="
-    if _tag == kindTag(opAssignMod):
+    if _tag == kindTag(.opAssignMod):
         return "%="
-    if _tag == kindTag(opAssignBitAnd):
+    if _tag == kindTag(.opAssignBitAnd):
         return "&="
-    if _tag == kindTag(opAssignBitOr):
+    if _tag == kindTag(.opAssignBitOr):
         return "|="
-    if _tag == kindTag(opAssignBitXor):
+    if _tag == kindTag(.opAssignBitXor):
         return "^="
-    if _tag == kindTag(opAssignShl):
+    if _tag == kindTag(.opAssignShl):
         return "<<="
-    if _tag == kindTag(opAssignShr):
+    if _tag == kindTag(.opAssignShr):
         return ">>="
     return ""
 
 ; 复合赋值对应的二元运算：`+=` 到 `>>=` 逐个映射；普通赋值与非赋值答 0。
 compoundBinaryTag|func(_tag: I32,) -> (I32,):
-    if _tag == kindTag(opAssignAdd):
-        return kindTag(opAdd)
-    if _tag == kindTag(opAssignSub):
-        return kindTag(opSub)
-    if _tag == kindTag(opAssignMul):
-        return kindTag(opMul)
-    if _tag == kindTag(opAssignDiv):
-        return kindTag(opDiv)
-    if _tag == kindTag(opAssignMod):
-        return kindTag(opMod)
-    if _tag == kindTag(opAssignBitAnd):
-        return kindTag(opBitAnd)
-    if _tag == kindTag(opAssignBitOr):
-        return kindTag(opBitOr)
-    if _tag == kindTag(opAssignBitXor):
-        return kindTag(opBitXor)
-    if _tag == kindTag(opAssignShl):
-        return kindTag(opShl)
-    if _tag == kindTag(opAssignShr):
-        return kindTag(opShr)
+    if _tag == kindTag(.opAssignAdd):
+        return kindTag(.opAdd)
+    if _tag == kindTag(.opAssignSub):
+        return kindTag(.opSub)
+    if _tag == kindTag(.opAssignMul):
+        return kindTag(.opMul)
+    if _tag == kindTag(.opAssignDiv):
+        return kindTag(.opDiv)
+    if _tag == kindTag(.opAssignMod):
+        return kindTag(.opMod)
+    if _tag == kindTag(.opAssignBitAnd):
+        return kindTag(.opBitAnd)
+    if _tag == kindTag(.opAssignBitOr):
+        return kindTag(.opBitOr)
+    if _tag == kindTag(.opAssignBitXor):
+        return kindTag(.opBitXor)
+    if _tag == kindTag(.opAssignShl):
+        return kindTag(.opShl)
+    if _tag == kindTag(.opAssignShr):
+        return kindTag(.opShr)
     return 0

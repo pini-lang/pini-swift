@@ -44,7 +44,7 @@ check: ForeignTypeCheck = ForeignTypeCheck()
     assert(采样.types.textOf(unit = 0, decl = 块.kids[0]) == "(I64,) -> *I8", "函数签名文本")
     let 句柄形 = 采样.types.typeOf(unit = 0, decl = 块.kids[3])
     let 句柄型 = 采样.types.pool.entries[句柄形].ret
-    assert(isTypeClass(kind = 采样.types.pool.entries[句柄型].kind, expected = typeClassOpaque), "句柄是不透明类别")
+    assert(isTypeClass(kind = 采样.types.pool.entries[句柄型].kind, expected = .typeClassOpaque), "句柄是不透明类别")
     assert(采样.types.textOf(unit = 0, decl = 块.kids[3]) == "(String,) -> StringHandle", "句柄签名文本")
     return
 
@@ -55,7 +55,7 @@ check: ForeignTypeCheck = ForeignTypeCheck()
     assert(采样.check.errorCount() == 4, "四条宽度错误，实得 " + 判型摘要(采样.check))
     var i = 0
     while i < 4:
-        assert(isForeignTypeError(error = 采样.check.errorAt(i), kind = foreignTypeWidthNotInIR), "第 " + "\(i)" + " 条应是宽度码")
+        assert(isForeignTypeError(error = 采样.check.errorAt(i), kind = .foreignTypeWidthNotInIR), "第 " + "\(i)" + " 条应是宽度码")
         i = i + 1
     return
 
@@ -64,7 +64,7 @@ check: ForeignTypeCheck = ForeignTypeCheck()
     let 文本 = "(S)\nx: I32 = 0\n\n[libc|foreign]\nc: Char\nd: S\n"
     let 采样 = 判型采样(units = [造判型单元(path = "packages/p/src/api/a.pini", text = 文本)])
     assert(采样.check.errorCount() == 2, "两条不可表示，实得 " + 判型摘要(采样.check))
-    assert(isForeignTypeError(error = 采样.check.errorAt(0), kind = foreignTypeNotRepresentable), "Char 不可表示")
+    assert(isForeignTypeError(error = 采样.check.errorAt(0), kind = .foreignTypeNotRepresentable), "Char 不可表示")
     assert(采样.check.errorAt(0).name == "c", "首个符号名")
     assert(采样.check.errorAt(1).detail.contains("按值结构体"), "结构体理由")
     return
@@ -74,9 +74,9 @@ String位置|test() -> ():
     let 文本 = "[libc|foreign]\nparam: (String,) -> ()\nret: (I32,) -> (String,)\ndata: String\n"
     let 采样 = 判型采样(units = [造判型单元(path = "packages/p/src/api/a.pini", text = 文本)])
     assert(采样.check.errorCount() == 2, "两条 String 位置错误，实得 " + 判型摘要(采样.check))
-    assert(isForeignTypeError(error = 采样.check.errorAt(0), kind = foreignStringInReturn), "返回位单列")
+    assert(isForeignTypeError(error = 采样.check.errorAt(0), kind = .foreignStringInReturn), "返回位单列")
     assert(采样.check.errorAt(0).name == "ret", "返回位符号名")
-    assert(isForeignTypeError(error = 采样.check.errorAt(1), kind = foreignTypeNotRepresentable), "数据位不可表示")
+    assert(isForeignTypeError(error = 采样.check.errorAt(1), kind = .foreignTypeNotRepresentable), "数据位不可表示")
     return
 
 ; 句柄位置：形参与返回都成立；数据位与指针目标都不行。
@@ -87,7 +87,7 @@ String位置|test() -> ():
     assert(采样.check.errorCount() == 2, "两条句柄位置错误，实得 " + 判型摘要(采样.check))
     assert(采样.check.errorAt(0).name == "data", "数据位符号名")
     assert(采样.check.errorAt(1).name == "ptr", "指针位符号名")
-    assert(isForeignTypeError(error = 采样.check.errorAt(1), kind = foreignTypeNotRepresentable), "句柄不能再套指针")
+    assert(isForeignTypeError(error = 采样.check.errorAt(1), kind = .foreignTypeNotRepresentable), "句柄不能再套指针")
     return
 
 ; 指针目标：目标按同一张白名单判，String 与宽度例外各走各的码。
@@ -95,8 +95,8 @@ String位置|test() -> ():
     let 文本 = "[libc|foreign]\ns: *String\nw: *U32\nnested: **I8\n"
     let 采样 = 判型采样(units = [造判型单元(path = "packages/p/src/api/a.pini", text = 文本)])
     assert(采样.check.errorCount() == 2, "两条指针目标错误，实得 " + 判型摘要(采样.check))
-    assert(isForeignTypeError(error = 采样.check.errorAt(0), kind = foreignTypeNotRepresentable), "String 不能作目标")
-    assert(isForeignTypeError(error = 采样.check.errorAt(1), kind = foreignTypeWidthNotInIR), "U32 目标是宽度码")
+    assert(isForeignTypeError(error = 采样.check.errorAt(0), kind = .foreignTypeNotRepresentable), "String 不能作目标")
+    assert(isForeignTypeError(error = 采样.check.errorAt(1), kind = .foreignTypeWidthNotInIR), "U32 目标是宽度码")
     return
 
 ; 回调边界：函数类型只作形参；回调形参与返回只收标量与指针，Bool 单列。
@@ -104,9 +104,9 @@ String位置|test() -> ():
     let 文本 = "[libc|foreign]\nretfn: (I32,) -> ((I32,) -> (),)\nbad: (*U8, (*U8,) -> (Bool,),) -> ()\nstr: ((String,) -> (),) -> ()\n"
     let 采样 = 判型采样(units = [造判型单元(path = "packages/p/src/api/a.pini", text = 文本)])
     assert(采样.check.errorCount() == 3, "三条回调错误，实得 " + 判型摘要(采样.check))
-    assert(isForeignTypeError(error = 采样.check.errorAt(0), kind = foreignCallbackOutsideParameter), "返回位函数单列")
-    assert(isForeignTypeError(error = 采样.check.errorAt(1), kind = foreignCallbackBoolean), "回调 Bool 单列")
-    assert(isForeignTypeError(error = 采样.check.errorAt(2), kind = foreignTypeNotRepresentable), "回调 String 不可表示")
+    assert(isForeignTypeError(error = 采样.check.errorAt(0), kind = .foreignCallbackOutsideParameter), "返回位函数单列")
+    assert(isForeignTypeError(error = 采样.check.errorAt(1), kind = .foreignCallbackBoolean), "回调 Bool 单列")
+    assert(isForeignTypeError(error = 采样.check.errorAt(2), kind = .foreignTypeNotRepresentable), "回调 String 不可表示")
     return
 
 ; 元组边界：空元组只在返回位成立；其余元组与空元组数据位都不可表示。
@@ -124,11 +124,11 @@ String位置|test() -> ():
     let 文本 = "[libc|foreign]\nunknown|inline: I32\ndup|readonly|readonly: I32\nfn|readonly: (I32,) -> ()\ndata|varargs: I32\nok|varargs: (String,) -> (I32,)\n"
     let 采样 = 判型采样(units = [造判型单元(path = "packages/p/src/api/a.pini", text = 文本)])
     assert(采样.check.errorCount() == 4, "四条标志错误，实得 " + 判型摘要(采样.check))
-    assert(isForeignTypeError(error = 采样.check.errorAt(0), kind = foreignFlagUnknown), "未知标志")
+    assert(isForeignTypeError(error = 采样.check.errorAt(0), kind = .foreignFlagUnknown), "未知标志")
     assert(采样.check.errorAt(0).name == "inline", "未知标志原文")
-    assert(isForeignTypeError(error = 采样.check.errorAt(1), kind = foreignFlagDuplicated), "重复标志")
-    assert(isForeignTypeError(error = 采样.check.errorAt(2), kind = foreignFlagMisplaced), "只读落在函数上")
-    assert(isForeignTypeError(error = 采样.check.errorAt(3), kind = foreignVarargsOnNonFunction), "变参落在数据上")
+    assert(isForeignTypeError(error = 采样.check.errorAt(1), kind = .foreignFlagDuplicated), "重复标志")
+    assert(isForeignTypeError(error = 采样.check.errorAt(2), kind = .foreignFlagMisplaced), "只读落在函数上")
+    assert(isForeignTypeError(error = 采样.check.errorAt(3), kind = .foreignVarargsOnNonFunction), "变参落在数据上")
     return
 
 ; 宏蕴含只读：`macro` 与 `macro|readonly` 合并成同一组，规范化后仍带两项。
@@ -147,7 +147,7 @@ String位置|test() -> ():
     let 表 = registerPackage([单元])
     let 类型 = resolvePackage(units = [单元], table = 表)
     assert(!类型.isOK(), "面外句柄应报错")
-    assert(isTypeError(error = 类型.errorAt(0), kind = typeErrorForeignOnlyName), "类别为仅外部面可用")
+    assert(isTypeError(error = 类型.errorAt(0), kind = .typeErrorForeignOnlyName), "类别为仅外部面可用")
     assert(类型.errorAt(0).name == "StringHandle", "错误带名字")
     return
 
@@ -157,8 +157,8 @@ String位置|test() -> ():
     let at = findBuiltinFunction(functions = 函数表, name = "fromCString")
     assert(at >= 0, "fromCString 应在内建表")
     assert(len(函数表[at].params) == 1, "一个形参")
-    assert(isBuiltinShape(shape = 函数表[at].params[0].shape, expected = builtinPointerU8), "形参是 *U8")
-    assert(isBuiltinShape(shape = 函数表[at].ret, expected = builtinString), "返回 String")
+    assert(isBuiltinShape(shape = 函数表[at].params[0].shape, expected = .builtinPointerU8), "形参是 *U8")
+    assert(isBuiltinShape(shape = 函数表[at].ret, expected = .builtinString), "返回 String")
     return
 
 ; 次序无关：两个单元正序与逆序判型，错误条数与首条文件相同。

@@ -102,7 +102,7 @@ enumNameOfType|func(pool: TypePool, id: I32,) -> (String,):
     if id < 0 || id >= len(pool.entries):
         return ""
     let entry = pool.entries[id]
-    if !isTypeClass(kind = entry.kind, expected = typeClassEnum):
+    if !isTypeClass(kind = entry.kind, expected = .typeClassEnum):
         return ""
     return entry.name
 

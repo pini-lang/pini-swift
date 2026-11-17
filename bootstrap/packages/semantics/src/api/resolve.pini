@@ -69,7 +69,7 @@ isResolveForm|func(form: ResolveForm, expected: ResolveForm,) -> (Bool,):
 
 ; 已解析：空形态之外都算已写。
 isResolved|func(_entry: ResolveEntry,) -> (Bool,):
-    return !isResolveForm(form = _entry.form, expected = resolveNone)
+    return !isResolveForm(form = _entry.form, expected = .resolveNone)
 
 ; 建表：逐单元按表达式池长度铺空条目；调用方先 sortedUnits，类型面与解析表共用同一序。
 makeResolveTable|func(_units: Array<CompilationUnit>,) -> (ResolveTable,):

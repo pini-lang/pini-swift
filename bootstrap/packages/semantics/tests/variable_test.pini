@@ -91,7 +91,7 @@ types: ExprTypes = ExprTypes()
     assert(hit.declared[0].spelling == "x", "实得 " + hit.declared[0].spelling)
     assert(!hit.declared[0].mutable, "let 应不可变")
     assert(typeText(pool = hit.pool, id = hit.declared[0].typeId) == "I32", "实得 " + typeText(pool = hit.pool, id = hit.declared[0].typeId))
-    assert(isLocalKind(kind = hit.declared[0].kind, expected = localVariable), "应判作局部变量")
+    assert(isLocalKind(kind = hit.declared[0].kind, expected = .localVariable), "应判作局部变量")
     assert(hit.declared[1].mutable, "var 应可变")
     assert(typeText(pool = hit.pool, id = hit.declared[1].typeId) == "F64", "实得 " + typeText(pool = hit.pool, id = hit.declared[1].typeId))
     return
@@ -203,7 +203,7 @@ let不可变|test() -> ():
 ; 字段写：字段目标按类型表取类型，初值按该类型定型。
 字段写|test() -> ():
     var sample = 造存样例("(点)\nx: I32 = 0\n\nf|func(p: 点,) -> ():\n    p.x = 1\n")
-    let 整数 = intern(pool = sample.world.types.pool, kind = typeClassScalar, name = "I32", kids = [], ret = -1)
+    let 整数 = intern(pool = sample.world.types.pool, kind = .typeClassScalar, name = "I32", kids = [], ret = -1)
     sample.world.types.pool = 整数.pool
     sample = 定目标(sample = sample, typeId = 整数.id)
     let hit = 查存(sample = sample, name = "f")
@@ -213,7 +213,7 @@ let不可变|test() -> ():
 ; 字段写不符：字段是 I32 而初值是字符串，报类型不匹配。
 字段写不符|test() -> ():
     var sample = 造存样例("(点)\nx: I32 = 0\n\nf|func(p: 点,) -> ():\n    p.x = \"s\"\n")
-    let 整数 = intern(pool = sample.world.types.pool, kind = typeClassScalar, name = "I32", kids = [], ret = -1)
+    let 整数 = intern(pool = sample.world.types.pool, kind = .typeClassScalar, name = "I32", kids = [], ret = -1)
     sample.world.types.pool = 整数.pool
     sample = 定目标(sample = sample, typeId = 整数.id)
     let hit = 查存(sample = sample, name = "f")
@@ -224,7 +224,7 @@ let不可变|test() -> ():
 ; 下标写：下标目标按类型表取元素类型，写值可赋值即放行。
 下标写|test() -> ():
     var sample = 造存样例("f|func(a: Array<I32>,) -> ():\n    a[0] = 1\n")
-    let 整数 = intern(pool = sample.world.types.pool, kind = typeClassScalar, name = "I32", kids = [], ret = -1)
+    let 整数 = intern(pool = sample.world.types.pool, kind = .typeClassScalar, name = "I32", kids = [], ret = -1)
     sample.world.types.pool = 整数.pool
     sample = 定目标(sample = sample, typeId = 整数.id)
     let hit = 查存(sample = sample, name = "f")

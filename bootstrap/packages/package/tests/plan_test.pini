@@ -8,7 +8,7 @@
 
 ; 测试助手：库 target 用统一入口形状，判据只关心名字与产物路径。
 库目标|func(_name: String,) -> (TargetSpec,):
-    return 造目标(name = _name, kind = targetLibrary, entry = "src/api/" + _name + ".pini")
+    return 造目标(name = _name, kind = .targetLibrary, entry = "src/api/" + _name + ".pini")
 
 ; 测试助手：空依赖表；直接写 `[]` 会被推成 I32 元素。
 空依赖|func() -> (Array<String>,):
@@ -36,12 +36,12 @@
 拓扑序固定|test() -> ():
     let 工作区 = 造工作区(["packages/diagnostics", "packages/driver", "packages/package", "packages/support", "packages/syntax", "packages/unicode"])
     var 解析表: Array<PackageParse> = []
-    解析表 = 解析表.append(造包(rootPath = "packages/support", name = "support", requires = 空依赖(), targets = [库目标("support"), 造目标(name = "support-tests", kind = targetTest, entry = "tests")]))
+    解析表 = 解析表.append(造包(rootPath = "packages/support", name = "support", requires = 空依赖(), targets = [库目标("support"), 造目标(name = "support-tests", kind = .targetTest, entry = "tests")]))
     解析表 = 解析表.append(造包(rootPath = "packages/unicode", name = "unicode", requires = ["support"], targets = [库目标("unicode")]))
     解析表 = 解析表.append(造包(rootPath = "packages/diagnostics", name = "diagnostics", requires = ["support"], targets = [库目标("diagnostics")]))
     解析表 = 解析表.append(造包(rootPath = "packages/syntax", name = "syntax", requires = ["support", "unicode", "diagnostics"], targets = [库目标("syntax")]))
     解析表 = 解析表.append(造包(rootPath = "packages/package", name = "package", requires = 空依赖(), targets = [库目标("package")]))
-    解析表 = 解析表.append(造包(rootPath = "packages/driver", name = "driver", requires = ["support", "package"], targets = [造目标(name = "pini-bootstrap", kind = targetExecutable, entry = "src/api/main.pini")]))
+    解析表 = 解析表.append(造包(rootPath = "packages/driver", name = "driver", requires = ["support", "package"], targets = [造目标(name = "pini-bootstrap", kind = .targetExecutable, entry = "src/api/main.pini")]))
     let 计划 = assemblePlan(workspace = 工作区, parses = 解析表)
     assert(计划.isOK(), "不应有错误：" + planText(计划))
     assert(计划.packageCount() == 6, "六个包")
@@ -72,7 +72,7 @@
 产物路径|test() -> ():
     let 工作区 = 造工作区(["p"])
     var 解析表: Array<PackageParse> = []
-    let 目标 = [库目标("p"), 造目标(name = "tool", kind = targetExecutable, entry = "src/main.pini"), 造目标(name = "p-tests", kind = targetTest, entry = "tests")]
+    let 目标 = [库目标("p"), 造目标(name = "tool", kind = .targetExecutable, entry = "src/main.pini"), 造目标(name = "p-tests", kind = .targetTest, entry = "tests")]
     解析表 = 解析表.append(造包(rootPath = "p", name = "p", requires = 空依赖(), targets = 目标))
     let 计划 = assemblePlan(workspace = 工作区, parses = 解析表)
     assert(计划.isOK(), "不应有错误：" + planText(计划))
@@ -109,8 +109,8 @@
 ; 可执行产物重名：两个包各声明同名 bin，建产物前就报错。
 可执行重名|test() -> ():
     var 解析表: Array<PackageParse> = []
-    解析表 = 解析表.append(造包(rootPath = "a", name = "a", requires = 空依赖(), targets = [造目标(name = "tool", kind = targetExecutable, entry = "src/main.pini")]))
-    解析表 = 解析表.append(造包(rootPath = "b", name = "b", requires = 空依赖(), targets = [造目标(name = "tool", kind = targetExecutable, entry = "src/main.pini")]))
+    解析表 = 解析表.append(造包(rootPath = "a", name = "a", requires = 空依赖(), targets = [造目标(name = "tool", kind = .targetExecutable, entry = "src/main.pini")]))
+    解析表 = 解析表.append(造包(rootPath = "b", name = "b", requires = 空依赖(), targets = [造目标(name = "tool", kind = .targetExecutable, entry = "src/main.pini")]))
     let 计划 = assemblePlan(workspace = 造工作区(["a", "b"]), parses = 解析表)
     assert(isErrorKind(e = 计划.errorAt(0), kind = .errorExecutableCollision), "产物重名")
     return

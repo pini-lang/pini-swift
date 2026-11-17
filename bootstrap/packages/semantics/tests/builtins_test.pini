@@ -5,7 +5,7 @@ id: I32 = -1
 
 ; 造标量：按名字驻留，池只增不改。
 造标量|func(pool: TypePool, name: String,) -> (标量结果,):
-    let inserted = intern(pool = pool, kind = typeClassScalar, name = name, kids = [], ret = -1)
+    let inserted = intern(pool = pool, kind = .typeClassScalar, name = name, kids = [], ret = -1)
     var out = 标量结果()
     out.pool = inserted.pool
     out.id = inserted.id
@@ -44,7 +44,7 @@ id: I32 = -1
 数组成员类型|test() -> ():
     var pool = TypePool()
     let elem = 造标量(pool = pool, name = "I32")
-    let array = intern(pool = elem.pool, kind = typeClassCollection, name = "Array", kids = [elem.id], ret = -1)
+    let array = intern(pool = elem.pool, kind = .typeClassCollection, name = "Array", kids = [elem.id], ret = -1)
     let members = builtinMemberTable()
     let append = findBuiltin(members = members, owner = "Array", name = "append")
     let appended = builtinShapeType(pool = array.pool, shape = members[append].ret, kids = [elem.id])
@@ -62,7 +62,7 @@ id: I32 = -1
     var pool = TypePool()
     let key = 造标量(pool = pool, name = "String")
     let value = 造标量(pool = key.pool, name = "I32")
-    let dict = intern(pool = value.pool, kind = typeClassCollection, name = "Dictionary", kids = [key.id, value.id], ret = -1)
+    let dict = intern(pool = value.pool, kind = .typeClassCollection, name = "Dictionary", kids = [key.id, value.id], ret = -1)
     let members = builtinMemberTable()
     let get = findBuiltin(members = members, owner = "Dictionary", name = "get")
     let got = builtinShapeType(pool = dict.pool, shape = members[get].ret, kids = [key.id, value.id])
@@ -74,6 +74,6 @@ id: I32 = -1
 
 ; 形状名：诊断与回执共用一份拼写。
 形状名|test() -> ():
-    assert(builtinShapeName(builtinPopTuple) == "数组弹出元组", "实得 " + builtinShapeName(builtinPopTuple))
-    assert(builtinShapeName(builtinOptionalElem) == "元素可选", "实得 " + builtinShapeName(builtinOptionalElem))
+    assert(builtinShapeName(.builtinPopTuple) == "数组弹出元组", "实得 " + builtinShapeName(.builtinPopTuple))
+    assert(builtinShapeName(.builtinOptionalElem) == "元素可选", "实得 " + builtinShapeName(.builtinOptionalElem))
     return

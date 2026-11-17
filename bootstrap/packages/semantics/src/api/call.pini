@@ -202,12 +202,12 @@ checkArg|func(out: CallResult, site: CallSite, arg: CallArg, param: CallParam,) 
     if param.sized:
         if isSizedType(pool = out.pool, id = arg.typeId):
             return out
-        return failCall(out = out, site = site, offset = arg.offset, kind = callArgType, expected = "数组、字典、集合或字符串", got = typeText(pool = out.pool, id = arg.typeId))
+        return failCall(out = out, site = site, offset = arg.offset, kind = .callArgType, expected = "数组、字典、集合或字符串", got = typeText(pool = out.pool, id = arg.typeId))
     if param.typeId < 0:
         return out
     if isAssignable(pool = out.pool, from = arg.typeId, to = param.typeId):
         return out
-    return failCall(out = out, site = site, offset = arg.offset, kind = callArgType, expected = typeText(pool = out.pool, id = param.typeId), got = typeText(pool = out.pool, id = arg.typeId))
+    return failCall(out = out, site = site, offset = arg.offset, kind = .callArgType, expected = typeText(pool = out.pool, id = param.typeId), got = typeText(pool = out.pool, id = arg.typeId))
 
 ; 实参匹配：标签按名字、位置按次序；缺失位若有默认值或取用则放过。
 ; 要标签的形参只收标签实参，退出标签面的只收位置实参。
@@ -228,11 +228,11 @@ matchCall|func(out: CallResult, site: CallSite, params: Array<CallParam>, variad
         if len(arg.label) > 0:
             let at = paramIndexOf(params = params, name = arg.label)
             if at < 0:
-                return failCall(out = out, site = site, offset = arg.offset, kind = callUnknownLabel, expected = "参数名", got = arg.label)
+                return failCall(out = out, site = site, offset = arg.offset, kind = .callUnknownLabel, expected = "参数名", got = arg.label)
             if filled[at]:
-                return failCall(out = out, site = site, offset = arg.offset, kind = callDuplicateLabel, expected = "每个形参一个实参", got = "标签 " + arg.label + " 重复")
+                return failCall(out = out, site = site, offset = arg.offset, kind = .callDuplicateLabel, expected = "每个形参一个实参", got = "标签 " + arg.label + " 重复")
             if !params[at].takesLabel:
-                return failCall(out = out, site = site, offset = arg.offset, kind = callUnexpectedLabel, expected = "位置实参", got = "标签 " + arg.label + " = 值")
+                return failCall(out = out, site = site, offset = arg.offset, kind = .callUnexpectedLabel, expected = "位置实参", got = "标签 " + arg.label + " = 值")
             filled[at] = true
             let checked = checkArg(out = out, site = site, arg = arg, param = params[at])
             if checked.failed:
@@ -243,10 +243,10 @@ matchCall|func(out: CallResult, site: CallSite, params: Array<CallParam>, variad
                 nextPos = nextPos + 1
             if nextPos >= len(params):
                 if !variadic:
-                    return failCall(out = out, site = site, offset = arg.offset, kind = callArity, expected = "至多 " + countText(len(params)), got = countText(len(site.args)))
+                    return failCall(out = out, site = site, offset = arg.offset, kind = .callArity, expected = "至多 " + countText(len(params)), got = countText(len(site.args)))
             else:
                 if params[nextPos].takesLabel:
-                    return failCall(out = out, site = site, offset = arg.offset, kind = callMissingLabel, expected = "标签 " + params[nextPos].name + " = 值", got = "位置实参")
+                    return failCall(out = out, site = site, offset = arg.offset, kind = .callMissingLabel, expected = "标签 " + params[nextPos].name + " = 值", got = "位置实参")
                 filled[nextPos] = true
                 let checked = checkArg(out = out, site = site, arg = arg, param = params[nextPos])
                 if checked.failed:
@@ -258,7 +258,7 @@ matchCall|func(out: CallResult, site: CallSite, params: Array<CallParam>, variad
         var m = 0
         while m < len(params):
             if !filled[m] && !params[m].hasDefault && !params[m].isUsing:
-                return failCall(out = out, site = site, offset = site.offset, kind = callArity, expected = "至少 " + countText(requiredCount(params)), got = countText(len(site.args)))
+                return failCall(out = out, site = site, offset = site.offset, kind = .callArity, expected = "至少 " + countText(requiredCount(params)), got = countText(len(site.args)))
             m = m + 1
     var done = out
     done.typeId = retId
@@ -335,8 +335,8 @@ checkValueCall|func(out: CallResult, site: CallSite,) -> (CallResult,):
     if site.calleeType < 0 || site.calleeType >= len(out.pool.entries):
         return deferCall(out)
     let entry = out.pool.entries[site.calleeType]
-    if !isTypeClass(kind = entry.kind, expected = typeClassFunction):
-        return failCall(out = out, site = site, offset = site.offset, kind = callNotCallable, expected = "函数", got = typeText(pool = out.pool, id = site.calleeType))
+    if !isTypeClass(kind = entry.kind, expected = .typeClassFunction):
+        return failCall(out = out, site = site, offset = site.offset, kind = .callNotCallable, expected = "函数", got = typeText(pool = out.pool, id = site.calleeType))
     var params: Array<CallParam> = []
     var i = 0
     while i < len(entry.kids):

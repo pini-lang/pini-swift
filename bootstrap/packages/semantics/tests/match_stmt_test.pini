@@ -73,7 +73,7 @@ types: ExprTypes = ExprTypes()
     assert(!hit.failed, "不应报错，实得 " + countText(诊断总数(hit)))
     let at = 找语句声明(check = hit, name = "半径")
     assert(at >= 0, "应绑定半径")
-    assert(isLocalKind(kind = hit.declared[at].kind, expected = localBinding), "应判作模式绑定")
+    assert(isLocalKind(kind = hit.declared[at].kind, expected = .localBinding), "应判作模式绑定")
     assert(typeText(pool = hit.pool, id = hit.declared[at].typeId) == "F64", "实得 " + typeText(pool = hit.pool, id = hit.declared[at].typeId))
     return
 
@@ -172,7 +172,7 @@ types: ExprTypes = ExprTypes()
     let sample = 造语句样例("f|func() -> ():\n    defer:\n        break\n")
     let hit = 查语句(sample = sample, name = "f")
     assert(len(hit.errors) == 1, "应报一条，实得 " + countText(len(hit.errors)))
-    assert(isStoreError(error = hit.errors[0], kind = storeLoopControlOutside), "实得 " + storeErrorName(hit.errors[0].kind))
+    assert(isStoreError(error = hit.errors[0], kind = .storeLoopControlOutside), "实得 " + storeErrorName(hit.errors[0].kind))
     return
 
 ; 两次检查一致：同一份源码查两遍，诊断条数与类别相同。

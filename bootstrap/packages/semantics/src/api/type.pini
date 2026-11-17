@@ -100,40 +100,40 @@ isTypeClass|func(kind: TypeClass, expected: TypeClass,) -> (Bool,):
 
 ; 跨包判定：枚举项不能跨包引用，下游按类别逐个问；每条走一次类别判定。
 isScalarClass|func(_kind: TypeClass,) -> (Bool,):
-    return isTypeClass(kind = _kind, expected = typeClassScalar)
+    return isTypeClass(kind = _kind, expected = .typeClassScalar)
 
 isOpaqueClass|func(_kind: TypeClass,) -> (Bool,):
-    return isTypeClass(kind = _kind, expected = typeClassOpaque)
+    return isTypeClass(kind = _kind, expected = .typeClassOpaque)
 
 isPointerClass|func(_kind: TypeClass,) -> (Bool,):
-    return isTypeClass(kind = _kind, expected = typeClassPointer)
+    return isTypeClass(kind = _kind, expected = .typeClassPointer)
 
 isStructClass|func(_kind: TypeClass,) -> (Bool,):
-    return isTypeClass(kind = _kind, expected = typeClassStruct)
+    return isTypeClass(kind = _kind, expected = .typeClassStruct)
 
 isObjectClass|func(_kind: TypeClass,) -> (Bool,):
-    return isTypeClass(kind = _kind, expected = typeClassObject)
+    return isTypeClass(kind = _kind, expected = .typeClassObject)
 
 isEnumClass|func(_kind: TypeClass,) -> (Bool,):
-    return isTypeClass(kind = _kind, expected = typeClassEnum)
+    return isTypeClass(kind = _kind, expected = .typeClassEnum)
 
 isTupleClass|func(_kind: TypeClass,) -> (Bool,):
-    return isTypeClass(kind = _kind, expected = typeClassTuple)
+    return isTypeClass(kind = _kind, expected = .typeClassTuple)
 
 isCollectionClass|func(_kind: TypeClass,) -> (Bool,):
-    return isTypeClass(kind = _kind, expected = typeClassCollection)
+    return isTypeClass(kind = _kind, expected = .typeClassCollection)
 
 isOptionalClass|func(_kind: TypeClass,) -> (Bool,):
-    return isTypeClass(kind = _kind, expected = typeClassOptional)
+    return isTypeClass(kind = _kind, expected = .typeClassOptional)
 
 isResultClass|func(_kind: TypeClass,) -> (Bool,):
-    return isTypeClass(kind = _kind, expected = typeClassResult)
+    return isTypeClass(kind = _kind, expected = .typeClassResult)
 
 isFunctionClass|func(_kind: TypeClass,) -> (Bool,):
-    return isTypeClass(kind = _kind, expected = typeClassFunction)
+    return isTypeClass(kind = _kind, expected = .typeClassFunction)
 
 isGenericClass|func(_kind: TypeClass,) -> (Bool,):
-    return isTypeClass(kind = _kind, expected = typeClassGeneric)
+    return isTypeClass(kind = _kind, expected = .typeClassGeneric)
 
 ((TypePool))
 ; 条目数：下标合法区间是 0 到 count() - 1。
@@ -214,48 +214,48 @@ joinTypes|func(pool: TypePool, ids: Array<I32>,) -> (String,):
 needsParens|func(pool: TypePool, id: I32,) -> (Bool,):
     if id < 0 || id >= len(pool.entries):
         return false
-    return isTypeClass(kind = pool.entries[id].kind, expected = typeClassFunction)
+    return isTypeClass(kind = pool.entries[id].kind, expected = .typeClassFunction)
 
 ; 规范化文本：接口产物与诊断共用一份拼写，同一类型在任何遍历顺序下都得到同一串。
 typeText|func(pool: TypePool, id: I32,) -> (String,):
     if id < 0 || id >= len(pool.entries):
         return "<无效>"
     let entry = pool.entries[id]
-    if isTypeClass(kind = entry.kind, expected = typeClassScalar):
+    if isTypeClass(kind = entry.kind, expected = .typeClassScalar):
         return entry.name
-    if isTypeClass(kind = entry.kind, expected = typeClassOpaque):
+    if isTypeClass(kind = entry.kind, expected = .typeClassOpaque):
         return entry.name
-    if isTypeClass(kind = entry.kind, expected = typeClassStruct) || isTypeClass(kind = entry.kind, expected = typeClassObject):
+    if isTypeClass(kind = entry.kind, expected = .typeClassStruct) || isTypeClass(kind = entry.kind, expected = .typeClassObject):
         return entry.name
-    if isTypeClass(kind = entry.kind, expected = typeClassEnum):
+    if isTypeClass(kind = entry.kind, expected = .typeClassEnum):
         return entry.name
-    if isTypeClass(kind = entry.kind, expected = typeClassGeneric):
+    if isTypeClass(kind = entry.kind, expected = .typeClassGeneric):
         if len(entry.kids) == 0:
             return entry.name
         return entry.name + "<" + joinTypes(pool = pool, ids = entry.kids) + ">"
-    if isTypeClass(kind = entry.kind, expected = typeClassCollection):
+    if isTypeClass(kind = entry.kind, expected = .typeClassCollection):
         return entry.name + "<" + joinTypes(pool = pool, ids = entry.kids) + ">"
-    if isTypeClass(kind = entry.kind, expected = typeClassPointer):
+    if isTypeClass(kind = entry.kind, expected = .typeClassPointer):
         if len(entry.kids) == 0:
             return "<无效>"
         let inner = typeText(pool = pool, id = entry.kids[0])
         if needsParens(pool = pool, id = entry.kids[0]):
             return "*(" + inner + ")"
         return "*" + inner
-    if isTypeClass(kind = entry.kind, expected = typeClassOptional):
+    if isTypeClass(kind = entry.kind, expected = .typeClassOptional):
         if len(entry.kids) == 0:
             return "<无效>"
         let inner = typeText(pool = pool, id = entry.kids[0])
         if needsParens(pool = pool, id = entry.kids[0]):
             return "(" + inner + ")?"
         return inner + "?"
-    if isTypeClass(kind = entry.kind, expected = typeClassTuple):
+    if isTypeClass(kind = entry.kind, expected = .typeClassTuple):
         if len(entry.kids) == 0:
             return "()"
         return "(" + joinTypes(pool = pool, ids = entry.kids) + ",)"
-    if isTypeClass(kind = entry.kind, expected = typeClassResult):
+    if isTypeClass(kind = entry.kind, expected = .typeClassResult):
         return resultText(pool = pool, entry = entry)
-    if isTypeClass(kind = entry.kind, expected = typeClassFunction):
+    if isTypeClass(kind = entry.kind, expected = .typeClassFunction):
         var params = "(" + joinTypes(pool = pool, ids = entry.kids) + ",)"
         if len(entry.kids) == 0:
             params = "()"

@@ -53,7 +53,7 @@ _module_loader = "../../module-loader"
     let ws = 工作区([组包(name = "app", root = "packages/app", requires = [], units = [app]), 组包(name = "base", root = "packages/base", requires = [], units = [base])])
     let check = checkWorkspaceImports(ws)
     assert(len(check.errors) == 1, "应报一条，实得 " + countText(len(check.errors)))
-    assert(isBoundaryError(error = check.errors[0], kind = boundaryUndeclared), "实得 " + boundaryKindName(check.errors[0].kind))
+    assert(isBoundaryError(error = check.errors[0], kind = .boundaryUndeclared), "实得 " + boundaryKindName(check.errors[0].kind))
     assert(check.errors[0].target == "packages/base", "实得 " + check.errors[0].target)
     assert(check.errors[0].alias == "base", "实得 " + check.errors[0].alias)
     return
@@ -65,7 +65,7 @@ _module_loader = "../../module-loader"
     let ws = 工作区([组包(name = "app", root = "packages/app", requires = ["base"], units = [app]), 组包(name = "base", root = "packages/base", requires = [], units = [base])])
     let check = checkWorkspaceImports(ws)
     assert(len(check.errors) == 1, "应报一条，实得 " + countText(len(check.errors)))
-    assert(isBoundaryError(error = check.errors[0], kind = boundaryInternal), "实得 " + boundaryKindName(check.errors[0].kind))
+    assert(isBoundaryError(error = check.errors[0], kind = .boundaryInternal), "实得 " + boundaryKindName(check.errors[0].kind))
     assert(check.errors[0].target == "packages/base/src/_internal/tables", "实得 " + check.errors[0].target)
     return
 
@@ -75,7 +75,7 @@ _module_loader = "../../module-loader"
     let ws = 工作区([组包(name = "app", root = "packages/app", requires = [], units = [app])])
     let check = checkWorkspaceImports(ws)
     assert(len(check.errors) == 1, "应报一条，实得 " + countText(len(check.errors)))
-    assert(isBoundaryError(error = check.errors[0], kind = boundaryUnknownTarget), "实得 " + boundaryKindName(check.errors[0].kind))
+    assert(isBoundaryError(error = check.errors[0], kind = .boundaryUnknownTarget), "实得 " + boundaryKindName(check.errors[0].kind))
     assert(check.errors[0].target == "packages/nope", "实得 " + check.errors[0].target)
     return
 

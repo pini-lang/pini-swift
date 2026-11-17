@@ -50,7 +50,7 @@ lowerVariableStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, 
     var valueId = -1
     if init >= 0:
         if typeId >= 0 && unit.ast.isArrayExpr(init) && len(unit.ast.exprAt(init).kids) == 0:
-            let empty = addIrNode(pool = done.pool, kind = irExprTag(irArrayLiteral), typeId = typeId, op = 0, kids = [])
+            let empty = addIrNode(pool = done.pool, kind = irExprTag(.irArrayLiteral), typeId = typeId, op = 0, kids = [])
             done.pool = empty.pool
             valueId = empty.id
         else:
@@ -66,7 +66,7 @@ lowerVariableStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, 
         if typeId < 0:
             typeId = valueType
         elif valueType >= 0 && valueType != typeId:
-            let cast = addIrNode(pool = done.pool, kind = irExprTag(irUnary), typeId = typeId, op = irUnaryTag(irCast), kids = [valueId])
+            let cast = addIrNode(pool = done.pool, kind = irExprTag(.irUnary), typeId = typeId, op = irUnaryTag(.irCast), kids = [valueId])
             done.pool = cast.pool
             valueId = cast.id
     if typeId < 0:
@@ -80,7 +80,7 @@ lowerVariableStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, 
     var kids: Array<I32> = []
     if valueId >= 0:
         kids = kids.append(valueId)
-    var node = irMakeNode(kind = irStmtTag(irAllocVar), typeId = typeId)
+    var node = irMakeNode(kind = irStmtTag(.irAllocVar), typeId = typeId)
     node.text = placed.id
     if mutable:
         node.op = 1
@@ -132,7 +132,7 @@ appendStmtNode|func(out: LowerStmt, node: IrNode,) -> (LowerStmt,):
 ; 字段读：接收者与字段名给定，造一个按声明序取的字段读。
 makeFieldGet|func(pool: IrNodePool, texts: Array<String>, fieldName: String, typeId: I32, base: I32,) -> (IrLoadNode,):
     let placed = internText(texts = texts, value = fieldName)
-    var node = irMakeNode(kind = irExprTag(irFieldGet), typeId = typeId)
+    var node = irMakeNode(kind = irExprTag(.irFieldGet), typeId = typeId)
     node.text = placed.id
     node.kids = [base]
     let inserted = irAppendNode(pool = pool, node = node)
@@ -144,7 +144,7 @@ makeFieldGet|func(pool: IrNodePool, texts: Array<String>, fieldName: String, typ
 
 ; 下标读：容器与下标给定，越界由运行时陷阱承担。
 makeSubscriptGet|func(pool: IrNodePool, typeId: I32, container: I32, index: I32,) -> (IrNodeInsert,):
-    return addIrNode(pool = pool, kind = irExprTag(irSubscriptGet), typeId = typeId, op = 0, kids = [container, index])
+    return addIrNode(pool = pool, kind = irExprTag(.irSubscriptGet), typeId = typeId, op = 0, kids = [container, index])
 
 ; 赋值：复合运算按「读—算—写」接成三节，普通赋值只写一次。
 lowerAssignStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32,) -> (LowerStmt,):
@@ -178,7 +178,7 @@ lowerStoreStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map
         if rhs.failed:
             return takeStmtFailure(out = done, detail = rhs.detail, offset = rhs.offset)
         let placed = internText(texts = done.texts, value = name)
-        var node = irMakeNode(kind = irStmtTag(irStoreVar), typeId = typeId)
+        var node = irMakeNode(kind = irStmtTag(.irStoreVar), typeId = typeId)
         node.text = placed.id
         node.kids = [rhs.id]
         done.texts = placed.texts
@@ -212,7 +212,7 @@ writeField|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: Ty
         return takeStmtFailure(out = done, detail = rhs.detail, offset = rhs.offset)
     let fieldName = decodeSpelling(bytes = bytes, start = member.nameStart, end = member.nameEnd)
     let placed = internText(texts = done.texts, value = fieldName)
-    var node = irMakeNode(kind = irStmtTag(irFieldStore), typeId = typeId)
+    var node = irMakeNode(kind = irStmtTag(.irFieldStore), typeId = typeId)
     node.text = placed.id
     node.kids = [recvOne.id, rhs.id]
     done.texts = placed.texts
@@ -244,7 +244,7 @@ writeSubscript|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map
     done.frame = rhs.frame
     if rhs.failed:
         return takeStmtFailure(out = done, detail = rhs.detail, offset = rhs.offset)
-    var node = irMakeNode(kind = irStmtTag(irSubscriptStore), typeId = typeId)
+    var node = irMakeNode(kind = irStmtTag(.irSubscriptStore), typeId = typeId)
     node.kids = [kids[0], kids[1], rhs.id]
     return appendStmtNode(out = done, node = node)
 
@@ -269,10 +269,10 @@ lowerCompoundStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, 
         done.frame = rhs.frame
         if rhs.failed:
             return takeStmtFailure(out = done, detail = rhs.detail, offset = rhs.offset)
-        let sum = addIrNode(pool = done.pool, kind = irExprTag(irBinary), typeId = typeId, op = base, kids = [load.id, rhs.id])
+        let sum = addIrNode(pool = done.pool, kind = irExprTag(.irBinary), typeId = typeId, op = base, kids = [load.id, rhs.id])
         done.pool = sum.pool
         let placed = internText(texts = done.texts, value = name)
-        var node = irMakeNode(kind = irStmtTag(irStoreVar), typeId = typeId)
+        var node = irMakeNode(kind = irStmtTag(.irStoreVar), typeId = typeId)
         node.text = placed.id
         node.kids = [sum.id]
         done.texts = placed.texts
@@ -310,10 +310,10 @@ compoundField|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map:
     done.frame = rhs.frame
     if rhs.failed:
         return takeStmtFailure(out = done, detail = rhs.detail, offset = rhs.offset)
-    let sum = addIrNode(pool = done.pool, kind = irExprTag(irBinary), typeId = typeId, op = base, kids = [get.id, rhs.id])
+    let sum = addIrNode(pool = done.pool, kind = irExprTag(.irBinary), typeId = typeId, op = base, kids = [get.id, rhs.id])
     done.pool = sum.pool
     let placed = internText(texts = done.texts, value = fieldName)
-    var node = irMakeNode(kind = irStmtTag(irFieldStore), typeId = typeId)
+    var node = irMakeNode(kind = irStmtTag(.irFieldStore), typeId = typeId)
     node.text = placed.id
     node.kids = [recvOne.id, sum.id]
     done.texts = placed.texts
@@ -350,9 +350,9 @@ compoundSubscript|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, 
     done.frame = rhs.frame
     if rhs.failed:
         return takeStmtFailure(out = done, detail = rhs.detail, offset = rhs.offset)
-    let sum = addIrNode(pool = done.pool, kind = irExprTag(irBinary), typeId = typeId, op = base, kids = [get.id, rhs.id])
+    let sum = addIrNode(pool = done.pool, kind = irExprTag(.irBinary), typeId = typeId, op = base, kids = [get.id, rhs.id])
     done.pool = sum.pool
-    var node = irMakeNode(kind = irStmtTag(irSubscriptStore), typeId = typeId)
+    var node = irMakeNode(kind = irStmtTag(.irSubscriptStore), typeId = typeId)
     node.kids = [container.id, indexOne.id, sum.id]
     return appendStmtNode(out = done, node = node)
 
@@ -368,7 +368,7 @@ lowerExprStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map:
     done.frame = one.frame
     if one.failed:
         return takeStmtFailure(out = done, detail = one.detail, offset = one.offset)
-    let inserted = addIrNode(pool = done.pool, kind = irStmtTag(irExprStmt), typeId = -1, op = 0, kids = [one.id])
+    let inserted = addIrNode(pool = done.pool, kind = irStmtTag(.irExprStmt), typeId = -1, op = 0, kids = [one.id])
     done.pool = inserted.pool
     done.ids = done.ids.append(inserted.id)
     return done
@@ -386,7 +386,7 @@ lowerReturnStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, ma
         if one.failed:
             return takeStmtFailure(out = done, detail = one.detail, offset = one.offset)
         kids = kids.append(one.id)
-    let inserted = addIrNode(pool = done.pool, kind = irStmtTag(irReturnStmt), typeId = -1, op = 0, kids = kids)
+    let inserted = addIrNode(pool = done.pool, kind = irStmtTag(.irReturnStmt), typeId = -1, op = 0, kids = kids)
     done.pool = inserted.pool
     done.ids = done.ids.append(inserted.id)
     return done
@@ -424,7 +424,7 @@ lowerIfStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: T
         while i < len(elsePart.ids):
             nodes = nodes.append(elsePart.ids[i])
             i = i + 1
-    var node = irMakeNode(kind = irStmtTag(irIfStmt), typeId = -1)
+    var node = irMakeNode(kind = irStmtTag(.irIfStmt), typeId = -1)
     node.kids = nodes
     node.tail = tail
     let inserted = irAppendNode(pool = done.pool, node = node)
@@ -455,7 +455,7 @@ lowerWhileStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map
     while i < len(bodyPart.ids):
         nodes = nodes.append(bodyPart.ids[i])
         i = i + 1
-    var node = irMakeNode(kind = irStmtTag(irWhileStmt), typeId = -1)
+    var node = irMakeNode(kind = irStmtTag(.irWhileStmt), typeId = -1)
     node.kids = nodes
     node.tail = len(nodes)
     let inserted = irAppendNode(pool = done.pool, node = node)

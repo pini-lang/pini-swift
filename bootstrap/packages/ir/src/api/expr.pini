@@ -124,47 +124,47 @@ irLogicalTag|func(_op: IrLogicalOp,) -> (I32,):
 ; 二元码按符号：符号未登记答 0，调用方据此报缺口。
 binaryTagOf|func(spelling: String,) -> (I32,):
     if spelling == "+":
-        return irBinaryTag(irAdd)
+        return irBinaryTag(.irAdd)
     if spelling == "-":
-        return irBinaryTag(irSubtract)
+        return irBinaryTag(.irSubtract)
     if spelling == "*":
-        return irBinaryTag(irMultiply)
+        return irBinaryTag(.irMultiply)
     if spelling == "/":
-        return irBinaryTag(irDivide)
+        return irBinaryTag(.irDivide)
     if spelling == "%":
-        return irBinaryTag(irModulo)
+        return irBinaryTag(.irModulo)
     if spelling == "==":
-        return irBinaryTag(irEqual)
+        return irBinaryTag(.irEqual)
     if spelling == "!=":
-        return irBinaryTag(irNotEqual)
+        return irBinaryTag(.irNotEqual)
     if spelling == "<":
-        return irBinaryTag(irLessThan)
+        return irBinaryTag(.irLessThan)
     if spelling == "<=":
-        return irBinaryTag(irLessThanOrEqual)
+        return irBinaryTag(.irLessThanOrEqual)
     if spelling == ">":
-        return irBinaryTag(irGreaterThan)
+        return irBinaryTag(.irGreaterThan)
     if spelling == ">=":
-        return irBinaryTag(irGreaterThanOrEqual)
+        return irBinaryTag(.irGreaterThanOrEqual)
     if spelling == "&":
-        return irBinaryTag(irBitwiseAnd)
+        return irBinaryTag(.irBitwiseAnd)
     if spelling == "|":
-        return irBinaryTag(irBitwiseOr)
+        return irBinaryTag(.irBitwiseOr)
     if spelling == "^":
-        return irBinaryTag(irBitwiseXor)
+        return irBinaryTag(.irBitwiseXor)
     if spelling == "<<":
-        return irBinaryTag(irLeftShift)
+        return irBinaryTag(.irLeftShift)
     if spelling == ">>":
-        return irBinaryTag(irRightShift)
+        return irBinaryTag(.irRightShift)
     return 0
 
 ; 一元码按符号：取负、逻辑非、按位取反；其余答 0。
 unaryTagOf|func(spelling: String,) -> (I32,):
     if spelling == "-":
-        return irUnaryTag(irNegate)
+        return irUnaryTag(.irNegate)
     if spelling == "!":
-        return irUnaryTag(irLogicalNot)
+        return irUnaryTag(.irLogicalNot)
     if spelling == "~":
-        return irUnaryTag(irBitwiseNot)
+        return irUnaryTag(.irBitwiseNot)
     return 0
 
 ; 文本驻留：同内容复用下标，池序即首次出现序。
@@ -265,15 +265,15 @@ fallbackIrType|func(map: TypeMap, types: ExprTypes, unit: CompilationUnit, unitI
             return -1
         let entry = irTypeAt(pool = map.pool, id = containerType)
         let tag = irTypeTag(entry.kind)
-        if tag == irTypeTag(irTypeArray):
+        if tag == irTypeTag(.irTypeArray):
             if len(entry.kids) > 0:
                 return entry.kids[0]
             return -1
-        if tag == irTypeTag(irTypeDict):
+        if tag == irTypeTag(.irTypeDict):
             if len(entry.kids) > 1:
                 return entry.kids[1]
             return -1
-        if tag == irTypeTag(irTypeString):
+        if tag == irTypeTag(.irTypeString):
             return map.charId
         return -1
     return -1
@@ -351,7 +351,7 @@ lowerIdentifier|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, ma
     let expr = unit.ast.exprAt(id)
     let name = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
     let placed = internText(texts = out.texts, value = name)
-    var node = irMakeNode(kind = irExprTag(irLoad), typeId = typeId)
+    var node = irMakeNode(kind = irExprTag(.irLoad), typeId = typeId)
     node.text = placed.id
     let inserted = irAppendNode(pool = out.pool, node = node)
     var done = out
@@ -382,19 +382,19 @@ lowerBinary|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: T
         return missType(out = done, unit = unit, id = id, bytes = bytes)
     let spelling = opSymbol(expr.op)
     if spelling == "&&":
-        let inserted = addIrNode(pool = done.pool, kind = irExprTag(irShortCircuit), typeId = typeId, op = irLogicalTag(irLogicalAnd), kids = kids)
+        let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irShortCircuit), typeId = typeId, op = irLogicalTag(.irLogicalAnd), kids = kids)
         done.pool = inserted.pool
         done.id = inserted.id
         return done
     if spelling == "||":
-        let inserted = addIrNode(pool = done.pool, kind = irExprTag(irShortCircuit), typeId = typeId, op = irLogicalTag(irLogicalOr), kids = kids)
+        let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irShortCircuit), typeId = typeId, op = irLogicalTag(.irLogicalOr), kids = kids)
         done.pool = inserted.pool
         done.id = inserted.id
         return done
     let op = binaryTagOf(spelling = spelling)
     if op == 0:
         return missExpr(out = done, unit = unit, id = id, what = "运算符 " + spelling)
-    let inserted = addIrNode(pool = done.pool, kind = irExprTag(irBinary), typeId = typeId, op = op, kids = kids)
+    let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irBinary), typeId = typeId, op = op, kids = kids)
     done.pool = inserted.pool
     done.id = inserted.id
     return done
@@ -421,7 +421,7 @@ lowerUnary|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: Ty
     let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
     if typeId < 0:
         return missType(out = done, unit = unit, id = id, bytes = bytes)
-    let inserted = addIrNode(pool = done.pool, kind = irExprTag(irUnary), typeId = typeId, op = op, kids = kids)
+    let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irUnary), typeId = typeId, op = op, kids = kids)
     done.pool = inserted.pool
     done.id = inserted.id
     return done
@@ -470,16 +470,16 @@ receiverOwner|func(map: TypeMap, typeId: I32,) -> (String,):
         return ""
     let entry = irTypeAt(pool = map.pool, id = typeId)
     let tag = irTypeTag(entry.kind)
-    if tag == irTypeTag(irTypeNominal):
+    if tag == irTypeTag(.irTypeNominal):
         return entry.name
-    if tag == irTypeTag(irTypeEnumeration):
+    if tag == irTypeTag(.irTypeEnumeration):
         return entry.name
     return ""
 
 ; 读节点：名字与类型给定，造一个按名读并把名字驻留进文本池。
 makeLoadNode|func(pool: IrNodePool, texts: Array<String>, name: String, typeId: I32,) -> (IrLoadNode,):
     let placed = internText(texts = texts, value = name)
-    var node = irMakeNode(kind = irExprTag(irLoad), typeId = typeId)
+    var node = irMakeNode(kind = irExprTag(.irLoad), typeId = typeId)
     node.text = placed.id
     let inserted = irAppendNode(pool = pool, node = node)
     var out = IrLoadNode()
@@ -672,7 +672,7 @@ zeroConstructType|func(map: TypeMap, name: String, isObject: Bool,) -> (I32,):
     var flags = 0
     if isObject:
         flags = 1
-    return irFindType(pool = map.pool, kind = irTypeNominal, name = name, kids = [], ret = -1, uses = [], flags = flags)
+    return irFindType(pool = map.pool, kind = .irTypeNominal, name = name, kids = [], ret = -1, uses = [], flags = flags)
 
 ; 具名调用：实参按形参序归位，接收者（若有）排在最前；归位失败即报缺口。
 lowerNamedCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32, name: String, actuals: Array<IrActual>, params: Array<CallParam>, leading: I32, ret: I32,) -> (LowerExpr,):
@@ -691,7 +691,7 @@ lowerNamedCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map
         kids = kids.append(order.ids[i])
         i = i + 1
     let placed = internText(texts = done.texts, value = name)
-    var node = irMakeNode(kind = irExprTag(irCall), typeId = typeId)
+    var node = irMakeNode(kind = irExprTag(.irCall), typeId = typeId)
     node.text = placed.id
     node.kids = kids
     let inserted = irAppendNode(pool = done.pool, node = node)
@@ -704,7 +704,7 @@ lowerNamedCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map
 lowerPlainCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32, name: String, actuals: Array<IrActual>, leading: I32,) -> (LowerExpr,):
     var done = out
     if name == "print" && len(actuals) == 1 && leading < 0:
-        let inserted = addIrNode(pool = done.pool, kind = irExprTag(irPrintCall), typeId = -1, op = 0, kids = [actuals[0].id])
+        let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irPrintCall), typeId = -1, op = 0, kids = [actuals[0].id])
         done.pool = inserted.pool
         done.id = inserted.id
         return done
@@ -720,7 +720,7 @@ lowerPlainCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map
         kids = kids.append(rest[i])
         i = i + 1
     let placed = internText(texts = done.texts, value = name)
-    var node = irMakeNode(kind = irExprTag(irCall), typeId = typeId)
+    var node = irMakeNode(kind = irExprTag(.irCall), typeId = typeId)
     node.text = placed.id
     node.kids = kids
     let inserted = irAppendNode(pool = done.pool, node = node)
@@ -778,7 +778,7 @@ lowerCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: Typ
                 if isStructDeclCode(decl.kind) || isObjectDeclCode(decl.kind):
                     let typeId = zeroConstructType(map = map, name = name, isObject = isObject)
                     if typeId >= 0:
-                        let inserted = addIrNode(pool = done.pool, kind = irExprTag(irConstruct), typeId = typeId, op = 0, kids = [])
+                        let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irConstruct), typeId = typeId, op = 0, kids = [])
                         done.pool = inserted.pool
                         done.id = inserted.id
                         return done
@@ -828,7 +828,7 @@ lowerMember|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: T
         return missType(out = done, unit = unit, id = id, bytes = bytes)
     let fieldName = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
     let placed = internText(texts = done.texts, value = fieldName)
-    var node = irMakeNode(kind = irExprTag(irFieldGet), typeId = typeId)
+    var node = irMakeNode(kind = irExprTag(.irFieldGet), typeId = typeId)
     node.text = placed.id
     node.kids = [one.id]
     let inserted = irAppendNode(pool = done.pool, node = node)
@@ -857,7 +857,7 @@ lowerSubscript|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map
     let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
     if typeId < 0:
         return missType(out = done, unit = unit, id = id, bytes = bytes)
-    let inserted = addIrNode(pool = done.pool, kind = irExprTag(irSubscriptGet), typeId = typeId, op = 0, kids = kids)
+    let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irSubscriptGet), typeId = typeId, op = 0, kids = kids)
     done.pool = inserted.pool
     done.id = inserted.id
     return done
@@ -900,7 +900,7 @@ lowerCaseValue|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map
     if typeId < 0:
         return missType(out = out, unit = unit, id = id, bytes = bytes)
     let placed = internText(texts = out.texts, value = name)
-    var node = irMakeNode(kind = irExprTag(irEnumConstruct), typeId = typeId)
+    var node = irMakeNode(kind = irExprTag(.irEnumConstruct), typeId = typeId)
     node.op = tag
     node.text = placed.id
     let inserted = irAppendNode(pool = out.pool, node = node)
@@ -958,7 +958,7 @@ lowerStringLiteral|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>,
     let expr = unit.ast.exprAt(id)
     let value = stringLiteralText(bytes = bytes, start = expr.start, end = expr.end)
     let placed = internText(texts = out.texts, value = value)
-    var node = irMakeNode(kind = irExprTag(irStringConst), typeId = typeId)
+    var node = irMakeNode(kind = irExprTag(.irStringConst), typeId = typeId)
     node.text = placed.id
     let inserted = irAppendNode(pool = out.pool, node = node)
     var done = out
@@ -985,7 +985,7 @@ lowerArrayLiteral|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, 
     let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
     if typeId < 0:
         return missType(out = done, unit = unit, id = id, bytes = bytes)
-    let inserted = addIrNode(pool = done.pool, kind = irExprTag(irArrayLiteral), typeId = typeId, op = 0, kids = kids)
+    let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irArrayLiteral), typeId = typeId, op = 0, kids = kids)
     done.pool = inserted.pool
     done.id = inserted.id
     return done
@@ -1006,7 +1006,7 @@ lowerExpr|func(pool: IrNodePool, texts: Array<String>, map: TypeMap, types: Expr
             return missType(out = out, unit = unit, id = id, bytes = bytes)
         let expr = unit.ast.exprAt(id)
         let spelling = decodeSpelling(bytes = bytes, start = expr.start, end = expr.end)
-        var node = irMakeNode(kind = irExprTag(irIntConst), typeId = typeId)
+        var node = irMakeNode(kind = irExprTag(.irIntConst), typeId = typeId)
         node.intValue = intSpellingValue(text = spelling)
         let inserted = irAppendNode(pool = out.pool, node = node)
         out.pool = inserted.pool
@@ -1016,7 +1016,7 @@ lowerExpr|func(pool: IrNodePool, texts: Array<String>, map: TypeMap, types: Expr
         let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = frame, bytes = bytes, id = id)
         if typeId < 0:
             return missType(out = out, unit = unit, id = id, bytes = bytes)
-        var node = irMakeNode(kind = irExprTag(irBoolConst), typeId = typeId)
+        var node = irMakeNode(kind = irExprTag(.irBoolConst), typeId = typeId)
         if unit.ast.isTrueExpr(id):
             node.intValue = 1
         let inserted = irAppendNode(pool = out.pool, node = node)

@@ -68,9 +68,9 @@ _module_loader = "../../module-loader"
     let ws = 跨包工作区([组跨包(name = "app", root = "packages/app", requires = ["base"], units = [app]), 组跨包(name = "base", root = "packages/base", requires = [], units = [base])])
     let check = checkWorkspaceCrossRefs(ws, world = 建跨包世界(ws))
     assert(len(check.errors) == 1, "应报一条，实得 " + 跨包错误串(check))
-    assert(isCrossRef(error = check.errors[0], kind = crossNotPublic), "实得 " + crossKindName(check.errors[0].kind))
+    assert(isCrossRef(error = check.errors[0], kind = .crossNotPublic), "实得 " + crossKindName(check.errors[0].kind))
     assert(check.errors[0].name == "_内部", "实得 " + check.errors[0].name)
-    assert(crossErrorCode(crossNotPublic) == "E3-012", "非 public 用门槛码")
+    assert(crossErrorCode(.crossNotPublic) == "E3-012", "非 public 用门槛码")
     return
 
 ; 内部目录：只收 `package` 级的名字跨包引用同样报。
@@ -80,7 +80,7 @@ _module_loader = "../../module-loader"
     let ws = 跨包工作区([组跨包(name = "app", root = "packages/app", requires = ["base"], units = [app]), 组跨包(name = "base", root = "packages/base", requires = [], units = [base])])
     let check = checkWorkspaceCrossRefs(ws, world = 建跨包世界(ws))
     assert(len(check.errors) == 1, "应报一条，实得 " + 跨包错误串(check))
-    assert(isCrossRef(error = check.errors[0], kind = crossNotPublic), "实得 " + crossKindName(check.errors[0].kind))
+    assert(isCrossRef(error = check.errors[0], kind = .crossNotPublic), "实得 " + crossKindName(check.errors[0].kind))
     return
 
 ; 注入遮蔽：注入导入的公开名与本文件参数同名时报歧义。
@@ -90,8 +90,8 @@ _module_loader = "../../module-loader"
     let ws = 跨包工作区([组跨包(name = "app", root = "packages/app", requires = ["base"], units = [app]), 组跨包(name = "base", root = "packages/base", requires = [], units = [base])])
     let check = checkWorkspaceCrossRefs(ws, world = 建跨包世界(ws))
     assert(len(check.errors) == 1, "应报一条，实得 " + 跨包错误串(check))
-    assert(isCrossRef(error = check.errors[0], kind = crossInjectedShadow), "实得 " + crossKindName(check.errors[0].kind))
-    assert(crossErrorCode(crossInjectedShadow) == "E3-013", "遮蔽用歧义码")
+    assert(isCrossRef(error = check.errors[0], kind = .crossInjectedShadow), "实得 " + crossKindName(check.errors[0].kind))
+    assert(crossErrorCode(.crossInjectedShadow) == "E3-013", "遮蔽用歧义码")
     return
 
 ; 注入遮蔽：局部变量同名同样算可裸引用名相撞。
@@ -101,7 +101,7 @@ _module_loader = "../../module-loader"
     let ws = 跨包工作区([组跨包(name = "app", root = "packages/app", requires = ["base"], units = [app]), 组跨包(name = "base", root = "packages/base", requires = [], units = [base])])
     let check = checkWorkspaceCrossRefs(ws, world = 建跨包世界(ws))
     assert(len(check.errors) == 1, "应报一条，实得 " + 跨包错误串(check))
-    assert(isCrossRef(error = check.errors[0], kind = crossInjectedShadow), "实得 " + crossKindName(check.errors[0].kind))
+    assert(isCrossRef(error = check.errors[0], kind = .crossInjectedShadow), "实得 " + crossKindName(check.errors[0].kind))
     return
 
 ; 注入无撞：目标包的公开名与本文件没有交集时放行。
@@ -148,9 +148,9 @@ _module_loader = "../../module-loader"
     let ws = 跨包工作区([组跨包(name = "app", root = "packages/app", requires = ["base"], units = [app]), 组跨包(name = "base", root = "packages/base", requires = [], units = [base])])
     let check = checkWorkspaceCrossRefs(ws, world = 建跨包世界(ws))
     assert(len(check.errors) == 1, "应报一条，实得 " + 跨包错误串(check))
-    assert(isCrossRef(error = check.errors[0], kind = crossMissing), "实得 " + crossKindName(check.errors[0].kind))
+    assert(isCrossRef(error = check.errors[0], kind = .crossMissing), "实得 " + crossKindName(check.errors[0].kind))
     assert(check.errors[0].name == "没有这个", "实得 " + check.errors[0].name)
-    assert(crossErrorCode(crossMissing) == "E3-022", "缺席用包面缺席码")
+    assert(crossErrorCode(.crossMissing) == "E3-022", "缺席用包面缺席码")
     return
 
 ; 第三包同名：目标包里没有的名字，别包有同名 public 也不放行。
@@ -161,7 +161,7 @@ _module_loader = "../../module-loader"
     let ws = 跨包工作区([组跨包(name = "app", root = "packages/app", requires = ["base"], units = [app]), 组跨包(name = "base", root = "packages/base", requires = [], units = [base]), 组跨包(name = "third", root = "packages/third", requires = [], units = [third])])
     let check = checkWorkspaceCrossRefs(ws, world = 建跨包世界(ws))
     assert(len(check.errors) == 1, "应报一条，实得 " + 跨包错误串(check))
-    assert(isCrossRef(error = check.errors[0], kind = crossMissing), "实得 " + crossKindName(check.errors[0].kind))
+    assert(isCrossRef(error = check.errors[0], kind = .crossMissing), "实得 " + crossKindName(check.errors[0].kind))
     return
 
 ; 测试单元不进公开面：同包 tests/ 下的助手既不算公开名，也不进包符号表。

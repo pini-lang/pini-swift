@@ -149,7 +149,7 @@ fieldSlotText|func(_layout: LayoutEntry,) -> (String,):
     var i = 0
     while i < len(_layout.slots):
         let slot = _layout.slots[i]
-        if isSlotRole(role = slot.role, expected = slotField):
+        if isSlotRole(role = slot.role, expected = .slotField):
             if written > 0:
                 text = text + ","
             text = text + slot.name
@@ -181,7 +181,7 @@ interfaceLayoutLine|func(world: MemberWorld, shapes: ShapeTable, name: String,) 
     if layout.slotCount < 0:
         return ""
     var text = "layout " + name + " " + shapeKindName(layout.shape) + " slots=" + "\(layout.slotCount)"
-    if isShapeKind(kind = layout.shape, expected = shapeEnum):
+    if isShapeKind(kind = layout.shape, expected = .shapeEnum):
         text = text + " cases=" + caseSlotText(layout)
     else:
         text = text + " fields=" + fieldSlotText(layout)

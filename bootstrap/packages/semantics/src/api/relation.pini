@@ -13,17 +13,17 @@ sameType|func(pool: TypePool, first: I32, second: I32,) -> (Bool,):
     let b = pool.entries[second]
     if typeClassName(a.kind) != typeClassName(b.kind):
         return false
-    if isTypeClass(kind = a.kind, expected = typeClassScalar):
+    if isTypeClass(kind = a.kind, expected = .typeClassScalar):
         return sameKey(first = a.key, second = b.key)
-    if isTypeClass(kind = a.kind, expected = typeClassStruct) || isTypeClass(kind = a.kind, expected = typeClassObject) || isTypeClass(kind = a.kind, expected = typeClassEnum):
+    if isTypeClass(kind = a.kind, expected = .typeClassStruct) || isTypeClass(kind = a.kind, expected = .typeClassObject) || isTypeClass(kind = a.kind, expected = .typeClassEnum):
         return sameKey(first = a.key, second = b.key)
-    if isTypeClass(kind = a.kind, expected = typeClassGeneric) || isTypeClass(kind = a.kind, expected = typeClassCollection):
+    if isTypeClass(kind = a.kind, expected = .typeClassGeneric) || isTypeClass(kind = a.kind, expected = .typeClassCollection):
         return sameKey(first = a.key, second = b.key) && sameTypeList(pool = pool, first = a.kids, second = b.kids)
-    if isTypeClass(kind = a.kind, expected = typeClassPointer) || isTypeClass(kind = a.kind, expected = typeClassOptional):
+    if isTypeClass(kind = a.kind, expected = .typeClassPointer) || isTypeClass(kind = a.kind, expected = .typeClassOptional):
         return sameType(pool = pool, first = a.kids[0], second = b.kids[0])
-    if isTypeClass(kind = a.kind, expected = typeClassResult) || isTypeClass(kind = a.kind, expected = typeClassTuple):
+    if isTypeClass(kind = a.kind, expected = .typeClassResult) || isTypeClass(kind = a.kind, expected = .typeClassTuple):
         return sameTypeList(pool = pool, first = a.kids, second = b.kids)
-    if isTypeClass(kind = a.kind, expected = typeClassFunction):
+    if isTypeClass(kind = a.kind, expected = .typeClassFunction):
         return sameTypeList(pool = pool, first = a.kids, second = b.kids) && sameType(pool = pool, first = a.ret, second = b.ret)
     return false
 
@@ -96,16 +96,16 @@ isAssignable|func(pool: TypePool, from: I32, to: I32,) -> (Bool,):
         return false
     let source = pool.entries[from]
     let target = pool.entries[to]
-    if isTypeClass(kind = source.kind, expected = typeClassScalar) && isTypeClass(kind = target.kind, expected = typeClassScalar):
+    if isTypeClass(kind = source.kind, expected = .typeClassScalar) && isTypeClass(kind = target.kind, expected = .typeClassScalar):
         if widensScalar(fromName = source.name, toName = target.name):
             return true
         return source.name == "Char" && target.name == "String"
-    if isTypeClass(kind = target.kind, expected = typeClassOptional):
-        if isTypeClass(kind = source.kind, expected = typeClassOptional):
+    if isTypeClass(kind = target.kind, expected = .typeClassOptional):
+        if isTypeClass(kind = source.kind, expected = .typeClassOptional):
             return isAssignable(pool = pool, from = source.kids[0], to = target.kids[0])
         return isAssignable(pool = pool, from = from, to = target.kids[0])
-    if isTypeClass(kind = target.kind, expected = typeClassResult):
-        if isTypeClass(kind = source.kind, expected = typeClassResult):
+    if isTypeClass(kind = target.kind, expected = .typeClassResult):
+        if isTypeClass(kind = source.kind, expected = .typeClassResult):
             return isAssignable(pool = pool, from = source.kids[0], to = target.kids[0])
         return isAssignable(pool = pool, from = from, to = target.kids[0])
     return false
@@ -115,7 +115,7 @@ scalarNameOf|func(pool: TypePool, id: I32,) -> (String,):
     if id < 0 || id >= len(pool.entries):
         return ""
     let entry = pool.entries[id]
-    if !isTypeClass(kind = entry.kind, expected = typeClassScalar):
+    if !isTypeClass(kind = entry.kind, expected = .typeClassScalar):
         return ""
     return entry.name
 
@@ -152,9 +152,9 @@ isNullableType|func(pool: TypePool, id: I32,) -> (Bool,):
     if id < 0 || id >= len(pool.entries):
         return false
     let entry = pool.entries[id]
-    if isTypeClass(kind = entry.kind, expected = typeClassOptional):
+    if isTypeClass(kind = entry.kind, expected = .typeClassOptional):
         return true
-    return isTypeClass(kind = entry.kind, expected = typeClassPointer)
+    return isTypeClass(kind = entry.kind, expected = .typeClassPointer)
 
 ; 字符：只有内建 Char 标量。
 isCharType|func(pool: TypePool, id: I32,) -> (Bool,):

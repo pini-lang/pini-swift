@@ -72,7 +72,7 @@ types: ExprTypes = ExprTypes()
     let sample = 造控样例("f|func() -> ():\n    if 1:\n        pass\n")
     let hit = 查控(sample = sample, name = "f")
     assert(len(hit.errors) == 1, "应报一条，实得 " + countText(len(hit.errors)))
-    assert(isStoreError(error = hit.errors[0], kind = storeConditionNotBool), "实得 " + storeErrorName(hit.errors[0].kind))
+    assert(isStoreError(error = hit.errors[0], kind = .storeConditionNotBool), "实得 " + storeErrorName(hit.errors[0].kind))
     assert(hit.errors[0].expected == "Bool", "实得 " + hit.errors[0].expected)
     assert(hit.errors[0].got == "I32", "实得 " + hit.errors[0].got)
     let stmt = 首个条件语句(sample.unit.ast)
@@ -92,7 +92,7 @@ elif条件|test() -> ():
     let sample = 造控样例("f|func() -> ():\n    if true:\n        pass\n    elif 1:\n        pass\n")
     let hit = 查控(sample = sample, name = "f")
     assert(len(hit.errors) == 1, "应报一条，实得 " + countText(len(hit.errors)))
-    assert(isStoreError(error = hit.errors[0], kind = storeConditionNotBool), "实得 " + storeErrorName(hit.errors[0].kind))
+    assert(isStoreError(error = hit.errors[0], kind = .storeConditionNotBool), "实得 " + storeErrorName(hit.errors[0].kind))
     return
 
 ; 循环条件：`while "x":` 报类型不符。
@@ -100,7 +100,7 @@ elif条件|test() -> ():
     let sample = 造控样例("f|func() -> ():\n    while \"x\":\n        pass\n")
     let hit = 查控(sample = sample, name = "f")
     assert(len(hit.errors) == 1, "应报一条，实得 " + countText(len(hit.errors)))
-    assert(isStoreError(error = hit.errors[0], kind = storeConditionNotBool), "实得 " + storeErrorName(hit.errors[0].kind))
+    assert(isStoreError(error = hit.errors[0], kind = .storeConditionNotBool), "实得 " + storeErrorName(hit.errors[0].kind))
     assert(hit.errors[0].got == "String", "实得 " + hit.errors[0].got)
     let stmt = 首个循环语句(sample.unit.ast)
     let cond = sample.unit.ast.stmtChild(id = stmt, index = 0)
@@ -121,7 +121,7 @@ elif条件|test() -> ():
     assert(!hit.failed, "不应报错")
     let at = 找声明(check = hit, name = "v")
     assert(at >= 0, "应声明循环变量 v")
-    assert(isLocalKind(kind = hit.declared[at].kind, expected = localLoopVar), "应判作循环变量")
+    assert(isLocalKind(kind = hit.declared[at].kind, expected = .localLoopVar), "应判作循环变量")
     assert(typeText(pool = hit.pool, id = hit.declared[at].typeId) == "I32", "实得 " + typeText(pool = hit.pool, id = hit.declared[at].typeId))
     let body = 找声明(check = hit, name = "s")
     assert(body >= 0, "体内应声明 s")
@@ -155,7 +155,7 @@ elif条件|test() -> ():
     let sample = 造控样例("f|func() -> ():\n    let a: Array<I32> = [1, 2,]\n    for (k, v) in a:\n        pass\n")
     let hit = 查控(sample = sample, name = "f")
     assert(len(hit.errors) == 1, "应报一条，实得 " + countText(len(hit.errors)))
-    assert(isStoreError(error = hit.errors[0], kind = storeIterableArity), "实得 " + storeErrorName(hit.errors[0].kind))
+    assert(isStoreError(error = hit.errors[0], kind = .storeIterableArity), "实得 " + storeErrorName(hit.errors[0].kind))
     assert(hit.errors[0].expected == "1", "实得 " + hit.errors[0].expected)
     assert(hit.errors[0].got == "2", "实得 " + hit.errors[0].got)
     return
@@ -165,7 +165,7 @@ elif条件|test() -> ():
     let sample = 造控样例("f|func() -> ():\n    for (v,) in 1:\n        pass\n")
     let hit = 查控(sample = sample, name = "f")
     assert(len(hit.errors) == 1, "应报一条，实得 " + countText(len(hit.errors)))
-    assert(isStoreError(error = hit.errors[0], kind = storeNotIterable), "实得 " + storeErrorName(hit.errors[0].kind))
+    assert(isStoreError(error = hit.errors[0], kind = .storeNotIterable), "实得 " + storeErrorName(hit.errors[0].kind))
     assert(hit.errors[0].got == "I32", "实得 " + hit.errors[0].got)
     return
 
@@ -174,7 +174,7 @@ elif条件|test() -> ():
     let sample = 造控样例("f|func() -> ():\n    let a: Array<I32> = [1, 2,]\n    for (1,) in a:\n        pass\n")
     let hit = 查控(sample = sample, name = "f")
     assert(len(hit.errors) == 1, "应报一条，实得 " + countText(len(hit.errors)))
-    assert(isStoreError(error = hit.errors[0], kind = storeBadLoopPattern), "实得 " + storeErrorName(hit.errors[0].kind))
+    assert(isStoreError(error = hit.errors[0], kind = .storeBadLoopPattern), "实得 " + storeErrorName(hit.errors[0].kind))
     return
 
 ; 占位：`_` 不占局部，也不报错。
@@ -200,9 +200,9 @@ elif条件|test() -> ():
     let sample = 造控样例("f|func() -> ():\n    break\n    continue\n")
     let hit = 查控(sample = sample, name = "f")
     assert(len(hit.errors) == 2, "应报两条，实得 " + countText(len(hit.errors)))
-    assert(isStoreError(error = hit.errors[0], kind = storeLoopControlOutside), "实得 " + storeErrorName(hit.errors[0].kind))
+    assert(isStoreError(error = hit.errors[0], kind = .storeLoopControlOutside), "实得 " + storeErrorName(hit.errors[0].kind))
     assert(hit.errors[0].op == "break", "实得 " + hit.errors[0].op)
-    assert(isStoreError(error = hit.errors[1], kind = storeLoopControlOutside), "实得 " + storeErrorName(hit.errors[1].kind))
+    assert(isStoreError(error = hit.errors[1], kind = .storeLoopControlOutside), "实得 " + storeErrorName(hit.errors[1].kind))
     assert(hit.errors[1].op == "continue", "实得 " + hit.errors[1].op)
     return
 

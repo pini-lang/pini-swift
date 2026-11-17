@@ -106,22 +106,22 @@ assemblePlan|func(workspace: WorkspaceParse, parses: Array<PackageParse>,) -> (B
         i = i + 1
         let norm = normalizeMemberPath(raw)
         if !norm.ok:
-            plan.errors = plan.errors.append(manifestError(kind = errorMemberPath, path = plan.rootPath, detail = raw + "：" + norm.reason))
+            plan.errors = plan.errors.append(manifestError(kind = .errorMemberPath, path = plan.rootPath, detail = raw + "：" + norm.reason))
             continue
         if _containsPlanText(items = members, value = norm.value):
-            plan.errors = plan.errors.append(manifestError(kind = errorMemberDuplicated, path = plan.rootPath, detail = norm.value))
+            plan.errors = plan.errors.append(manifestError(kind = .errorMemberDuplicated, path = plan.rootPath, detail = norm.value))
             continue
         members = members.append(norm.value)
         let at = findParse(parses = parses, rootPath = norm.value)
         if at < 0:
-            plan.errors = plan.errors.append(manifestError(kind = errorManifestMissing, path = plan.rootPath, detail = norm.value))
+            plan.errors = plan.errors.append(manifestError(kind = .errorManifestMissing, path = plan.rootPath, detail = norm.value))
             continue
         plan.errors = appendErrors(errors = plan.errors, extra = parses[at].errors)
         packages = packages.append(parses[at].manifest)
     i = 0
     while i < len(packages):
         if hasEarlierPackage(packages = packages, at = i, name = packages[i].name):
-            plan.errors = plan.errors.append(manifestError(kind = errorDuplicatePackage, path = plan.rootPath, detail = packages[i].name))
+            plan.errors = plan.errors.append(manifestError(kind = .errorDuplicatePackage, path = plan.rootPath, detail = packages[i].name))
         i = i + 1
     plan.errors = checkExecutableNames(packages = packages, rootPath = plan.rootPath, errors = plan.errors)
     let topo = topoOrder(packages = packages, rootPath = plan.rootPath, errors = plan.errors)
@@ -142,7 +142,7 @@ planWorkspace|func(_root: String,) -> (BuildPlan,):
     if !exists(rootManifest):
         var plan = BuildPlan()
         plan.rootPath = _root
-        plan.errors = plan.errors.append(manifestError(kind = errorManifestMissing, path = rootManifest, detail = "pini.toml"))
+        plan.errors = plan.errors.append(manifestError(kind = .errorManifestMissing, path = rootManifest, detail = "pini.toml"))
         return plan
     let workspace = parseWorkspaceManifest(text = readFile(rootManifest), rootPath = _root, path = rootManifest)
     var parses: Array<PackageParse> = []
@@ -156,7 +156,7 @@ planWorkspace|func(_root: String,) -> (BuildPlan,):
         if !exists(memberManifest):
             var missing = PackageParse()
             missing.manifest.rootPath = norm.value
-            missing.errors = missing.errors.append(manifestError(kind = errorManifestMissing, path = memberManifest, detail = norm.value))
+            missing.errors = missing.errors.append(manifestError(kind = .errorManifestMissing, path = memberManifest, detail = norm.value))
             parses = parses.append(missing)
             continue
         parses = parses.append(parsePackageManifest(text = readFile(memberManifest), rootPath = norm.value, path = memberManifest))
@@ -181,22 +181,22 @@ packagePlan|func(pkg: PackageManifest, root: String, profile: String,) -> (Packa
         plan.sourceRoot = sourceRootOf(target)
         plan.irPath = buildDir + "/" + target.name + ".ll"
         plan.interfacePath = buildDir + "/interface.txt"
-        if isTargetKind(kind = target.kind, expected = targetExecutable):
+        if isTargetKind(kind = target.kind, expected = .targetExecutable):
             plan.executablePath = root + "/.build/" + profile + "/bin/" + target.name
-        plan.isBuiltByDefault = !isTargetKind(kind = target.kind, expected = targetTest)
+        plan.isBuiltByDefault = !isTargetKind(kind = target.kind, expected = .targetTest)
         out.targets = out.targets.append(plan)
         i = i + 1
     return out
 
 ; 源码根：库与可执行从 src 取生产源码，测试目标从入口目录取；扫描规则归装载面。
 sourceRootOf|func(_target: TargetSpec,) -> (String,):
-    if isTargetKind(kind = _target.kind, expected = targetTest):
+    if isTargetKind(kind = _target.kind, expected = .targetTest):
         return _target.entry
     return "src"
 
 ; 测试目标判定：测试目标不进普通构建产物，装载面据此决定是否并入测试源码。
 isTestTarget|func(_target: TargetPlan,) -> (Bool,):
-    return isTargetKind(kind = _target.kind, expected = targetTest)
+    return isTargetKind(kind = _target.kind, expected = .targetTest)
 
 ; 可执行产物名在工作区内唯一：跨包同名会让两份产物落到同一个 bin 路径。
 checkExecutableNames|func(packages: Array<PackageManifest>, rootPath: String, errors: Array<ManifestError>,) -> (Array<ManifestError>,):
@@ -208,9 +208,9 @@ checkExecutableNames|func(packages: Array<PackageManifest>, rootPath: String, er
         var t = 0
         while t < len(pkg.targets):
             let target = pkg.targets[t]
-            if isTargetKind(kind = target.kind, expected = targetExecutable):
+            if isTargetKind(kind = target.kind, expected = .targetExecutable):
                 if _containsPlanText(items = seen, value = target.name):
-                    out = out.append(manifestError(kind = errorExecutableCollision, path = rootPath, detail = target.name + " @ " + pkg.name))
+                    out = out.append(manifestError(kind = .errorExecutableCollision, path = rootPath, detail = target.name + " @ " + pkg.name))
                 else:
                     seen = seen.append(target.name)
             t = t + 1
@@ -264,7 +264,7 @@ topoOrder|func(packages: Array<PackageManifest>, rootPath: String, errors: Array
                 if state[found] == 2:
                     continue
                 if state[found] == 1:
-                    out.errors = out.errors.append(manifestError(kind = errorDependencyCycle, path = rootPath, detail = cycleChain(frames = frames, depth = depth, dep = dep)))
+                    out.errors = out.errors.append(manifestError(kind = .errorDependencyCycle, path = rootPath, detail = cycleChain(frames = frames, depth = depth, dep = dep)))
                     return out
                 state[found] = 1
                 var child = TopoFrame()
