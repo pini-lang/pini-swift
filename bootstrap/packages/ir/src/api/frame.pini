@@ -9,16 +9,12 @@ slot: I32 = -1
 typeId: I32 = -1
 mutable: Bool = false
 
-; 帧：局部表与下一个可用槽位。
+; 帧：局部表、下一个可用槽位与降载上下文。
+; 世界随帧走：方法调用要按名查符号表，逐层传参会把同一个世界抄进十几条签名。
 (LowerFrame)
 locals: Array<IrLocal> = []
 nextSlot: I32 = 0
-
-; 建帧：参数与自身已由播种占位，此处只接水位，不重排既有槽位。
-makeLowerFrame|func(scope: ScopeStack,) -> (LowerFrame,):
-    var out = LowerFrame()
-    out.nextSlot = scope.nextSlot
-    return out
+world: MemberWorld = MemberWorld()
 
 ; 声明局部：槽位取当前水位，随后水位加一。
 declareIrLocal|func(frame: LowerFrame, name: String, typeId: I32, mutable: Bool,) -> (LowerFrame,):
@@ -63,3 +59,21 @@ frameLocalCount|func(frame: LowerFrame,) -> (I32,):
 ; 槽位水位：函数内已分配的下一个槽位，函数结束时即帧大小。
 frameSlotCount|func(frame: LowerFrame,) -> (I32,):
     return frame.nextSlot
+
+; 播种帧：参数与自身由语义层播种，这里照抄一遍，槽位与类型一并带过来。
+; 不抄的话赋值目标与局部类型查找都认不出参数，形参赋值会被报成非局部目标。
+seedLowerFrame|func(scope: ScopeStack, map: TypeMap, world: MemberWorld,) -> (LowerFrame,):
+    var out = LowerFrame()
+    out.nextSlot = scope.nextSlot
+    out.world = world
+    var i = 0
+    while i < len(scope.locals):
+        let local = scope.locals[i]
+        var row = IrLocal()
+        row.name = local.spelling
+        row.slot = local.slot
+        row.typeId = irIdOf(map = map, semanticId = local.typeId)
+        row.mutable = local.mutable
+        out.locals = out.locals.append(row)
+        i = i + 1
+    return out

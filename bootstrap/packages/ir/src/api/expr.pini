@@ -222,8 +222,8 @@ addIrNode|func(pool: IrNodePool, kind: I32, typeId: I32, op: I32, kids: Array<I3
     node.kids = kids
     return irAppendNode(pool = pool, node = node)
 
-; 类型后备：推导表不覆盖由非字面量初始化的局部，此处按运算符形状取结果类型。
-; 比较与逻辑答布尔，一元答操作数类型；这条判定是过渡，待局部类型表落地后删除。
+; 类型后备：推导表不覆盖非字面量初始化的局部与 self 上的字段读，这里按形状补判。
+; 比较与逻辑答布尔，一元答操作数类型，成员查字段声明，调用查被调声明；待推导表补面后删除。
 fallbackIrType|func(map: TypeMap, types: ExprTypes, unit: CompilationUnit, unitIndex: I32, frame: LowerFrame, bytes: Array<U8>, id: I32,) -> (I32,):
     if id < 0 || id >= unit.ast.exprCount():
         return -1
@@ -247,6 +247,15 @@ fallbackIrType|func(map: TypeMap, types: ExprTypes, unit: CompilationUnit, unitI
         if len(expr.kids) > 0:
             return exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = frame, bytes = bytes, id = expr.kids[0])
         return -1
+    if unit.ast.isMemberExpr(id):
+        if len(expr.kids) < 1:
+            return -1
+        let recv: I32 = expr.kids[0]
+        let owner = receiverOwner(map = map, typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = frame, bytes = bytes, id = recv))
+        if len(owner) == 0:
+            return -1
+        let fieldName = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
+        return irIdOf(map = map, semanticId = fieldTypeOf(frame = frame, owner = owner, fieldName = fieldName))
     return -1
 
 ; 表达式类型：先读推导表，标识符回查帧，最后按运算符形状取后备；都没有答 -1。
@@ -376,45 +385,343 @@ lowerUnary|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: Ty
     done.id = inserted.id
     return done
 
-; 调用：被调为标识符时按名调用；`print` 单参降成打印节点；成员被调报缺口。
-lowerCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
-    let expr = unit.ast.exprAt(id)
-    if len(expr.kids) < 1:
-        return missExpr(out = out, unit = unit, id = id, what = "空调用")
-    let callee = expr.kids[0]
-    if !unit.ast.isIdentifierExpr(callee):
-        return missExpr(out = out, unit = unit, id = id, what = "成员被调")
-    let calleeExpr = unit.ast.exprAt(callee)
-    let name = decodeSpelling(bytes = bytes, start = calleeExpr.nameStart, end = calleeExpr.nameEnd)
-    var done = out
-    var args: Array<I32> = []
-    var i = 1
-    while i < len(expr.kids):
-        let one = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = expr.kids[i])
-        done.pool = one.pool
-        done.texts = one.texts
-        done.frame = one.frame
-        if one.failed:
-            return takeFailure(out = done, one = one)
-        args = args.append(one.id)
+; 实参：标签与降好的节点下标；标签为空即位置实参。
+(IrActual)
+label: String = ""
+id: I32 = -1
+
+; 归位结果：按形参声明序排好的节点下标；缺位时带原因。
+(IrOrder)
+ids: Array<I32> = []
+failed: Bool = false
+detail: String = ""
+
+; 被调方：IR 名、形参序、声明返回类型、是否按形参归位与是否带接收者首参。
+(IrCallee)
+found: Bool = false
+name: String = ""
+params: Array<CallParam> = []
+ret: I32 = -1
+ordered: Bool = false
+takesReceiver: Bool = false
+
+; 读节点结果：池、文本池与节点下标；读改写先把目标读一次。
+(IrLoadNode)
+pool: IrNodePool = IrNodePool()
+texts: Array<String> = []
+id: I32 = -1
+
+; 字段类型：所有者名加字段名查符号，命中的字段声明给出语义类型下标。
+; 名义类型的字段都带标注，故这里不需要再回溯推导表。
+fieldTypeOf|func(frame: LowerFrame, owner: String, fieldName: String,) -> (I32,):
+    let symbol = lookupMemberByName(index = frame.world.symbols, owner = owner, name = fieldName)
+    let ref = symbolDecl(world = frame.world, symbol = symbol)
+    if ref.unit < 0:
+        return -1
+    let decl = frame.world.units[ref.unit].ast.decls[ref.decl]
+    if !isFieldDeclCode(decl.kind):
+        return -1
+    return frame.world.types.typeOf(unit = ref.unit, decl = ref.decl)
+
+; 接收者所有者：名义与枚举答名字，其余答空串；空串说明按名找不到方法符号。
+receiverOwner|func(map: TypeMap, typeId: I32,) -> (String,):
+    if typeId < 0 || typeId >= irTypeCount(map.pool):
+        return ""
+    let entry = irTypeAt(pool = map.pool, id = typeId)
+    let tag = irTypeTag(entry.kind)
+    if tag == irTypeTag(irTypeNominal):
+        return entry.name
+    if tag == irTypeTag(irTypeEnumeration):
+        return entry.name
+    return ""
+
+; 读节点：名字与类型给定，造一个按名读并把名字驻留进文本池。
+makeLoadNode|func(pool: IrNodePool, texts: Array<String>, name: String, typeId: I32,) -> (IrLoadNode,):
+    let placed = internText(texts = texts, value = name)
+    var node = irMakeNode(kind = irExprTag(irLoad), typeId = typeId)
+    node.text = placed.id
+    let inserted = irAppendNode(pool = pool, node = node)
+    var out = IrLoadNode()
+    out.pool = inserted.pool
+    out.texts = placed.texts
+    out.id = inserted.id
+    return out
+
+; 实参归位：标签按名对位，位置实参填剩余的不收标签位，结果按形参声明序。
+; 缺位即失败并给原因：默认值与取用位不在降载期补，补出来是伪实现。
+orderActuals|func(actuals: Array<IrActual>, params: Array<CallParam>,) -> (IrOrder,):
+    var out = IrOrder()
+    var slots: Array<I32> = []
+    var i = 0
+    while i < len(params):
+        slots = slots.append(-1)
         i = i + 1
-    if name == "print" && len(args) == 1:
-        let inserted = addIrNode(pool = done.pool, kind = irExprTag(irPrintCall), typeId = -1, op = 0, kids = args)
-        done.pool = inserted.pool
-        done.id = inserted.id
-        return done
-    let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
-    if typeId < 0:
+    var next = 0
+    var e = 0
+    while e < len(actuals):
+        let actual = actuals[e]
+        if len(actual.label) > 0:
+            let at = paramIndexOf(params = params, name = actual.label)
+            if at < 0:
+                out.failed = true
+                out.detail = "未知实参标签 " + actual.label
+                return out
+            if slots[at] >= 0:
+                out.failed = true
+                out.detail = "实参标签重复 " + actual.label
+                return out
+            slots[at] = actual.id
+        else:
+            while next < len(params) && slots[next] >= 0:
+                next = next + 1
+            if next >= len(params):
+                out.failed = true
+                out.detail = "实参个数超出形参表"
+                return out
+            if params[next].takesLabel:
+                out.failed = true
+                out.detail = "形参 " + params[next].name + " 需要标签"
+                return out
+            slots[next] = actual.id
+            next = next + 1
+        e = e + 1
+    i = 0
+    while i < len(slots):
+        if slots[i] < 0:
+            out.failed = true
+            if params[i].isUsing:
+                out.detail = "省略取用实参"
+            elif params[i].hasDefault:
+                out.detail = "省略默认值实参"
+            else:
+                out.detail = "缺实参 " + params[i].name
+            return out
+        i = i + 1
+    out.ids = slots
+    return out
+
+; 源序实参：不按形参归位时用源内次序，内建与被调方未知时走这条。
+actualIds|func(actuals: Array<IrActual>,) -> (Array<I32>,):
+    var out: Array<I32> = []
+    var i = 0
+    while i < len(actuals):
+        out = out.append(actuals[i].id)
+        i = i + 1
+    return out
+
+; 调用结果类型：空元组答 -1（IR 用 -1 表达空返回），判不出答 -2。
+; 推导表没覆盖调用结果时退回声明返回类型，两者都缺才按缺口报。
+callResultType|func(map: TypeMap, types: ExprTypes, unit: CompilationUnit, unitIndex: I32, frame: LowerFrame, bytes: Array<U8>, id: I32, ret: I32,) -> (I32,):
+    let known = exprTypeAt(table = types, unit = unitIndex, node = id)
+    var hint = known
+    if hint < 0:
+        hint = ret
+    if hint >= 0:
+        if isVoidReturn(pool = frame.world.types.pool, id = hint):
+            return -1
+        let mapped = irIdOf(map = map, semanticId = hint)
+        if mapped >= 0:
+            return mapped
+    return -2
+
+; 具名函数：裸名在包级符号表里查，命中的函数声明给出形参序。
+calleeOfFunction|func(frame: LowerFrame, name: String,) -> (IrCallee,):
+    var out = IrCallee()
+    let symbol = lookupTopByName(index = frame.world.symbols, name = name)
+    if symbol < 0:
+        return out
+    let ref = symbolDecl(world = frame.world, symbol = symbol)
+    if ref.unit < 0:
+        return out
+    let decl = frame.world.units[ref.unit].ast.decls[ref.decl]
+    if !isFunctionDeclCode(decl.kind):
+        return out
+    out.found = true
+    out.name = name
+    out.params = declParams(world = frame.world, ref = ref)
+    out.ret = frame.world.types.typeOf(unit = ref.unit, decl = ref.decl)
+    out.ordered = true
+    return out
+
+; 实例方法：接收者类型名加方法名查符号，IR 名按「方法__类型」出，接收者作首参。
+calleeOfMethod|func(frame: LowerFrame, map: TypeMap, pool: IrNodePool, receiver: I32, memberName: String,) -> (IrCallee,):
+    var out = IrCallee()
+    let owner = receiverOwner(map = map, typeId = irNodeAt(pool = pool, id = receiver).typeId)
+    if len(owner) == 0:
+        return out
+    let symbol = lookupMemberByName(index = frame.world.symbols, owner = owner, name = memberName)
+    let ref = symbolDecl(world = frame.world, symbol = symbol)
+    if ref.unit < 0:
+        return out
+    let decl = frame.world.units[ref.unit].ast.decls[ref.decl]
+    if !isFunctionDeclCode(decl.kind):
+        return out
+    out.found = true
+    out.params = declParams(world = frame.world, ref = ref)
+    out.ret = frame.world.types.typeOf(unit = ref.unit, decl = ref.decl)
+    out.ordered = true
+    if decl.isOwn:
+        out.name = ownMethodName(method = memberName, owner = owner)
+        out.takesReceiver = false
+    else:
+        out.name = instanceMethodName(method = memberName, owner = owner)
+        out.takesReceiver = true
+    return out
+
+; 本型方法：接收者是类型名而非值，调用点不带接收者实参。
+calleeOfOwnType|func(frame: LowerFrame, unit: CompilationUnit, bytes: Array<U8>, recvNode: I32, memberName: String,) -> (IrCallee,):
+    var out = IrCallee()
+    if !unit.ast.isIdentifierExpr(recvNode):
+        return out
+    let node = unit.ast.exprAt(recvNode)
+    let recvName = decodeSpelling(bytes = bytes, start = node.nameStart, end = node.nameEnd)
+    if findIrLocal(frame = frame, name = recvName) >= 0:
+        return out
+    let symbol = lookupMemberByName(index = frame.world.symbols, owner = recvName, name = memberName)
+    let ref = symbolDecl(world = frame.world, symbol = symbol)
+    if ref.unit < 0:
+        return out
+    let decl = frame.world.units[ref.unit].ast.decls[ref.decl]
+    if !isFunctionDeclCode(decl.kind) || !decl.isOwn:
+        return out
+    out.found = true
+    out.name = ownMethodName(method = memberName, owner = recvName)
+    out.params = declParams(world = frame.world, ref = ref)
+    out.ret = frame.world.types.typeOf(unit = ref.unit, decl = ref.decl)
+    out.ordered = true
+    return out
+
+; 导入别名：`别名.函数` 是具名调用，别名只是限定符，不进实参。
+calleeOfAlias|func(frame: LowerFrame, unit: CompilationUnit, bytes: Array<U8>, recvNode: I32, memberName: String,) -> (IrCallee,):
+    var out = IrCallee()
+    if !unit.ast.isIdentifierExpr(recvNode):
+        return out
+    let node = unit.ast.exprAt(recvNode)
+    let recvName = decodeSpelling(bytes = bytes, start = node.nameStart, end = node.nameEnd)
+    if lookupImportByName(index = frame.world.symbols, file = unit.path, name = recvName) < 0:
+        return out
+    return calleeOfFunction(frame = frame, name = memberName)
+
+; 具名调用：实参按形参序归位，接收者（若有）排在最前；归位失败即报缺口。
+lowerNamedCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32, name: String, actuals: Array<IrActual>, params: Array<CallParam>, leading: I32, ret: I32,) -> (LowerExpr,):
+    var done = out
+    let order = orderActuals(actuals = actuals, params = params)
+    if order.failed:
+        return missExpr(out = done, unit = unit, id = id, what = order.detail)
+    let typeId = callResultType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id, ret = ret)
+    if typeId == -2:
         return missType(out = done, unit = unit, id = id)
+    var kids: Array<I32> = []
+    if leading >= 0:
+        kids = kids.append(leading)
+    var i = 0
+    while i < len(order.ids):
+        kids = kids.append(order.ids[i])
+        i = i + 1
     let placed = internText(texts = done.texts, value = name)
     var node = irMakeNode(kind = irExprTag(irCall), typeId = typeId)
     node.text = placed.id
-    node.kids = args
+    node.kids = kids
     let inserted = irAppendNode(pool = done.pool, node = node)
     done.texts = placed.texts
     done.pool = inserted.pool
     done.id = inserted.id
     return done
+
+; 按名调用：被调方未知或内建时按源序传参，名字就用源码里的拼写。
+lowerPlainCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32, name: String, actuals: Array<IrActual>, leading: I32,) -> (LowerExpr,):
+    var done = out
+    if name == "print" && len(actuals) == 1 && leading < 0:
+        let inserted = addIrNode(pool = done.pool, kind = irExprTag(irPrintCall), typeId = -1, op = 0, kids = [actuals[0].id])
+        done.pool = inserted.pool
+        done.id = inserted.id
+        return done
+    let typeId = callResultType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id, ret = -1)
+    if typeId == -2:
+        return missType(out = done, unit = unit, id = id)
+    var kids: Array<I32> = []
+    if leading >= 0:
+        kids = kids.append(leading)
+    let rest = actualIds(actuals = actuals)
+    var i = 0
+    while i < len(rest):
+        kids = kids.append(rest[i])
+        i = i + 1
+    let placed = internText(texts = done.texts, value = name)
+    var node = irMakeNode(kind = irExprTag(irCall), typeId = typeId)
+    node.text = placed.id
+    node.kids = kids
+    let inserted = irAppendNode(pool = done.pool, node = node)
+    done.texts = placed.texts
+    done.pool = inserted.pool
+    done.id = inserted.id
+    return done
+
+; 调用：被调先解析成 IR 名与形参序，再按源序降实参，最后按形参序归位。
+; 方法名按「方法__类型」出符号；标签实参在这里解包，标签本身不进节点。
+lowerCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
+    let expr = unit.ast.exprAt(id)
+    if len(expr.kids) < 1:
+        return missExpr(out = out, unit = unit, id = id, what = "空调用")
+    let callee: I32 = expr.kids[0]
+    var done = out
+    var resolved = IrCallee()
+    var receiver = -1
+    if unit.ast.isMemberExpr(callee):
+        let member = unit.ast.exprAt(callee)
+        if len(member.kids) < 1:
+            return missExpr(out = done, unit = unit, id = id, what = "无接收者的成员被调")
+        let memberName = decodeSpelling(bytes = bytes, start = member.nameStart, end = member.nameEnd)
+        let recvNode: I32 = member.kids[0]
+        resolved = calleeOfOwnType(frame = done.frame, unit = unit, bytes = bytes, recvNode = recvNode, memberName = memberName)
+        if !resolved.found:
+            let recvOne = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = recvNode)
+            done.pool = recvOne.pool
+            done.texts = recvOne.texts
+            done.frame = recvOne.frame
+            if recvOne.failed:
+                return takeFailure(out = done, one = recvOne)
+            receiver = recvOne.id
+            resolved = calleeOfMethod(frame = done.frame, map = map, pool = done.pool, receiver = receiver, memberName = memberName)
+            if !resolved.found:
+                resolved = calleeOfAlias(frame = done.frame, unit = unit, bytes = bytes, recvNode = recvNode, memberName = memberName)
+                if !resolved.found:
+                    return missExpr(out = done, unit = unit, id = id, what = "成员被调 " + memberName)
+                receiver = -1
+            elif !resolved.takesReceiver:
+                receiver = -1
+    elif unit.ast.isIdentifierExpr(callee):
+        let calleeExpr = unit.ast.exprAt(callee)
+        let name = decodeSpelling(bytes = bytes, start = calleeExpr.nameStart, end = calleeExpr.nameEnd)
+        resolved = calleeOfFunction(frame = done.frame, name = name)
+        if !resolved.found:
+            resolved.name = name
+    else:
+        return missExpr(out = done, unit = unit, id = id, what = "被调表达式")
+    var actuals: Array<IrActual> = []
+    var i = 1
+    while i < len(expr.kids):
+        let kid: I32 = expr.kids[i]
+        var valueId = kid
+        var label = ""
+        if unit.ast.isLabeledArgument(kid):
+            let labelNode = unit.ast.exprAt(kid)
+            label = decodeSpelling(bytes = bytes, start = labelNode.nameStart, end = labelNode.nameEnd)
+            valueId = unit.ast.childOf(id = kid, index = 0)
+        let one = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = valueId)
+        done.pool = one.pool
+        done.texts = one.texts
+        done.frame = one.frame
+        if one.failed:
+            return takeFailure(out = done, one = one)
+        var actual = IrActual()
+        actual.label = label
+        actual.id = one.id
+        actuals = actuals.append(actual)
+        i = i + 1
+    if resolved.found && resolved.ordered:
+        return lowerNamedCall(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id, name = resolved.name, actuals = actuals, params = resolved.params, leading = receiver, ret = resolved.ret)
+    return lowerPlainCall(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id, name = resolved.name, actuals = actuals, leading = receiver)
 
 ; 成员读：接收者一个子节点，字段名驻留进文本池；方法值不走这条。
 lowerMember|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):

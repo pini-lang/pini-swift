@@ -4,6 +4,8 @@ name = "ir"
 [require]
 syntax = "*"
 semantics = "*"
+unicode = "*"
+module_loader = "*"
 
 [lib]
 name = "ir"

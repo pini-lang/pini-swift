@@ -25,9 +25,13 @@ _semantics = "../../semantics"
 样例源码|func() -> (String,):
     return "累积|func(a: I32, b: I32,) -> (I32,):\n    var total = a + b\n    if total > 0:\n        total = total - 1\n    while total > 0:\n        total = total - 1\n    return total\n"
 
-; 样例模块：从文本建单元，单包注册解析，填表后降载。
+; 样例模块：样例源码走同一条文本降载，判据只关心样例本身。
 样例模块|func() -> (IrModule,):
-    let loaded: UnitLoad = loadUnit(path = "sample.pini", text = 样例源码())
+    return 文本模块(样例源码())
+
+; 文本模块：从文本建单元，单包注册解析，填表后降载。
+文本模块|func(_src: String,) -> (IrModule,):
+    let loaded: UnitLoad = loadUnit(path = "sample.pini", text = _src)
     assert(!loaded.failed, "样例应装载成功")
     assert(len(loaded.unit.diagnostics) == 0, "样例不应有语法诊断")
     var units: Array<CompilationUnit> = [loaded.unit]
@@ -108,12 +112,12 @@ _semantics = "../../semantics"
     assert(循环.tail == 2, "循环体只含一条语句，边界应为 2")
     return
 
-; 缺口纪律：依赖缺失时每个有体函数各一条缺口，体留空；缺口少于函数数即静默吞体。
+; 缺口纪律：降不了的构造逐函数各报一条缺口且体留空；少一条即静默吞体。
 缺口逐函数|test() -> ():
-    var input = LowerWorld()
-    input.world = 单文件世界(relative = "packages/support/src/api/offsets.pini")
-    let module = lowerWorkspace(input = input)
-    assert(len(module.errors) == 2, "两个函数应各报一条缺口")
-    assert(emptyBodyCount(module = module) == 2, "两个函数体应全为空")
+    let 源 = "带文本|func() -> (I32,):\n    let s = \"文本\"\n    return 0\n\n正常|func() -> (I32,):\n    return 1\n"
+    let module = 文本模块(源)
+    assert(len(module.functions) == 2, "两个函数都应在表里")
+    assert(len(module.errors) == 1, "只有用到未降载构造的那个应报缺口")
+    assert(emptyBodyCount(module = module) == 1, "报缺口的函数体应留空")
     assert(len(module.errors[0].detail) > 0, "缺口应写清原因")
     return

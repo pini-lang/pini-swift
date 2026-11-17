@@ -48,10 +48,68 @@ main|func() -> ():
         input.types = 填.types
         let module = lowerWorkspace(input = input)
         print("lower-ok", len(module.functions), len(module.errors), emptyBodyCount(module = module), len(module.typeErrors))
+        printGapSummary(module = module)
         return
     let plan = planWorkspace(root)
     if plan.isOK() && plan.packageCount() == 10:
         print("workspace-ok", plan.packageCount(), true)
         return
     print("workspace-plan-failed", plan.errorCount())
+    return
+
+; 缺口归纳：按原因归并计数，函数名前缀不进归类；只打印前若干条，够看头号缺口。
+; 次数降序，同数保持首次出现序 —— 不按字符串排序，两通道的串比较口径并不一致。
+reasonIndex|func(reasons: Array<String>, text: String,) -> (I32,):
+    var i = 0
+    while i < len(reasons):
+        if reasons[i] == text:
+            return i
+        i = i + 1
+    return -1
+
+printGapSummary|func(module: IrModule,) -> ():
+    var reasons: Array<String> = []
+    var counts: Array<I32> = []
+    var i = 0
+    while i < len(module.errors):
+        let detail = module.errors[i].detail
+        var reason = detail
+        let at = detail.indexOf("：")
+        if at >= 0:
+            reason = detail.slice(at + 1, len(detail))
+        let found = reasonIndex(reasons = reasons, text = reason)
+        if found >= 0:
+            var grown = counts
+            grown[found] = grown[found] + 1
+            counts = grown
+        else:
+            reasons = reasons.append(reason)
+            counts = counts.append(1)
+        i = i + 1
+    var order: Array<I32> = []
+    i = 0
+    while i < len(counts):
+        order = order.append(i)
+        i = i + 1
+    var a = 0
+    while a < len(order):
+        var best = a
+        var b = a + 1
+        while b < len(order):
+            if counts[order[b]] > counts[order[best]]:
+                best = b
+            b = b + 1
+        if best != a:
+            var swapped = order
+            let keep: I32 = swapped[a]
+            swapped[a] = swapped[best]
+            swapped[best] = keep
+            order = swapped
+        a = a + 1
+    var shown = 0
+    i = 0
+    while i < len(order) && shown < 15:
+        print("缺口", counts[order[i]], reasons[order[i]])
+        shown = shown + 1
+        i = i + 1
     return

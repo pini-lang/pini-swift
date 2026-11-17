@@ -73,38 +73,269 @@ lowerVariableStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, 
     done.frame = declareIrLocal(frame = done.frame, name = name, typeId = valueNode.typeId, mutable = mutable)
     return done
 
-; 赋值：只接简单赋值与标识符目标；复合赋值与非标识符目标报缺口。
-lowerAssignStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32,) -> (LowerStmt,):
+; 右值结果：池、文本池、帧、节点下标与失败原因；六条写路共用一次右值降载。
+(RhsResult)
+pool: IrNodePool = IrNodePool()
+texts: Array<String> = []
+frame: LowerFrame = LowerFrame()
+id: I32 = -1
+failed: Bool = false
+detail: String = ""
+offset: I32 = 0
+
+; 右值：赋值语句的第二子节点；失败原因与位置一并带回，由调用方转成缺口。
+lowerAssignRhs|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32,) -> (RhsResult,):
     let stmt = unit.ast.stmtAt(stmtId)
-    if opSymbol(stmt.op) != "=":
-        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "复合赋值")
-    if len(stmt.kids) < 2:
-        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "缺值或目标的赋值")
-    let target = stmt.kids[0]
-    if !unit.ast.isIdentifierExpr(target):
-        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "非标识符赋值目标")
-    let expr = unit.ast.exprAt(target)
-    let name = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
-    let at = findIrLocal(frame = out.frame, name = name)
-    if at < 0:
-        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "非局部变量的赋值目标")
-    var done = out
-    let one = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = stmt.kids[1])
+    var done = RhsResult()
+    done.pool = out.pool
+    done.texts = out.texts
+    done.frame = out.frame
+    let one = lowerExpr(pool = out.pool, texts = out.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = out.frame, id = stmt.kids[1])
     done.pool = one.pool
     done.texts = one.texts
     done.frame = one.frame
     if one.failed:
-        return takeStmtFailure(out = done, detail = one.detail, offset = one.offset)
-    let local = done.frame.locals[at]
-    let placed = internText(texts = done.texts, value = name)
-    var node = irMakeNode(kind = irStmtTag(irStoreVar), typeId = local.typeId)
-    node.text = placed.id
-    node.kids = [one.id]
+        done.failed = true
+        done.detail = one.detail
+        done.offset = one.offset
+        return done
+    done.id = one.id
+    return done
+
+; 记语句：节点并进池并把下标追加到语句序列，源序即节点序。
+appendStmtNode|func(out: LowerStmt, node: IrNode,) -> (LowerStmt,):
+    var done = out
     let inserted = irAppendNode(pool = done.pool, node = node)
-    done.texts = placed.texts
     done.pool = inserted.pool
     done.ids = done.ids.append(inserted.id)
     return done
+
+; 字段读：接收者与字段名给定，造一个按声明序取的字段读。
+makeFieldGet|func(pool: IrNodePool, texts: Array<String>, fieldName: String, typeId: I32, base: I32,) -> (IrLoadNode,):
+    let placed = internText(texts = texts, value = fieldName)
+    var node = irMakeNode(kind = irExprTag(irFieldGet), typeId = typeId)
+    node.text = placed.id
+    node.kids = [base]
+    let inserted = irAppendNode(pool = pool, node = node)
+    var out = IrLoadNode()
+    out.pool = inserted.pool
+    out.texts = placed.texts
+    out.id = inserted.id
+    return out
+
+; 下标读：容器与下标给定，越界由运行时陷阱承担。
+makeSubscriptGet|func(pool: IrNodePool, typeId: I32, container: I32, index: I32,) -> (IrNodeInsert,):
+    return addIrNode(pool = pool, kind = irExprTag(irSubscriptGet), typeId = typeId, op = 0, kids = [container, index])
+
+; 赋值：复合运算按「读—算—写」接成三节，普通赋值只写一次。
+lowerAssignStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32,) -> (LowerStmt,):
+    let stmt = unit.ast.stmtAt(stmtId)
+    if len(stmt.kids) < 2:
+        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "缺值或目标的赋值")
+    let compound = compoundBinaryTag(stmt.op)
+    if compound == 0:
+        return lowerStoreStmt(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId)
+    let base = binaryTagOf(spelling = opSymbol(compound))
+    if base == 0:
+        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "复合赋值 " + opSymbol(stmt.op))
+    return lowerCompoundStmt(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId, base = base)
+
+; 普通赋值：标识符写局部槽，成员写字段，下标写元素；其余目标报缺口。
+lowerStoreStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32,) -> (LowerStmt,):
+    let stmt = unit.ast.stmtAt(stmtId)
+    let target: I32 = stmt.kids[0]
+    var done = out
+    if unit.ast.isIdentifierExpr(target):
+        let expr = unit.ast.exprAt(target)
+        let name = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
+        let at = findIrLocal(frame = done.frame, name = name)
+        if at < 0:
+            return missStmt(out = done, unit = unit, stmtId = stmtId, what = "非局部变量的赋值目标")
+        let typeId = done.frame.locals[at].typeId
+        let rhs = lowerAssignRhs(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId)
+        done.pool = rhs.pool
+        done.texts = rhs.texts
+        done.frame = rhs.frame
+        if rhs.failed:
+            return takeStmtFailure(out = done, detail = rhs.detail, offset = rhs.offset)
+        let placed = internText(texts = done.texts, value = name)
+        var node = irMakeNode(kind = irStmtTag(irStoreVar), typeId = typeId)
+        node.text = placed.id
+        node.kids = [rhs.id]
+        done.texts = placed.texts
+        return appendStmtNode(out = done, node = node)
+    if unit.ast.isMemberExpr(target):
+        return writeField(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId, target = target)
+    if unit.ast.isSubscriptExpr(target):
+        return writeSubscript(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId, target = target)
+    return missStmt(out = done, unit = unit, stmtId = stmtId, what = "该赋值目标尚未降载")
+
+; 字段写：接收者先降，字段名驻留，值排在其后；字段类型取自推导表。
+writeField|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32, target: I32,) -> (LowerStmt,):
+    let member = unit.ast.exprAt(target)
+    if len(member.kids) < 1:
+        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "无接收者的字段写")
+    var done = out
+    let recvOne = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = member.kids[0])
+    done.pool = recvOne.pool
+    done.texts = recvOne.texts
+    done.frame = recvOne.frame
+    if recvOne.failed:
+        return takeStmtFailure(out = done, detail = recvOne.detail, offset = recvOne.offset)
+    let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = target)
+    if typeId < 0:
+        return missStmt(out = done, unit = unit, stmtId = stmtId, what = "字段类型未定")
+    let rhs = lowerAssignRhs(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId)
+    done.pool = rhs.pool
+    done.texts = rhs.texts
+    done.frame = rhs.frame
+    if rhs.failed:
+        return takeStmtFailure(out = done, detail = rhs.detail, offset = rhs.offset)
+    let fieldName = decodeSpelling(bytes = bytes, start = member.nameStart, end = member.nameEnd)
+    let placed = internText(texts = done.texts, value = fieldName)
+    var node = irMakeNode(kind = irStmtTag(irFieldStore), typeId = typeId)
+    node.text = placed.id
+    node.kids = [recvOne.id, rhs.id]
+    done.texts = placed.texts
+    return appendStmtNode(out = done, node = node)
+
+; 下标写：容器、下标与值三个子节点，元素类型取自推导表；越界写由运行时报错。
+writeSubscript|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32, target: I32,) -> (LowerStmt,):
+    let expr = unit.ast.exprAt(target)
+    if len(expr.kids) < 2:
+        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "缺下标的下标写")
+    var done = out
+    var kids: Array<I32> = []
+    var i = 0
+    while i < 2:
+        let one = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = expr.kids[i])
+        done.pool = one.pool
+        done.texts = one.texts
+        done.frame = one.frame
+        if one.failed:
+            return takeStmtFailure(out = done, detail = one.detail, offset = one.offset)
+        kids = kids.append(one.id)
+        i = i + 1
+    let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = target)
+    if typeId < 0:
+        return missStmt(out = done, unit = unit, stmtId = stmtId, what = "元素类型未定")
+    let rhs = lowerAssignRhs(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId)
+    done.pool = rhs.pool
+    done.texts = rhs.texts
+    done.frame = rhs.frame
+    if rhs.failed:
+        return takeStmtFailure(out = done, detail = rhs.detail, offset = rhs.offset)
+    var node = irMakeNode(kind = irStmtTag(irSubscriptStore), typeId = typeId)
+    node.kids = [kids[0], kids[1], rhs.id]
+    return appendStmtNode(out = done, node = node)
+
+; 复合赋值：读—算—写分三节，接收者只收标识符，其余形态会被求值两次。
+lowerCompoundStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32, base: I32,) -> (LowerStmt,):
+    let stmt = unit.ast.stmtAt(stmtId)
+    let target: I32 = stmt.kids[0]
+    var done = out
+    if unit.ast.isIdentifierExpr(target):
+        let expr = unit.ast.exprAt(target)
+        let name = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
+        let at = findIrLocal(frame = done.frame, name = name)
+        if at < 0:
+            return missStmt(out = done, unit = unit, stmtId = stmtId, what = "非局部变量的赋值目标")
+        let typeId = done.frame.locals[at].typeId
+        let load = makeLoadNode(pool = done.pool, texts = done.texts, name = name, typeId = typeId)
+        done.pool = load.pool
+        done.texts = load.texts
+        let rhs = lowerAssignRhs(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId)
+        done.pool = rhs.pool
+        done.texts = rhs.texts
+        done.frame = rhs.frame
+        if rhs.failed:
+            return takeStmtFailure(out = done, detail = rhs.detail, offset = rhs.offset)
+        let sum = addIrNode(pool = done.pool, kind = irExprTag(irBinary), typeId = typeId, op = base, kids = [load.id, rhs.id])
+        done.pool = sum.pool
+        let placed = internText(texts = done.texts, value = name)
+        var node = irMakeNode(kind = irStmtTag(irStoreVar), typeId = typeId)
+        node.text = placed.id
+        node.kids = [sum.id]
+        done.texts = placed.texts
+        return appendStmtNode(out = done, node = node)
+    if unit.ast.isMemberExpr(target):
+        return compoundField(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId, target = target, base = base)
+    if unit.ast.isSubscriptExpr(target):
+        return compoundSubscript(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId, target = target, base = base)
+    return missStmt(out = done, unit = unit, stmtId = stmtId, what = "该赋值目标尚未降载")
+
+; 字段复合赋值：先读字段，再算，再写回同一个接收者。
+compoundField|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32, target: I32, base: I32,) -> (LowerStmt,):
+    let member = unit.ast.exprAt(target)
+    if len(member.kids) < 1:
+        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "无接收者的字段写")
+    if !unit.ast.isIdentifierExpr(member.kids[0]):
+        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "复合赋值的接收者求值两次")
+    var done = out
+    let recvOne = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = member.kids[0])
+    done.pool = recvOne.pool
+    done.texts = recvOne.texts
+    done.frame = recvOne.frame
+    if recvOne.failed:
+        return takeStmtFailure(out = done, detail = recvOne.detail, offset = recvOne.offset)
+    let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = target)
+    if typeId < 0:
+        return missStmt(out = done, unit = unit, stmtId = stmtId, what = "字段类型未定")
+    let fieldName = decodeSpelling(bytes = bytes, start = member.nameStart, end = member.nameEnd)
+    let get = makeFieldGet(pool = done.pool, texts = done.texts, fieldName = fieldName, typeId = typeId, base = recvOne.id)
+    done.pool = get.pool
+    done.texts = get.texts
+    let rhs = lowerAssignRhs(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId)
+    done.pool = rhs.pool
+    done.texts = rhs.texts
+    done.frame = rhs.frame
+    if rhs.failed:
+        return takeStmtFailure(out = done, detail = rhs.detail, offset = rhs.offset)
+    let sum = addIrNode(pool = done.pool, kind = irExprTag(irBinary), typeId = typeId, op = base, kids = [get.id, rhs.id])
+    done.pool = sum.pool
+    let placed = internText(texts = done.texts, value = fieldName)
+    var node = irMakeNode(kind = irStmtTag(irFieldStore), typeId = typeId)
+    node.text = placed.id
+    node.kids = [recvOne.id, sum.id]
+    done.texts = placed.texts
+    return appendStmtNode(out = done, node = node)
+
+; 下标复合赋值：容器只收标识符，读—算—写落在同一个容器与下标上。
+compoundSubscript|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32, target: I32, base: I32,) -> (LowerStmt,):
+    let expr = unit.ast.exprAt(target)
+    if len(expr.kids) < 2:
+        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "缺下标的下标写")
+    if !unit.ast.isIdentifierExpr(expr.kids[0]):
+        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "复合赋值的容器求值两次")
+    var done = out
+    let container = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = expr.kids[0])
+    done.pool = container.pool
+    done.texts = container.texts
+    done.frame = container.frame
+    if container.failed:
+        return takeStmtFailure(out = done, detail = container.detail, offset = container.offset)
+    let indexOne = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = expr.kids[1])
+    done.pool = indexOne.pool
+    done.texts = indexOne.texts
+    done.frame = indexOne.frame
+    if indexOne.failed:
+        return takeStmtFailure(out = done, detail = indexOne.detail, offset = indexOne.offset)
+    let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = target)
+    if typeId < 0:
+        return missStmt(out = done, unit = unit, stmtId = stmtId, what = "元素类型未定")
+    let get = makeSubscriptGet(pool = done.pool, typeId = typeId, container = container.id, index = indexOne.id)
+    done.pool = get.pool
+    let rhs = lowerAssignRhs(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId)
+    done.pool = rhs.pool
+    done.texts = rhs.texts
+    done.frame = rhs.frame
+    if rhs.failed:
+        return takeStmtFailure(out = done, detail = rhs.detail, offset = rhs.offset)
+    let sum = addIrNode(pool = done.pool, kind = irExprTag(irBinary), typeId = typeId, op = base, kids = [get.id, rhs.id])
+    done.pool = sum.pool
+    var node = irMakeNode(kind = irStmtTag(irSubscriptStore), typeId = typeId)
+    node.kids = [container.id, indexOne.id, sum.id]
+    return appendStmtNode(out = done, node = node)
 
 ; 表达式语句：求值并丢弃结果。
 lowerExprStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32,) -> (LowerStmt,):
