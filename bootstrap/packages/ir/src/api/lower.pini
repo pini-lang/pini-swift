@@ -1,6 +1,7 @@
 [lower|import]
 _syntax = "../../../syntax"
 _semantics = "../../../semantics"
+_module_loader = "../../../module-loader"
 
 ; 降载入口：吃工作区世界与各张表，出一份 IR 模块。
 ; 函数表与语句体一并产出；语句或表达式降不了时整函数留空并逐函数报缺口。
@@ -67,9 +68,35 @@ paramSlotOf|func(scope: ScopeStack, name: String,) -> (I32,):
         i = i + 1
     return -1
 
-; 形参表：逐个取参数声明，名字、类型、槽位与取用位一并落地。
+; 自身位：实例方法的 self 由语义层播种，局部表里至多一条。
+selfLocalIndex|func(scope: ScopeStack,) -> (I32,):
+    var i = 0
+    while i < len(scope.locals):
+        if isSelfLocal(scope.locals[i].kind):
+            return i
+        i = i + 1
+    return -1
+
+; 函数名：顶层函数用声明名，方法用「方法__类型」；本型方法另加 own 前缀。
+irFunctionName|func(unit: CompilationUnit, bytes: Array<U8>, decl: DeclNode, owner: String,) -> (String,):
+    let name = declName(unit = unit, bytes = bytes, decl = decl)
+    if len(owner) == 0:
+        return name
+    if decl.isOwn:
+        return ownMethodName(method = name, owner = owner)
+    return instanceMethodName(method = name, owner = owner)
+
+; 形参表：实例方法先放自身，再按声明序放参数；名字、类型、槽位与取用位一并落地。
 lowerParams|func(state: LowerState, unit: CompilationUnit, decl: DeclNode, scope: ScopeStack,) -> (Array<IrParam>,):
     var out: Array<IrParam> = []
+    let selfAt = selfLocalIndex(scope = scope)
+    if selfAt >= 0:
+        let local = scope.locals[selfAt]
+        var selfParam = IrParam()
+        selfParam.name = "self"
+        selfParam.typeId = irIdOf(map = state.map, semanticId = local.typeId)
+        selfParam.slot = local.slot
+        out = out.append(selfParam)
     var i = 0
     while i < len(decl.kids):
         let kid: DeclNode = unit.ast.decls[decl.kids[i]]
@@ -84,16 +111,16 @@ lowerParams|func(state: LowerState, unit: CompilationUnit, decl: DeclNode, scope
         i = i + 1
     return out
 
-; 单函数：播种函数帧取参数与返回类型，再降语句体。
+; 单函数：播种函数帧取参数与返回类型，再降语句体；owner 非空即方法。
 ; 体降不了就整函数留空并记一条缺口：半截体在发射期能跑却少了语句。
-lowerFunction|func(state: LowerState, unit: CompilationUnit, declId: I32,) -> (LowerState,):
+lowerFunction|func(state: LowerState, unit: CompilationUnit, declId: I32, owner: String,) -> (LowerState,):
     var out = state
     let decl: DeclNode = unit.ast.decls[declId]
     let seed = seedFunctionScope(world = out.world, unitIndex = out.unitIndex, declId = declId, bytes = out.bytes)
     if !seed.valid:
         return out
     var fn = IrFunction()
-    fn.name = declName(unit = unit, bytes = out.bytes, decl = decl)
+    fn.name = irFunctionName(unit = unit, bytes = out.bytes, decl = decl, owner = owner)
     fn.isTest = decl.isTest
     fn.isAsync = decl.isAsync
     fn.sourceFile = unit.path
@@ -104,7 +131,7 @@ lowerFunction|func(state: LowerState, unit: CompilationUnit, declId: I32,) -> (L
         var start = LowerStmt()
         start.pool = out.nodes
         start.texts = out.texts
-        start.frame = makeLowerFrame(scope = seed.scope)
+        start.frame = seedLowerFrame(scope = seed.scope, map = out.map, world = out.world)
         let body = lowerBlockOf(out = start, unit = unit, bytes = out.bytes, map = out.map, types = out.types, unitIndex = out.unitIndex, blockId = decl.body)
         out.nodes = body.pool
         out.texts = body.texts
@@ -116,18 +143,19 @@ lowerFunction|func(state: LowerState, unit: CompilationUnit, declId: I32,) -> (L
     out.functions = out.functions.append(fn)
     return out
 
-; 单声明：函数直接降；类型与扩展块下钻到成员函数，顺序即声明序。
+; 单声明：函数直接降；类型与扩展块下钻到成员函数，owner 取块名，顺序即声明序。
 lowerDeclBody|func(state: LowerState, unit: CompilationUnit, declId: I32,) -> (LowerState,):
     var out = state
     let decl: DeclNode = unit.ast.decls[declId]
     if isFunctionDeclCode(decl.kind):
-        return lowerFunction(state = out, unit = unit, declId = declId)
+        return lowerFunction(state = out, unit = unit, declId = declId, owner = "")
     if isTypeDecl(decl) || isExtensionDeclCode(decl.kind):
+        let owner = declName(unit = unit, bytes = out.bytes, decl = decl)
         var i = 0
         while i < len(decl.kids):
             let child: DeclNode = unit.ast.decls[decl.kids[i]]
             if isFunctionDeclCode(child.kind):
-                out = lowerFunction(state = out, unit = unit, declId = decl.kids[i])
+                out = lowerFunction(state = out, unit = unit, declId = decl.kids[i], owner = owner)
             i = i + 1
     return out
 

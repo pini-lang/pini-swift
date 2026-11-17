@@ -279,6 +279,18 @@ lookupMember|func(index: SymbolIndex, owner: String, key: Array<U8>,) -> (I32,):
             return slot.symbol
     return -1
 
+; 顶层按名查找：名字在这里折成 NFC 键，包外调用方不必自持键格式。
+lookupTopByName|func(index: SymbolIndex, name: String,) -> (I32,):
+    return lookupTop(index = index, key = keyOfText(name))
+
+; 成员按名查找：所有者与成员名各折一键，二分口径与 lookupMember 同一份。
+lookupMemberByName|func(index: SymbolIndex, owner: String, name: String,) -> (I32,):
+    return lookupMember(index = index, owner = owner, key = keyOfText(name))
+
+; 导入别名按名查找：别名只在给定文件内成立，不进包级名字空间。
+lookupImportByName|func(index: SymbolIndex, file: String, name: String,) -> (I32,):
+    return lookupImport(index = index, file = file, key = keyOfText(name))
+
 ; 导入下界：第一个不小于给定（文件, 别名）的槽位。
 lowerBoundImport|func(slots: Array<ImportSlot>, fileKey: Array<U8>, key: Array<U8>,) -> (I32,):
     var lo = 0

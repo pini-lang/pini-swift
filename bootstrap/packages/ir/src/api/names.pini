@@ -1,0 +1,53 @@
+[names|import]
+_unicode = "../../../unicode"
+
+; IR 名：方法在 IR 里按「方法__类型」出符号，本型方法另加 `own__` 前缀。
+; 非 ASCII 标量编码成 `_u` 加至少四位大写十六进制，与宿主 IRName 同一规则，两侧得同一符号。
+; 编码只发生在符号拼写，不改源码区间里的原始拼写。
+
+; 十六进制位：在固定表里按值取一个，越界落在 0；调用方保证入参在 0 到 15。
+hexDigitName|func(_value: I32,) -> (String,):
+    let table = "0123456789ABCDEF"
+    var at = _value
+    if at < 0 || at > 15:
+        at = 0
+    return "\(chars(table)[at])"
+
+; 单标量编码：ASCII 原样，其余写 `_u` 加补足四位的十六进制。
+encodeScalarName|func(_code: I32,) -> (String,):
+    if _code < 128:
+        return "\(chr(_code))"
+    var hex = ""
+    var value = _code
+    while value > 0:
+        hex = hexDigitName(value % 16) + hex
+        value = value / 16
+    while len(hex) < 4:
+        hex = "0" + hex
+    return "_u" + hex
+
+; 名字编码：全 ASCII 原样返回，含非 ASCII 标量时逐标量编码。
+mangleName|func(name: String,) -> (String,):
+    let decoded = decodeUtf8(tempUtf8Bytes(name))
+    var needs = false
+    var i = 0
+    while i < len(decoded.scalars):
+        if decoded.scalars[i].code > 127:
+            needs = true
+        i = i + 1
+    if !needs:
+        return name
+    var out = ""
+    i = 0
+    while i < len(decoded.scalars):
+        out = out + encodeScalarName(decoded.scalars[i].code)
+        i = i + 1
+    return out
+
+; 实例方法名：`方法__类型`；同名方法与同名类型在两侧算出同一个串。
+instanceMethodName|func(method: String, owner: String,) -> (String,):
+    return mangleName(name = method) + "__" + mangleName(name = owner)
+
+; 本型方法名：`own__方法__类型`，与实例方法分处两个符号，一名一义。
+ownMethodName|func(method: String, owner: String,) -> (String,):
+    return "own__" + mangleName(name = method) + "__" + mangleName(name = owner)
