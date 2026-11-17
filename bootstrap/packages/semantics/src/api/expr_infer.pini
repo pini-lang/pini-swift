@@ -340,6 +340,38 @@ inferUnitExprs|func(world: MemberWorld, unitIndex: I32, types: ExprTypes,) -> (I
 types: ExprTypes = ExprTypes()
 pool: TypePool = TypePool()
 
+; 声明标注定型：变量声明的模式节点按标注写类型，覆盖推导期按名匹配出的近似值。
+; 只在有标注时写：无标注声明的类型由初值决定，推导表里已有初值节点的类型。
+; 声明节点按名推类型本就不可靠（同名局部互串），故这一步必须排在推导之后。
+fillDeclaredTypes|func(world: MemberWorld, units: Array<CompilationUnit>, types: ExprTypes, pool: TypePool,) -> (ExprFill,):
+    var out = ExprFill()
+    out.types = types
+    out.pool = pool
+    var types = TypeWorld()
+    types.units = world.units
+    types.table = world.table
+    var cursor = TypeCursor()
+    cursor.world = types
+    var u = 0
+    while u < len(units):
+        let unit = units[u]
+        cursor.file = unit.path
+        cursor.ast = unit.ast
+        cursor.bytes = unitBytes(unit)
+        var s = 0
+        while s < unit.ast.stmtCount():
+            if unit.ast.isVariableStmt(s):
+                let stmt = unit.ast.stmtAt(s)
+                if stmt.typeId >= 0:
+                    let resolved = resolveAnnotationIn(cursor = cursor, pool = out.pool, node = stmt.typeId)
+                    out.pool = resolved.pool
+                    let pattern = unit.ast.stmtChild(id = s, index = 0)
+                    if resolved.id >= 0 && pattern >= 0 && unit.ast.isIdentifierExpr(pattern):
+                        out.types = writeExprType(table = out.types, unit = u, node = pattern, typeId = resolved.id)
+            s = s + 1
+        u = u + 1
+    return out
+
 ; 全工作区推导：逐单元推，后一单元基于前一单元增长后的池。
 ; 池增长只追加，故既有下标不变；调用方用返回的池解释表，不得用入参世界的池。
 fillExprTypes|func(world: MemberWorld, units: Array<CompilationUnit>,) -> (ExprFill,):
@@ -352,4 +384,7 @@ fillExprTypes|func(world: MemberWorld, units: Array<CompilationUnit>,) -> (ExprF
         out.pool = one.pool
         out.types = one.types
         u = u + 1
+    let declared = fillDeclaredTypes(world = world, units = units, types = out.types, pool = out.pool)
+    out.types = declared.types
+    out.pool = declared.pool
     return out

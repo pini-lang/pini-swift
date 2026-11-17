@@ -117,3 +117,74 @@ module: IrModule = IrModule()
     assert(countNodes(module = 样例.module, kind = irStmtTag(irFieldStore)) == 1, "字段写应有一个节点")
     assert(countNodes(module = 样例.module, kind = irStmtTag(irSubscriptStore)) == 1, "下标写应有一个节点")
     return
+
+; 字符串取值：去引号、按转义表还原，`\0` 之后的内容丢弃。
+字符串取值|test() -> ():
+    assert(stringLiteralText(bytes = tempUtf8Bytes("\"ab\""), start = 0, end = 4) == "ab", "应去掉首尾引号")
+    assert(stringLiteralText(bytes = tempUtf8Bytes("\"a\\nb\""), start = 0, end = 6) == "a\nb", "换行转义应还原")
+    assert(stringLiteralText(bytes = tempUtf8Bytes("\"a\\0b\""), start = 0, end = 6) == "a", "内容终止符之后应丢弃")
+    return
+
+; 带标注的声明：分配按标注定型，初值窄于标注时包一层转换。
+带标注声明|test() -> ():
+    let src = "f|func() -> (I64,):\n    let n: I64 = 1\n    return n\n"
+    let 样例 = 造样例(src)
+    assert(len(样例.module.errors) == 0, "带标注的声明应降载成功")
+    let at = 取函数(样例 = 样例, name = "f")
+    assert(at >= 0, "函数应在表里")
+    let 分配 = irNodeAt(pool = 样例.module.nodes, id = 样例.module.functions[at].body[0])
+    assert(irTypeText(pool = 样例.module.types, id = 分配.typeId) == "i64", "分配类型应取标注")
+    assert(len(分配.kids) == 1, "初值应有一个子节点")
+    let 初值 = irNodeAt(pool = 样例.module.nodes, id = 分配.kids[0])
+    assert(初值.kind == irExprTag(irUnary), "窄初值应包成转换节点")
+    assert(初值.op == irUnaryTag(irCast), "转换节点应是显式转换")
+    return
+
+; 字符串与数组字面量：值驻留文本池，数组元素保序，空数组按标注定型。
+字面量降载|test() -> ():
+    let src = "f|func() -> (I32,):\n    let s = \"ab\"\n    let xs = [1, 2]\n    var out: Array<I32> = []\n    return len(xs)\n"
+    let 样例 = 造样例(src)
+    assert(len(样例.module.errors) == 0, "字面量应全部降载")
+    assert(countNodes(module = 样例.module, kind = irExprTag(irStringConst)) == 1, "字符串应有一个常量节点")
+    assert(countNodes(module = 样例.module, kind = irExprTag(irArrayLiteral)) == 2, "两个数组字面量各一个节点")
+    var 空数组 = -1
+    var 有元素 = -1
+    var i = 0
+    while i < irNodeCount(样例.module.nodes):
+        let 节点 = irNodeAt(pool = 样例.module.nodes, id = i)
+        if 节点.kind == irExprTag(irArrayLiteral):
+            if len(节点.kids) == 0:
+                空数组 = i
+            else:
+                有元素 = i
+        i = i + 1
+    assert(空数组 >= 0 && 有元素 >= 0, "两种数组字面量都应出现")
+    assert(irTypeText(pool = 样例.module.types, id = irNodeAt(pool = 样例.module.nodes, id = 空数组).typeId) == "array<i32>", "空数组的类型应来自标注")
+    assert(len(irNodeAt(pool = 样例.module.nodes, id = 有元素).kids) == 2, "数组元素应保序保全")
+    return
+
+; 零参构造：类型名作被调时产构造节点，类型取池里的同名名义条目。
+零参构造|test() -> ():
+    let src = "(Label)\nstart: I32 = 0\n\nf|func() -> (Label,):\n    let one = Label()\n    return one\n"
+    let 样例 = 造样例(src)
+    assert(len(样例.module.errors) == 0, "零参构造应降载成功")
+    assert(countNodes(module = 样例.module, kind = irExprTag(irConstruct)) == 1, "应有一个构造节点")
+    var at = -1
+    var i = 0
+    while i < irNodeCount(样例.module.nodes):
+        if irNodeAt(pool = 样例.module.nodes, id = i).kind == irExprTag(irConstruct):
+            at = i
+        i = i + 1
+    assert(at >= 0, "构造节点应在池里")
+    assert(irTypeText(pool = 样例.module.types, id = irNodeAt(pool = 样例.module.nodes, id = at).typeId) == "Label", "构造类型应是名义类型")
+    return
+
+; 内建调用：包级符号表里没有的名字回落到内建表，返回类型按形状映射。
+内建调用|test() -> ():
+    let src = "f|func() -> (I32,):\n    let bytes = tempUtf8Bytes(\"ab\")\n    return len(bytes)\n"
+    let 样例 = 造样例(src)
+    assert(len(样例.module.errors) == 0, "内建调用应降载成功")
+    let at = 取节点(样例 = 样例, kind = irExprTag(irCall), text = "tempUtf8Bytes")
+    assert(at >= 0, "调用节点应指向内建名")
+    assert(irTypeText(pool = 样例.module.types, id = irNodeAt(pool = 样例.module.nodes, id = at).typeId) == "array<u8>", "返回类型应按形状定为 array<u8>")
+    return

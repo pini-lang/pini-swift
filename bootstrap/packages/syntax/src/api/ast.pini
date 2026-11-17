@@ -208,6 +208,58 @@ exprKindTag|func(_kind: ExprKind,) -> (I32,):
             return 25
     return 0
 
+; 表达式类别名：降载与诊断按名报缺口，不暴露类别码。
+exprKindName|func(_code: I32,) -> (String,):
+    if _code == exprKindTag(exprInteger):
+        return "整数字面量"
+    if _code == exprKindTag(exprString):
+        return "字符串字面量"
+    if _code == exprKindTag(exprTrue) || _code == exprKindTag(exprFalse):
+        return "布尔字面量"
+    if _code == exprKindTag(exprIdentifier):
+        return "标识符"
+    if _code == exprKindTag(exprMember):
+        return "成员读"
+    if _code == exprKindTag(exprSubscript):
+        return "下标读"
+    if _code == exprKindTag(exprCall):
+        return "调用"
+    if _code == exprKindTag(exprUnary):
+        return "一元运算"
+    if _code == exprKindTag(exprBinary):
+        return "二元运算"
+    if _code == exprKindTag(exprFloat):
+        return "浮点字面量"
+    if _code == exprKindTag(exprInterpolated):
+        return "插值字符串"
+    if _code == exprKindTag(exprNil):
+        return "空字面量"
+    if _code == exprKindTag(exprCase):
+        return "枚举用例"
+    if _code == exprKindTag(exprSlice):
+        return "切片"
+    if _code == exprKindTag(exprTuple):
+        return "元组"
+    if _code == exprKindTag(exprArray):
+        return "数组字面量"
+    if _code == exprKindTag(exprDictionary):
+        return "字典字面量"
+    if _code == exprKindTag(exprSet):
+        return "集合字面量"
+    if _code == exprKindTag(exprFunction):
+        return "函数字面量"
+    if _code == exprKindTag(exprCast):
+        return "显式转换"
+    if _code == exprKindTag(exprTry):
+        return "错误处理"
+    if _code == exprKindTag(exprUnsafe):
+        return "不安全前缀"
+    if _code == exprKindTag(exprJoin):
+        return "等待前缀"
+    if _code == exprKindTag(exprDictEntry):
+        return "字典条目"
+    return "该表达式类别"
+
 ; 语句类别码。
 stmtKindTag|func(_kind: StmtKind,) -> (I32,):
     match _kind:

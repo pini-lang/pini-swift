@@ -280,6 +280,8 @@ checkVariableDecl|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32
     var declaredType = annotation
     if declaredType < 0 && initType >= 0:
         declaredType = initType
+    if declaredType >= 0:
+        working.types = writeExprType(table = working.types, unit = unitIndex, node = pattern, typeId = declaredType)
     return declareStore(out = working, unit = unit, name = name, typeId = declaredType, mutable = mutable, offset = stmt.start)
 
 ; 赋值目标：名字查作用域并判可变性，成员与下标只认类型表；其余形态不是左值。

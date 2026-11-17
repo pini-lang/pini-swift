@@ -114,7 +114,7 @@ _semantics = "../../semantics"
 
 ; 缺口纪律：降不了的构造逐函数各报一条缺口且体留空；少一条即静默吞体。
 缺口逐函数|test() -> ():
-    let 源 = "带文本|func() -> (I32,):\n    let s = \"文本\"\n    return 0\n\n正常|func() -> (I32,):\n    return 1\n"
+    let 源 = "带缺口|func() -> (I32,):\n    let xs = [1, 2]\n    for (v, i) in xs:\n        return v\n    return 0\n\n正常|func() -> (I32,):\n    return 1\n"
     let module = 文本模块(源)
     assert(len(module.functions) == 2, "两个函数都应在表里")
     assert(len(module.errors) == 1, "只有用到未降载构造的那个应报缺口")

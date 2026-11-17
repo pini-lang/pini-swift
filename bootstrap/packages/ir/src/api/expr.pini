@@ -222,8 +222,8 @@ addIrNode|func(pool: IrNodePool, kind: I32, typeId: I32, op: I32, kids: Array<I3
     node.kids = kids
     return irAppendNode(pool = pool, node = node)
 
-; 类型后备：推导表不覆盖非字面量初始化的局部与 self 上的字段读，这里按形状补判。
-; 比较与逻辑答布尔，一元答操作数类型，成员查字段声明，调用查被调声明；待推导表补面后删除。
+; 类型后备：推导表不覆盖非字面量初始化的局部，其下游的下标读与字段读同样落空，这里按形状补判。
+; 比较与逻辑答布尔，一元答操作数类型，成员查字段声明，下标按容器分量取；待推导表补面后删除。
 fallbackIrType|func(map: TypeMap, types: ExprTypes, unit: CompilationUnit, unitIndex: I32, frame: LowerFrame, bytes: Array<U8>, id: I32,) -> (I32,):
     if id < 0 || id >= unit.ast.exprCount():
         return -1
@@ -256,6 +256,25 @@ fallbackIrType|func(map: TypeMap, types: ExprTypes, unit: CompilationUnit, unitI
             return -1
         let fieldName = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
         return irIdOf(map = map, semanticId = fieldTypeOf(frame = frame, owner = owner, fieldName = fieldName))
+    if unit.ast.isSubscriptExpr(id):
+        if len(expr.kids) < 1:
+            return -1
+        let containerType = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = frame, bytes = bytes, id = expr.kids[0])
+        if containerType < 0 || containerType >= irTypeCount(map.pool):
+            return -1
+        let entry = irTypeAt(pool = map.pool, id = containerType)
+        let tag = irTypeTag(entry.kind)
+        if tag == irTypeTag(irTypeArray):
+            if len(entry.kids) > 0:
+                return entry.kids[0]
+            return -1
+        if tag == irTypeTag(irTypeDict):
+            if len(entry.kids) > 1:
+                return entry.kids[1]
+            return -1
+        if tag == irTypeTag(irTypeString):
+            return map.charId
+        return -1
     return -1
 
 ; 表达式类型：先读推导表，标识符回查帧，最后按运算符形状取后备；都没有答 -1。
@@ -274,12 +293,14 @@ exprIrType|func(map: TypeMap, types: ExprTypes, unit: CompilationUnit, unitIndex
     return fallbackIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = frame, bytes = bytes, id = id)
 
 ; 缺类型：类型未定或不可映射；偏移记在结果上，由调用方写进错误表。
+; 细节带类别名：同一句「类型未定」在各类别上的修法不同，不带名字就分不出批。
 missType|func(out: LowerExpr, unit: CompilationUnit, id: I32,) -> (LowerExpr,):
     var done = out
     done.failed = true
     done.detail = "表达式类型未定"
     if id >= 0 && id < unit.ast.exprCount():
         done.offset = unit.ast.exprAt(id).start
+        done.detail = done.detail + " " + exprKindName(unit.ast.exprAt(id).kind)
     return done
 
 ; 缺能力：类别尚未降载，带类别与位置，不产占位节点。
@@ -524,18 +545,39 @@ callResultType|func(map: TypeMap, types: ExprTypes, unit: CompilationUnit, unitI
             return mapped
     return -2
 
-; 具名函数：裸名在包级符号表里查，命中的函数声明给出形参序。
-calleeOfFunction|func(frame: LowerFrame, name: String,) -> (IrCallee,):
+; 内建函数：包级符号表里没有的裸名在此查，形参一律位置传递，返回类型按形状入池。
+; `print` 不在此列：它有专属节点，走通用调用会丢掉行终止符语义。
+calleeOfBuiltin|func(frame: LowerFrame, map: TypeMap, name: String,) -> (IrCallee,):
+    var out = IrCallee()
+    if name == "print":
+        return out
+    var i = 0
+    while i < len(frame.world.functions):
+        let fn = frame.world.functions[i]
+        if fn.name == name:
+            let typed = builtinParams(pool = frame.world.types.pool, params = fn.params)
+            let retType = builtinShapeType(pool = typed.pool, shape = fn.ret, kids = [])
+            out.found = true
+            out.name = name
+            out.params = typed.params
+            out.ret = irIdOf(map = map, semanticId = retType.id)
+            out.ordered = true
+            return out
+        i = i + 1
+    return out
+
+; 具名函数：裸名先查包级符号表，再查内建表；命中的函数声明给出形参序。
+calleeOfFunction|func(frame: LowerFrame, map: TypeMap, name: String,) -> (IrCallee,):
     var out = IrCallee()
     let symbol = lookupTopByName(index = frame.world.symbols, name = name)
     if symbol < 0:
-        return out
+        return calleeOfBuiltin(frame = frame, map = map, name = name)
     let ref = symbolDecl(world = frame.world, symbol = symbol)
     if ref.unit < 0:
-        return out
+        return calleeOfBuiltin(frame = frame, map = map, name = name)
     let decl = frame.world.units[ref.unit].ast.decls[ref.decl]
     if !isFunctionDeclCode(decl.kind):
-        return out
+        return calleeOfBuiltin(frame = frame, map = map, name = name)
     out.found = true
     out.name = name
     out.params = declParams(world = frame.world, ref = ref)
@@ -592,15 +634,25 @@ calleeOfOwnType|func(frame: LowerFrame, unit: CompilationUnit, bytes: Array<U8>,
     return out
 
 ; 导入别名：`别名.函数` 是具名调用，别名只是限定符，不进实参。
-calleeOfAlias|func(frame: LowerFrame, unit: CompilationUnit, bytes: Array<U8>, recvNode: I32, memberName: String,) -> (IrCallee,):
+calleeOfAlias|func(frame: LowerFrame, map: TypeMap, unit: CompilationUnit, bytes: Array<U8>, recvNode: I32, memberName: String,) -> (IrCallee,):
     var out = IrCallee()
     if !unit.ast.isIdentifierExpr(recvNode):
         return out
     let node = unit.ast.exprAt(recvNode)
     let recvName = decodeSpelling(bytes = bytes, start = node.nameStart, end = node.nameEnd)
+    if findIrLocal(frame = frame, name = recvName) >= 0:
+        return out
     if lookupImportByName(index = frame.world.symbols, file = unit.path, name = recvName) < 0:
         return out
-    return calleeOfFunction(frame = frame, name = memberName)
+    return calleeOfFunction(frame = frame, map = map, name = memberName)
+
+; 零参构造类型：按名字与对象位查类型池里的名义条目；池里没有答 -1。
+; 降载期不新增池条目：新条目传不回模块池，节点会指向不存在的类型。
+zeroConstructType|func(map: TypeMap, name: String, isObject: Bool,) -> (I32,):
+    var flags = 0
+    if isObject:
+        flags = 1
+    return irFindType(pool = map.pool, kind = irTypeNominal, name = name, kids = [], ret = -1, uses = [], flags = flags)
 
 ; 具名调用：实参按形参序归位，接收者（若有）排在最前；归位失败即报缺口。
 lowerNamedCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32, name: String, actuals: Array<IrActual>, params: Array<CallParam>, leading: I32, ret: I32,) -> (LowerExpr,):
@@ -675,6 +727,10 @@ lowerCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: Typ
         let recvNode: I32 = member.kids[0]
         resolved = calleeOfOwnType(frame = done.frame, unit = unit, bytes = bytes, recvNode = recvNode, memberName = memberName)
         if !resolved.found:
+            resolved = calleeOfAlias(frame = done.frame, map = map, unit = unit, bytes = bytes, recvNode = recvNode, memberName = memberName)
+        if resolved.found:
+            receiver = -1
+        else:
             let recvOne = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = recvNode)
             done.pool = recvOne.pool
             done.texts = recvOne.texts
@@ -684,16 +740,28 @@ lowerCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: Typ
             receiver = recvOne.id
             resolved = calleeOfMethod(frame = done.frame, map = map, pool = done.pool, receiver = receiver, memberName = memberName)
             if !resolved.found:
-                resolved = calleeOfAlias(frame = done.frame, unit = unit, bytes = bytes, recvNode = recvNode, memberName = memberName)
-                if !resolved.found:
-                    return missExpr(out = done, unit = unit, id = id, what = "成员被调 " + memberName)
-                receiver = -1
-            elif !resolved.takesReceiver:
+                return missExpr(out = done, unit = unit, id = id, what = "成员被调 " + memberName)
+            if !resolved.takesReceiver:
                 receiver = -1
     elif unit.ast.isIdentifierExpr(callee):
         let calleeExpr = unit.ast.exprAt(callee)
         let name = decodeSpelling(bytes = bytes, start = calleeExpr.nameStart, end = calleeExpr.nameEnd)
-        resolved = calleeOfFunction(frame = done.frame, name = name)
+        resolved = calleeOfFunction(frame = done.frame, map = map, name = name)
+        if !resolved.found && len(expr.kids) == 1:
+            let symbol = lookupTopByName(index = done.frame.world.symbols, name = name)
+            let ref = symbolDecl(world = done.frame.world, symbol = symbol)
+            if ref.unit >= 0:
+                let decl = done.frame.world.units[ref.unit].ast.decls[ref.decl]
+                var isObject = false
+                if isObjectDeclCode(decl.kind):
+                    isObject = true
+                if isStructDeclCode(decl.kind) || isObjectDeclCode(decl.kind):
+                    let typeId = zeroConstructType(map = map, name = name, isObject = isObject)
+                    if typeId >= 0:
+                        let inserted = addIrNode(pool = done.pool, kind = irExprTag(irConstruct), typeId = typeId, op = 0, kids = [])
+                        done.pool = inserted.pool
+                        done.id = inserted.id
+                        return done
         if !resolved.found:
             resolved.name = name
     else:
@@ -774,6 +842,86 @@ lowerSubscript|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map
     done.id = inserted.id
     return done
 
+; 字符串字面量取值：去首尾引号并按转义表还原；`\0` 之后的内容全部丢弃。
+; 字节先拼再整体解码：逐段解码会把转义切开的序列变成替换字符。
+stringLiteralText|func(bytes: Array<U8>, start: I32, end: I32,) -> (String,):
+    let quote: U8 = 34
+    let backslash: U8 = 92
+    var pieces: Array<U8> = []
+    var i = start
+    var stop = end
+    if i < stop && bytes[i] == quote:
+        i = i + 1
+    if stop > i && bytes[stop - 1] == quote:
+        stop = stop - 1
+    var closed = false
+    while i < stop && !closed:
+        let code = bytes[i]
+        if code == backslash && i + 1 < stop:
+            let next = bytes[i + 1]
+            if next == 110 as U8:
+                pieces = pieces.append(10 as U8)
+            elif next == 116 as U8:
+                pieces = pieces.append(9 as U8)
+            elif next == 114 as U8:
+                pieces = pieces.append(13 as U8)
+            elif next == 48 as U8:
+                closed = true
+            elif next == backslash:
+                pieces = pieces.append(backslash)
+            elif next == quote:
+                pieces = pieces.append(quote)
+            elif next == 40 as U8:
+                pieces = pieces.append(40 as U8)
+            else:
+                pieces = pieces.append(code)
+                pieces = pieces.append(next)
+            i = i + 2
+        else:
+            pieces = pieces.append(code)
+            i = i + 1
+    return decodeSpelling(bytes = pieces, start = 0, end = len(pieces))
+
+; 字符串字面量：值驻留进文本池，类型取推导表给出的 string。
+lowerStringLiteral|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
+    let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = out.frame, bytes = bytes, id = id)
+    if typeId < 0:
+        return missType(out = out, unit = unit, id = id)
+    let expr = unit.ast.exprAt(id)
+    let value = stringLiteralText(bytes = bytes, start = expr.start, end = expr.end)
+    let placed = internText(texts = out.texts, value = value)
+    var node = irMakeNode(kind = irExprTag(irStringConst), typeId = typeId)
+    node.text = placed.id
+    let inserted = irAppendNode(pool = out.pool, node = node)
+    var done = out
+    done.texts = placed.texts
+    done.pool = inserted.pool
+    done.id = inserted.id
+    return done
+
+; 数组字面量：元素保序，类型取推导表；空字面量的元素类型由标注定型后同样落在表里。
+lowerArrayLiteral|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
+    let expr = unit.ast.exprAt(id)
+    var done = out
+    var kids: Array<I32> = []
+    var i = 0
+    while i < len(expr.kids):
+        let one = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = expr.kids[i])
+        done.pool = one.pool
+        done.texts = one.texts
+        done.frame = one.frame
+        if one.failed:
+            return takeFailure(out = done, one = one)
+        kids = kids.append(one.id)
+        i = i + 1
+    let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
+    if typeId < 0:
+        return missType(out = done, unit = unit, id = id)
+    let inserted = addIrNode(pool = done.pool, kind = irExprTag(irArrayLiteral), typeId = typeId, op = 0, kids = kids)
+    done.pool = inserted.pool
+    done.id = inserted.id
+    return done
+
 ; 表达式入口：按类别分派；未知类别报缺口。
 lowerExpr|func(pool: IrNodePool, texts: Array<String>, map: TypeMap, types: ExprTypes, unit: CompilationUnit, unitIndex: I32, bytes: Array<U8>, frame: LowerFrame, id: I32,) -> (LowerExpr,):
     var out = LowerExpr()
@@ -807,6 +955,10 @@ lowerExpr|func(pool: IrNodePool, texts: Array<String>, map: TypeMap, types: Expr
         out.pool = inserted.pool
         out.id = inserted.id
         return out
+    if unit.ast.isStringExpr(id):
+        return lowerStringLiteral(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
+    if unit.ast.isArrayExpr(id):
+        return lowerArrayLiteral(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
     if unit.ast.isIdentifierExpr(id):
         return lowerIdentifier(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
     if unit.ast.isBinaryExpr(id):
@@ -819,4 +971,5 @@ lowerExpr|func(pool: IrNodePool, texts: Array<String>, map: TypeMap, types: Expr
         return lowerMember(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
     if unit.ast.isSubscriptExpr(id):
         return lowerSubscript(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
-    return missExpr(out = out, unit = unit, id = id, what = "该表达式类别")
+    let node = unit.ast.exprAt(id)
+    return missExpr(out = out, unit = unit, id = id, what = exprKindName(node.kind))

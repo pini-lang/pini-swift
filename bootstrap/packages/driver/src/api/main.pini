@@ -109,7 +109,18 @@ printGapSummary|func(module: IrModule,) -> ():
     var shown = 0
     i = 0
     while i < len(order) && shown < 15:
-        print("缺口", counts[order[i]], reasons[order[i]])
+        var sample = ""
+        var k = 0
+        while k < len(module.errors):
+            let one = module.errors[k]
+            var reason = one.detail
+            let at = one.detail.indexOf("：")
+            if at >= 0:
+                reason = one.detail.slice(at + 1, len(one.detail))
+            if reason == reasons[order[i]] && len(sample) == 0:
+                sample = one.file + ":" + countText(one.offset)
+            k = k + 1
+        print("缺口", counts[order[i]], reasons[order[i]], sample)
         shown = shown + 1
         i = i + 1
     return
