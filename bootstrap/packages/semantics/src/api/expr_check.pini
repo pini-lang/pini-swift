@@ -142,11 +142,63 @@ checkMemberNode|func(world: MemberWorld, unit: CompilationUnit, bytes: Array<U8>
         return out
     return appendExprError(out = out, unit = unit, offset = member.start, kind = .exprMemberFailed, name = memberName, detail = recvName + " 上没有该成员", code = memberErrorCode(result.error.kind))
 
+; 成员被调：接收者定型后按成员面判方法、内建与函数值；私有成员在无归属时放过。
+; 成员不存在与调用形状仍按专用码报；类型错的比对归调用面。
+checkMemberCall|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, bytes: Array<U8>, shadow: Array<String>, types: ExprTypes, node: I32, out: ExprCheck,) -> (ExprCheck,):
+    let callee = calleeNode(unit = unit, node = node)
+    if callee < 0:
+        return out
+    let member = unit.ast.exprAt(callee)
+    if len(member.kids) < 1:
+        return out
+    let recvNode: I32 = member.kids[0]
+    var receiverType = -1
+    var isTypeName = false
+    if unit.ast.isIdentifierExpr(recvNode):
+        let recvExpr = unit.ast.exprAt(recvNode)
+        let recvName = decodeRange(bytes = bytes, start = recvExpr.nameStart, end = recvExpr.nameEnd)
+        if !hasName(items = shadow, value = recvName):
+            let nominal = nominalTypeId(world = world, name = recvName)
+            if nominal >= 0:
+                receiverType = nominal
+                isTypeName = true
+    if receiverType < 0:
+        receiverType = exprTypeAt(table = types, unit = unitIndex, node = recvNode)
+    if receiverType < 0:
+        return out
+    let memberName = decodeRange(bytes = bytes, start = member.nameStart, end = member.nameEnd)
+    let access = memberAccess(receiver = receiverType, name = memberName, isTypeName = isTypeName, owner = "", file = unit.path, offset = member.start)
+    let result = checkMember(world = world, access = access)
+    if result.failed:
+        if isMemberError(error = result.error, kind = .memberPrivate) || isMemberError(error = result.error, kind = .memberInaccessible):
+            return out
+        return appendExprError(out = out, unit = unit, offset = member.start, kind = .exprMemberFailed, name = memberName, detail = "接收者上没有该成员", code = memberErrorCode(result.error.kind))
+    if result.deferred:
+        return out
+    var site = CallSite()
+    site.name = memberName
+    site.file = unit.path
+    site.offset = unit.ast.exprAt(node).start
+    site.unit = unitIndex
+    site.args = callArguments(unit = unit, unitIndex = unitIndex, node = node, types = types)
+    if isMemberKind(kind = result.kind, expected = .memberMethod) || isMemberKind(kind = result.kind, expected = .memberOwnMethod):
+        site.symbol = result.symbol
+    else:
+        site.calleeType = result.typeId
+    let checked = checkCall(world = probeWorld(world = world, pool = result.pool), site = site)
+    if !checked.failed:
+        return out
+    return appendExprError(out = out, unit = unit, offset = site.offset, kind = .exprCallFailed, name = memberName, detail = callErrorName(checked.error.kind), code = callErrorCode(checked.error.kind))
+
 ; 调用形状：被调是顶层函数或内建时按签名对实参标签与个数。
 ; 外部符号跳过：变参尾与回调判据要实参类型，本层拿不到；未定义由标识符扫描报。
 checkCallNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, bytes: Array<U8>, shadow: Array<String>, types: ExprTypes, node: I32, out: ExprCheck,) -> (ExprCheck,):
     let callee = calleeNode(unit = unit, node = node)
-    if callee < 0 || !unit.ast.isIdentifierExpr(callee):
+    if callee < 0:
+        return out
+    if unit.ast.isMemberExpr(callee):
+        return checkMemberCall(world = world, unit = unit, unitIndex = unitIndex, bytes = bytes, shadow = shadow, types = types, node = node, out = out)
+    if !unit.ast.isIdentifierExpr(callee):
         return out
     let calleeExpr = unit.ast.exprAt(callee)
     let name = decodeRange(bytes = bytes, start = calleeExpr.nameStart, end = calleeExpr.nameEnd)

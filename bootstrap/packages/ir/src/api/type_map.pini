@@ -13,6 +13,7 @@ pool: IrTypePool = IrTypePool()
 ids: Array<I32> = []
 booleanId: I32 = -1
 charId: I32 = -1
+stringId: I32 = -1
 errors: Array<LowerError> = []
 
 ; 取像：越界或未映射答 -1，调用方据此报能力缺口。
@@ -240,6 +241,9 @@ buildTypeMap|func(world: MemberWorld,) -> (TypeMap,):
     let letter = irScalarType(pool = out.pool, kind = .irTypeChar, name = "char")
     out.pool = letter.pool
     out.charId = letter.id
+    let text = irScalarType(pool = out.pool, kind = .irTypeString, name = "string")
+    out.pool = text.pool
+    out.stringId = text.id
     return out
 
 ; 映射计数：已映射的条目数，供回执与测试对照。

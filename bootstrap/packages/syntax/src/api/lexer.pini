@@ -97,12 +97,21 @@ isTextRole|func(warning: LexWarning, role: LexTextRole,) -> (Bool,):
 lexText|func(_text: String,) -> (LexResult,):
     return lexTextIn(language = .langEnglish, text = _text)
 
+; CRLF 归一：CRLF 是一个字素簇，按簇下标删一次即整对去掉；只在含 CR 时走到这里。
+normalizeCrlf|func(text: String,) -> (String,):
+    var out = text
+    var at = out.indexOf("\r\n")
+    while at >= 0:
+        out = out.substring(0, at) + "\n" + out.substring(at + 1, len(out))
+        at = out.indexOf("\r\n")
+    return out
+
 ; 按指定关键字语言扫描文本：词表只影响整词分类，标识符与字面量的扫描规则不变。
-; 只有含 CR 的文本才走替换归一：`replace` 逐字切片再逐字拼串，代价随长度平方增长，无 CR 时必须绕开。
+; 只有含 CR 的文本才走归一：按字节删 CR，代价随长度线性，无 CR 时必须绕开。
 lexTextIn|func(language: KeywordLanguage, text: String,) -> (LexResult,):
     if text.indexOf("\r") < 0:
         return lexSourceIn(language = language, source = makeSourceText(text))
-    let normalized = text.replace("\r\n", "\n")
+    let normalized = normalizeCrlf(text = text)
     return lexSourceIn(language = language, source = makeSourceText(normalized))
 
 ; 扫描源文本：调用方保证行尾已归一化；起始 BOM 记问题并跳过三字节，偏移仍指向原文本。

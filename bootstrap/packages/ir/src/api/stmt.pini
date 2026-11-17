@@ -391,45 +391,65 @@ lowerReturnStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, ma
     done.ids = done.ids.append(inserted.id)
     return done
 
-; 分支：只接 then 与可选 else；出现 elif 报缺口，链式改写留待分支补面。
+; 分支：kids 交替是「条件、块」，末尾可能有孤立 else 块；elif 链按嵌套 if 收成一条语句。
+; 先按源序降条件与块，再从末段往前搭节点 —— 节点序不参与发射次序，块序保持不变。
 lowerIfStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32,) -> (LowerStmt,):
     let kids = unit.ast.stmtAt(stmtId).kids
     if len(kids) < 2:
         return missStmt(out = out, unit = unit, stmtId = stmtId, what = "缺体的分支")
-    if len(kids) > 3:
-        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "带 elif 的分支")
     var done = out
-    let cond = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = kids[0])
-    done.pool = cond.pool
-    done.texts = cond.texts
-    done.frame = cond.frame
-    if cond.failed:
-        return takeStmtFailure(out = done, detail = cond.detail, offset = cond.offset)
-    let thenPart = lowerBlockOf(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, blockId = kids[1])
-    done = thenPart
-    if done.failed:
-        return done
-    var nodes: Array<I32> = [cond.id]
+    var conds: Array<I32> = []
+    var blockIds: Array<I32> = []
+    var blockStart: Array<I32> = []
+    var blockLen: Array<I32> = []
+    var elseIds: Array<I32> = []
     var i = 0
-    while i < len(thenPart.ids):
-        nodes = nodes.append(thenPart.ids[i])
-        i = i + 1
-    let tail = len(nodes)
-    if len(kids) == 3:
-        let elsePart = lowerBlockOf(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, blockId = kids[2])
-        done = elsePart
+    while i + 1 < len(kids):
+        let cond = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = kids[i])
+        done.pool = cond.pool
+        done.texts = cond.texts
+        done.frame = cond.frame
+        if cond.failed:
+            return takeStmtFailure(out = done, detail = cond.detail, offset = cond.offset)
+        conds = conds.append(cond.id)
+        let part = lowerBlockOf(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, blockId = kids[i + 1])
+        done = part
         if done.failed:
             return done
-        i = 0
-        while i < len(elsePart.ids):
-            nodes = nodes.append(elsePart.ids[i])
-            i = i + 1
-    var node = irMakeNode(kind = irStmtTag(.irIfStmt), typeId = -1)
-    node.kids = nodes
-    node.tail = tail
-    let inserted = irAppendNode(pool = done.pool, node = node)
-    done.pool = inserted.pool
-    done.ids = [inserted.id]
+        blockStart = blockStart.append(len(blockIds))
+        blockLen = blockLen.append(len(part.ids))
+        var b = 0
+        while b < len(part.ids):
+            blockIds = blockIds.append(part.ids[b])
+            b = b + 1
+        i = i + 2
+    if i < len(kids):
+        let part = lowerBlockOf(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, blockId = kids[i])
+        done = part
+        if done.failed:
+            return done
+        elseIds = part.ids
+    var ids = elseIds
+    var k = len(conds) - 1
+    while k >= 0:
+        var nodes: Array<I32> = [conds[k]]
+        var b = 0
+        while b < blockLen[k]:
+            nodes = nodes.append(blockIds[blockStart[k] + b])
+            b = b + 1
+        let tail = len(nodes)
+        var e = 0
+        while e < len(ids):
+            nodes = nodes.append(ids[e])
+            e = e + 1
+        var node = irMakeNode(kind = irStmtTag(.irIfStmt), typeId = -1)
+        node.kids = nodes
+        node.tail = tail
+        let inserted = irAppendNode(pool = done.pool, node = node)
+        done.pool = inserted.pool
+        ids = [inserted.id]
+        k = k - 1
+    done.ids = ids
     return done
 
 ; 循环：只接条件与体；`step` 块的轮末语义另批处理，出现即报缺口。
@@ -492,6 +512,15 @@ lowerBlockOf|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: 
     done.frame = closeBlock(frame = done.frame, mark = mark)
     return done
 
+; 跳出与继续：只接无标签形态，深度一；带标签的控制流等标签面接线。
+lowerJumpStmt|func(out: LowerStmt, unit: CompilationUnit, stmtId: I32, kind: IrStmtKind,) -> (LowerStmt,):
+    let stmt = unit.ast.stmtAt(stmtId)
+    if len(stmt.kids) > 0 && stmt.kids[0] >= 0:
+        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "带标签的跳出")
+    var node = irMakeNode(kind = irStmtTag(kind), typeId = -1)
+    node.op = 1
+    return appendStmtNode(out = out, node = node)
+
 ; 单条语句：按类别分派；`pass` 不产节点，其余未知类别报缺口。
 lowerStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32,) -> (LowerStmt,):
     if stmtId < 0 || stmtId >= unit.ast.stmtCount():
@@ -513,6 +542,10 @@ lowerStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: Typ
         return lowerIfStmt(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId)
     if unit.ast.isWhileStmt(stmtId):
         return lowerWhileStmt(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId)
+    if unit.ast.isBreakStmt(stmtId):
+        return lowerJumpStmt(out = out, unit = unit, stmtId = stmtId, kind = .irBreakStmt)
+    if unit.ast.isContinueStmt(stmtId):
+        return lowerJumpStmt(out = out, unit = unit, stmtId = stmtId, kind = .irContinueStmt)
     if unit.ast.isPassStmt(stmtId):
         return out
     return missStmt(out = out, unit = unit, stmtId = stmtId, what = "该语句类别尚未降载")

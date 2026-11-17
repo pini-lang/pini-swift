@@ -424,4 +424,9 @@ checkWorkspace|func(root: String,) -> (WorkspaceReport,):
     while i < len(bodies):
         diagnostics = diagnostics.append(bodies[i])
         i = i + 1
+    var exprs = exprPackageDiagnostics(world = world, units = units)
+    i = 0
+    while i < len(exprs):
+        diagnostics = diagnostics.append(exprs[i])
+        i = i + 1
     return finishReport(root = root, packages = plan.packageCount(), diagnostics = diagnostics, units = units)
