@@ -160,7 +160,7 @@ internNominalTypes|func(units: Array<CompilationUnit>, pool: TypePool,) -> (Type
     var u = 0
     while u < len(units):
         let unit = units[u]
-        let bytes = tempUtf8Bytes(unit.text)
+        let bytes = unitBytes(unit)
         var i = 0
         while i < len(unit.ast.items):
             let decl = unit.ast.decls[unit.ast.items[i]]

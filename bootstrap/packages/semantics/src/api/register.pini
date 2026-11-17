@@ -101,7 +101,7 @@ makeSymbol|func(unit: CompilationUnit, bytes: Array<U8>, decl: DeclNode, kind: S
 
 ; 注册一个文件：先注册顶层声明，再注册导入块，别名因此能看见本文件的顶层名字。
 registerFile|func(table: SymbolTable, unit: CompilationUnit,) -> (SymbolTable,):
-    let bytes = tempUtf8Bytes(unit.text)
+    let bytes = unitBytes(unit)
     var out = table
     var i = 0
     while i < len(unit.ast.items):

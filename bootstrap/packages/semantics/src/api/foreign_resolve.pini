@@ -263,7 +263,7 @@ resolveOneForeign|func(env: ForeignEnvironment, pool: TypePool, name: String, pa
 ; 一个外部块：逐条解析；块名不参与，条目序即记录序。
 resolveBlockSymbols|func(env: ForeignEnvironment, unit: CompilationUnit, unitIndex: I32, types: TypeTable, decl: DeclNode, out: ForeignResolutionCheck,) -> (ForeignResolutionCheck,):
     var working = out
-    let bytes = tempUtf8Bytes(unit.text)
+    let bytes = unitBytes(unit)
     var i = 0
     while i < len(decl.kids):
         let symbol = unit.ast.decls[decl.kids[i]]

@@ -69,7 +69,7 @@ findNominalDecl|func(world: MemberWorld, name: String,) -> (DeclRef,):
     var u = 0
     while u < len(world.units):
         let unit = world.units[u]
-        let bytes = tempUtf8Bytes(unit.text)
+        let bytes = unitBytes(unit)
         var i = 0
         while i < len(unit.ast.items):
             let id = unit.ast.items[i]
@@ -99,7 +99,7 @@ shapeOfDecl|func(world: MemberWorld, ref: DeclRef, typeId: I32,) -> (ShapeEntry,
     out.typeId = typeId
     let unit = world.units[ref.unit]
     let decl = unit.ast.decls[ref.decl]
-    let bytes = tempUtf8Bytes(unit.text)
+    let bytes = unitBytes(unit)
     if isStructDeclCode(decl.kind):
         out.kind = shapeStruct
     elif isObjectDeclCode(decl.kind):

@@ -117,7 +117,7 @@ ownerTypeOf|func(world: MemberWorld, unitIndex: I32, declId: I32, bytes: Array<U
     let unit = world.units[unitIndex]
     var view = bytes
     if len(view) == 0:
-        view = tempUtf8Bytes(unit.text)
+        view = unitBytes(unit)
     var i = 0
     while i < unit.ast.declCount():
         let decl = unit.ast.decls[i]
@@ -340,7 +340,7 @@ seedFunctionScope|func(world: MemberWorld, unitIndex: I32, declId: I32, bytes: A
     out.valid = true
     var view = bytes
     if len(view) == 0:
-        view = tempUtf8Bytes(unit.text)
+        view = unitBytes(unit)
     var stack = enterScope(stack = ScopeStack(), kind = scopeFunction, file = unit.path, offset = decl.start)
     if decl.isSelf:
         let ownerId = ownerTypeOf(world = world, unitIndex = unitIndex, declId = declId, bytes = view)
@@ -394,7 +394,7 @@ checkFunctionBodyWith|func(world: MemberWorld, unitIndex: I32, declId: I32, type
     if known && !isVoidReturn(pool = out.pool, id = out.returnType) && !out.guarantees:
         var view = bytes
         if len(view) == 0:
-            view = tempUtf8Bytes(unit.text)
+            view = unitBytes(unit)
         let name = decodeRange(bytes = view, start = decl.nameStart, end = decl.nameEnd)
         out = appendBodyError(out = out, unit = unit, offset = decl.start, kind = bodyReturnMissing, name = name, expected = typeText(pool = out.pool, id = out.returnType), got = "()")
     out.failed = len(out.errors) > 0

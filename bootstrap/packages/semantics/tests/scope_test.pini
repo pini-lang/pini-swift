@@ -19,7 +19,7 @@ file: String = ""
     var out = 参数样本()
     out.decl = unit.ast.decls[paramId]
     out.declId = paramId
-    out.bytes = tempUtf8Bytes(unit.text)
+    out.bytes = unitBytes(unit)
     out.file = unit.path
     return out
 

@@ -266,7 +266,7 @@ checkForeignValue|func(out: ForeignTypeCheck, unit: CompilationUnit, pool: TypeP
 ; 标志：只认三个；未知、重复与放错位置各报一条，位置指向标志本身。
 checkForeignFlags|func(out: ForeignTypeCheck, unit: CompilationUnit, symbol: DeclNode, name: String, isFunction: Bool,) -> (ForeignTypeCheck,):
     var working = out
-    let bytes = tempUtf8Bytes(unit.text)
+    let bytes = unitBytes(unit)
     var seen: Array<String> = []
     var i = 0
     while i < len(symbol.kids):
@@ -287,7 +287,7 @@ checkForeignFlags|func(out: ForeignTypeCheck, unit: CompilationUnit, symbol: Dec
 
 ; 一条外部符号：先判标志，再按函数 / 数据两个面判类型；类型解析失败时只留标志错误。
 checkForeignSymbol|func(out: ForeignTypeCheck, unit: CompilationUnit, unitIndex: I32, types: TypeTable, declId: I32, symbol: DeclNode,) -> (ForeignTypeCheck,):
-    let bytes = tempUtf8Bytes(unit.text)
+    let bytes = unitBytes(unit)
     let name = decodeRange(bytes = bytes, start = symbol.nameStart, end = symbol.nameEnd)
     var isFunction = false
     if symbol.typeId >= 0 && symbol.typeId < unit.ast.typeCount() && isFunctionTypeCode(unit.ast.types[symbol.typeId].kind):
