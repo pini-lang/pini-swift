@@ -47,6 +47,44 @@ structBody|func(count: I32,) -> (String,):
         i = i + 1
     return out + " }"
 
+; 元素装箱宽度：按字节给，认不出答零；容器族搬元素只认这一个数。
+; 指针宽度的类别随目标走，其余按标量自身宽度，与槽宽无关。
+elementWidth|func(pool: IrTypePool, typeId: I32, pointerBytes: I32,) -> (I32,):
+    if typeId < 0 || typeId >= irTypeCount(pool):
+        return 0
+    let tag = irTypeTag(irTypeAt(pool = pool, id = typeId).kind)
+    if tag == 1:
+        return 4
+    if tag == 2 || tag == 3 || tag == 6 || tag == 9:
+        return 8
+    if tag == 4 || tag == 5 || tag == 7:
+        return 1
+    if tag == 8 || tag == 11 || tag == 12 || tag == 16 || tag == 17 || tag == 21:
+        return pointerBytes
+    return 0
+
+; 元素装箱标签：决定销毁时如何归还成员，认不出答负一。
+; 标量无成员份额，容器与串的份额归运行时按标签处理；标签错了就是悬垂或泄漏。
+elementTag|func(pool: IrTypePool, typeId: I32,) -> (I32,):
+    if typeId < 0 || typeId >= irTypeCount(pool):
+        return -1
+    let tag = irTypeTag(irTypeAt(pool = pool, id = typeId).kind)
+    if tag == 1 || tag == 2 || tag == 3 || tag == 4 || tag == 5:
+        return 0
+    if tag == 6:
+        return 1
+    if tag == 7:
+        return 2
+    if tag == 8:
+        return 3
+    if tag == 9:
+        return 7
+    if tag == 11 || tag == 21:
+        return 6
+    if tag == 12 || tag == 16 || tag == 17:
+        return 4
+    return -1
+
 ; 类型声明：只为值语义名义类型出结构体；对象与枚举走句柄，不出声明。
 llvmTypeDecls|func(module: IrModule,) -> (Array<String>,):
     var lines: Array<String> = []

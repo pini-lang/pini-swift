@@ -9,6 +9,6 @@
 包 ir / ir-tests（34 个测试，34 通过）
 包 backend_kit / backend-kit-tests（4 个测试，4 通过）
 包 backend_dump / backend-dump-tests（5 个测试，5 通过）
-包 backend_llvm / backend-llvm-tests（6 个测试，6 通过）
+包 backend_llvm / backend-llvm-tests（7 个测试，7 通过）
 包 driver / driver-tests（16 个测试，16 通过）
-结果: 606 通过, 0 失败（用时）
+结果: 607 通过, 0 失败（用时）

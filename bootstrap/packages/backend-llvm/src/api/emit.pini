@@ -62,6 +62,7 @@ emitModule|func(entry: BackendEntry, target: TargetProfile, module: IrModule,) -
         i = i + 1
     var gaps: Array<String> = []
     let families = irContractFamilies()
+    let builtins = builtinTable()
     var strings = StringPool()
     var externs = ExternUse()
     i = 0
@@ -70,6 +71,7 @@ emitModule|func(entry: BackendEntry, target: TargetProfile, module: IrModule,) -
         if needsBody(fn = fn):
             appendLine(sink = sink, text = llvmSignature(pool = module.types, fn = fn, isDefine = true) + " {")
             appendLine(sink = sink, text = "entry:")
+            appendLine(sink = sink, text = "  " + boxName() + " = alloca [8 x i8], align 8")
             seedParams(sink = sink, pool = module.types, fn = fn)
             var ctx = BodyCtx()
             ctx.lines = sink
@@ -78,6 +80,8 @@ emitModule|func(entry: BackendEntry, target: TargetProfile, module: IrModule,) -
             ctx.declared = entry.families
             ctx.strings = strings
             ctx.externs = externs
+            ctx.builtins = builtins
+            ctx.pointerBytes = target.pointerWidth
             ctx = emitStmts(ctx = ctx, module = module, ids = fn.body)
             ctx = closeFunction(ctx = ctx, module = module)
             var k = 0

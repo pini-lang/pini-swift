@@ -555,10 +555,10 @@ callResultType|func(map: TypeMap, types: ExprTypes, unit: CompilationUnit, unitI
     return -2
 
 ; 内建函数：包级符号表里没有的裸名在此查，形参一律位置传递，返回类型按形状入池。
-; `print` 不在此列：它有专属节点，走通用调用会丢掉行终止符语义。
+; `print`、`assert`、`len` 不在此列：三者各有专属节点，走通用调用会丢掉行终止、消息与容器分派。
 calleeOfBuiltin|func(frame: LowerFrame, map: TypeMap, name: String,) -> (IrCallee,):
     var out = IrCallee()
-    if name == "print" || name == "assert":
+    if name == "print" || name == "assert" || name == "len":
         return out
     var i = 0
     while i < len(frame.world.functions):
@@ -714,6 +714,14 @@ lowerPlainCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map
             checked = checked.append(actuals[p].id)
             p = p + 1
         let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irAssertCall), typeId = -1, op = 0, kids = checked)
+        done.pool = inserted.pool
+        done.id = inserted.id
+        return done
+    if name == "len" && len(actuals) == 1 && leading < 0:
+        ; 长度是容器分派：结果恒为 I32，具体符号由后端按实参类型查表。
+        if map.i32Id < 0:
+            return missType(out = done, unit = unit, id = id, bytes = bytes)
+        let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irLenCall), typeId = map.i32Id, op = 0, kids = [actuals[0].id])
         done.pool = inserted.pool
         done.id = inserted.id
         return done

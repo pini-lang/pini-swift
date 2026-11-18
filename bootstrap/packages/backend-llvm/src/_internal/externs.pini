@@ -33,4 +33,16 @@ externSignature|func(name: String,) -> (String,):
         return "declare ptr @bk_double_to_string(double)"
     if name == "bk_str_release":
         return "declare void @bk_str_release(ptr)"
+    if name == "bk_array_create":
+        return "declare ptr @bk_array_create(i32)"
+    if name == "bk_array_len":
+        return "declare i32 @bk_array_len(ptr)"
+    if name == "bk_array_append":
+        return "declare ptr @bk_array_append(ptr, ptr, i32, i32)"
+    if name == "bk_dict_len":
+        return "declare i32 @bk_dict_len(ptr)"
+    if name == "bk_set_len":
+        return "declare i32 @bk_set_len(ptr)"
+    if name == "bk_string_count":
+        return "declare i32 @bk_string_count(ptr)"
     return ""
