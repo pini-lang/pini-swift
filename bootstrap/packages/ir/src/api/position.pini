@@ -1,0 +1,28 @@
+; 源位置面：函数携带逐语句的源内字节偏移，条目序与语句创建序一致。
+; 节点不膨胀：只有语句记位置，表达式的位置由所在语句给；同一语句派生的合成节点共用该语句的偏移。
+; 偏移配函数的源文件名即成可读位置，行号换算归诊断面。
+
+; 位置条目：IR 节点下标与源内字节偏移。
+(IrPosition)
+node: I32 = -1
+offset: I32 = 0
+
+; 造位置：节点下标与偏移由调用方给。
+makePosition|func(node: I32, offset: I32,) -> (IrPosition,):
+    var out = IrPosition()
+    out.node = node
+    out.offset = offset
+    return out
+
+; 追加位置：语句入库时调用，序即创建序。
+recordPosition|func(positions: Array<IrPosition>, node: I32, offset: I32,) -> (Array<IrPosition>,):
+    return positions.append(makePosition(node = node, offset = offset))
+
+; 查位置：按节点下标线性扫，未命中答 -1；语句数在千以内，不值得另建索引。
+positionOf|func(positions: Array<IrPosition>, node: I32,) -> (I32,):
+    var i = 0
+    while i < len(positions):
+        if positions[i].node == node:
+            return positions[i].offset
+        i = i + 1
+    return -1

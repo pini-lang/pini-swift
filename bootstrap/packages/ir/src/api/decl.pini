@@ -1,0 +1,169 @@
+[decl|import]
+_semantics = "../../../semantics"
+
+; 类型声明面：把语义形态表搬成 IR 可发的声明表，字段与用例保持声明序。
+; 槽序由声明序派生，故字段行一个都不能少：字段类型映射不到时留 -1 占位，校验面据此报缺口。
+; 类型下标一律换成 IR 池下标，后端不读语义池。
+
+; 声明表：按类型下标升序，条目只读；引用语义承载，降载期逐层传的是同一份。
+; 放在文件开头：解析器只在这个位置接受花括号类型，写到结构之后会被当成语句。
+{IrDeclTable}
+entries: Array<IrDecl> = []
+
+; 声明类别：结构、对象、枚举三类；前两类有字段表，枚举有用例表。
+[IrDeclKind]
+irDeclStruct
+irDeclObject
+irDeclEnum
+
+; 字段声明：名字与 IR 类型下标；在字段表里的位置即声明序，也是字段槽的偏移量。
+(IrField)
+name: String = ""
+typeId: I32 = -1
+
+; 用例声明：名字、标签与逐位载荷的 IR 类型下标；标签即用例表位置。
+(IrCase)
+name: String = ""
+tag: I32 = 0
+payload: Array<I32> = []
+
+; 类型声明：IR 类型下标、拼写、类别与两张子表；拼写供转储与诊断，判等只用下标。
+(IrDecl)
+typeId: I32 = -1
+name: String = ""
+kind: IrDeclKind = .irDeclStruct
+fields: Array<IrField> = []
+cases: Array<IrCase> = []
+
+; 类别码：跨包不能比枚举项，判据与转储一律走编码。
+irDeclKindCode|func(_kind: IrDeclKind,) -> (I32,):
+    match _kind:
+        case irDeclStruct:
+            return 1
+        case irDeclObject:
+            return 2
+        case irDeclEnum:
+            return 3
+    return 0
+
+; 形态码到声明类别：结构、对象、枚举成形，可选与结果没有声明，落入枚举一栏再被调用方筛掉。
+irDeclKindOf|func(shapeCode: I32,) -> (IrDeclKind,):
+    if shapeCode == 1:
+        return .irDeclStruct
+    if shapeCode == 2:
+        return .irDeclObject
+    return .irDeclEnum
+
+; 声明是否带字段表：结构、对象两类。
+isFieldDeclKind|func(kind: IrDeclKind,) -> (Bool,):
+    let code = irDeclKindCode(kind)
+    return code == 1 || code == 2
+
+; 字段表：逐字段取像，缺席留 -1；位置即槽位，故不因映射失败而丢行。
+mapFields|func(map: TypeMap, fields: Array<ShapeField>,) -> (Array<IrField>,):
+    var out: Array<IrField> = []
+    var i = 0
+    while i < len(fields):
+        var row = IrField()
+        row.name = fields[i].name
+        row.typeId = irIdOf(map = map, semanticId = fields[i].typeId)
+        out = out.append(row)
+        i = i + 1
+    return out
+
+; 用例表：载荷逐位取像，标签取声明序；载荷缺席同样留 -1。
+mapCases|func(map: TypeMap, cases: Array<ShapeCase>,) -> (Array<IrCase>,):
+    var out: Array<IrCase> = []
+    var i = 0
+    while i < len(cases):
+        var row = IrCase()
+        row.name = cases[i].name
+        row.tag = i
+        var payload: Array<I32> = []
+        var k = 0
+        while k < len(cases[i].payload):
+            payload = payload.append(irIdOf(map = map, semanticId = cases[i].payload[k]))
+            k = k + 1
+        row.payload = payload
+        out = out.append(row)
+        i = i + 1
+    return out
+
+; 单条声明：类型下标取像后照抄名字与两张子表；只有三种名义形态进表。
+makeDecl|func(shapes: ShapeTable, map: TypeMap, at: I32,) -> (IrDecl,):
+    var out = IrDecl()
+    let shape = shapes.entries[at]
+    let typeId = irIdOf(map = map, semanticId = shape.typeId)
+    if typeId < 0:
+        return out
+    out.typeId = typeId
+    out.name = map.pool.entries[typeId].name
+    out.kind = irDeclKindOf(shapeCode = shapeKindCode(kind = shape.kind))
+    out.fields = mapFields(map = map, fields = shape.fields)
+    out.cases = mapCases(map = map, cases = shape.cases)
+    return out
+
+; 建表：形态表逐条转声明；取不到像的类型不入表，缺一条即有一个名义类型不可发。
+makeDeclTable|func(shapes: ShapeTable, map: TypeMap,) -> (IrDeclTable,):
+    var out = IrDeclTable()
+    var i = 0
+    while i < len(shapes.entries):
+        let row = makeDecl(shapes = shapes, map = map, at = i)
+        if row.typeId >= 0:
+            out.entries = out.entries.append(row)
+        i = i + 1
+    return out
+
+; 条目数：下标合法区间是 0 到 count - 1。
+declCount|func(table: IrDeclTable,) -> (I32,):
+    return len(table.entries)
+
+; 按类型下标查声明：升序表线性扫，未命中答 -1。
+findDecl|func(table: IrDeclTable, typeId: I32,) -> (I32,):
+    var i = 0
+    while i < len(table.entries):
+        if table.entries[i].typeId == typeId:
+            return i
+        i = i + 1
+    return -1
+
+; 取声明：未命中答空条目（下标 -1），调用方不必先判下标。
+declAt|func(table: IrDeclTable, typeId: I32,) -> (IrDecl,):
+    let at = findDecl(table = table, typeId = typeId)
+    if at < 0:
+        return IrDecl()
+    return table.entries[at]
+
+; 字段槽：字段在声明序里的位置即槽位偏移量；未命中答 -1。
+fieldSlotOf|func(table: IrDeclTable, typeId: I32, name: String,) -> (I32,):
+    let decl = declAt(table = table, typeId = typeId)
+    var i = 0
+    while i < len(decl.fields):
+        if decl.fields[i].name == name:
+            return i
+        i = i + 1
+    return -1
+
+; 字段数：槽位合法区间的上界，校验面用它判越界。
+fieldCountOf|func(table: IrDeclTable, typeId: I32,) -> (I32,):
+    return len(declAt(table = table, typeId = typeId).fields)
+
+; 用例标签：按名查声明序，未命中答 -1；跨枚举重名靠所有者类型分开。
+caseTagOf|func(table: IrDeclTable, typeId: I32, caseName: String,) -> (I32,):
+    let decl = declAt(table = table, typeId = typeId)
+    var i = 0
+    while i < len(decl.cases):
+        if decl.cases[i].name == caseName:
+            return decl.cases[i].tag
+        i = i + 1
+    return -1
+
+; 载荷数：该用例的关联值个数，校验面用它判载荷读越界。
+payloadCountOf|func(table: IrDeclTable, typeId: I32, caseName: String,) -> (I32,):
+    let decl = declAt(table = table, typeId = typeId)
+    var i = 0
+    while i < len(decl.cases):
+        if decl.cases[i].name == caseName:
+            return len(decl.cases[i].payload)
+        i = i + 1
+    return -1

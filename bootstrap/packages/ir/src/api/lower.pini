@@ -22,27 +22,31 @@ typeId: I32 = -1
 slot: I32 = -1
 isUsing: Bool = false
 
-; 函数：名字、形参、返回类型与语句节点下标；返回 -1 表示空返回。
+; 函数：名字、形参、返回类型、语句节点下标与逐语句源位置；返回 -1 表示空返回。
 (IrFunction)
 name: String = ""
 params: Array<IrParam> = []
 returnType: I32 = -1
 body: Array<I32> = []
+positions: Array<IrPosition> = []
 isTest: Bool = false
 isAsync: Bool = false
 sourceFile: String = ""
 
-; 模块：类型池、节点池、字符串池、函数表与两张错误表。
+; 模块：类型池、节点池、字符串池、函数表、声明面、槽位面与两张错误表。
 ; `errors` 只放函数级降载失败，`typeErrors` 放类型映射失败：前者与空体一一对应，后者没有函数。
+; 后端只读这张模块：声明、槽位、位置与份额都在里面，不再回查语义层。
 (IrModule)
 types: IrTypePool = IrTypePool()
 nodes: IrNodePool = IrNodePool()
 texts: Array<String> = []
 functions: Array<IrFunction> = []
+decls: IrDeclTable = IrDeclTable()
+slots: IrSlotTable = IrSlotTable()
 errors: Array<LowerError> = []
 typeErrors: Array<LowerError> = []
 
-; 降载状态：模块四表加当前单元视图；函数之间只共享类型池、节点池与错误表。
+; 降载状态：模块各表加当前单元视图；函数之间只共享类型池、节点池、声明表、槽表与错误表。
 (LowerState)
 map: TypeMap = TypeMap()
 nodes: IrNodePool = IrNodePool()
@@ -51,6 +55,8 @@ functions: Array<IrFunction> = []
 errors: Array<LowerError> = []
 world: MemberWorld = MemberWorld()
 types: ExprTypes = ExprTypes()
+decls: IrDeclTable = IrDeclTable()
+slots: IrSlotTable = IrSlotTable()
 unitIndex: I32 = 0
 bytes: Array<U8> = []
 
@@ -113,11 +119,18 @@ lowerParams|func(state: LowerState, unit: CompilationUnit, decl: DeclNode, scope
 
 ; 单函数：播种函数帧取参数与返回类型，再降语句体；owner 非空即方法。
 ; 体降不了就整函数留空并记一条缺口：半截体在发射期能跑却少了语句。
+; 播种失败同样记缺口 —— 它也是「节点没生成」，静默返回会让空体数与缺口数对不上。
 lowerFunction|func(state: LowerState, unit: CompilationUnit, declId: I32, owner: String,) -> (LowerState,):
     var out = state
     let decl: DeclNode = unit.ast.decls[declId]
     let seed = seedFunctionScope(world = out.world, unitIndex = out.unitIndex, declId = declId, bytes = out.bytes)
     if !seed.valid:
+        let name = irFunctionName(unit = unit, bytes = out.bytes, decl = decl, owner = owner)
+        out.errors = appendLowerError(errors = out.errors, error = makeLowerError(kind = .lowerMissingCapability, file = unit.path, offset = decl.start, detail = name + "：函数帧播种失败"))
+        var blank = IrFunction()
+        blank.name = name
+        blank.sourceFile = unit.path
+        out.functions = out.functions.append(blank)
         return out
     var fn = IrFunction()
     fn.name = irFunctionName(unit = unit, bytes = out.bytes, decl = decl, owner = owner)
@@ -131,7 +144,7 @@ lowerFunction|func(state: LowerState, unit: CompilationUnit, declId: I32, owner:
         var start = LowerStmt()
         start.pool = out.nodes
         start.texts = out.texts
-        start.frame = seedLowerFrame(scope = seed.scope, map = out.map, world = out.world)
+        start.frame = seedLowerFrame(scope = seed.scope, map = out.map, world = out.world, decls = out.decls)
         let body = lowerBlockOf(out = start, unit = unit, bytes = out.bytes, map = out.map, types = out.types, unitIndex = out.unitIndex, blockId = decl.body)
         out.nodes = body.pool
         out.texts = body.texts
@@ -140,6 +153,7 @@ lowerFunction|func(state: LowerState, unit: CompilationUnit, declId: I32, owner:
             out.functions = out.functions.append(fn)
             return out
         fn.body = body.ids
+        fn.positions = body.positions
     out.functions = out.functions.append(fn)
     return out
 
@@ -168,13 +182,16 @@ lowerUnit|func(state: LowerState, unit: CompilationUnit,) -> (LowerState,):
         i = i + 1
     return out
 
-; 入口：先建类型映射，再逐单元降函数表。
+; 入口：先建类型映射与声明面、槽位面，再逐单元降函数表。
 ; 映射错误与函数级失败分表存放：前者没有对应函数，不能参与「每个空体一条」的对照。
+; 声明面与槽位面在建类型池之后折，故它们的类型下标与节点同域。
 lowerWorkspace|func(input: LowerWorld,) -> (IrModule,):
     var state = LowerState()
     state.world = input.world
     state.types = input.types
     state.map = buildTypeMap(world = input.world)
+    state.decls = makeDeclTable(shapes = input.shapes, map = state.map)
+    state.slots = makeSlotTable(layouts = input.layouts, map = state.map)
     var u = 0
     while u < len(input.world.units):
         state.unitIndex = u
@@ -186,6 +203,8 @@ lowerWorkspace|func(input: LowerWorld,) -> (IrModule,):
     out.nodes = state.nodes
     out.texts = state.texts.items
     out.functions = state.functions
+    out.decls = state.decls
+    out.slots = state.slots
     out.errors = state.errors
     out.typeErrors = state.map.errors
     return out

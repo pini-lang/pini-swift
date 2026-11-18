@@ -58,9 +58,20 @@ main|func() -> ():
         var input = LowerWorld()
         input.world = 世界
         input.types = 填.types
+        let shapes = makeShapeTable(世界)
+        input.shapes = shapes
+        input.layouts = layoutAll(shapes = shapes, pool = 世界.types.pool)
         let module = lowerWorkspace(input = input)
         print("types-ok", typedExprCount(table = 填.types))
         print("lower-ok", len(module.functions), len(module.errors), emptyBodyCount(module = module), len(module.typeErrors))
+        print("surface-ok", declCount(table = module.decls), slotRowCount(table = module.slots))
+        let check = validateModule(module = module)
+        print("validate-ok", check.visited, len(check.errors))
+        var v = 0
+        while v < len(check.errors):
+            let one = check.errors[v]
+            print("结构违约", lowerErrorCode(one.kind), one.file, one.offset, one.detail)
+            v = v + 1
         printGapSummary(module = module)
         printTypeErrors(module = module)
         return

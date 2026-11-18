@@ -914,12 +914,14 @@ lowerMember|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: T
     if typeId < 0:
         return missType(out = done, unit = unit, id = id, bytes = bytes)
     let fieldName = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
-    let placed = internText(texts = done.texts, value = fieldName)
+    let receiverType = irNodeAt(pool = done.pool, id = one.id).typeId
+    let slot = fieldSlotOf(table = done.frame.decls, typeId = receiverType, name = fieldName)
+    if slot < 0:
+        return missExpr(out = done, unit = unit, id = id, what = "字段 " + fieldName + " 不在声明里")
     var node = irMakeNode(kind = irExprTag(.irFieldGet), typeId = typeId)
-    node.text = placed.id
+    node.op = slot
     node.kids = [one.id]
     let inserted = irAppendNode(pool = done.pool, node = node)
-    done.texts = placed.texts
     done.pool = inserted.pool
     done.id = inserted.id
     return done
