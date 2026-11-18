@@ -1,0 +1,36 @@
+; 外部符号面：首版接的 C 库与运行时段符号，签名照 `runtime-api` 与 C 标准库抄，不猜。
+; 只声明被调用到的符号：没人调用的声明只拖长文本，也不证明任何能力。
+; 调用点与声明共用这一张表：表里没有的名字按「外部调用未登记」报缺口。
+
+; 使用集合：按首次调用序记录，发射时逐条出 declare。
+{ExternUse}
+names: Array<String> = []
+
+; 登记：同名字只留一次，顺序即首次调用序。
+useExtern|func(use: ExternUse, name: String,) -> ():
+    var i = 0
+    while i < len(use.names):
+        if use.names[i] == name:
+            return
+        i = i + 1
+    use.names = use.names.append(name)
+
+; 已登记数：下标合法区间是 0 到 count - 1。
+externUseCount|func(use: ExternUse,) -> (I32,):
+    return len(use.names)
+
+; 签名：返回完整 declare 行，未登记答空串；变参符号在固定参数后留省略号。
+externSignature|func(name: String,) -> (String,):
+    if name == "printf":
+        return "declare i32 @printf(ptr, ...)"
+    if name == "bk_print_lock":
+        return "declare void @bk_print_lock()"
+    if name == "bk_print_unlock":
+        return "declare void @bk_print_unlock()"
+    if name == "bk_panic":
+        return "declare void @bk_panic(ptr) noreturn"
+    if name == "bk_double_to_string":
+        return "declare ptr @bk_double_to_string(double)"
+    if name == "bk_str_release":
+        return "declare void @bk_str_release(ptr)"
+    return ""

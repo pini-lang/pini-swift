@@ -558,7 +558,7 @@ callResultType|func(map: TypeMap, types: ExprTypes, unit: CompilationUnit, unitI
 ; `print` 不在此列：它有专属节点，走通用调用会丢掉行终止符语义。
 calleeOfBuiltin|func(frame: LowerFrame, map: TypeMap, name: String,) -> (IrCallee,):
     var out = IrCallee()
-    if name == "print":
+    if name == "print" || name == "assert":
         return out
     var i = 0
     while i < len(frame.world.functions):
@@ -704,6 +704,16 @@ lowerPlainCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map
             printed = printed.append(actuals[p].id)
             p = p + 1
         let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irPrintMulti), typeId = -1, op = 0, kids = printed)
+        done.pool = inserted.pool
+        done.id = inserted.id
+        return done
+    if name == "assert" && len(actuals) > 0 && leading < 0:
+        var checked: Array<I32> = []
+        var p = 0
+        while p < len(actuals):
+            checked = checked.append(actuals[p].id)
+            p = p + 1
+        let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irAssertCall), typeId = -1, op = 0, kids = checked)
         done.pool = inserted.pool
         done.id = inserted.id
         return done

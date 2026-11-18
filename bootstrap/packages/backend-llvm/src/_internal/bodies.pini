@@ -19,6 +19,8 @@ fnIndex: I32 = 0
 closed: Bool = false
 families: Array<I32> = []
 declared: Array<I32> = []
+strings: StringPool = StringPool()
+externs: ExternUse = ExternUse()
 
 ; 表达式结果：上下文与值串；值串只给操作数，类型由所在指令给。
 (ExprOut)
@@ -210,11 +212,22 @@ emitExpr|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
             appendLine(sink = out.ctx.lines, text = "  " + name + " = xor " + opType + " " + one.text + ", -1")
         out.text = name
         return out
+    if node.kind == 4:
+        let value = textAt(module = module, id = node.text)
+        let at = internString(pool = out.ctx.strings, value = value)
+        let id = out.ctx.temp
+        out.ctx.temp = id + 1
+        out.text = stringValue(lines = out.ctx.lines, pool = out.ctx.strings, index = at, temp = id)
+        return out
     if node.kind == 8:
         let callee = textAt(module = module, id = node.text)
+        var symbol = mangleName(name = callee)
         if findIrFunctionIndex(module = module, name = callee) < 0:
-            out.ctx = addGap(ctx = out.ctx, gap = "外部调用 " + callee)
-            return out
+            if len(externSignature(name = callee)) == 0:
+                out.ctx = addGap(ctx = out.ctx, gap = "外部调用 " + callee)
+                return out
+            useExtern(use = out.ctx.externs, name = callee)
+            symbol = callee
         var args = ""
         var i = 0
         while i < len(node.kids):
@@ -228,17 +241,118 @@ emitExpr|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
         out.ctx.temp = id + 1
         let name = tempName(index = id)
         let retType = llvmTypeName(pool = module.types, typeId = node.typeId)
-        if len(retType) == 0:
-            out.ctx = addGap(ctx = out.ctx, gap = "调用缺返回类型")
-            return out
         if retType == "void":
-            appendLine(sink = out.ctx.lines, text = "  call void @" + mangleName(name = callee) + "(" + args + ")")
+            appendLine(sink = out.ctx.lines, text = "  call void @" + symbol + "(" + args + ")")
             out.text = ""
         else:
-            appendLine(sink = out.ctx.lines, text = "  " + name + " = call " + retType + " @" + mangleName(name = callee) + "(" + args + ")")
+            appendLine(sink = out.ctx.lines, text = "  " + name + " = call " + retType + " @" + symbol + "(" + args + ")")
             out.text = name
         return out
+    if node.kind == 9:
+        out.ctx = emitPrintArgs(ctx = out.ctx, module = module, ids = node.kids, spaced = false)
+        out.text = ""
+        return out
+    if node.kind == 10:
+        out.ctx = emitPrintArgs(ctx = out.ctx, module = module, ids = node.kids, spaced = true)
+        out.text = ""
+        return out
+    if node.kind == 14:
+        out.ctx = emitAssert(ctx = out.ctx, module = module, node = node)
+        out.text = ""
+        return out
     out.ctx = addGap(ctx = out.ctx, gap = nodeGap(ctx = out.ctx, kind = node.kind))
+    return out
+
+; 打印一组实参：整行由锁连成一段，逐参展示后补行终止符；多参之间一个空格。
+; 锁与格式串的开销只在这一处登记，调用点不再各记一遍。
+emitPrintArgs|func(ctx: BodyCtx, module: IrModule, ids: Array<I32>, spaced: Bool,) -> (BodyCtx,):
+    var out = ctx
+    useExtern(use = out.externs, name = "printf")
+    useExtern(use = out.externs, name = "bk_print_lock")
+    useExtern(use = out.externs, name = "bk_print_unlock")
+    appendLine(sink = out.lines, text = "  call void @bk_print_lock()")
+    var i = 0
+    while i < len(ids):
+        if spaced && i > 0:
+            appendLine(sink = out.lines, text = "  call i32 (ptr, ...) @printf(ptr @fmt_space)")
+        out = printValue(ctx = out, module = module, nodeId = ids[i])
+        i = i + 1
+    appendLine(sink = out.lines, text = "  call i32 (ptr, ...) @printf(ptr @fmt_newline)")
+    appendLine(sink = out.lines, text = "  call void @bk_print_unlock()")
+    return out
+
+; 展示一个值：按 IR 拼写选格式与加宽方向；字符串载荷与 C 串同形，直接走 `%s`。
+; 浮点走运行时段转换，临时串当场还；聚合与容器未接，落到整数兜底前先记缺口不在此处。
+printValue|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (BodyCtx,):
+    let one = emitExpr(ctx = ctx, module = module, nodeId = nodeId)
+    var out = one.ctx
+    let node = irNodeAt(pool = module.nodes, id = nodeId)
+    let ty = llvmTypeName(pool = module.types, typeId = node.typeId)
+    if ty == "i1":
+        let id = out.temp
+        out.temp = id + 1
+        let sel = tempName(index = id)
+        appendLine(sink = out.lines, text = "  " + sel + " = select i1 " + one.text + ", ptr @fmt_bool_true, ptr @fmt_bool_false")
+        appendLine(sink = out.lines, text = "  call i32 (ptr, ...) @printf(ptr " + sel + ")")
+        return out
+    if ty == "i8":
+        let id = out.temp
+        out.temp = id + 1
+        let wide = tempName(index = id)
+        appendLine(sink = out.lines, text = "  " + wide + " = sext i8 " + one.text + " to i32")
+        appendLine(sink = out.lines, text = "  call i32 (ptr, ...) @printf(ptr @fmt_int, i32 " + wide + ")")
+        return out
+    if ty == "i64":
+        let id = out.temp
+        out.temp = id + 1
+        let narrow = tempName(index = id)
+        appendLine(sink = out.lines, text = "  " + narrow + " = trunc i64 " + one.text + " to i32")
+        appendLine(sink = out.lines, text = "  call i32 (ptr, ...) @printf(ptr @fmt_int, i32 " + narrow + ")")
+        return out
+    if ty == "double":
+        useExtern(use = out.externs, name = "bk_double_to_string")
+        useExtern(use = out.externs, name = "bk_str_release")
+        let id = out.temp
+        out.temp = id + 1
+        let rendered = tempName(index = id)
+        appendLine(sink = out.lines, text = "  " + rendered + " = call ptr @bk_double_to_string(double " + one.text + ")")
+        appendLine(sink = out.lines, text = "  call i32 (ptr, ...) @printf(ptr @fmt_string, ptr " + rendered + ")")
+        appendLine(sink = out.lines, text = "  call void @bk_str_release(ptr " + rendered + ")")
+        return out
+    if ty == "ptr":
+        appendLine(sink = out.lines, text = "  call i32 (ptr, ...) @printf(ptr @fmt_string, ptr " + one.text + ")")
+        return out
+    appendLine(sink = out.lines, text = "  call i32 (ptr, ...) @printf(ptr @fmt_int, " + ty + " " + one.text + ")")
+    return out
+
+; 断言：条件为真直落，为假调陷阱并带消息；消息缺省给一句固定串，不空指针。
+; 陷阱声明为不返回，失败块仍补跳转，只为让块有终结指令。
+emitAssert|func(ctx: BodyCtx, module: IrModule, node: IrNode,) -> (BodyCtx,):
+    var out = ctx
+    useExtern(use = out.externs, name = "bk_panic")
+    let cond = emitExpr(ctx = out, module = module, nodeId = node.kids[0])
+    out = cond.ctx
+    var msgIndex = -1
+    if len(node.kids) > 1:
+        let msgNode = irNodeAt(pool = module.nodes, id = node.kids[1])
+        msgIndex = internString(pool = out.strings, value = textAt(module = module, id = msgNode.text))
+    else:
+        msgIndex = internString(pool = out.strings, value = "assert failed")
+    let id = out.temp
+    out.temp = id + 1
+    let msgAt = stringValue(lines = out.lines, pool = out.strings, index = msgIndex, temp = id)
+    let at = out.label
+    out.label = at + 1
+    let passLabel = labelName(prefix = "assert.pass.", index = at)
+    let failLabel = labelName(prefix = "assert.fail.", index = at)
+    let endLabel = labelName(prefix = "assert.end.", index = at)
+    appendLine(sink = out.lines, text = "  br i1 " + cond.text + ", label %" + passLabel + ", label %" + failLabel)
+    appendLine(sink = out.lines, text = failLabel + ":")
+    appendLine(sink = out.lines, text = "  call void @bk_panic(ptr " + msgAt + ")")
+    appendLine(sink = out.lines, text = "  br label %" + endLabel)
+    appendLine(sink = out.lines, text = passLabel + ":")
+    appendLine(sink = out.lines, text = "  br label %" + endLabel)
+    appendLine(sink = out.lines, text = endLabel + ":")
     return out
 
 ; 语句序列：逐条发射；块已由返回收口时，后续语句不再发，免出不可达指令。

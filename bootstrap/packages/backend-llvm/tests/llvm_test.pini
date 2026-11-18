@@ -89,3 +89,78 @@ _backend_kit = "../../backend-kit"
     assert(once.text == twice.text, "两遍发射应逐字节相同")
     assert(once.lines == twice.lines, "两遍行读数应相同")
     return
+
+; 打印模块的类型池：i32、String、Bool 三个标量。
+发射造打印类型池|func() -> (IrTypePool,):
+    var pool = IrTypePool()
+    let intType = irScalarTypeOfCode(pool = pool, code = 1, name = "i32")
+    pool = intType.pool
+    let textType = irScalarTypeOfCode(pool = pool, code = 8, name = "String")
+    pool = textType.pool
+    let boolType = irScalarTypeOfCode(pool = pool, code = 7, name = "Bool")
+    return boolType.pool
+
+; 打印模块：一个字符串常量，一条单参打印，一条真断言，末尾返回。
+; 字面量「值」三个字节、一个标量，常量总长 = 四字节头加四字节计数、载荷与 NUL。
+发射造打印模块|func() -> (IrModule,):
+    var module = IrModule()
+    module.types = 发射造打印类型池()
+    module.texts = module.texts.append("值")
+    var nodes = IrNodePool()
+    var literal = irMakeNode(kind = tagOfName(name = "stringConst"), typeId = 1)
+    literal.text = 0
+    let placedLiteral = irAppendNode(pool = nodes, node = literal)
+    nodes = placedLiteral.pool
+    var printed = irMakeNode(kind = tagOfName(name = "printCall"), typeId = -1)
+    printed.kids = [placedLiteral.id]
+    let placedPrintCall = irAppendNode(pool = nodes, node = printed)
+    nodes = placedPrintCall.pool
+    var printStmt = irMakeNode(kind = tagOfName(name = "exprStmt"), typeId = -1)
+    printStmt.kids = [placedPrintCall.id]
+    let placedPrint = irAppendNode(pool = nodes, node = printStmt)
+    nodes = placedPrint.pool
+    var cond = irMakeNode(kind = tagOfName(name = "boolConst"), typeId = 2)
+    cond.intValue = 1
+    let placedCond = irAppendNode(pool = nodes, node = cond)
+    nodes = placedCond.pool
+    var checked = irMakeNode(kind = tagOfName(name = "assertCall"), typeId = -1)
+    checked.kids = [placedCond.id, placedLiteral.id]
+    let placedAssertCall = irAppendNode(pool = nodes, node = checked)
+    nodes = placedAssertCall.pool
+    var assertStmt = irMakeNode(kind = tagOfName(name = "exprStmt"), typeId = -1)
+    assertStmt.kids = [placedAssertCall.id]
+    let placedAssert = irAppendNode(pool = nodes, node = assertStmt)
+    nodes = placedAssert.pool
+    var back = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    let placedBack = irAppendNode(pool = nodes, node = back)
+    nodes = placedBack.pool
+    module.nodes = nodes
+    var fn = IrFunction()
+    fn.name = "main"
+    fn.returnType = -1
+    fn.body = [placedPrint.id, placedAssert.id, placedBack.id]
+    module.functions = module.functions.append(fn)
+    return module
+
+; 打印与断言：整行由锁连成一段，字符串走 `%s`，断言为假跳陷阱。
+打印与断言|test() -> ():
+    let module = 发射造打印模块()
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    if result.failed:
+        assert(false, "缺口：" + result.gaps[0])
+    assert(含子串(text = result.text, needle = "call void @bk_print_lock()"), "整行应先取锁")
+    assert(含子串(text = result.text, needle = "call i32 (ptr, ...) @printf(ptr @fmt_string, ptr %t0)"), "字符串应走 %s")
+    assert(含子串(text = result.text, needle = "call i32 (ptr, ...) @printf(ptr @fmt_newline)"), "行末应补终止符")
+    assert(含子串(text = result.text, needle = "call void @bk_print_unlock()"), "整行应还锁")
+    assert(含子串(text = result.text, needle = "declare i32 @printf(ptr, ...)"), "被调外部符号应出声明")
+    assert(含子串(text = result.text, needle = "call void @bk_panic(ptr"), "断言为假应跳陷阱")
+    assert(含子串(text = result.text, needle = "assert.fail."), "断言应有失败块")
+    return
+
+; 字符串常量：头部四格与载荷同序，总长含头、载荷与 NUL；两遍常量号不漂。
+字符串常量形状|test() -> ():
+    let module = 发射造打印模块()
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    assert(含子串(text = result.text, needle = "@.str0 = private global [20 x i8] c\"\\00\\00\\00\\00\\03\\00\\00\\00\\03\\00\\00\\00\\01\\00\\00\\00\\E5\\80\\BC\\00\", align 16"), "常量应按头加载荷出字节")
+    assert(含子串(text = result.text, needle = "getelementptr [20 x i8], ptr @.str0, i32 0, i32 16"), "取串应跳过十六字节头")
+    return

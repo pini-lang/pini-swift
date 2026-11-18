@@ -1,0 +1,85 @@
+[strings|import]
+_semantics = "../../../semantics"
+_unicode = "../../../unicode"
+
+; 字符串常量面：全局常量按值去重，头部十六字节与运行时段同宽；载荷是 UTF-8 加 NUL。
+; 头按 i32 小端写：引用计数、字节数、容量、标量数；只读段常量不进计数。
+; 取串先跳过头，得到载荷首址，与 C 串同形，可交给 `%s`；C 串形状的格式常量不带这个头。
+
+; 常量池：值、全局名与总长三表同序；下标即常量号。
+{StringPool}
+values: Array<String> = []
+names: Array<String> = []
+lengths: Array<I32> = []
+
+; 两位十六进制：大写，前面带反斜杠；转义写法与 LLVM 的 `c"..."` 一致。
+hexByte|func(byte: U8,) -> (String,):
+    let table = "0123456789ABCDEF"
+    let value = byte as I32
+    return "\\" + "\(chars(table)[value / 16])" + "\(chars(table)[value % 16])"
+
+; 小端四字节：低字节在前，正是字符串头里计数的写法；入参按非负用。
+littleEndian|func(value: I32,) -> (String,):
+    var rest = value
+    var out = ""
+    var i = 0
+    while i < 4:
+        out = out + hexByte(byte = (rest % 256) as U8)
+        rest = rest / 256
+        i = i + 1
+    return out
+
+; 去重登记：同值复用下标；总长含头、载荷、NUL，够一个表槽的串再加预留。
+internString|func(pool: StringPool, value: String,) -> (I32,):
+    var i = 0
+    while i < len(pool.values):
+        if pool.values[i] == value:
+            return i
+        i = i + 1
+    let at = len(pool.values)
+    let bytes = tempUtf8Bytes(value)
+    var size = len(bytes) + 17
+    if len(bytes) >= 128:
+        size = size + 16
+    pool.values = pool.values.append(value)
+    pool.names = pool.names.append("@.str" + countText(at))
+    pool.lengths = pool.lengths.append(size)
+    return at
+
+; 全局定义：头 + 载荷 + NUL，长串再留十六字节表槽；对齐十六是原子计数的硬要求。
+stringGlobalLine|func(pool: StringPool, index: I32,) -> (String,):
+    let value = pool.values[index]
+    let bytes = tempUtf8Bytes(value)
+    let decoded = decodeUtf8(bytes)
+    var hex = "\\00\\00\\00\\00"
+    hex = hex + littleEndian(value = len(bytes))
+    hex = hex + littleEndian(value = len(bytes))
+    hex = hex + littleEndian(value = len(decoded.scalars))
+    var i = 0
+    while i < len(bytes):
+        hex = hex + hexByte(byte = bytes[i])
+        i = i + 1
+    hex = hex + "\\00"
+    if len(bytes) >= 128:
+        var slot = 0
+        while slot < 16:
+            hex = hex + "\\00"
+            slot = slot + 1
+    return pool.names[index] + " = private global [" + countText(pool.lengths[index]) + " x i8] c\"" + hex + "\", align 16"
+
+; 取串：跳过十六字节头，得到载荷首址；临时值编号由调用方给。
+stringValue|func(lines: LineSink, pool: StringPool, index: I32, temp: I32,) -> (String,):
+    let name = tempName(index = temp)
+    appendLine(sink = lines, text = "  " + name + " = getelementptr [" + countText(pool.lengths[index]) + " x i8], ptr " + pool.names[index] + ", i32 0, i32 16")
+    return name
+
+; 格式常量：C 串形状，`printf` 直接吃；布尔两支与空格是展示语义的一部分。
+formatConstants|func() -> (Array<String>,):
+    var out: Array<String> = []
+    out = out.append("@fmt_int = private constant [3 x i8] c\"%d\\00\"")
+    out = out.append("@fmt_bool_true = private constant [6 x i8] c\"true\\00\\00\"")
+    out = out.append("@fmt_bool_false = private constant [7 x i8] c\"false\\00\\00\"")
+    out = out.append("@fmt_string = private constant [3 x i8] c\"%s\\00\"")
+    out = out.append("@fmt_newline = private constant [2 x i8] c\"\\0A\\00\"")
+    out = out.append("@fmt_space = private constant [2 x i8] c\" \\00\"")
+    return out

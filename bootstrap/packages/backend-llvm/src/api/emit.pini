@@ -62,6 +62,8 @@ emitModule|func(entry: BackendEntry, target: TargetProfile, module: IrModule,) -
         i = i + 1
     var gaps: Array<String> = []
     let families = irContractFamilies()
+    var strings = StringPool()
+    var externs = ExternUse()
     i = 0
     while i < len(module.functions):
         let fn = module.functions[i]
@@ -74,6 +76,8 @@ emitModule|func(entry: BackendEntry, target: TargetProfile, module: IrModule,) -
             ctx.fnIndex = i
             ctx.families = families
             ctx.declared = entry.families
+            ctx.strings = strings
+            ctx.externs = externs
             ctx = emitStmts(ctx = ctx, module = module, ids = fn.body)
             ctx = closeFunction(ctx = ctx, module = module)
             var k = 0
@@ -81,6 +85,19 @@ emitModule|func(entry: BackendEntry, target: TargetProfile, module: IrModule,) -
                 gaps = mergeGap(gaps = gaps, gap = ctx.gaps[k])
                 k = k + 1
             appendLine(sink = sink, text = "}")
+        i = i + 1
+    i = 0
+    while i < externUseCount(use = externs):
+        appendLine(sink = sink, text = externSignature(name = externs.names[i]))
+        i = i + 1
+    let formats = formatConstants()
+    i = 0
+    while i < len(formats):
+        appendLine(sink = sink, text = formats[i])
+        i = i + 1
+    i = 0
+    while i < len(strings.values):
+        appendLine(sink = sink, text = stringGlobalLine(pool = strings, index = i))
         i = i + 1
     var result = EmitResult()
     result.detail = "llvm"

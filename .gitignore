@@ -22,6 +22,4 @@ __pycache__/
 Pini草稿.md
 
 # 夹具验收产物
-bootstrap/fixtures/*/value
-bootstrap/fixtures/*/value.ll
-bootstrap/fixtures/*/value.bc
+bootstrap/fixtures/*/.build/
