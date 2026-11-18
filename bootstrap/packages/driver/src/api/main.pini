@@ -3,6 +3,15 @@ _package = "../../../package"
 _module_loader = "../../../module-loader"
 _semantics = "../../../semantics"
 _ir = "../../../ir"
+_backend_kit = "../../../backend-kit"
+_backend_dump = "../../../backend-dump"
+
+; 降载产物：模块、结构校验、包数与已定型表达式数；lower 与 dump 共用同一条装配链。
+(降载产物)
+module: IrModule = IrModule()
+check: IrValidation = IrValidation()
+packages: I32 = 0
+typed: I32 = 0
 
 ; 驱动主程序：无参数只装配清单并打印产物行，毫秒级；`check` 跑完整检查，`lower` 走降载。
 ; `cases` 只列裸名用例位置。三个子命令的根取第二个参数，缺省从模块根上溯。
@@ -12,12 +21,17 @@ main|func() -> ():
     var root = workspaceRootOf(start = moduleRoot())
     var 全量 = false
     var 降载 = false
+    var 转储 = false
     if len(args) > 0 && args[0] == "check":
         全量 = true
         if len(args) > 1:
             root = args[1]
     if len(args) > 0 && args[0] == "lower":
         降载 = true
+        if len(args) > 1:
+            root = args[1]
+    if len(args) > 0 && args[0] == "dump":
+        转储 = true
         if len(args) > 1:
             root = args[1]
     if len(args) > 0 && args[0] == "cases":
@@ -43,44 +57,69 @@ main|func() -> ():
         print("workspace-ok", report.packages, true)
         return
     if 降载:
-        let plan = planWorkspace(root)
-        if !plan.isOK():
-            print("workspace-plan-failed", plan.errorCount())
+        let 产物 = 降载工作区(root = root)
+        if 产物.packages == 0:
             return
-        let ws = loadWorkspaceGrouped(plan)
-        let units = collectWorkspaceUnits(ws)
-        let build = buildWorld(units = units, packages = ws.packages)
-        let 填 = fillExprTypes(world = build.world, units = units)
-        var 世界 = build.world
-        var 类型面 = 世界.types
-        类型面.pool = 填.pool
-        世界.types = 类型面
-        var input = LowerWorld()
-        input.world = 世界
-        input.types = 填.types
-        let shapes = makeShapeTable(世界)
-        input.shapes = shapes
-        input.layouts = layoutAll(shapes = shapes, pool = 世界.types.pool)
-        let module = lowerWorkspace(input = input)
-        print("types-ok", typedExprCount(table = 填.types))
+        let module = 产物.module
+        print("types-ok", 产物.typed)
         print("lower-ok", len(module.functions), len(module.errors), emptyBodyCount(module = module), len(module.typeErrors))
         print("surface-ok", declCount(table = module.decls), slotRowCount(table = module.slots))
-        let check = validateModule(module = module)
-        print("validate-ok", check.visited, len(check.errors))
+        print("validate-ok", 产物.check.visited, len(产物.check.errors))
         var v = 0
-        while v < len(check.errors):
-            let one = check.errors[v]
+        while v < len(产物.check.errors):
+            let one = 产物.check.errors[v]
             print("结构违约", lowerErrorCode(one.kind), one.file, one.offset, one.detail)
             v = v + 1
         printGapSummary(module = module)
         printTypeErrors(module = module)
         return
+    if 转储:
+        let 产物 = 降载工作区(root = root)
+        if 产物.packages == 0:
+            return
+        if len(产物.check.errors) > 0:
+            print("dump-blocked", len(产物.check.errors))
+            return
+        let entry = makeBackendOf(name = "dump", outputCode = backendOutputDumpCode(), families = backendFamilyCodes(), entry = 1)
+        let emitted = dumpModule(module = 产物.module)
+        print("dump-ok", 产物.packages, emitted.lines, len(emitted.text))
+        print("dump-backend", entry.name, backendOutputName(entry.output), len(entry.families))
+        print(emitted.text)
+        return
     let plan = planWorkspace(root)
-    if plan.isOK() && plan.packageCount() == 10:
+    if plan.isOK():
         print("workspace-ok", plan.packageCount(), true)
         return
     print("workspace-plan-failed", plan.errorCount())
     return
+
+; 装配并降载：规划、装载、世界、填表、形态与槽、降载、校验；规划失败时包数为零。
+; 两个子命令共用这一条链，避免 lower 与 dump 各自装配、读数各说一套。
+降载工作区|func(root: String,) -> (降载产物,):
+    var out = 降载产物()
+    let plan = planWorkspace(root)
+    if !plan.isOK():
+        print("workspace-plan-failed", plan.errorCount())
+        return out
+    let ws = loadWorkspaceGrouped(plan)
+    let units = collectWorkspaceUnits(ws)
+    let build = buildWorld(units = units, packages = ws.packages)
+    let 填 = fillExprTypes(world = build.world, units = units)
+    var 世界 = build.world
+    var 类型面 = 世界.types
+    类型面.pool = 填.pool
+    世界.types = 类型面
+    var input = LowerWorld()
+    input.world = 世界
+    input.types = 填.types
+    let shapes = makeShapeTable(世界)
+    input.shapes = shapes
+    input.layouts = layoutAll(shapes = shapes, pool = 世界.types.pool)
+    out.module = lowerWorkspace(input = input)
+    out.check = validateModule(module = out.module)
+    out.packages = plan.packageCount()
+    out.typed = typedExprCount(table = 填.types)
+    return out
 
 ; 缺口归纳：按原因归并计数，函数名前缀不进归类；只打印前若干条，够看头号缺口。
 ; 次数降序，同数保持首次出现序 —— 不按字符串排序，两通道的串比较口径并不一致。

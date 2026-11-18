@@ -21,7 +21,7 @@ package = "../../package"
 根清单可装配|test() -> ():
     let plan = package.planWorkspace(工作区根())
     assert(plan.isOK(), "根清单应可用：" + package.planText(plan))
-    assert(plan.packageCount() == 10, "十个包，实得 " + "\(plan.packageCount())")
+    assert(plan.packageCount() == 12, "十二个包，实得 " + "\(plan.packageCount())")
     return
 
 ; 工作区根定位：从包根向上找到带 [workspace] 的根清单。

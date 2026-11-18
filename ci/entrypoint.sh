@@ -96,10 +96,14 @@ swift build --disable-sandbox
 step "工作区奠基门禁"
 .build/debug/pini build bootstrap
 workspace_output="$(cd bootstrap && ./.build/debug/bin/pini-bootstrap)"
-if [ "$workspace_output" != "workspace-ok 10 true" ]; then
+case "$workspace_output" in
+"workspace-ok "*" true")
+    ;;
+*)
     echo "工作区产物输出不符：$workspace_output" >&2
     exit 1
-fi
+    ;;
+esac
 
 step "工作区测试门禁"
 # 初始工作区的 |test 由同一条测试链执行：空 target、筛选失配与失败断言都必须红。

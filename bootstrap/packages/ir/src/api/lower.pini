@@ -263,3 +263,28 @@ tagOfName|func(name: String,) -> (I32,):
             return table.entries[i].tag
         i = i + 1
     return 0
+
+; 码到名：转储与诊断按码印名；未登记答问号加码，不猜一个相近的名字。
+irTagName|func(tag: I32,) -> (String,):
+    let table = contractTable()
+    var i = 0
+    while i < len(table.entries):
+        if table.entries[i].tag == tag:
+            return table.entries[i].name
+        i = i + 1
+    return "?" + countText(tag)
+
+; 整张码到名表：下标即类别码，未登记为空串；转储一次取走，逐节点查表。
+; 逐节点调 irTagName 会每次重建契约清单，全工作区转储的代价随节点数乘表长。
+irTagNames|func() -> (Array<String>,):
+    var out: Array<String> = []
+    var i = 0
+    while i < 201:
+        out = out.append("")
+        i = i + 1
+    let table = contractTable()
+    var k = 0
+    while k < len(table.entries):
+        out[table.entries[k].tag] = table.entries[k].name
+        k = k + 1
+    return out

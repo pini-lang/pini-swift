@@ -1,3 +1,6 @@
+[share|import]
+_semantics = "../../../semantics"
+
 ; 归还面：按 IR 类型给份额类别，按求值节点给求值效果，两者合成存储点的接收动作。
 ; 判据只用 IR 自身：类别看类型池条目，效果看节点类别与操作数类型，后端不按拼写反推。
 ; 判错的后果不对称：把新份额判成借用是漏一份，反过来是悬垂；拿不准时按借用。
@@ -90,6 +93,18 @@ irAdoptTag|func(_kind: IrAdoptAction,) -> (I32,):
         case irAdoptRetain:
             return 3
     return 0
+
+; 动作名：转储按码印名，未登记答问号加码。
+irAdoptName|func(code: I32,) -> (String,):
+    if code == 0:
+        return "none"
+    if code == 1:
+        return "take"
+    if code == 2:
+        return "copyStruct"
+    if code == 3:
+        return "retain"
+    return "?" + countText(code)
 
 ; 类别判定：按类型池条目逐类表态，不留兜底；新增类型必须在这里选一族。
 ; 不参与含标量、外部指针、任务句柄与 C 串句柄；整块含结果、可选、元组与函数值。

@@ -362,6 +362,62 @@ irTypeTag|func(_kind: IrTypeClass,) -> (I32,):
             return 23
     return 0
 
+; 类型类别反查：跨包不能引用枚举项，按码取类别；未登记按 i32 兜底。
+irTypeClassOf|func(code: I32,) -> (IrTypeClass,):
+    if code == 2:
+        return .irTypeI64
+    if code == 3:
+        return .irTypeU64
+    if code == 4:
+        return .irTypeU8
+    if code == 5:
+        return .irTypeI8
+    if code == 6:
+        return .irTypeF64
+    if code == 7:
+        return .irTypeBoolean
+    if code == 8:
+        return .irTypeString
+    if code == 9:
+        return .irTypeChar
+    if code == 10:
+        return .irTypeResult
+    if code == 11:
+        return .irTypeFuture
+    if code == 12:
+        return .irTypeArray
+    if code == 13:
+        return .irTypeOptional
+    if code == 14:
+        return .irTypeNominal
+    if code == 15:
+        return .irTypeEnumeration
+    if code == 16:
+        return .irTypeDict
+    if code == 17:
+        return .irTypeSet
+    if code == 18:
+        return .irTypeLazyRef
+    if code == 19:
+        return .irTypeTuple
+    if code == 20:
+        return .irTypeFunction
+    if code == 21:
+        return .irTypePointer
+    if code == 22:
+        return .irTypeCFunction
+    if code == 23:
+        return .irTypeStringHandle
+    return .irTypeI32
+
+; 按码造标量：测试与工具跨包建类型，不起前导点。
+irScalarTypeOfCode|func(pool: IrTypePool, code: I32, name: String,) -> (IrTypeInsert,):
+    return irScalarType(pool = pool, kind = irTypeClassOf(code = code), name = name)
+
+; 按码造包装类型：数组、可选、指针等一元类别走这条。
+irWrapTypeOfCode|func(pool: IrTypePool, code: I32, name: String, inner: I32,) -> (IrTypeInsert,):
+    return irWrapType(pool = pool, kind = irTypeClassOf(code = code), name = name, inner = inner)
+
 ; 逐项相等：按下标比，长度不同直接假。
 irSameIds|func(first: Array<I32>, second: Array<I32>,) -> (Bool,):
     if len(first) != len(second):

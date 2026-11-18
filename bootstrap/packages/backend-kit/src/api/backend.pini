@@ -1,0 +1,165 @@
+[backend|import]
+_semantics = "../../../semantics"
+
+; 后端记录：名字、输出档次、能力族与入口码；驱动按入口码分派，不引入函数指针。
+; 能力族是声明不是实现：转储后端可以声明全部族，产出档次单列，不拿族表冒充可执行。
+; 本包不认识任何具体后端；具体后端只依赖这里的记录与目标描述。
+
+; 能力族：与 IR 契约的族表同序，十四项；族码即次序，从 0 起。
+[BackendFamily]
+backendFamilyControlFlow
+backendFamilyScalars
+backendFamilyVariablesAndOperators
+backendFamilyCalls
+backendFamilyResultAndOptional
+backendFamilyCollections
+backendFamilyNominals
+backendFamilyPointers
+backendFamilyFileIO
+backendFamilyCatchableIO
+backendFamilyStrings
+backendFamilyLazyRef
+backendFamilyConcurrency
+backendFamilyGivenInstances
+
+; 输出档次：本机码、字节码、结构转储；码序即判据序。
+[BackendOutput]
+backendOutputNative
+backendOutputBytecode
+backendOutputDump
+
+; 后端记录：能力族按族码列出，入口码由驱动的分派表约定。
+(BackendEntry)
+name: String = ""
+output: BackendOutput = .backendOutputDump
+families: Array<I32> = []
+entry: I32 = 0
+
+; 发射结果：文本、行数与失败原因；失败时文本可为空，细节写缺口。
+; 计数与结构化信息留在模块里，本结构只承载「一份产物 + 是否发得出来」。
+(EmitResult)
+text: String = ""
+lines: I32 = 0
+failed: Bool = false
+detail: String = ""
+
+; 族数：与契约族表同长，判据与全族码共用。
+backendFamilyCount|func() -> (I32,):
+    return 14
+
+; 族名：按码印名，未登记答问号加码。
+backendFamilyName|func(code: I32,) -> (String,):
+    if code == 0:
+        return "controlFlow"
+    if code == 1:
+        return "scalars"
+    if code == 2:
+        return "variablesAndOperators"
+    if code == 3:
+        return "calls"
+    if code == 4:
+        return "resultAndOptional"
+    if code == 5:
+        return "collections"
+    if code == 6:
+        return "nominals"
+    if code == 7:
+        return "pointers"
+    if code == 8:
+        return "fileIO"
+    if code == 9:
+        return "catchableIO"
+    if code == 10:
+        return "strings"
+    if code == 11:
+        return "lazyRef"
+    if code == 12:
+        return "concurrency"
+    if code == 13:
+        return "givenInstances"
+    return "?" + countText(code)
+
+; 族名到码：装配表按名登记时用，未登记答 -1。
+backendFamilyOf|func(name: String,) -> (I32,):
+    var i = 0
+    while i < backendFamilyCount():
+        if backendFamilyName(code = i) == name:
+            return i
+        i = i + 1
+    return -1
+
+; 全族码：注册表默认表与转储都用同一次序。
+backendFamilyCodes|func() -> (Array<I32>,):
+    var out: Array<I32> = []
+    var i = 0
+    while i < backendFamilyCount():
+        out = out.append(i)
+        i = i + 1
+    return out
+
+; 输出档次名：回执与转储共用一份拼写。
+backendOutputName|func(_output: BackendOutput,) -> (String,):
+    match _output:
+        case backendOutputNative:
+            return "native"
+        case backendOutputBytecode:
+            return "bytecode"
+        case backendOutputDump:
+            return "dump"
+    return "unknown"
+
+; 输出档次码：跨包只认码，不引用枚举项；码序与枚举项序一致。
+backendOutputCode|func(_output: BackendOutput,) -> (I32,):
+    match _output:
+        case backendOutputNative:
+            return 1
+        case backendOutputBytecode:
+            return 2
+        case backendOutputDump:
+            return 3
+    return 0
+
+; 码到档次：装配表按码造记录，未登记按转储兜底（转储不发可执行码，兜底最安全）。
+backendOutputOf|func(code: I32,) -> (BackendOutput,):
+    if code == 1:
+        return .backendOutputNative
+    if code == 2:
+        return .backendOutputBytecode
+    return .backendOutputDump
+
+; 转储档次码：调用方免记字面量。
+backendOutputDumpCode|func() -> (I32,):
+    return 3
+
+; 造记录：族表按值抄入，入口码由调用方给。
+makeBackend|func(name: String, output: BackendOutput, families: Array<I32>, entry: I32,) -> (BackendEntry,):
+    var out = BackendEntry()
+    out.name = name
+    out.output = output
+    out.families = families
+    out.entry = entry
+    return out
+
+; 按码造记录：跨包装配用这条，避免引用枚举项。
+makeBackendOf|func(name: String, outputCode: I32, families: Array<I32>, entry: I32,) -> (BackendEntry,):
+    return makeBackend(name = name, output = backendOutputOf(code = outputCode), families = families, entry = entry)
+
+; 族声明判定：族码在表里即算声明支持；表空表示不声明任何族。
+supportsFamily|func(entry: BackendEntry, family: I32,) -> (Bool,):
+    var i = 0
+    while i < len(entry.families):
+        if entry.families[i] == family:
+            return true
+        i = i + 1
+    return false
+
+; 空结果：发射成功但没有产物时用，调用方须显式填文本。
+emptyEmit|func() -> (EmitResult,):
+    return EmitResult()
+
+; 失败结果：细节写缺哪一类节点或哪个能力族；文本留空，不产半份产物。
+failedEmit|func(detail: String,) -> (EmitResult,):
+    var out = EmitResult()
+    out.failed = true
+    out.detail = detail
+    return out

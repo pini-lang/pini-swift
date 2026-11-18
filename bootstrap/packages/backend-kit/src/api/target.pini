@@ -1,0 +1,72 @@
+[target|import]
+_ir = "../../../ir"
+
+; 目标描述：字节宽度、对齐、符号拼写与变参提升；字节口径只此一处。
+; 槽是布局单位不是字节：聚合宽度由后端按槽表乘槽宽，本包不替槽表数槽。
+; 符号前缀随目标变（Mach-O 加下划线，ELF 不加），发射器只拼名字，不判平台。
+(TargetProfile)
+name: String = "bootstrap64"
+pointerWidth: I32 = 8
+pointerAlign: I32 = 8
+slotWidth: I32 = 8
+slotAlign: I32 = 8
+symbolPrefix: String = ""
+variadicWidensToI32: Bool = true
+
+; 默认目标：六十四位、八字节对齐、符号不加前缀；结构转储不读字节口径，留着给 LLVM。
+defaultTarget|func() -> (TargetProfile,):
+    return TargetProfile()
+
+; 标量宽度：按 IR 类型类别码给字节数；聚合与容器答 -1，宽度得由槽表乘出来。
+kindByteWidth|func(target: TargetProfile, code: I32,) -> (I32,):
+    if code == 1:
+        return 4
+    if code == 2:
+        return 8
+    if code == 3:
+        return 8
+    if code == 4:
+        return 1
+    if code == 5:
+        return 1
+    if code == 6:
+        return 8
+    if code == 7:
+        return 1
+    if code == 8:
+        return target.pointerWidth
+    if code == 9:
+        return 4
+    if code == 20:
+        return target.pointerWidth
+    if code == 21:
+        return target.pointerWidth
+    if code == 22:
+        return target.pointerWidth
+    if code == 23:
+        return target.pointerWidth
+    return -1
+
+; 字节宽度：类别码取自类型池；下标越界或聚合类别答 -1。
+byteWidthOf|func(target: TargetProfile, pool: IrTypePool, typeId: I32,) -> (I32,):
+    if typeId < 0 || typeId >= irTypeCount(pool):
+        return -1
+    return kindByteWidth(target = target, code = irTypeTag(irTypeAt(pool = pool, id = typeId).kind))
+
+; 对齐：标量取自身宽度但不超指针对齐；聚合按槽对齐，未知答 -1。
+alignOf|func(target: TargetProfile, pool: IrTypePool, typeId: I32,) -> (I32,):
+    if typeId < 0 || typeId >= irTypeCount(pool):
+        return -1
+    let code = irTypeTag(irTypeAt(pool = pool, id = typeId).kind)
+    let width = kindByteWidth(target = target, code = code)
+    if width < 0:
+        return target.slotAlign
+    if width > target.pointerAlign:
+        return target.pointerAlign
+    return width
+
+; 聚合字节数：槽数乘槽宽；槽数非负才成立，-1 说明该类别没有约定槽位。
+slotBytesOf|func(target: TargetProfile, slots: I32,) -> (I32,):
+    if slots < 0:
+        return -1
+    return slots * target.slotWidth
