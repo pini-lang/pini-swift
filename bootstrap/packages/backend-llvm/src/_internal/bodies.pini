@@ -21,6 +21,8 @@ families: Array<I32> = []
 declared: Array<I32> = []
 strings: StringPool = StringPool()
 externs: ExternUse = ExternUse()
+builtins: Array<BuiltinEntry> = []
+pointerBytes: I32 = 8
 
 ; 表达式结果：上下文与值串；值串只给操作数，类型由所在指令给。
 (ExprOut)
@@ -38,6 +40,11 @@ slotName|func(slot: I32,) -> (String,):
 ; 标签名：前缀加编号，前缀只作可读性，不参与判等。
 labelName|func(prefix: String, index: I32,) -> (String,):
     return prefix + countText(index)
+
+; 装箱台：函数入口的一块固定缓冲，追加元素时把值存进去再交地址。
+; 它必须留在入口：放在循环体里会按次长栈，追加正是循环里最常见的一步。
+boxName|func() -> (String,):
+    return "%ebox"
 
 ; 记缺口：去重后追加；同一类别码只留一条，行数不随节点数膨胀。
 addGap|func(ctx: BodyCtx, gap: String,) -> (BodyCtx,):
@@ -73,12 +80,25 @@ nodeGap|func(ctx: BodyCtx, kind: I32,) -> (String,):
 
 ; 节点类型是否为浮点：二元与一元据此换指令族。
 isFloatNode|func(module: IrModule, nodeId: I32,) -> (Bool,):
+    return typeTagOf(module = module, nodeId = nodeId) == 6
+
+; 节点类型的类别码：容器分派与内建查表都按它判，取不到答负一。
+typeTagOf|func(module: IrModule, nodeId: I32,) -> (I32,):
     if nodeId < 0 || nodeId >= irNodeCount(module.nodes):
-        return false
-    let typeId = irNodeAt(pool = module.nodes, id = nodeId).typeId
+        return -1
+    return typeTagAt(module = module, typeId = irNodeAt(pool = module.nodes, id = nodeId).typeId)
+
+; 类型下标的类别码：越界答负一；装箱报缺口时也用它点名。
+typeTagAt|func(module: IrModule, typeId: I32,) -> (I32,):
     if typeId < 0 || typeId >= irTypeCount(module.types):
-        return false
-    return irTypeTag(irTypeAt(pool = module.types, id = typeId).kind) == 6
+        return -1
+    return irTypeTag(irTypeAt(pool = module.types, id = typeId).kind)
+
+; 调用接收者类别：首个实参即接收者；无实参答负一，命不中任何内建行。
+receiverTagOf|func(module: IrModule, node: IrNode,) -> (I32,):
+    if len(node.kids) == 0:
+        return -1
+    return typeTagOf(module = module, nodeId = node.kids[0])
 
 ; 二元指令：整数一套，浮点一套；min/max 走比较加选择，其余直出。
 binaryOpText|func(op: I32, isFloat: Bool,) -> (String,):
@@ -221,6 +241,9 @@ emitExpr|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
         return out
     if node.kind == 8:
         let callee = textAt(module = module, id = node.text)
+        let row = builtinLookup(table = out.ctx.builtins, name = callee, receiver = receiverTagOf(module = module, node = node))
+        if len(row.symbol) > 0:
+            return emitBuiltinCall(out = out, module = module, node = node, row = row)
         var symbol = mangleName(name = callee)
         if findIrFunctionIndex(module = module, name = callee) < 0:
             if len(externSignature(name = callee)) == 0:
@@ -260,8 +283,96 @@ emitExpr|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
         out.ctx = emitAssert(ctx = out.ctx, module = module, node = node)
         out.text = ""
         return out
+    if node.kind == 18:
+        return emitArrayLiteral(out = out, module = module, node = node)
+    if node.kind == 22:
+        if len(node.kids) == 0:
+            out.ctx = addGap(ctx = out.ctx, gap = "长度缺实参")
+            return out
+        let tag = typeTagOf(module = module, nodeId = node.kids[0])
+        let row = builtinLookup(table = out.ctx.builtins, name = "len", receiver = tag)
+        if len(row.symbol) == 0:
+            out.ctx = addGap(ctx = out.ctx, gap = "长度不支持 类别码 " + countText(tag))
+            return out
+        return emitHandleCount(ctx = out.ctx, module = module, argId = node.kids[0], symbol = row.symbol)
     out.ctx = addGap(ctx = out.ctx, gap = nodeGap(ctx = out.ctx, kind = node.kind))
     return out
+
+; 内建调用：符号与搬参法都来自表，本函数只按形状码补指令。
+emitBuiltinCall|func(out: ExprOut, module: IrModule, node: IrNode, row: BuiltinEntry,) -> (ExprOut,):
+    var done = out
+    if row.shape == shapeHandleCount() && len(node.kids) == 1:
+        return emitHandleCount(ctx = done.ctx, module = module, argId = node.kids[0], symbol = row.symbol)
+    if row.shape == shapeElementAppend() && len(node.kids) == 2:
+        let receiver = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[0])
+        return emitElementAppend(ctx = receiver.ctx, module = module, receiverText = receiver.text, valueId = node.kids[1], symbol = row.symbol)
+    done.ctx = addGap(ctx = done.ctx, gap = "内建形状 " + row.name + " " + countText(row.shape))
+    return done
+
+; 句柄计数：一个句柄进、i32 出；句柄在本层一律是 ptr，容器与串同一条指令。
+emitHandleCount|func(ctx: BodyCtx, module: IrModule, argId: I32, symbol: String,) -> (ExprOut,):
+    var out = ExprOut()
+    let arg = emitExpr(ctx = ctx, module = module, nodeId = argId)
+    out.ctx = arg.ctx
+    useExtern(use = out.ctx.externs, name = symbol)
+    let id = out.ctx.temp
+    out.ctx.temp = id + 1
+    let name = tempName(index = id)
+    appendLine(sink = out.ctx.lines, text = "  " + name + " = call i32 @" + symbol + "(ptr " + arg.text + ")")
+    out.text = name
+    return out
+
+; 元素追加：值先落装箱台，再连同宽度与标签交给运行时；新句柄是返回值，旧句柄不保证原地变。
+; 接收者按值串传入，字面量接管新建的句柄时不必再造一个节点。
+emitElementAppend|func(ctx: BodyCtx, module: IrModule, receiverText: String, valueId: I32, symbol: String,) -> (ExprOut,):
+    var out = ExprOut()
+    out.ctx = ctx
+    let valueType = irNodeAt(pool = module.nodes, id = valueId).typeId
+    let width = elementWidth(pool = module.types, typeId = valueType, pointerBytes = ctx.pointerBytes)
+    let tag = elementTag(pool = module.types, typeId = valueType)
+    if width == 0 || tag < 0:
+        out.ctx = addGap(ctx = out.ctx, gap = "元素装箱 类别码 " + countText(typeTagAt(module = module, typeId = valueType)))
+        return out
+    let value = emitExpr(ctx = out.ctx, module = module, nodeId = valueId)
+    out.ctx = value.ctx
+    let valueTypeName = llvmTypeName(pool = module.types, typeId = valueType)
+    appendLine(sink = out.ctx.lines, text = "  store " + valueTypeName + " " + value.text + ", ptr " + boxName() + ", align " + countText(width))
+    useExtern(use = out.ctx.externs, name = symbol)
+    let id = out.ctx.temp
+    out.ctx.temp = id + 1
+    let name = tempName(index = id)
+    let args = "ptr " + receiverText + ", ptr " + boxName() + ", i32 " + countText(width) + ", i32 " + countText(tag)
+    appendLine(sink = out.ctx.lines, text = "  " + name + " = call ptr @" + symbol + "(" + args + ")")
+    out.text = name
+    return out
+
+; 数组字面量：先建空句柄，再逐元素追加；元素类型取自数组类型的首分量。
+emitArrayLiteral|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut,):
+    var done = out
+    var elementType = -1
+    if node.typeId >= 0 && node.typeId < irTypeCount(module.types):
+        let kids = irTypeAt(pool = module.types, id = node.typeId).kids
+        if len(kids) > 0:
+            elementType = kids[0]
+    let width = elementWidth(pool = module.types, typeId = elementType, pointerBytes = done.ctx.pointerBytes)
+    if width == 0:
+        done.ctx = addGap(ctx = done.ctx, gap = "数组元素装箱 类别码 " + countText(typeTagAt(module = module, typeId = elementType)))
+        return done
+    useExtern(use = done.ctx.externs, name = "bk_array_create")
+    let at = done.ctx.temp
+    done.ctx.temp = at + 1
+    let head = tempName(index = at)
+    appendLine(sink = done.ctx.lines, text = "  " + head + " = call ptr @bk_array_create(i32 0)")
+    done.text = head
+    var i = 0
+    while i < len(node.kids):
+        let one = emitElementAppend(ctx = done.ctx, module = module, receiverText = done.text, valueId = node.kids[i], symbol = "bk_array_append")
+        done.ctx = one.ctx
+        if len(one.text) == 0:
+            return done
+        done.text = one.text
+        i = i + 1
+    return done
 
 ; 打印一组实参：整行由锁连成一段，逐参展示后补行终止符；多参之间一个空格。
 ; 锁与格式串的开销只在这一处登记，调用点不再各记一遍。

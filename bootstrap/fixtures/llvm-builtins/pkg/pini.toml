@@ -1,0 +1,6 @@
+[package]
+name = "grow"
+
+[lib]
+name = "grow"
+entry = "src/api/main.pini"

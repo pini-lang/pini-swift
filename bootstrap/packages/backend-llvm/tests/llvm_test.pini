@@ -62,7 +62,7 @@ _backend_kit = "../../backend-kit"
 族未声明|test() -> ():
     var module = 发射造模块()
     var pool = module.nodes
-    var list = irMakeNode(kind = tagOfName(name = "arrayLiteral"), typeId = 0)
+    var list = irMakeNode(kind = tagOfName(name = "subscriptGet"), typeId = 0)
     let placed = irAppendNode(pool = pool, node = list)
     module.nodes = placed.pool
     module.functions[0].body = [placed.id]
@@ -163,4 +163,86 @@ _backend_kit = "../../backend-kit"
     let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
     assert(含子串(text = result.text, needle = "@.str0 = private global [20 x i8] c\"\\00\\00\\00\\00\\03\\00\\00\\00\\03\\00\\00\\00\\01\\00\\00\\00\\E5\\80\\BC\\00\", align 16"), "常量应按头加载荷出字节")
     assert(含子串(text = result.text, needle = "getelementptr [20 x i8], ptr @.str0, i32 0, i32 16"), "取串应跳过十六字节头")
+    return
+
+; 容器模块的类型池：i32 与 Array<I32>；数组类型的首分量就是元素类型。
+发射造容器类型池|func() -> (IrTypePool,):
+    var pool = IrTypePool()
+    let intType = irScalarTypeOfCode(pool = pool, code = 1, name = "i32")
+    let arrayType = irWrapTypeOfCode(pool = intType.pool, code = 12, name = "", inner = intType.id)
+    return arrayType.pool
+
+; 容器模块：空字面量建句柄、追加一个元素并写回、打印长度，末尾返回。
+; 槽位零用于数组变量；追加是命名调用，名字登记在文本池首格。
+发射造容器模块|func() -> (IrModule,):
+    var module = IrModule()
+    module.types = 发射造容器类型池()
+    module.texts = module.texts.append("Array.append")
+    var nodes = IrNodePool()
+    var literal = irMakeNode(kind = tagOfName(name = "arrayLiteral"), typeId = 1)
+    let placedLiteral = irAppendNode(pool = nodes, node = literal)
+    nodes = placedLiteral.pool
+    var alloc = irMakeNode(kind = tagOfName(name = "allocVar"), typeId = 1)
+    alloc.intValue = 0
+    alloc.kids = [placedLiteral.id]
+    let placedAlloc = irAppendNode(pool = nodes, node = alloc)
+    nodes = placedAlloc.pool
+    var reading = irMakeNode(kind = tagOfName(name = "load"), typeId = 1)
+    reading.intValue = 0
+    let placedReading = irAppendNode(pool = nodes, node = reading)
+    nodes = placedReading.pool
+    var seven = irMakeNode(kind = tagOfName(name = "intConst"), typeId = 0)
+    seven.intValue = 7
+    let placedSeven = irAppendNode(pool = nodes, node = seven)
+    nodes = placedSeven.pool
+    var appended = irMakeNode(kind = tagOfName(name = "call"), typeId = 1)
+    appended.text = 0
+    appended.kids = [placedReading.id, placedSeven.id]
+    let placedAppend = irAppendNode(pool = nodes, node = appended)
+    nodes = placedAppend.pool
+    var stored = irMakeNode(kind = tagOfName(name = "storeVar"), typeId = 1)
+    stored.intValue = 0
+    stored.kids = [placedAppend.id]
+    let placedStore = irAppendNode(pool = nodes, node = stored)
+    nodes = placedStore.pool
+    var reloaded = irMakeNode(kind = tagOfName(name = "load"), typeId = 1)
+    reloaded.intValue = 0
+    let placedReloaded = irAppendNode(pool = nodes, node = reloaded)
+    nodes = placedReloaded.pool
+    var counted = irMakeNode(kind = tagOfName(name = "lenCall"), typeId = 0)
+    counted.kids = [placedReloaded.id]
+    let placedCount = irAppendNode(pool = nodes, node = counted)
+    nodes = placedCount.pool
+    var printed = irMakeNode(kind = tagOfName(name = "printCall"), typeId = -1)
+    printed.kids = [placedCount.id]
+    let placedPrintCall = irAppendNode(pool = nodes, node = printed)
+    nodes = placedPrintCall.pool
+    var printStmt = irMakeNode(kind = tagOfName(name = "exprStmt"), typeId = -1)
+    printStmt.kids = [placedPrintCall.id]
+    let placedPrint = irAppendNode(pool = nodes, node = printStmt)
+    nodes = placedPrint.pool
+    var back = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    let placedBack = irAppendNode(pool = nodes, node = back)
+    nodes = placedBack.pool
+    module.nodes = nodes
+    var fn = IrFunction()
+    fn.name = "main"
+    fn.returnType = -1
+    fn.body = [placedAlloc.id, placedStore.id, placedPrint.id, placedBack.id]
+    module.functions = module.functions.append(fn)
+    return module
+
+; 容器长度与追加：字面量先建空句柄，追加按元素宽度与标签装箱，长度按接收者类别选符号。
+容器长度与追加|test() -> ():
+    let module = 发射造容器模块()
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    if result.failed:
+        assert(false, "缺口：" + result.gaps[0])
+    assert(含子串(text = result.text, needle = "%t0 = call ptr @bk_array_create(i32 0)"), "空字面量应建零长句柄")
+    assert(含子串(text = result.text, needle = "store i32 7, ptr %ebox, align 4"), "元素应先落装箱台")
+    assert(含子串(text = result.text, needle = "call ptr @bk_array_append(ptr %t1, ptr %ebox, i32 4, i32 0)"), "追加应带宽度与标签")
+    assert(含子串(text = result.text, needle = "call i32 @bk_array_len(ptr %t3)"), "数组长度应走数组族符号")
+    assert(含子串(text = result.text, needle = "declare ptr @bk_array_append(ptr, ptr, i32, i32)"), "追加符号应出声明")
+    assert(含子串(text = result.text, needle = "declare i32 @bk_array_len(ptr)"), "长度符号应出声明")
+    assert(含子串(text = result.text, needle = "%ebox = alloca [8 x i8], align 8"), "装箱台应在函数入口分配")
     return
