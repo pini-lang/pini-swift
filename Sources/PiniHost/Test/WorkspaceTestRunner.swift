@@ -140,6 +140,11 @@ public enum WorkspaceTestRunner {
                 let suite = WorkspaceTestSuite(
                     packageName: package.name, targetName: target.name,
                     packageRoot: package.rootPath)
+                let progress = ProcessInfo.processInfo.environment["PINI_TEST_PROGRESS"] == "1"
+                let startedAt = Date()
+                if progress {
+                    FileHandle.standardError.write(Data("· \(package.name)/\(target.name)\n".utf8))
+                }
                 let loaded = try WorkspaceBuilder.load(package: package, target: target)
                 let analyzer = SemanticAnalyzer()
                 try analyzer.analyze(package: loaded.package)
@@ -149,8 +154,7 @@ public enum WorkspaceTestRunner {
                 let runner = ProgramRunner(
                     ffiConfig: package.manifest.ffi ?? .default,
                     programBase: package.rootPath)
-                let lowered = try runner.lowerTests(package: loaded.package)
-                // 声明数与收集数必须相等：注册在解析或降载里被静默丢掉时，少跑不得当成少写。
+                let lowered = try runner.lowerTests(package: loaded.package)                // 声明数与收集数必须相等：注册在解析或降载里被静默丢掉时，少跑不得当成少写。
                 let declaredTests = declaredTestCount(in: loaded.package)
                 let collected = lowered.functions.filter(\.isTest).count
                 if declaredTests != collected {
@@ -168,6 +172,11 @@ public enum WorkspaceTestRunner {
                 let fullySkipped = !names.isEmpty && selected.isEmpty
                 let outcomes = try runner.runLoweredTests(
                     lowered, nameFilter: filter, nameSkip: skip)
+                if progress {
+                    let cost = String(format: "%.1fs", Date().timeIntervalSince(startedAt))
+                    FileHandle.standardError.write(
+                        Data("  \(package.name)/\(target.name) \(outcomes.count) 条 \(cost)\n".utf8))
+                }
                 if outcomes.isEmpty {
                     // 筛选未命中的 target 不进报告（与筛选单独生效时的呈现一致）；
                     // 只有跳过名单把它排空时才留下一条说明，空结果不得冒充「没有测试」。

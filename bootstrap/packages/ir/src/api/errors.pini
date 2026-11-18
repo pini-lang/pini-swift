@@ -47,6 +47,37 @@ lowerErrorCode|func(_kind: LowerErrorKind,) -> (String,):
             return "E6-011"
     return "E6-004"
 
+; 类别码：跨包只认码；序与枚举项序一致，从 1 起。
+lowerErrorKindCode|func(_kind: LowerErrorKind,) -> (I32,):
+    match _kind:
+        case lowerUnsupportedType:
+            return 1
+        case lowerUnsupportedExpr:
+            return 2
+        case lowerUnsupportedStmt:
+            return 3
+        case lowerMissingCapability:
+            return 4
+        case lowerStructural:
+            return 5
+    return 4
+
+; 码到类别：夹具与工具按码造错误，未登记按能力缺口兜底。
+lowerErrorKindOf|func(code: I32,) -> (LowerErrorKind,):
+    if code == 1:
+        return .lowerUnsupportedType
+    if code == 2:
+        return .lowerUnsupportedExpr
+    if code == 3:
+        return .lowerUnsupportedStmt
+    if code == 5:
+        return .lowerStructural
+    return .lowerMissingCapability
+
+; 按码造一条：跨包夹具用这条，避免引用枚举项。
+makeLowerErrorOfCode|func(code: I32, file: String, offset: I32, detail: String,) -> (LowerError,):
+    return makeLowerError(kind = lowerErrorKindOf(code = code), file = file, offset = offset, detail = detail)
+
 ; 造一条：字段直填；偏移为负表示与源码位置无关的池级错误。
 makeLowerError|func(kind: LowerErrorKind, file: String, offset: I32, detail: String,) -> (LowerError,):
     var out = LowerError()

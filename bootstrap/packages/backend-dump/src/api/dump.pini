@@ -1,0 +1,216 @@
+[dump|import]
+_semantics = "../../../semantics"
+_ir = "../../../ir"
+_backend_kit = "../../../backend-kit"
+
+; 结构转储后端：只读模块，逐行转储类型、声明、槽表、函数体与份额动作。
+; 它不发射可执行码；价值是接缝的验收器械：模块少一样东西，这里当场缺一行。
+; 输出按池序与函数序，不按名字排序；同一模块两遍转储逐字节相同。
+
+; 缩进：两空格一级，深度非负。
+indentOf|func(depth: I32,) -> (String,):
+    var out = ""
+    var i = 0
+    while i < depth:
+        out = out + "  "
+        i = i + 1
+    return out
+
+; 布尔拼写：转储行里只出现 true / false。
+boolText|func(value: Bool,) -> (String,):
+    if value:
+        return "true"
+    return "false"
+
+; 槽类型拼写：槽位不吃类型时留 -1，印短横；其余照类型池拼。
+slotTypeText|func(module: IrModule, typeId: I32,) -> (String,):
+    if typeId < 0:
+        return "-"
+    return irTypeText(pool = module.types, id = typeId)
+
+; 区间拼写：用于载荷表与参数表，空表答 ()。
+idListText|func(module: IrModule, ids: Array<I32>,) -> (String,):
+    var out = "("
+    var i = 0
+    while i < len(ids):
+        if i > 0:
+            out = out + ", "
+        out = out + irTypeText(pool = module.types, id = ids[i])
+        i = i + 1
+    return out + ")"
+
+; 类型池：逐条印类别码与拼写；拼写已含分量，类别码供与契约表对照。
+dumpTypes|func(module: IrModule,) -> (Array<String>,):
+    var lines: Array<String> = []
+    lines = lines.append("types")
+    var i = 0
+    while i < irTypeCount(module.types):
+        let entry = irTypeAt(pool = module.types, id = i)
+        lines = lines.append("  type " + countText(i) + " kind=" + countText(irTypeTag(entry.kind)) + " " + irTypeText(pool = module.types, id = i))
+        i = i + 1
+    return lines
+
+; 声明表：种类与名字之后跟两张子表；字段序即槽位，用例序即标签。
+dumpDecls|func(module: IrModule,) -> (Array<String>,):
+    var lines: Array<String> = []
+    lines = lines.append("decls")
+    var i = 0
+    while i < declCount(table = module.decls):
+        let row = module.decls.entries[i]
+        lines = lines.append("  decl " + countText(row.typeId) + " " + irDeclKindName(code = irDeclKindCode(row.kind)) + " " + row.name + " fields=" + countText(len(row.fields)) + " cases=" + countText(len(row.cases)))
+        var f = 0
+        while f < len(row.fields):
+            lines = lines.append("    field " + countText(f) + " " + row.fields[f].name + " type=" + irTypeText(pool = module.types, id = row.fields[f].typeId))
+            f = f + 1
+        var c = 0
+        while c < len(row.cases):
+            lines = lines.append("    case " + countText(c) + " " + row.cases[c].name + " tag=" + countText(row.cases[c].tag) + " payload=" + idListText(module = module, ids = row.cases[c].payload))
+            c = c + 1
+        i = i + 1
+    return lines
+
+; 槽表：表头两个常量先出，再逐类型印槽与用例载荷；载荷窗口类型留 -1 表示逐用例看。
+dumpSlots|func(module: IrModule,) -> (Array<String>,):
+    var lines: Array<String> = []
+    lines = lines.append("slots headSlots=" + countText(module.slots.headSlots) + " payloadBase=" + countText(module.slots.payloadBase))
+    var i = 0
+    while i < slotRowCount(table = module.slots):
+        let row = module.slots.entries[i]
+        lines = lines.append("  slotrow " + countText(row.typeId) + " shape=" + countText(row.shapeCode) + " slots=" + countText(row.slotCount))
+        var s = 0
+        while s < len(row.slots):
+            lines = lines.append("    slot " + countText(row.slots[s].index) + " role=" + irSlotRoleName(code = irSlotRoleCode(row.slots[s].role)) + " name=" + row.slots[s].name + " type=" + slotTypeText(module = module, typeId = row.slots[s].typeId))
+            s = s + 1
+        var c = 0
+        while c < len(row.cases):
+            lines = lines.append("    case " + row.cases[c].name + " payload=" + idListText(module = module, ids = row.cases[c].payload))
+            c = c + 1
+        i = i + 1
+    return lines
+
+; 单节点：先印本行，再递归子节点；语句体的子节点继续按语句印，其余按表达式印。
+; 位置只查语句：表达式共用所在语句的偏移，逐节点查位置会把线扫放大一个数量级。
+dumpNode|func(module: IrModule, nodeId: I32, depth: I32, names: Array<String>, positions: Array<IrPosition>, outer: I32,) -> (Array<String>,):
+    var lines: Array<String> = []
+    if nodeId < 0 || nodeId >= irNodeCount(module.nodes):
+        return lines.append(indentOf(depth = depth) + "? 悬空节点 " + countText(nodeId))
+    let node = irNodeAt(pool = module.nodes, id = nodeId)
+    let isStmt = irIsStmtTag(node.kind)
+    var offset = outer
+    if isStmt:
+        let here = positionOf(positions = positions, node = nodeId)
+        if here >= 0:
+            offset = here
+    var name = ""
+    if node.kind >= 0 && node.kind < len(names):
+        name = names[node.kind]
+    var label = "expr"
+    if isStmt:
+        label = "stmt"
+    var line = indentOf(depth = depth) + label + " " + countText(nodeId)
+    line = line + " @" + countText(offset)
+    line = line + " kind=" + name
+    line = line + " type=" + irTypeText(pool = module.types, id = node.typeId)
+    line = line + " op=" + countText(node.op)
+    line = line + " text=" + textAt(module = module, id = node.text)
+    line = line + " kids=" + countText(len(node.kids))
+    line = line + " tail=" + countText(node.tail)
+    if isStmt:
+        line = line + " adopt=" + irAdoptName(code = node.adopt)
+        line = line + " releaseOld=" + boolText(value = node.releaseOld)
+    lines = lines.append(line)
+    var k = 0
+    while k < len(node.kids):
+        let sub = dumpNode(module = module, nodeId = node.kids[k], depth = depth + 1, names = names, positions = positions, outer = offset)
+        var s = 0
+        while s < len(sub):
+            lines = lines.append(sub[s])
+            s = s + 1
+        k = k + 1
+    return lines
+
+; 函数：签名、位置数与体规模先一行，参数逐条，语句体按源序递归。
+dumpFunctions|func(module: IrModule, names: Array<String>,) -> (Array<String>,):
+    var lines: Array<String> = []
+    lines = lines.append("functions")
+    var i = 0
+    while i < len(module.functions):
+        let fn = module.functions[i]
+        var line = "  func " + countText(i) + " " + fn.name
+        line = line + " params=" + countText(len(fn.params))
+        line = line + " ret=" + irTypeText(pool = module.types, id = fn.returnType)
+        line = line + " body=" + countText(len(fn.body))
+        line = line + " positions=" + countText(len(fn.positions))
+        line = line + " test=" + boolText(value = fn.isTest)
+        line = line + " async=" + boolText(value = fn.isAsync)
+        if len(fn.body) == 0:
+            line = line + " empty=true"
+        line = line + " file=" + fn.sourceFile
+        lines = lines.append(line)
+        var p = 0
+        while p < len(fn.params):
+            lines = lines.append("    param " + countText(p) + " " + fn.params[p].name + " type=" + irTypeText(pool = module.types, id = fn.params[p].typeId) + " slot=" + countText(fn.params[p].slot) + " using=" + boolText(value = fn.params[p].isUsing))
+            p = p + 1
+        var b = 0
+        while b < len(fn.body):
+            let sub = dumpNode(module = module, nodeId = fn.body[b], depth = 2, names = names, positions = fn.positions, outer = -1)
+            var s = 0
+            while s < len(sub):
+                lines = lines.append(sub[s])
+                s = s + 1
+            b = b + 1
+        i = i + 1
+    return lines
+
+; 错误表：函数级缺口与类型缺口分两节；码表与诊断同源，细节照抄，不改写。
+dumpErrors|func(module: IrModule,) -> (Array<String>,):
+    var lines: Array<String> = []
+    lines = lines.append("errors")
+    var i = 0
+    while i < len(module.errors):
+        let one = module.errors[i]
+        lines = lines.append("  error " + lowerErrorCode(one.kind) + " " + one.file + ":" + countText(one.offset) + " " + one.detail)
+        i = i + 1
+    i = 0
+    while i < len(module.typeErrors):
+        let one = module.typeErrors[i]
+        lines = lines.append("  typeError " + lowerErrorCode(one.kind) + " " + one.detail)
+        i = i + 1
+    return lines
+
+; 入口：按固定节序组装；两次调用得到同一串文本，末尾恒有一个换行。
+dumpModule|func(module: IrModule,) -> (EmitResult,):
+    var lines: Array<String> = []
+    lines = lines.append("module functions=" + countText(len(module.functions)) + " nodes=" + countText(irNodeCount(module.nodes)) + " types=" + countText(irTypeCount(module.types)) + " decls=" + countText(declCount(table = module.decls)) + " slots=" + countText(slotRowCount(table = module.slots)) + " errors=" + countText(len(module.errors)))
+    let target = defaultTarget()
+    lines = lines.append("target name=" + target.name + " pointer=" + countText(target.pointerWidth) + " slot=" + countText(target.slotWidth))
+    let 类型行 = dumpTypes(module = module)
+    var 类型行i = 0
+    while 类型行i < len(类型行):
+        lines = lines.append(类型行[类型行i])
+        类型行i = 类型行i + 1
+    let 声明行 = dumpDecls(module = module)
+    var 声明行i = 0
+    while 声明行i < len(声明行):
+        lines = lines.append(声明行[声明行i])
+        声明行i = 声明行i + 1
+    let 槽行 = dumpSlots(module = module)
+    var 槽行i = 0
+    while 槽行i < len(槽行):
+        lines = lines.append(槽行[槽行i])
+        槽行i = 槽行i + 1
+    let 函数行 = dumpFunctions(module = module, names = irTagNames())
+    var 函数行i = 0
+    while 函数行i < len(函数行):
+        lines = lines.append(函数行[函数行i])
+        函数行i = 函数行i + 1
+    let 错误行 = dumpErrors(module = module)
+    var 错误行i = 0
+    while 错误行i < len(错误行):
+        lines = lines.append(错误行[错误行i])
+        错误行i = 错误行i + 1
+    var result = EmitResult()
+    result.text = lines.join("\n") + "\n"
+    result.lines = len(lines)
+    result.detail = "dump"
+    return result

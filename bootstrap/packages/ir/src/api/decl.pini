@@ -54,6 +54,16 @@ irDeclKindOf|func(shapeCode: I32,) -> (IrDeclKind,):
         return .irDeclObject
     return .irDeclEnum
 
+; 类别名：转储按码印名，未登记答空串；跨包只认码，不认枚举项。
+irDeclKindName|func(code: I32,) -> (String,):
+    if code == 1:
+        return "struct"
+    if code == 2:
+        return "object"
+    if code == 3:
+        return "enum"
+    return ""
+
 ; 声明是否带字段表：结构、对象两类。
 isFieldDeclKind|func(kind: IrDeclKind,) -> (Bool,):
     let code = irDeclKindCode(kind)

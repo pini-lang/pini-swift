@@ -9,6 +9,8 @@ diagnostics = "*"
 module_loader = "*"
 semantics = "*"
 ir = "*"
+backend_kit = "*"
+backend_dump = "*"
 
 [[bin]]
 name = "pini-bootstrap"

@@ -76,6 +76,34 @@ irSlotRoleCode|func(_role: IrSlotRole,) -> (I32,):
             return 12
     return 0
 
+; 角色名：转储按码印名；跨包只认码，不认枚举项。
+irSlotRoleName|func(code: I32,) -> (String,):
+    if code == 1:
+        return "strongCount"
+    if code == 2:
+        return "weakCount"
+    if code == 3:
+        return "typeIdentity"
+    if code == 4:
+        return "weakTable"
+    if code == 5:
+        return "field"
+    if code == 6:
+        return "caseTag"
+    if code == 7:
+        return "payload"
+    if code == 8:
+        return "resultTag"
+    if code == 9:
+        return "resultOk"
+    if code == 10:
+        return "resultError"
+    if code == 11:
+        return "optionalTag"
+    if code == 12:
+        return "optionalPayload"
+    return "?"
+
 ; 编码到角色：语义侧给了 1 到 12 的码，未登记按字段槽兜底（校验面会另行报错）。
 irSlotRoleOf|func(code: I32,) -> (IrSlotRole,):
     if code == 1:

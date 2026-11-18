@@ -1,0 +1,15 @@
+[package]
+name = "backend_dump"
+
+[require]
+semantics = "*"
+ir = "*"
+backend_kit = "*"
+
+[lib]
+name = "backend-dump"
+entry = "src/api/dump.pini"
+
+[[test]]
+name = "backend-dump-tests"
+entry = "tests"
