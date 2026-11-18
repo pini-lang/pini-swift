@@ -157,6 +157,10 @@ public enum IRPrinter {
         case .enumConstruct(_, let caseName, _, let payloads, _, _):
             let items = payloads.map(exprText).joined(separator: ", ")
             return "\(caseName)(\(items))"
+        case .enumTagGet(let value):
+            return "#tag(\(exprText(value)))"
+        case .enumPayloadGet(let value, let caseName, let index, let type):
+            return "#payload(\(caseName).\(index))(\(exprText(value)))@\(type.llvmSpelling)"
         case .dictLiteral(let entries, _):
             let items = entries.map { "\(exprText($0.key)) = \(exprText($0.value))" }.joined(separator: ", ")
             return "[\(items)]"

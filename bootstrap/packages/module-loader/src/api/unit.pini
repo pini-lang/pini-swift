@@ -8,6 +8,7 @@ _diagnostics = "../../../diagnostics"
 path: String = ""
 text: String = ""
 bytes: Array<U8> = []
+segments: Array<Segment> = []
 ast: Ast = Ast()
 diagnostics: Array<Diagnostic> = []
 issues: Array<LexIssue> = []
@@ -64,6 +65,7 @@ loadUnit|func(path: String, text: String,) -> (UnitLoad,):
     unit.path = path
     unit.text = normalized
     unit.bytes = tempUtf8Bytes(normalized)
+    unit.segments = parsed.segments
     unit.ast = parsed.ast
     unit.diagnostics = parsed.diagnostics
     unit.issues = parsed.issues

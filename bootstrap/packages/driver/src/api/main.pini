@@ -62,6 +62,7 @@ main|func() -> ():
         print("types-ok", typedExprCount(table = 填.types))
         print("lower-ok", len(module.functions), len(module.errors), emptyBodyCount(module = module), len(module.typeErrors))
         printGapSummary(module = module)
+        printTypeErrors(module = module)
         return
     let plan = planWorkspace(root)
     if plan.isOK() && plan.packageCount() == 10:
@@ -79,6 +80,14 @@ reasonIndex|func(reasons: Array<String>, text: String,) -> (I32,):
             return i
         i = i + 1
     return -1
+
+; 类型缺口：建映射表时就判掉的类型，不绑函数，逐条打出，供能力表对照。
+printTypeErrors|func(module: IrModule,) -> ():
+    var i = 0
+    while i < len(module.typeErrors):
+        let one = module.typeErrors[i]
+        print("类型缺口", lowerErrorName(one.kind), one.detail)
+        i = i + 1
 
 printGapSummary|func(module: IrModule,) -> ():
     var reasons: Array<String> = []

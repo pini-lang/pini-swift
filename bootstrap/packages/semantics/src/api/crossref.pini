@@ -49,11 +49,24 @@ symbols: Array<Symbol> = []
 found: Bool = false
 symbol: Symbol = Symbol()
 
+; 前缀判定：逐字符比，避免依赖标准库成员；只用于导入路径。
+pathStartsWith|func(text: String, prefix: String,) -> (Bool,):
+    let left = chars(text)
+    let right = chars(prefix)
+    if len(left) < len(right):
+        return false
+    var i = 0
+    while i < len(right):
+        if ord(left[i]) != ord(right[i]):
+            return false
+        i = i + 1
+    return true
+
 ; 测试单元：路径落在所属包的某个测试根之下；测试助手只在包内可见，不进公开面。
 isTestUnit|func(group: PackageUnits, path: String,) -> (Bool,):
     var i = 0
     while i < len(group.testRoots):
-        if path.startsWith(group.rootPath + "/" + group.testRoots[i] + "/"):
+        if pathStartsWith(text = path, prefix = group.rootPath + "/" + group.testRoots[i] + "/"):
             return true
         i = i + 1
     return false

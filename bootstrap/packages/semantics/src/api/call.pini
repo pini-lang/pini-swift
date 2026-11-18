@@ -280,7 +280,9 @@ declParams|func(world: MemberWorld, ref: DeclRef,) -> (Array<CallParam>,):
             param.name = name
             param.hasDefault = len(node.kids) > 0
             param.isUsing = node.isUsing
-            param.takesLabel = !(len(name) > 0 && name.slice(0, 1) == "_")
+            param.takesLabel = true
+            if len(name) > 0 && name.indexOf("_") == 0:
+                param.takesLabel = false
             param.typeId = world.types.typeOf(unit = ref.unit, decl = kid)
             out = out.append(param)
         i = i + 1

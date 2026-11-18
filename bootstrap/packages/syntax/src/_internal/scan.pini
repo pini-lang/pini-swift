@@ -438,7 +438,7 @@ scanString|func(_state: LexState,) -> (LexState,):
                     pos = total
                     break
                 if !dropping:
-                    segments = segments.append(makeSegment(kind = .segmentInterpolation, start = inner, end = close))
+                    segments = segments.append(makeCodeSegment(start = inner, end = close))
                     interpolated = true
                 pos = close + 1
                 segStart = pos
@@ -516,22 +516,24 @@ interpolationEnd|func(bytes: Array<U8>, start: I32,) -> (I32,):
                 i = i + 1
     return -1
 
-; 造段：区间是源内字节半开区间，不含定界符。
+; 造段：区间是源内字节半开区间，不含定界符；`code` 供不能比枚举的消费方判类别。
 makeSegment|func(kind: SegmentKind, start: I32, end: I32,) -> (Segment,):
     var out = Segment()
     out.kind = kind
+    out.code = 0
     out.start = start
     out.end = end
     return out
 
-; 段是否为字面内容：枚举相等比较不可用，按模式分派。
+; 造插值段：代码段与字面段只差类别码。
+makeCodeSegment|func(start: I32, end: I32,) -> (Segment,):
+    var out = makeSegment(kind = .segmentInterpolation, start = start, end = end)
+    out.code = 1
+    return out
+
+; 段是否为字面内容：按类别码判，不比枚举。
 isLiteralSegment|func(_seg: Segment,) -> (Bool,):
-    match _seg.kind:
-        case segmentLiteral:
-            return true
-        case segmentInterpolation:
-            return false
-    return false
+    return _seg.code == 0
 
 ; 运算符与定界符：先试三字节、再两字节、最后一字节；括号同步维护括号栈。
 scanPunctuation|func(_state: LexState,) -> (LexState,):

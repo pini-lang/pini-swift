@@ -14,6 +14,7 @@ segmentLength: I32 = 0
 ; 字符串段：字面段的范围含转义原文，插值段的范围是括号内的表达式，都不含两侧定界。
 (Segment)
 kind: SegmentKind = .segmentLiteral
+code: I32 = 0
 start: I32 = 0
 end: I32 = 0
 

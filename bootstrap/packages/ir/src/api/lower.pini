@@ -178,7 +178,7 @@ lowerWorkspace|func(input: LowerWorld,) -> (IrModule,):
     var u = 0
     while u < len(input.world.units):
         state.unitIndex = u
-        state.bytes = tempUtf8Bytes(input.world.units[u].text)
+        state.bytes = unitBytes(input.world.units[u])
         state = lowerUnit(state = state, unit = input.world.units[u])
         u = u + 1
     var out = IrModule()

@@ -6,6 +6,6 @@
 包 syntax / syntax-tests（91 个测试，91 通过）
 包 module_loader / module-loader-tests（14 个测试，14 通过）
 包 semantics / semantics-tests（345 个测试，345 通过）
-包 ir / ir-tests（25 个测试，25 通过）
+包 ir / ir-tests（28 个测试，28 通过）
 包 driver / driver-tests（16 个测试，16 通过）
-结果: 582 通过, 0 失败（用时）
+结果: 585 通过, 0 失败（用时）

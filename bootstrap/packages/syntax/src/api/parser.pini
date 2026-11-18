@@ -47,6 +47,7 @@ parseFileIn|func(language: KeywordLanguage, text: String, file: String,) -> (Par
     p.parseModule()
     var out = ParseResult()
     out.ast = p.ast
+    out.segments = lexed.segments
     out.diagnostics = p.diagnostics
     out.issues = lexed.issues
     return out
@@ -1253,18 +1254,16 @@ parseInterpolated|self(token: Token,) -> (I32,):
     var i = 0
     while i < token.segmentCount():
         let segment: Segment = self.segments[token.segmentBase + i]
-        var isCode = false
-        match segment.kind:
-            case segmentInterpolation:
-                isCode = true
-            case segmentLiteral:
-                isCode = false
-        if isCode:
+        if segment.code == 1:
             let inner: I32 = self.parseFragment(start = segment.start, end = segment.end)
             if inner >= 0:
                 kids = kids.append(inner)
         i = i + 1
     self.setExprKids(id = id, kids = kids)
+    var node = self.ast.exprs[id]
+    node.op = token.segmentBase
+    node.body = token.segmentCount()
+    self.ast.exprs[id] = node
     return id
 ; 片段解析：只把游标临时换到段内记号上，节点池与诊断共用；
 ; 段内记号本就用源内绝对偏移，故子节点跨度无需平移。

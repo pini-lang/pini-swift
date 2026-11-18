@@ -134,7 +134,7 @@ module: IrModule = IrModule()
     assert(stringLiteralText(bytes = tempUtf8Bytes("\"a\\0b\""), start = 0, end = 6) == "a", "内容终止符之后应丢弃")
     return
 
-; 带标注的声明：分配按标注定型，初值窄于标注时包一层转换。
+; 带标注的声明：分配按标注定型，字面量初值也按标注定型，不再多包一层转换。
 带标注声明|test() -> ():
     let src = "f|func() -> (I64,):\n    let n: I64 = 1\n    return n\n"
     let 样例 = 造样例(src)
@@ -145,8 +145,8 @@ module: IrModule = IrModule()
     assert(irTypeText(pool = 样例.module.types, id = 分配.typeId) == "i64", "分配类型应取标注")
     assert(len(分配.kids) == 1, "初值应有一个子节点")
     let 初值 = irNodeAt(pool = 样例.module.nodes, id = 分配.kids[0])
-    assert(初值.kind == irExprTag(.irUnary), "窄初值应包成转换节点")
-    assert(初值.op == irUnaryTag(.irCast), "转换节点应是显式转换")
+    assert(初值.kind == irExprTag(.irIntConst), "字面量初值应直接按标注定型")
+    assert(irTypeText(pool = 样例.module.types, id = 初值.typeId) == "i64", "初值类型应与标注一致")
     return
 
 ; 字符串与数组字面量：值驻留文本池，数组元素保序，空数组按标注定型。
@@ -218,12 +218,14 @@ module: IrModule = IrModule()
     assert(样例.module.errors[0].detail.indexOf("须写成 .甲") >= 0, "缺口应给出应写写法")
     return
 
-; 同名用例：两个枚举各有一个同名用例，前导点缺类型信息，报候选数而不是猜一个。
+; 同名用例：期望类型是甲，前导点按期望定型，不再靠唯一候选。
 同名用例|test() -> ():
     let src = "[甲]\nx\n\n[乙]\nx\n\nf|func() -> (甲,):\n    return .x\n"
     let 样例 = 造样例(src)
-    assert(len(样例.module.errors) == 1, "歧义应报一条缺口")
-    assert(样例.module.errors[0].detail.indexOf("候选枚举 2 个") >= 0, "缺口应报候选数")
+    assert(len(样例.module.errors) == 0, "期望类型应消解同名歧义")
+    let at = 取节点(样例 = 样例, kind = irExprTag(.irEnumConstruct), text = "x")
+    assert(at >= 0, "应有一个枚举构造节点")
+    assert(irTypeText(pool = 样例.module.types, id = irNodeAt(pool = 样例.module.nodes, id = at).typeId) == "甲", "构造类型应取期望的枚举")
     return
 
 ; 数组成员：append 走「Array.append」命名调用（与宿主同形，不加节点类别），结果类型取接收者。
@@ -260,4 +262,50 @@ module: IrModule = IrModule()
     assert(again.id == 0, "同内容应复用下标")
     assert(second.id == 1, "新内容应追加")
     assert(len(pool.items) == 2, "池里应只有两条")
+    return
+
+; 字面量匹配：主体落进临时局部，分支链成 if；裸值未命中静默落到之后，不补陷阱。
+字面量匹配|test() -> ():
+    let src = "f|func(_n: I32,) -> (I32,):\n    match _n:\n        case 1:\n            return 1\n        case _:\n            return 0\n"
+    let 样例 = 造样例(src)
+    assert(len(样例.module.errors) == 0, "字面量匹配应降载成功")
+    let at = 取函数(样例 = 样例, name = "f")
+    assert(at >= 0, "函数应在表里")
+    let body = 样例.module.functions[at].body
+    assert(len(body) == 2, "主体临时局部加一条分支链")
+    assert(irNodeAt(pool = 样例.module.nodes, id = body[0]).kind == irStmtTag(.irAllocVar), "首条应是主体临时局部")
+    let chain = irNodeAt(pool = 样例.module.nodes, id = body[1])
+    assert(chain.kind == irStmtTag(.irIfStmt), "次条应是分支链")
+    assert(chain.tail == 2, "条件加一条 then 语句")
+    assert(取节点按类别(样例 = 样例, kind = irStmtTag(.irPanicStmt)) < 0, "裸值匹配不补陷阱")
+    assert(取节点按类别(样例 = 样例, kind = irExprTag(.irBinary)) >= 0, "条件应是比较")
+    return
+
+; 枚举匹配：标签读加整数字面量比较；没有通配臂就补陷阱，与宿主 matchStmt 同一收尾。
+枚举匹配|test() -> ():
+    let src = "[Flag]\n甲\n乙\n\nf|func(_v: Flag,) -> (I32,):\n    match _v:\n        case 甲:\n            return 1\n        case 乙:\n            return 0\n"
+    let 样例 = 造样例(src)
+    assert(len(样例.module.errors) == 0, "枚举匹配应降载成功")
+    let tagAt = 取节点按类别(样例 = 样例, kind = irExprTag(.irEnumTagGet))
+    assert(tagAt >= 0, "应有一个标签读节点")
+    let tagNode = irNodeAt(pool = 样例.module.nodes, id = tagAt)
+    assert(irTypeText(pool = 样例.module.types, id = tagNode.typeId) == "i32", "标签读答 i32")
+    assert(len(tagNode.kids) == 1, "标签读只有一个操作数")
+    assert(取节点按类别(样例 = 样例, kind = irStmtTag(.irPanicStmt)) >= 0, "枚举未命中应补陷阱")
+    return
+
+; 结果匹配：带绑定臂先读载荷再落局部；ok 取结果实参，err 取擦除后的错误字。
+结果绑定|test() -> ():
+    let src = "f|func(_r: ^I32,) -> (I32,):\n    match _r:\n        case ok(v,):\n            return v\n        case err(_e,):\n            return 0\n"
+    let 样例 = 造样例(src)
+    assert(len(样例.module.errors) == 0, "结果匹配应降载成功")
+    let okAt = 取节点(样例 = 样例, kind = irExprTag(.irEnumPayloadGet), text = "ok")
+    assert(okAt >= 0, "ok 臂应读载荷")
+    let okNode = irNodeAt(pool = 样例.module.nodes, id = okAt)
+    assert(okNode.op == 0, "ok 载荷序号为 0")
+    assert(irTypeText(pool = 样例.module.types, id = okNode.typeId) == "i32", "ok 载荷类型取结果实参")
+    let errAt = 取节点(样例 = 样例, kind = irExprTag(.irEnumPayloadGet), text = "err")
+    assert(errAt >= 0, "err 臂应读载荷")
+    assert(irTypeText(pool = 样例.module.types, id = irNodeAt(pool = 样例.module.nodes, id = errAt).typeId) == "i64", "错误字按 i64")
+    assert(取节点(样例 = 样例, kind = irStmtTag(.irAllocVar), text = "v") >= 0, "绑定 v 应落局部")
     return

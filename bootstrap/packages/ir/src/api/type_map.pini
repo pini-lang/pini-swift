@@ -13,6 +13,9 @@ pool: IrTypePool = IrTypePool()
 ids: Array<I32> = []
 booleanId: I32 = -1
 charId: I32 = -1
+stringId: I32 = -1
+i64Id: I32 = -1
+i32Id: I32 = -1
 errors: Array<LowerError> = []
 
 ; 取像：越界或未映射答 -1，调用方据此报能力缺口。
@@ -40,6 +43,9 @@ addMapError|func(map: TypeMap, kind: LowerErrorKind, detail: String,) -> (TypeMa
 ; 标量映射：只收 IR 有宽度的九种；名字未登记即能力缺口。
 mapScalar|func(map: TypeMap, name: String, semanticId: I32,) -> (TypeMap,):
     var out = map
+    ; 错误字在 Result 里已经类型擦除，IR 侧只有 i64；不驻留，也不算能力缺口。
+    if name == "Error" || name == "CancelError":
+        return out
     if name == "I8":
         let inserted = irScalarType(pool = out.pool, kind = .irTypeI8, name = "i8")
         out.pool = inserted.pool
@@ -240,6 +246,17 @@ buildTypeMap|func(world: MemberWorld,) -> (TypeMap,):
     let letter = irScalarType(pool = out.pool, kind = .irTypeChar, name = "char")
     out.pool = letter.pool
     out.charId = letter.id
+    let text = irScalarType(pool = out.pool, kind = .irTypeString, name = "string")
+    out.pool = text.pool
+    out.stringId = text.id
+    ; 错误字在 Result 里已经类型擦除，宿主侧就是一个机器字；结果匹配的绑定要用这个下标。
+    let widened = irScalarType(pool = out.pool, kind = .irTypeI64, name = "i64")
+    out.pool = widened.pool
+    out.i64Id = widened.id
+    ; 判别式与整数字面量的比较要用 i32；小程序可能一次都没驻留过它。
+    let narrowed = irScalarType(pool = out.pool, kind = .irTypeI32, name = "i32")
+    out.pool = narrowed.pool
+    out.i32Id = narrowed.id
     return out
 
 ; 映射计数：已映射的条目数，供回执与测试对照。

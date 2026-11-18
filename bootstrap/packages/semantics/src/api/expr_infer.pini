@@ -13,8 +13,10 @@ typeId: I32 = -1
 ambiguous: Bool = false
 
 ; 名字表：单元内参数与局部变量的类型；不含顶层符号与内建。
+; `owner` 是所属类型名：成员访问按它判私有，空串表示自由函数。
 (NameTable)
 items: Array<NameType> = []
+owner: String = ""
 
 ; 名字表构建结果：表与随标注解析增长的池。
 (NameBuild)
@@ -271,6 +273,8 @@ walkInferFunction|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32
     var inner = state
     inner.pool = built.pool
     inner.table = built.table
+    if ownerType >= 0 && ownerType < len(inner.pool.entries):
+        inner.table.owner = inner.pool.entries[ownerType].name
     if decl.typeId >= 0:
         let ret = annotationType(world = world, unit = unit, node = decl.typeId, pool = inner.pool)
         inner.pool = ret.pool
@@ -339,7 +343,7 @@ inferNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
         out.typeId = known
         return out
     if unit.ast.isLiteralExpr(node):
-        let typed = checkLiteral(unit = unit, unitIndex = unitIndex, node = node, expectation = noExpectation(), pool = out.pool, types = out.types)
+        let typed = checkLiteral(unit = unit, unitIndex = unitIndex, node = node, expectation = expected, pool = out.pool, types = out.types)
         out.pool = typed.pool
         out.types = typed.types
         if !typed.failed:
@@ -367,8 +371,10 @@ inferNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
         return inferCall(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out, bytes = bytes)
     if unit.ast.isBinaryExpr(node):
         return inferBinary(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out, bytes = bytes)
+    if unit.ast.isUnaryExpr(node):
+        return inferUnary(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out, bytes = bytes)
     if unit.ast.isArrayExpr(node) || unit.ast.isSetExpr(node) || unit.ast.isDictionaryExpr(node):
-        return inferContainer(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out, bytes = bytes)
+        return inferContainer(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out, bytes = bytes, expected = expected)
     if unit.ast.isSubscriptExpr(node) || unit.ast.isSliceExpr(node):
         return inferIndex(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out, bytes = bytes)
     if unit.ast.isCastExpr(node):
@@ -392,7 +398,7 @@ inferMember|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node
         return done
     let member = unit.ast.exprAt(node)
     let memberName = decodeRange(bytes = bytes, start = member.nameStart, end = member.nameEnd)
-    let access = memberAccess(receiver = inner.typeId, name = memberName, isTypeName = false, owner = "", file = unit.path, offset = member.start)
+    let access = memberAccess(receiver = inner.typeId, name = memberName, isTypeName = false, owner = names.owner, file = unit.path, offset = member.start)
     let result = checkMember(world = probeWorld(world = world, pool = done.pool), access = access)
     done.pool = result.pool
     if result.failed:
@@ -402,7 +408,8 @@ inferMember|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node
     return done
 
 ; 调用：先推被调与实参，顶层函数取声明返回类型，内建交给调用面。
-; 实参：形参表可用且全为位置实参时逐个传期望；有标签就不传 —— 位置对不上会把用例定错枚举。
+; 实参：有标签按名对位传期望；纯位置调用按声明序传。
+; 混写时位置实参不传期望 —— 位置与已填槽的对应要另算，传错比不传更糟。
 inferActuals|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, params: Array<CallParam>, names: NameTable, out: InferResult, bytes: Array<U8>,) -> (InferResult,):
     var done = out
     let expr = unit.ast.exprAt(node)
@@ -415,11 +422,21 @@ inferActuals|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, nod
     var positional = !labeled && len(params) > 0 && len(expr.kids) - 1 <= len(params)
     i = 1
     while i < len(expr.kids):
+        let kid = expr.kids[i]
         var wanted = noExpectation()
-        let at = i - 1
-        if positional && at < len(params) && params[at].typeId >= 0:
-            wanted = expectType(params[at].typeId)
-        let one = inferNode(world = world, unit = unit, unitIndex = unitIndex, node = expr.kids[i], names = names, pool = done.pool, types = done.types, bytes = bytes, expected = wanted)
+        var valueNode = kid
+        if unit.ast.isLabeledArgument(kid):
+            let labelNode = unit.ast.exprAt(kid)
+            let label = decodeRange(bytes = bytes, start = labelNode.nameStart, end = labelNode.nameEnd)
+            let at = paramIndexOf(params = params, name = label)
+            if at >= 0 && params[at].typeId >= 0:
+                wanted = expectType(params[at].typeId)
+            valueNode = unit.ast.childOf(id = kid, index = 0)
+        elif positional:
+            let at = i - 1
+            if at >= 0 && at < len(params) && params[at].typeId >= 0:
+                wanted = expectType(params[at].typeId)
+        let one = inferNode(world = world, unit = unit, unitIndex = unitIndex, node = valueNode, names = names, pool = done.pool, types = done.types, bytes = bytes, expected = wanted)
         done.pool = one.pool
         done.types = one.types
         i = i + 1
@@ -435,6 +452,8 @@ inferCall|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
     let head = inferNode(world = world, unit = unit, unitIndex = unitIndex, node = callee, names = names, pool = done.pool, types = done.types, bytes = bytes, expected = noExpectation())
     done.pool = head.pool
     done.types = head.types
+    if unit.ast.isMemberExpr(callee):
+        return inferMemberCall(world = world, unit = unit, unitIndex = unitIndex, node = node, callee = callee, names = names, out = done, bytes = bytes)
     if !unit.ast.isIdentifierExpr(callee):
         return inferActuals(world = world, unit = unit, unitIndex = unitIndex, node = node, params = [], names = names, out = done, bytes = bytes)
     let calleeExpr = unit.ast.exprAt(callee)
@@ -442,6 +461,14 @@ inferCall|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
     let symbol = world.table.topIndex(keyOfText(name))
     if symbol >= 0:
         let ref = symbolDecl(world = world, symbol = symbol)
+        if ref.unit >= 0:
+            let decl = world.units[ref.unit].ast.decls[ref.decl]
+            if (isStructDeclCode(decl.kind) || isObjectDeclCode(decl.kind)) && len(expr.kids) == 1:
+                let planted = nominalTypeId(world = world, name = name)
+                if planted >= 0:
+                    done.typeId = planted
+                    done.types = writeExprType(table = done.types, unit = unitIndex, node = node, typeId = done.typeId)
+                    return done
         done = inferActuals(world = world, unit = unit, unitIndex = unitIndex, node = node, params = declParams(world = world, ref = ref), names = names, out = done, bytes = bytes)
         let ret = returnTypeOf(world = world, symbol = symbol, pool = done.pool)
         done.pool = ret.pool
@@ -468,6 +495,86 @@ inferCall|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
     done.types = writeExprType(table = done.types, unit = unitIndex, node = node, typeId = done.typeId)
     return done
 
+; 成员被调：接收者先定型，再按成员面分方法、内建与函数值三路；方法带标签期望。
+; 别名调用不在此路 —— 别名不是值，留给降载按限定调用处理。
+inferMemberCall|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, callee: I32, names: NameTable, out: InferResult, bytes: Array<U8>,) -> (InferResult,):
+    var done = out
+    let member = unit.ast.exprAt(callee)
+    if len(member.kids) < 1:
+        return inferActuals(world = world, unit = unit, unitIndex = unitIndex, node = node, params = [], names = names, out = done, bytes = bytes)
+    let recvNode: I32 = member.kids[0]
+    var receiverType = -1
+    var isTypeName = false
+    if unit.ast.isIdentifierExpr(recvNode):
+        let recvExpr = unit.ast.exprAt(recvNode)
+        let recvName = decodeRange(bytes = bytes, start = recvExpr.nameStart, end = recvExpr.nameEnd)
+        if lookupNameType(table = names, name = recvName) < 0:
+            let nominal = nominalTypeId(world = world, name = recvName)
+            if nominal >= 0:
+                receiverType = nominal
+                isTypeName = true
+    if receiverType < 0:
+        let inner = inferNode(world = world, unit = unit, unitIndex = unitIndex, node = recvNode, names = names, pool = done.pool, types = done.types, bytes = bytes, expected = noExpectation())
+        done.pool = inner.pool
+        done.types = inner.types
+        receiverType = inner.typeId
+    if receiverType < 0:
+        return inferActuals(world = world, unit = unit, unitIndex = unitIndex, node = node, params = [], names = names, out = done, bytes = bytes)
+    let memberName = decodeRange(bytes = bytes, start = member.nameStart, end = member.nameEnd)
+    let access = memberAccess(receiver = receiverType, name = memberName, isTypeName = isTypeName, owner = names.owner, file = unit.path, offset = member.start)
+    let result = checkMember(world = probeWorld(world = world, pool = done.pool), access = access)
+    done.pool = result.pool
+    if result.failed || result.deferred:
+        return inferActuals(world = world, unit = unit, unitIndex = unitIndex, node = node, params = [], names = names, out = done, bytes = bytes)
+    if isMemberKind(kind = result.kind, expected = .memberMethod) || isMemberKind(kind = result.kind, expected = .memberOwnMethod):
+        let ref = symbolDecl(world = world, symbol = result.symbol)
+        if ref.unit < 0:
+            return inferActuals(world = world, unit = unit, unitIndex = unitIndex, node = node, params = [], names = names, out = done, bytes = bytes)
+        done = inferActuals(world = world, unit = unit, unitIndex = unitIndex, node = node, params = declParams(world = world, ref = ref), names = names, out = done, bytes = bytes)
+        let ret = world.types.typeOf(unit = ref.unit, decl = ref.decl)
+        if ret >= 0:
+            done.typeId = ret
+            done.types = writeExprType(table = done.types, unit = unitIndex, node = node, typeId = done.typeId)
+        return done
+    if result.typeId < 0 || result.typeId >= len(done.pool.entries):
+        return inferActuals(world = world, unit = unit, unitIndex = unitIndex, node = node, params = [], names = names, out = done, bytes = bytes)
+    let entry = done.pool.entries[result.typeId]
+    if !isTypeClass(kind = entry.kind, expected = .typeClassFunction):
+        return inferActuals(world = world, unit = unit, unitIndex = unitIndex, node = node, params = [], names = names, out = done, bytes = bytes)
+    var params: Array<CallParam> = []
+    var i = 0
+    while i < len(entry.kids):
+        var param = CallParam()
+        param.typeId = entry.kids[i]
+        param.takesLabel = false
+        params = params.append(param)
+        i = i + 1
+    done = inferActuals(world = world, unit = unit, unitIndex = unitIndex, node = node, params = params, names = names, out = done, bytes = bytes)
+    if entry.ret >= 0:
+        done.typeId = entry.ret
+        done.types = writeExprType(table = done.types, unit = unitIndex, node = node, typeId = done.typeId)
+    return done
+
+; 一元：操作数先推；`!` 答布尔，取负与按位取反都不改类型。
+; 缺这一条时，以 `-1` 起头的声明没有类型，下游的数组字面量与成员读会连着落空。
+inferUnary|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, out: InferResult, bytes: Array<U8>,) -> (InferResult,):
+    let operand = unit.ast.childOf(id = node, index = 0)
+    let inner = inferNode(world = world, unit = unit, unitIndex = unitIndex, node = operand, names = names, pool = out.pool, types = out.types, bytes = bytes, expected = noExpectation())
+    var done = out
+    done.pool = inner.pool
+    done.types = inner.types
+    if inner.typeId < 0:
+        return done
+    let expr = unit.ast.exprAt(node)
+    if opSymbol(expr.op) == "!":
+        let made = boolType(done.pool)
+        done.pool = made.pool
+        done.typeId = made.id
+    else:
+        done.typeId = inner.typeId
+    done.types = writeExprType(table = done.types, unit = unitIndex, node = node, typeId = done.typeId)
+    return done
+
 ; 二元：两侧都推得出才判；标签实参的 `=` 不是运算，运算面自然拒绝。
 inferBinary|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, out: InferResult, bytes: Array<U8>,) -> (InferResult,):
     let kids = inferKids(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, pool = out.pool, types = out.types, bytes = bytes)
@@ -490,8 +597,8 @@ inferBinary|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node
     done.types = writeExprType(table = done.types, unit = unitIndex, node = node, typeId = done.typeId)
     return done
 
-; 容器字面量：元素推完后交给容器面统一元素类型。
-inferContainer|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, out: InferResult, bytes: Array<U8>,) -> (InferResult,):
+; 容器字面量：元素推完后交给容器面统一元素类型；期望类型决定空字面量的元素。
+inferContainer|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, out: InferResult, bytes: Array<U8>, expected: Expectation,) -> (InferResult,):
     let kids = inferKids(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, pool = out.pool, types = out.types, bytes = bytes)
     var done = out
     done.pool = kids.pool
@@ -500,11 +607,11 @@ inferContainer|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, n
     result.pool = done.pool
     result.types = done.types
     if unit.ast.isArrayExpr(node):
-        result = checkArrayLiteral(unit = unit, unitIndex = unitIndex, node = node, expectation = noExpectation(), pool = done.pool, types = done.types)
+        result = checkArrayLiteral(unit = unit, unitIndex = unitIndex, node = node, expectation = expected, pool = done.pool, types = done.types)
     elif unit.ast.isSetExpr(node):
-        result = checkSetLiteral(unit = unit, unitIndex = unitIndex, node = node, expectation = noExpectation(), pool = done.pool, types = done.types)
+        result = checkSetLiteral(unit = unit, unitIndex = unitIndex, node = node, expectation = expected, pool = done.pool, types = done.types)
     else:
-        result = checkDictionaryLiteral(unit = unit, unitIndex = unitIndex, node = node, expectation = noExpectation(), pool = done.pool, types = done.types)
+        result = checkDictionaryLiteral(unit = unit, unitIndex = unitIndex, node = node, expectation = expected, pool = done.pool, types = done.types)
     done.pool = result.pool
     done.types = result.types
     if result.failed:

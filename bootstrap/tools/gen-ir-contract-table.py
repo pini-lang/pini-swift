@@ -34,8 +34,12 @@ SECTION_FAMILY = {
     "2.11": "lazyRef",
     "2.12": "concurrency",
     "2.13": "givenInstances",
+    # 2.14 符号地址：符号是给调用准备的地址，拒绝时的族标注也一直写 calls。
     "2.14": "calls",
+    # 2.15 逻辑短路：与二元运算同族 —— 拒绝它说的是「运算符没实现」。
     "2.15": "variablesAndOperators",
+    # 2.16 带标签值的读：读的是枚举 / 可选 / 结果三族的判别式与载荷，拒绝时的族标注也写这个族。
+    "2.16": "resultAndOptional",
 }
 
 NODE_FAMILY = {"foreignDataAddress": "pointers"}

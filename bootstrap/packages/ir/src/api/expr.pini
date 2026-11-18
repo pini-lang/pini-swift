@@ -692,6 +692,16 @@ lowerPlainCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map
         done.pool = inserted.pool
         done.id = inserted.id
         return done
+    if name == "print" && len(actuals) > 1 && leading < 0:
+        var printed: Array<I32> = []
+        var p = 0
+        while p < len(actuals):
+            printed = printed.append(actuals[p].id)
+            p = p + 1
+        let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irPrintMulti), typeId = -1, op = 0, kids = printed)
+        done.pool = inserted.pool
+        done.id = inserted.id
+        return done
     let typeId = callResultType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id, ret = -1)
     if typeId == -2:
         return missType(out = done, unit = unit, id = id, bytes = bytes)
@@ -750,6 +760,9 @@ lowerCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: Typ
                 if isArrayMember(memberName = memberName, receiverType = recvType, map = map):
                     builtinMember = memberName
                     builtinType = recvType
+                elif isStringMember(memberName = memberName, receiverType = recvType, map = map):
+                    builtinMember = memberName
+                    builtinType = recvType
                 else:
                     return missExpr(out = done, unit = unit, id = id, what = "成员被调 " + memberName)
             if resolved.found && !resolved.takesReceiver:
@@ -799,6 +812,8 @@ lowerCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: Typ
         actuals = actuals.append(actual)
         i = i + 1
     if len(builtinMember) > 0:
+        if builtinType >= 0 && builtinType < irTypeCount(map.pool) && irTypeTag(irTypeAt(pool = map.pool, id = builtinType).kind) == irTypeTag(.irTypeString):
+            return lowerStringMember(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id, member = builtinMember, receiver = receiver, actuals = actuals)
         return lowerArrayMember(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id, member = builtinMember, receiver = receiver, receiverType = builtinType, actuals = actuals)
     if resolved.found && resolved.ordered:
         return lowerNamedCall(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id, name = resolved.name, actuals = actuals, params = resolved.params, leading = receiver, ret = resolved.ret)
@@ -806,7 +821,7 @@ lowerCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: Typ
 
 ; 数组成员判定：名字在两类之内且接收者类型是数组 —— 字串的同名成员归字串批。
 isArrayMember|func(memberName: String, receiverType: I32, map: TypeMap,) -> (Bool,):
-    if memberName != "append" && memberName != "slice":
+    if memberName != "append" && memberName != "slice" && memberName != "join":
         return false
     if receiverType < 0 || receiverType >= irTypeCount(map.pool):
         return false
@@ -826,12 +841,62 @@ lowerArrayMember|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, m
         done.pool = inserted.pool
         done.id = inserted.id
         return done
+    if member == "join" && len(actuals) == 1:
+        let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
+        if typeId < 0:
+            return missType(out = done, unit = unit, id = id, bytes = bytes)
+        let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irArrayJoin), typeId = typeId, op = 0, kids = [receiver, actuals[0].id])
+        done.pool = inserted.pool
+        done.id = inserted.id
+        return done
     if member == "slice" && len(actuals) == 2:
         let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irSliceCall), typeId = receiverType, op = 0, kids = [receiver, actuals[0].id, actuals[1].id])
         done.pool = inserted.pool
         done.id = inserted.id
         return done
     return missExpr(out = done, unit = unit, id = id, what = "成员被调 " + member)
+
+; 字符串成员判定：名字在五类之内且接收者类型是字符串。
+isStringMember|func(memberName: String, receiverType: I32, map: TypeMap,) -> (Bool,):
+    if memberName != "contains" && memberName != "split" && memberName != "substring" && memberName != "indexOf" && memberName != "slice":
+        return false
+    if receiverType < 0 || receiverType >= irTypeCount(map.pool):
+        return false
+    return irTypeTag(irTypeAt(pool = map.pool, id = receiverType).kind) == irTypeTag(.irTypeString)
+
+; 字符串成员：contains / split / substring / indexOf 各发专属节点，slice 发切片节点。
+; 结果类型取推导表；数目不符或名字不认识时报「成员被调」，不猜。
+lowerStringMember|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32, member: String, receiver: I32, actuals: Array<IrActual>,) -> (LowerExpr,):
+    var done = out
+    let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
+    if typeId < 0:
+        if member == "contains":
+            return lowerStringNode(out = done, unit = unit, id = id, kind = .irStringContains, typeId = map.booleanId, receiver = receiver, actuals = actuals)
+        return missType(out = done, unit = unit, id = id, bytes = bytes)
+    if member == "contains" && len(actuals) == 1:
+        return lowerStringNode(out = done, unit = unit, id = id, kind = .irStringContains, typeId = typeId, receiver = receiver, actuals = actuals)
+    if member == "split" && len(actuals) == 1:
+        return lowerStringNode(out = done, unit = unit, id = id, kind = .irStringSplit, typeId = typeId, receiver = receiver, actuals = actuals)
+    if member == "indexOf" && len(actuals) == 1:
+        return lowerStringNode(out = done, unit = unit, id = id, kind = .irStringIndexOf, typeId = typeId, receiver = receiver, actuals = actuals)
+    if member == "substring" && len(actuals) == 2:
+        return lowerStringNode(out = done, unit = unit, id = id, kind = .irStringSubstring, typeId = typeId, receiver = receiver, actuals = actuals)
+    if member == "slice" && len(actuals) == 2:
+        return lowerStringNode(out = done, unit = unit, id = id, kind = .irSliceCall, typeId = typeId, receiver = receiver, actuals = actuals)
+    return missExpr(out = done, unit = unit, id = id, what = "成员被调 " + member)
+
+; 字符串成员节点：接收者在前，实参按源序排在其后。
+lowerStringNode|func(out: LowerExpr, unit: CompilationUnit, id: I32, kind: IrExprKind, typeId: I32, receiver: I32, actuals: Array<IrActual>,) -> (LowerExpr,):
+    var kids: Array<I32> = [receiver]
+    var i = 0
+    while i < len(actuals):
+        kids = kids.append(actuals[i].id)
+        i = i + 1
+    let inserted = addIrNode(pool = out.pool, kind = irExprTag(kind), typeId = typeId, op = 0, kids = kids)
+    var done = out
+    done.pool = inserted.pool
+    done.id = inserted.id
+    return done
 
 ; 成员读：接收者一个子节点，字段名驻留进文本池；方法值不走这条。
 lowerMember|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
@@ -906,19 +971,25 @@ enumCaseTag|func(frame: LowerFrame, owner: String, caseName: String,) -> (I32,):
         i = i + 1
     return -1
 
-; 前导点用例：候选枚举恰一个才定型并发构造，其余按缺口报。
+; 前导点用例：期望类型是枚举就先按它定所有者；无类型信息才退回唯一候选。
 ; 用例是枚举的成员，知道所属枚举才知道类型 —— 前导点只是把枚举名写成糖。
 lowerCaseValue|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
     let expr = unit.ast.exprAt(id)
     let name = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
-    let candidates = caseCandidateCount(index = out.frame.world.symbols, name = name)
-    if candidates != 1:
-        return missNeed(out = out, unit = unit, id = id, what = "用例 ." + name + " 缺类型信息：候选枚举 " + countText(candidates) + " 个")
-    let owner = caseCandidateOwner(index = out.frame.world.symbols, name = name, nth = 0)
+    let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = out.frame, bytes = bytes, id = id)
+    var owner = ""
+    if typeId >= 0 && typeId < irTypeCount(map.pool):
+        let entry = irTypeAt(pool = map.pool, id = typeId)
+        if irTypeTag(entry.kind) == irTypeTag(.irTypeEnumeration):
+            owner = entry.name
+    if len(owner) == 0:
+        let candidates = caseCandidateCount(index = out.frame.world.symbols, name = name)
+        if candidates != 1:
+            return missNeed(out = out, unit = unit, id = id, what = "用例 ." + name + " 缺类型信息：候选枚举 " + countText(candidates) + " 个")
+        owner = caseCandidateOwner(index = out.frame.world.symbols, name = name, nth = 0)
     let tag = enumCaseTag(frame = out.frame, owner = owner, caseName = name)
     if tag < 0:
         return missNeed(out = out, unit = unit, id = id, what = "用例 ." + name + " 不在枚举 " + owner + " 的声明序里")
-    let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = out.frame, bytes = bytes, id = id)
     if typeId < 0:
         return missType(out = out, unit = unit, id = id, bytes = bytes)
     let placed = internText(texts = out.texts, value = name)
@@ -1012,6 +1083,90 @@ lowerArrayLiteral|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, 
     done.id = inserted.id
     return done
 
+; 显式转换：操作数一个子节点，目标类型取推导表；合法性由语义层挡。
+lowerCast|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
+    let expr = unit.ast.exprAt(id)
+    if len(expr.kids) < 1:
+        return missExpr(out = out, unit = unit, id = id, what = "转换缺操作数")
+    var done = out
+    let one = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = expr.kids[0])
+    done.pool = one.pool
+    done.texts = one.texts
+    done.frame = one.frame
+    if one.failed:
+        return takeFailure(out = done, one = one)
+    let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
+    if typeId < 0:
+        return missType(out = done, unit = unit, id = id, bytes = bytes)
+    let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irUnary), typeId = typeId, op = irUnaryTag(.irCast), kids = [one.id])
+    done.pool = inserted.pool
+    done.id = inserted.id
+    return done
+
+; 空值：只接可选类型；类型来自标注或期望，推不出即缺口。
+lowerNil|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
+    let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = out.frame, bytes = bytes, id = id)
+    if typeId < 0 || typeId >= irTypeCount(map.pool):
+        return missType(out = out, unit = unit, id = id, bytes = bytes)
+    let entry = irTypeAt(pool = map.pool, id = typeId)
+    if irTypeTag(entry.kind) != irTypeTag(.irTypeOptional):
+        return missExpr(out = out, unit = unit, id = id, what = "nil 只接可选类型")
+    var node = irMakeNode(kind = irExprTag(.irOptionalConstruct), typeId = typeId)
+    node.op = 0
+    let inserted = irAppendNode(pool = out.pool, node = node)
+    var done = out
+    done.pool = inserted.pool
+    done.id = inserted.id
+    return done
+
+; 插值串：段表按源序交替字面与代码；字面段造字符串常量，代码段取对应子节点。
+; 段表由语法层随单元带出；子表达式个数与代码段不符即缺口，不拼半截串。
+lowerInterp|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
+    let expr = unit.ast.exprAt(id)
+    if expr.body <= 0 || expr.op < 0 || expr.op + expr.body > len(unit.segments):
+        return missExpr(out = out, unit = unit, id = id, what = "插值串缺段表")
+    var done = out
+    var parts: Array<I32> = []
+    var segIndex = 0
+    var kidIndex = 0
+    while segIndex < expr.body:
+        let segment = unit.segments[expr.op + segIndex]
+        if segment.code == 0:
+            let text = stringLiteralText(bytes = bytes, start = segment.start, end = segment.end)
+            if len(text) > 0:
+                let placed = internText(texts = done.texts, value = text)
+                var node = irMakeNode(kind = irExprTag(.irStringConst), typeId = map.stringId)
+                node.text = placed.id
+                let inserted = irAppendNode(pool = done.pool, node = node)
+                done.texts = placed.texts
+                done.pool = inserted.pool
+                parts = parts.append(inserted.id)
+        else:
+            if kidIndex >= len(expr.kids):
+                return missExpr(out = done, unit = unit, id = id, what = "插值段与子表达式不符")
+            let one = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = expr.kids[kidIndex])
+            done.pool = one.pool
+            done.texts = one.texts
+            done.frame = one.frame
+            if one.failed:
+                return takeFailure(out = done, one = one)
+            parts = parts.append(one.id)
+            kidIndex = kidIndex + 1
+        segIndex = segIndex + 1
+    if kidIndex != len(expr.kids):
+        return missExpr(out = done, unit = unit, id = id, what = "插值段与子表达式不符")
+    var typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
+    if typeId < 0:
+        typeId = map.stringId
+    if typeId < 0:
+        return missType(out = done, unit = unit, id = id, bytes = bytes)
+    var node = irMakeNode(kind = irExprTag(.irInterpString), typeId = typeId)
+    node.kids = parts
+    let inserted = irAppendNode(pool = done.pool, node = node)
+    done.pool = inserted.pool
+    done.id = inserted.id
+    return done
+
 ; 表达式入口：按类别分派；未知类别报缺口。
 lowerExpr|func(pool: IrNodePool, texts: IrTextPool, map: TypeMap, types: ExprTypes, unit: CompilationUnit, unitIndex: I32, bytes: Array<U8>, frame: LowerFrame, id: I32,) -> (LowerExpr,):
     var out = LowerExpr()
@@ -1047,6 +1202,12 @@ lowerExpr|func(pool: IrNodePool, texts: IrTextPool, map: TypeMap, types: ExprTyp
         return out
     if unit.ast.isStringExpr(id):
         return lowerStringLiteral(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
+    if unit.ast.isInterpolatedExpr(id):
+        return lowerInterp(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
+    if unit.ast.isCastExpr(id):
+        return lowerCast(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
+    if unit.ast.isNilExpr(id):
+        return lowerNil(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
     if unit.ast.isArrayExpr(id):
         return lowerArrayLiteral(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
     if unit.ast.isCaseExpr(id):
