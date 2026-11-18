@@ -45,4 +45,13 @@ externSignature|func(name: String,) -> (String,):
         return "declare i32 @bk_set_len(ptr)"
     if name == "bk_string_count":
         return "declare i32 @bk_string_count(ptr)"
+    ; 字符族：字符值以 i64 装箱，串入参按借出。
+    if name == "bk_chr":
+        return "declare i64 @bk_chr(i32)"
+    if name == "bk_ord":
+        return "declare i32 @bk_ord(i64)"
+    if name == "bk_chars":
+        return "declare ptr @bk_chars(ptr)"
+    if name == "bk_temp_utf8_bytes":
+        return "declare ptr @bk_temp_utf8_bytes(ptr)"
     return ""

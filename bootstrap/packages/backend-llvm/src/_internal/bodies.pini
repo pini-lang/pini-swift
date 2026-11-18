@@ -306,6 +306,8 @@ emitBuiltinCall|func(out: ExprOut, module: IrModule, node: IrNode, row: BuiltinE
     if row.shape == shapeElementAppend() && len(node.kids) == 2:
         let receiver = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[0])
         return emitElementAppend(ctx = receiver.ctx, module = module, receiverText = receiver.text, valueId = node.kids[1], symbol = row.symbol)
+    if row.shape == shapeDirectCall() && len(node.kids) == 1:
+        return emitDirectCall(ctx = done.ctx, module = module, node = node, symbol = row.symbol)
     done.ctx = addGap(ctx = done.ctx, gap = "内建形状 " + row.name + " " + countText(row.shape))
     return done
 
@@ -343,6 +345,22 @@ emitElementAppend|func(ctx: BodyCtx, module: IrModule, receiverText: String, val
     let name = tempName(index = id)
     let args = "ptr " + receiverText + ", ptr " + boxName() + ", i32 " + countText(width) + ", i32 " + countText(tag)
     appendLine(sink = out.ctx.lines, text = "  " + name + " = call ptr @" + symbol + "(" + args + ")")
+    out.text = name
+    return out
+
+; 单参直呼：实参按自身类型传，结果按节点类型出；字符与字节桥共用这一形。
+emitDirectCall|func(ctx: BodyCtx, module: IrModule, node: IrNode, symbol: String,) -> (ExprOut,):
+    var out = ExprOut()
+    let argId = node.kids[0]
+    let arg = emitExpr(ctx = ctx, module = module, nodeId = argId)
+    out.ctx = arg.ctx
+    useExtern(use = out.ctx.externs, name = symbol)
+    let argType = llvmTypeName(pool = module.types, typeId = irNodeAt(pool = module.nodes, id = argId).typeId)
+    let retType = llvmTypeName(pool = module.types, typeId = node.typeId)
+    let id = out.ctx.temp
+    out.ctx.temp = id + 1
+    let name = tempName(index = id)
+    appendLine(sink = out.ctx.lines, text = "  " + name + " = call " + retType + " @" + symbol + "(" + argType + " " + arg.text + ")")
     out.text = name
     return out
 

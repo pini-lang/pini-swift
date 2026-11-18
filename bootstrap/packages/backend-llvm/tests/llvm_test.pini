@@ -246,3 +246,100 @@ _backend_kit = "../../backend-kit"
     assert(含子串(text = result.text, needle = "declare i32 @bk_array_len(ptr)"), "长度符号应出声明")
     assert(含子串(text = result.text, needle = "%ebox = alloca [8 x i8], align 8"), "装箱台应在函数入口分配")
     return
+
+; 字符模块的类型池：i32、字符、字串、U8、字符数组与字节数组。
+发射造字符类型池|func() -> (IrTypePool,):
+    var pool = IrTypePool()
+    let intType = irScalarTypeOfCode(pool = pool, code = 1, name = "i32")
+    pool = intType.pool
+    let charType = irScalarTypeOfCode(pool = pool, code = 9, name = "char")
+    pool = charType.pool
+    let textType = irScalarTypeOfCode(pool = pool, code = 8, name = "String")
+    pool = textType.pool
+    let byteType = irScalarTypeOfCode(pool = pool, code = 4, name = "u8")
+    pool = byteType.pool
+    let charArray = irWrapTypeOfCode(pool = pool, code = 12, name = "", inner = charType.id)
+    pool = charArray.pool
+    let byteArray = irWrapTypeOfCode(pool = pool, code = 12, name = "", inner = byteType.id)
+    return byteArray.pool
+
+; 字符模块：chr、ord、chars 与字节桥各一条调用；结果丢弃，只验发射形状。
+发射造字符模块|func() -> (IrModule,):
+    var module = IrModule()
+    module.types = 发射造字符类型池()
+    module.texts = module.texts.append("chr")
+    module.texts = module.texts.append("ord")
+    module.texts = module.texts.append("ab")
+    module.texts = module.texts.append("chars")
+    module.texts = module.texts.append("tempUtf8Bytes")
+    var nodes = IrNodePool()
+    var letter = irMakeNode(kind = tagOfName(name = "intConst"), typeId = 0)
+    letter.intValue = 65
+    let placedLetter = irAppendNode(pool = nodes, node = letter)
+    nodes = placedLetter.pool
+    var made = irMakeNode(kind = tagOfName(name = "call"), typeId = 1)
+    made.text = 0
+    made.kids = [placedLetter.id]
+    let placedMade = irAppendNode(pool = nodes, node = made)
+    nodes = placedMade.pool
+    var code = irMakeNode(kind = tagOfName(name = "call"), typeId = 0)
+    code.text = 1
+    code.kids = [placedMade.id]
+    let placedCode = irAppendNode(pool = nodes, node = code)
+    nodes = placedCode.pool
+    var text = irMakeNode(kind = tagOfName(name = "stringConst"), typeId = 2)
+    text.text = 2
+    let placedText = irAppendNode(pool = nodes, node = text)
+    nodes = placedText.pool
+    var split = irMakeNode(kind = tagOfName(name = "call"), typeId = 4)
+    split.text = 3
+    split.kids = [placedText.id]
+    let placedSplit = irAppendNode(pool = nodes, node = split)
+    nodes = placedSplit.pool
+    var bytes = irMakeNode(kind = tagOfName(name = "call"), typeId = 5)
+    bytes.text = 4
+    bytes.kids = [placedText.id]
+    let placedBytes = irAppendNode(pool = nodes, node = bytes)
+    nodes = placedBytes.pool
+    var first = irMakeNode(kind = tagOfName(name = "exprStmt"), typeId = -1)
+    first.kids = [placedMade.id]
+    let placedFirst = irAppendNode(pool = nodes, node = first)
+    nodes = placedFirst.pool
+    var second = irMakeNode(kind = tagOfName(name = "exprStmt"), typeId = -1)
+    second.kids = [placedCode.id]
+    let placedSecond = irAppendNode(pool = nodes, node = second)
+    nodes = placedSecond.pool
+    var third = irMakeNode(kind = tagOfName(name = "exprStmt"), typeId = -1)
+    third.kids = [placedSplit.id]
+    let placedThird = irAppendNode(pool = nodes, node = third)
+    nodes = placedThird.pool
+    var fourth = irMakeNode(kind = tagOfName(name = "exprStmt"), typeId = -1)
+    fourth.kids = [placedBytes.id]
+    let placedFourth = irAppendNode(pool = nodes, node = fourth)
+    nodes = placedFourth.pool
+    var back = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    let placedBack = irAppendNode(pool = nodes, node = back)
+    nodes = placedBack.pool
+    module.nodes = nodes
+    var fn = IrFunction()
+    fn.name = "main"
+    fn.returnType = -1
+    fn.body = [placedFirst.id, placedSecond.id, placedThird.id, placedFourth.id, placedBack.id]
+    module.functions = module.functions.append(fn)
+    return module
+
+; 字符与字节内建：四行各按自身签名出调用，字符值以 i64 装箱。
+字符与字节内建|test() -> ():
+    let module = 发射造字符模块()
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    if result.failed:
+        assert(false, "缺口：" + result.gaps[0])
+    assert(含子串(text = result.text, needle = "call i64 @bk_chr(i32 65)"), "chr 应 i32 进、i64 出")
+    assert(含子串(text = result.text, needle = "call i32 @bk_ord(i64"), "ord 应 i64 进、i32 出")
+    assert(含子串(text = result.text, needle = "call ptr @bk_chars(ptr"), "chars 应串进、句柄出")
+    assert(含子串(text = result.text, needle = "call ptr @bk_temp_utf8_bytes(ptr"), "字节桥应串进、句柄出")
+    assert(含子串(text = result.text, needle = "declare i64 @bk_chr(i32)"), "chr 声明应与调用同形")
+    assert(含子串(text = result.text, needle = "declare i32 @bk_ord(i64)"), "ord 声明应与调用同形")
+    assert(含子串(text = result.text, needle = "declare ptr @bk_chars(ptr)"), "chars 声明应与调用同形")
+    assert(含子串(text = result.text, needle = "declare ptr @bk_temp_utf8_bytes(ptr)"), "字节桥声明应与调用同形")
+    return

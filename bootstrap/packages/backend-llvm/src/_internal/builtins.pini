@@ -2,15 +2,18 @@
 _ir = "../../../ir"
 
 ; 内建名映射：源码层内建名加接收者类别，落到运行时段符号与一种搬参形状。
-; 表只登记符号与搬参法，指令由发射面按形状补；加内建只加行，不改查表与发射。
+; 表只登记符号与搬参法，指令由发射面按形状补；同形状加内建只加行，新形状先落发射面。
 ; 接收者类别取类型类别码：同名内建落在不同容器上就是两行，表外名字照旧报缺口。
 
-; 形状码：句柄计数一个句柄进、i32 出；元素追加多带装箱地址与宽度标签，回答新句柄。
+; 形状码：一 句柄计数；二 元素追加；三 单参直呼，实参按自身类型传、结果按节点类型出。
 shapeHandleCount|func() -> (I32,):
     return 1
 
 shapeElementAppend|func() -> (I32,):
     return 2
+
+shapeDirectCall|func() -> (I32,):
+    return 3
 
 ; 内建行：名字、接收者类别、符号与形状；`symbol` 空即未登记，调用方据此报缺口。
 (BuiltinEntry)
@@ -28,13 +31,17 @@ makeBuiltinOf|func(name: String, receiver: I32, symbol: String, shape: I32,) -> 
     out.shape = shape
     return out
 
-; 内建表：一行一条；接收者类别码是类型类别（数组十二、字典十六、集合十七、字串八）。
+; 内建表：一行一条；接收者类别码是类型类别（i32 一、字串八、字符九、数组十二、字典十六、集合十七）。
 builtinTable|func() -> (Array<BuiltinEntry>,):
     var out: Array<BuiltinEntry> = []
     out = out.append(makeBuiltinOf(name = "len", receiver = 12, symbol = "bk_array_len", shape = 1))
     out = out.append(makeBuiltinOf(name = "len", receiver = 16, symbol = "bk_dict_len", shape = 1))
     out = out.append(makeBuiltinOf(name = "len", receiver = 17, symbol = "bk_set_len", shape = 1))
     out = out.append(makeBuiltinOf(name = "len", receiver = 8, symbol = "bk_string_count", shape = 1))
+    out = out.append(makeBuiltinOf(name = "chr", receiver = 1, symbol = "bk_chr", shape = 3))
+    out = out.append(makeBuiltinOf(name = "ord", receiver = 9, symbol = "bk_ord", shape = 3))
+    out = out.append(makeBuiltinOf(name = "chars", receiver = 8, symbol = "bk_chars", shape = 3))
+    out = out.append(makeBuiltinOf(name = "tempUtf8Bytes", receiver = 8, symbol = "bk_temp_utf8_bytes", shape = 3))
     out = out.append(makeBuiltinOf(name = "Array.append", receiver = 12, symbol = "bk_array_append", shape = 2))
     return out
 

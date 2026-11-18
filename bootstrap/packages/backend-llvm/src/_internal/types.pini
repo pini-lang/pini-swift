@@ -3,7 +3,7 @@ _ir = "../../../ir"
 _backend_kit = "../../../backend-kit"
 
 ; 类型面：IR 类型下标到 LLVM 类型拼写，外加值语义名义类型的结构声明。
-; 标量直出；字符串、容器、指针与对象一律 ptr，运行时按句柄搬。
+; 标量直出，字符按 i64 装箱；字符串、容器、指针与对象一律 ptr，运行时按句柄搬。
 ; 槽是布局单位：结构体按槽数出 i64 格，宽度与对齐归目标描述，不在这里逐槽判型。
 
 ; 类型拼写：无类型答 void；越界与未认类别答 ptr，宁可宽一格也不出错误拼写。
@@ -28,6 +28,8 @@ llvmTypeName|func(pool: IrTypePool, typeId: I32,) -> (String,):
         return "double"
     if tag == 7:
         return "i1"
+    if tag == 9:
+        return "i64"
     return "ptr"
 
 ; 结构名：按 IR 名编码一次，非 ASCII 逐标量写 `_u`；值语义名义类型专用。
