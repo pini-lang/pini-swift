@@ -7,7 +7,7 @@ _backend_kit = "../../../backend-kit"
 ; 临时值与标签按遍历序编号，同一模块两遍发射逐字节相同。
 ; 块终结按段记：返回收口的段不补跳转，两段都收口时整条分支也收口。
 
-; 发射上下文：行容器、临时值水位、标签水位、缺口与失败位；每函数一份。
+; 发射上下文：行容器、临时值水位、标签水位、循环帧、缺口与失败位；每函数一份。
 ; 行容器是引用，函数级状态是值：上下文复制便宜，状态也不互相污染。
 {BodyCtx}
 lines: LineSink = LineSink()
@@ -23,6 +23,11 @@ strings: StringPool = StringPool()
 externs: ExternUse = ExternUse()
 builtins: Array<BuiltinEntry> = []
 pointerBytes: I32 = 8
+loopEnds: Array<String> = []
+loopHeads: Array<String> = []
+slotNames: Array<String> = []
+slotUses: Array<I32> = []
+head: Array<String> = []
 
 ; 表达式结果：上下文与值串；值串只给操作数，类型由所在指令给。
 (ExprOut)
@@ -36,6 +41,32 @@ tempName|func(index: I32,) -> (String,):
 ; 槽名：按槽位编号；同名变量的不同声明因此在文本里也分得开。
 slotName|func(slot: I32,) -> (String,):
     return "%s" + countText(slot)
+
+; 槽名解析：同号槽在不同块里会被重新声明，故以最近一次声明为准；未声明时用默认名。
+slotNameOf|func(ctx: BodyCtx, slot: I32,) -> (String,):
+    if slot >= 0 && slot < len(ctx.slotNames):
+        if len(ctx.slotNames[slot]) > 0:
+            return ctx.slotNames[slot]
+    return slotName(slot = slot)
+
+; 槽声明：同号槽第几次声明就带第几号后缀，同名不同块的两条 alloca 才不撞。
+defineSlot|func(ctx: BodyCtx, slot: I32,) -> (ExprOut,):
+    var out = ExprOut()
+    out.ctx = ctx
+    var names = out.ctx.slotNames
+    var uses = out.ctx.slotUses
+    while len(names) <= slot:
+        names = names.append("")
+        uses = uses.append(0)
+    var name = slotName(slot = slot)
+    if uses[slot] > 0:
+        name = slotName(slot = slot) + "." + countText(uses[slot])
+    names[slot] = name
+    uses[slot] = uses[slot] + 1
+    out.ctx.slotNames = names
+    out.ctx.slotUses = uses
+    out.text = name
+    return out
 
 ; 标签名：前缀加编号，前缀只作可读性，不参与判等。
 labelName|func(prefix: String, index: I32,) -> (String,):
@@ -94,11 +125,39 @@ typeTagAt|func(module: IrModule, typeId: I32,) -> (I32,):
         return -1
     return irTypeTag(irTypeAt(pool = module.types, id = typeId).kind)
 
+; 整数宽度：只认整数与布尔六类，其余答零；转换方向按它判。
+intWidthOf|func(tag: I32,) -> (I32,):
+    if tag == 7:
+        return 1
+    if tag == 4 || tag == 5:
+        return 8
+    if tag == 1:
+        return 32
+    if tag == 2 || tag == 3:
+        return 64
+    return 0
+
+; 无符号类别：u8 与 u64 两类；加宽与转浮点按它选零扩展还是符号扩展。
+isUnsignedTag|func(tag: I32,) -> (Bool,):
+    return tag == 3 || tag == 4
+
 ; 调用接收者类别：首个实参即接收者；无实参答负一，命不中任何内建行。
 receiverTagOf|func(module: IrModule, node: IrNode,) -> (I32,):
     if len(node.kids) == 0:
         return -1
     return typeTagOf(module = module, nodeId = node.kids[0])
+
+; 零值常量：按拼写给，聚合用零初始化；存储与构造清格共用这一份判据。
+zeroTextOf|func(typeName: String,) -> (String,):
+    if typeName == "double":
+        return "0.0"
+    if typeName == "ptr":
+        return "null"
+    if typeName.indexOf("{") == 0:
+        return "zeroinitializer"
+    if typeName == "void":
+        return "null"
+    return "0"
 
 ; 二元指令：整数一套，浮点一套；min/max 走比较加选择，其余直出。
 binaryOpText|func(op: I32, isFloat: Bool,) -> (String,):
@@ -156,7 +215,7 @@ binaryOpText|func(op: I32, isFloat: Bool,) -> (String,):
         return "ashr"
     return ""
 
-; 一元指令：取负写 sub 零减，取反写异或全一，逻辑非写比较；转换与绝对值尚未接。
+; 一元指令：取负写 sub 零减，取反写异或全一，逻辑非写比较；绝对值走选择，转换另计。
 unaryOpText|func(op: I32,) -> (String,):
     if op == 1:
         return "sub"
@@ -191,47 +250,13 @@ emitExpr|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
         let id = out.ctx.temp
         out.ctx.temp = id + 1
         let name = tempName(index = id)
-        appendLine(sink = out.ctx.lines, text = "  " + name + " = load " + typeName + ", ptr " + slotName(slot = slot))
+        appendLine(sink = out.ctx.lines, text = "  " + name + " = load " + typeName + ", ptr " + slotNameOf(ctx = out.ctx, slot = slot))
         out.text = name
         return out
     if node.kind == 6:
-        let left = emitExpr(ctx = out.ctx, module = module, nodeId = node.kids[0])
-        let right = emitExpr(ctx = left.ctx, module = module, nodeId = node.kids[1])
-        out.ctx = right.ctx
-        let isFloat = isFloatNode(module = module, nodeId = node.kids[0])
-        if node.op >= 17:
-            out.ctx = addGap(ctx = out.ctx, gap = "二元运算 min/max")
-            return out
-        let opText = binaryOpText(op = node.op, isFloat = isFloat)
-        if len(opText) == 0:
-            out.ctx = addGap(ctx = out.ctx, gap = "二元运算码 " + countText(node.op))
-            return out
-        let id = out.ctx.temp
-        out.ctx.temp = id + 1
-        let name = tempName(index = id)
-        let opType = llvmTypeName(pool = module.types, typeId = irNodeAt(pool = module.nodes, id = node.kids[0]).typeId)
-        appendLine(sink = out.ctx.lines, text = "  " + name + " = " + opText + " " + opType + " " + left.text + ", " + right.text)
-        out.text = name
-        return out
+        return emitBinary(out = out, module = module, node = node)
     if node.kind == 7:
-        let one = emitExpr(ctx = out.ctx, module = module, nodeId = node.kids[0])
-        out.ctx = one.ctx
-        let opText = unaryOpText(op = node.op)
-        if len(opText) == 0:
-            out.ctx = addGap(ctx = out.ctx, gap = "一元运算码 " + countText(node.op))
-            return out
-        let id = out.ctx.temp
-        out.ctx.temp = id + 1
-        let name = tempName(index = id)
-        let opType = llvmTypeName(pool = module.types, typeId = irNodeAt(pool = module.nodes, id = node.kids[0]).typeId)
-        if node.op == 1:
-            appendLine(sink = out.ctx.lines, text = "  " + name + " = sub " + opType + " 0, " + one.text)
-        elif node.op == 2:
-            appendLine(sink = out.ctx.lines, text = "  " + name + " = icmp eq " + opType + " " + one.text + ", false")
-        else:
-            appendLine(sink = out.ctx.lines, text = "  " + name + " = xor " + opType + " " + one.text + ", -1")
-        out.text = name
-        return out
+        return emitUnary(out = out, module = module, node = node)
     if node.kind == 4:
         let value = textAt(module = module, id = node.text)
         let at = internString(pool = out.ctx.strings, value = value)
@@ -245,7 +270,8 @@ emitExpr|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
         if len(row.symbol) > 0:
             return emitBuiltinCall(out = out, module = module, node = node, row = row)
         var symbol = mangleName(name = callee)
-        if findIrFunctionIndex(module = module, name = callee) < 0:
+        let target = findIrFunctionIndex(module = module, name = callee)
+        if target < 0:
             if len(externSignature(name = callee)) == 0:
                 out.ctx = addGap(ctx = out.ctx, gap = "外部调用 " + callee)
                 return out
@@ -256,9 +282,14 @@ emitExpr|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
         while i < len(node.kids):
             let one = emitExpr(ctx = out.ctx, module = module, nodeId = node.kids[i])
             out.ctx = one.ctx
+            var argType = irNodeAt(pool = module.nodes, id = node.kids[i]).typeId
+            if target >= 0 && i < len(module.functions[target].params):
+                argType = module.functions[target].params[i].typeId
+            let shaped = storeValue(ctx = out.ctx, module = module, text = one.text, fromType = irNodeAt(pool = module.nodes, id = node.kids[i]).typeId, toType = argType)
+            out.ctx = shaped.ctx
             if i > 0:
                 args = args + ", "
-            args = args + llvmTypeName(pool = module.types, typeId = irNodeAt(pool = module.nodes, id = node.kids[i]).typeId) + " " + one.text
+            args = args + llvmTypeName(pool = module.types, typeId = argType) + " " + shaped.text
             i = i + 1
         let id = out.ctx.temp
         out.ctx.temp = id + 1
@@ -285,6 +316,8 @@ emitExpr|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
         return out
     if node.kind == 18:
         return emitArrayLiteral(out = out, module = module, node = node)
+    if node.kind == 21:
+        return emitSubscriptGet(out = out, module = module, node = node)
     if node.kind == 22:
         if len(node.kids) == 0:
             out.ctx = addGap(ctx = out.ctx, gap = "长度缺实参")
@@ -295,7 +328,281 @@ emitExpr|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
             out.ctx = addGap(ctx = out.ctx, gap = "长度不支持 类别码 " + countText(tag))
             return out
         return emitHandleCount(ctx = out.ctx, module = module, argId = node.kids[0], symbol = row.symbol)
+    if node.kind == 23:
+        return emitSliceCall(out = out, module = module, node = node)
+    if node.kind == 26:
+        return emitConstruct(out = out, module = module, node = node)
+    if node.kind == 27:
+        return emitEnumConstruct(out = out, module = module, node = node)
+    if node.kind == 28:
+        return emitFieldGet(out = out, module = module, node = node)
+    if node.kind == 41:
+        return emitStringPairCall(out = out, module = module, node = node, symbol = "bk_string_contains", asBool = true)
+    if node.kind == 42:
+        return emitStringSubstring(out = out, module = module, node = node)
+    if node.kind == 43:
+        return emitStringPairCall(out = out, module = module, node = node, symbol = "bk_string_split", asBool = false)
+    if node.kind == 44:
+        return emitArrayJoin(out = out, module = module, node = node)
+    if node.kind == 46:
+        return emitInterp(out = out, module = module, node = node)
+    if node.kind == 49:
+        return emitStringPairCall(out = out, module = module, node = node, symbol = "bk_string_index_of", asBool = false)
+    if node.kind == 56:
+        return emitShortCircuit(out = out, module = module, node = node)
+    if node.kind == 57:
+        return emitEnumTagGet(out = out, module = module, node = node)
+    if node.kind == 58:
+        return emitEnumPayloadGet(out = out, module = module, node = node)
     out.ctx = addGap(ctx = out.ctx, gap = nodeGap(ctx = out.ctx, kind = node.kind))
+    return out
+
+; 二元运算：整数一套、浮点一套；min/max 用比较加选择，其余按码出指令。
+emitBinary|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut,):
+    var done = out
+    let left = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[0])
+    done.ctx = left.ctx
+    let right = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[1])
+    done.ctx = right.ctx
+    let isFloat = isFloatNode(module = module, nodeId = node.kids[0])
+    let opType = llvmTypeName(pool = module.types, typeId = irNodeAt(pool = module.nodes, id = node.kids[0]).typeId)
+    let lhsTag = typeTagOf(module = module, nodeId = node.kids[0])
+    let rhsTag = typeTagOf(module = module, nodeId = node.kids[1])
+    if lhsTag == 9 || rhsTag == 9 || lhsTag == 8 || rhsTag == 8:
+        return emitStringFaceBinary(out = done, module = module, node = node, left = left.text, right = right.text, lhsTag = lhsTag, rhsTag = rhsTag)
+    if node.op == 17 || node.op == 18:
+        if opType == "double" || opType == "i1":
+            done.ctx = addGap(ctx = done.ctx, gap = "二元运算码 " + countText(node.op))
+            return done
+        let id = done.ctx.temp
+        done.ctx.temp = id + 1
+        let name = tempName(index = id)
+        var cmp = "icmp slt"
+        if node.op == 18:
+            cmp = "icmp sgt"
+        appendLine(sink = done.ctx.lines, text = "  " + name + " = " + cmp + " " + opType + " " + left.text + ", " + right.text)
+        let pickId = done.ctx.temp
+        done.ctx.temp = pickId + 1
+        let pick = tempName(index = pickId)
+        appendLine(sink = done.ctx.lines, text = "  " + pick + " = select i1 " + name + ", " + opType + " " + left.text + ", " + opType + " " + right.text)
+        done.text = pick
+        return done
+    let opText = binaryOpText(op = node.op, isFloat = isFloat)
+    if len(opText) == 0:
+        done.ctx = addGap(ctx = done.ctx, gap = "二元运算码 " + countText(node.op))
+        return done
+    let id = done.ctx.temp
+    done.ctx.temp = id + 1
+    let name = tempName(index = id)
+    appendLine(sink = done.ctx.lines, text = "  " + name + " = " + opText + " " + opType + " " + left.text + ", " + right.text)
+    done.text = name
+    return done
+
+; 字符串面二元：拼接走运行时拼接内核，比较走 strcmp 或字符相等通道。
+; 字符是八字节内联值，与串比较时必须交给运行时按内容判，不能把它当指针传。
+emitStringFaceBinary|func(out: ExprOut, module: IrModule, node: IrNode, left: String, right: String, lhsTag: I32, rhsTag: I32,) -> (ExprOut,):
+    var done = out
+    if node.op == 1:
+        let lhsPtr = stringFacePointer(ctx = done.ctx, text = left, tag = lhsTag)
+        done.ctx = lhsPtr.ctx
+        let rhsPtr = stringFacePointer(ctx = done.ctx, text = right, tag = rhsTag)
+        done.ctx = rhsPtr.ctx
+        useExtern(use = done.ctx.externs, name = "bk_str_concat")
+        let id = done.ctx.temp
+        done.ctx.temp = id + 1
+        let name = tempName(index = id)
+        let args = "ptr " + lhsPtr.text + ", ptr " + rhsPtr.text + ", i32 0"
+        appendLine(sink = done.ctx.lines, text = "  " + name + " = call ptr @bk_str_concat(" + args + ")")
+        done.text = name
+        return done
+    if node.op < 6 || node.op > 11:
+        done.ctx = addGap(ctx = done.ctx, gap = "字符串面二元运算码 " + countText(node.op))
+        return done
+    if lhsTag == 9 && rhsTag == 9:
+        var cmp = "icmp ne"
+        if node.op == 6:
+            cmp = "icmp eq"
+        let id = done.ctx.temp
+        done.ctx.temp = id + 1
+        let name = tempName(index = id)
+        appendLine(sink = done.ctx.lines, text = "  " + name + " = " + cmp + " i64 " + left + ", " + right)
+        done.text = name
+        return done
+    if lhsTag == 9 || rhsTag == 9:
+        if node.op != 6 && node.op != 7:
+            done.ctx = addGap(ctx = done.ctx, gap = "字符与其他串比大小")
+            return done
+        var charText = left
+        var stringText = right
+        if rhsTag == 9:
+            charText = right
+            stringText = left
+        useExtern(use = done.ctx.externs, name = "bk_char_equal_string")
+        let hitId = done.ctx.temp
+        done.ctx.temp = hitId + 1
+        let hit = tempName(index = hitId)
+        appendLine(sink = done.ctx.lines, text = "  " + hit + " = call i32 @bk_char_equal_string(i64 " + charText + ", ptr " + stringText + ")")
+        var cmp = "icmp eq"
+        if node.op == 6:
+            cmp = "icmp ne"
+        let id = done.ctx.temp
+        done.ctx.temp = id + 1
+        let name = tempName(index = id)
+        appendLine(sink = done.ctx.lines, text = "  " + name + " = " + cmp + " i32 " + hit + ", 0")
+        done.text = name
+        return done
+    useExtern(use = done.ctx.externs, name = "strcmp")
+    let hitId = done.ctx.temp
+    done.ctx.temp = hitId + 1
+    let hit = tempName(index = hitId)
+    appendLine(sink = done.ctx.lines, text = "  " + hit + " = call i32 @strcmp(ptr " + left + ", ptr " + right + ")")
+    var cmp = "icmp eq"
+    if node.op == 7:
+        cmp = "icmp ne"
+    if node.op == 8:
+        cmp = "icmp slt"
+    if node.op == 9:
+        cmp = "icmp sle"
+    if node.op == 10:
+        cmp = "icmp sgt"
+    if node.op == 11:
+        cmp = "icmp sge"
+    let id = done.ctx.temp
+    done.ctx.temp = id + 1
+    let name = tempName(index = id)
+    appendLine(sink = done.ctx.lines, text = "  " + name + " = " + cmp + " i32 " + hit + ", 0")
+    done.text = name
+    return done
+
+; 字符落串：字符按内联字交给运行时展开，其余按现有指针直接用。
+stringFacePointer|func(ctx: BodyCtx, text: String, tag: I32,) -> (ExprOut,):
+    var out = ExprOut()
+    out.ctx = ctx
+    out.text = text
+    if tag != 9:
+        return out
+    useExtern(use = out.ctx.externs, name = "bk_char_to_heap_string")
+    let id = out.ctx.temp
+    out.ctx.temp = id + 1
+    let name = tempName(index = id)
+    appendLine(sink = out.ctx.lines, text = "  " + name + " = call ptr @bk_char_to_heap_string(i64 " + text + ")")
+    out.text = name
+    return out
+
+; 一元运算：取负、取反、逻辑非、绝对值与转换；转换按源与目标的宽度和符号性选指令。
+emitUnary|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut,):
+    var done = out
+    let one = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[0])
+    done.ctx = one.ctx
+    let opType = llvmTypeName(pool = module.types, typeId = irNodeAt(pool = module.nodes, id = node.kids[0]).typeId)
+    if node.op == 5:
+        return emitCast(ctx = done.ctx, module = module, node = node, text = one.text)
+    if node.op == 4:
+        if opType == "double" || opType == "i1":
+            done.ctx = addGap(ctx = done.ctx, gap = "绝对值不支持 " + opType)
+            return done
+        let negId = done.ctx.temp
+        done.ctx.temp = negId + 1
+        let neg = tempName(index = negId)
+        appendLine(sink = done.ctx.lines, text = "  " + neg + " = sub " + opType + " 0, " + one.text)
+        let condId = done.ctx.temp
+        done.ctx.temp = condId + 1
+        let cond = tempName(index = condId)
+        appendLine(sink = done.ctx.lines, text = "  " + cond + " = icmp slt " + opType + " " + one.text + ", 0")
+        let id = done.ctx.temp
+        done.ctx.temp = id + 1
+        let name = tempName(index = id)
+        appendLine(sink = done.ctx.lines, text = "  " + name + " = select i1 " + cond + ", " + opType + " " + neg + ", " + opType + " " + one.text)
+        done.text = name
+        return done
+    let opText = unaryOpText(op = node.op)
+    if len(opText) == 0:
+        done.ctx = addGap(ctx = done.ctx, gap = "一元运算码 " + countText(node.op))
+        return done
+    let id = done.ctx.temp
+    done.ctx.temp = id + 1
+    let name = tempName(index = id)
+    if node.op == 1:
+        if opType == "double":
+            appendLine(sink = done.ctx.lines, text = "  " + name + " = fneg " + opType + " " + one.text)
+        else:
+            appendLine(sink = done.ctx.lines, text = "  " + name + " = sub " + opType + " 0, " + one.text)
+    elif node.op == 2:
+        appendLine(sink = done.ctx.lines, text = "  " + name + " = xor i1 " + one.text + ", 1")
+    else:
+        appendLine(sink = done.ctx.lines, text = "  " + name + " = xor " + opType + " " + one.text + ", -1")
+    done.text = name
+    return done
+
+; 转换：同拼写不出指令；浮点与整数互转按符号性选指令，整数之间加宽选扩展、收窄选截断。
+; 指针与整数互转走 ptrtoint / inttoptr；其余组合报缺口，不硬塞一条错拼的指令。
+emitCast|func(ctx: BodyCtx, module: IrModule, node: IrNode, text: String,) -> (ExprOut,):
+    let srcType = irNodeAt(pool = module.nodes, id = node.kids[0]).typeId
+    return emitConvert(ctx = ctx, module = module, text = text, srcType = srcType, dstType = node.typeId)
+
+; 存储位取值：两侧拼写不同时先转一格；store 的两个操作数必须同型，靠 LLVM 自动放宽不存在。
+storeValue|func(ctx: BodyCtx, module: IrModule, text: String, fromType: I32, toType: I32,) -> (ExprOut,):
+    return emitConvert(ctx = ctx, module = module, text = text, srcType = fromType, dstType = toType)
+
+; 转换内核：源与目标各给一个类型下标，调用点不必先造节点。
+emitConvert|func(ctx: BodyCtx, module: IrModule, text: String, srcType: I32, dstType: I32,) -> (ExprOut,):
+    var out = ExprOut()
+    out.ctx = ctx
+    let srcName = llvmTypeName(pool = module.types, typeId = srcType)
+    let dstName = llvmTypeName(pool = module.types, typeId = dstType)
+    if srcName == dstName:
+        out.text = text
+        return out
+    let srcTag = typeTagAt(module = module, typeId = srcType)
+    let dstTag = typeTagAt(module = module, typeId = dstType)
+    let srcWidth = intWidthOf(tag = srcTag)
+    let dstWidth = intWidthOf(tag = dstTag)
+    var op = ""
+    if srcTag == 9 && dstTag == 8:
+        ; 字符转串：字符是八字节内联值，必须交给运行时展开成带头串，不能当指针转。
+        useExtern(use = out.ctx.externs, name = "bk_char_to_heap_string")
+        let id = out.ctx.temp
+        out.ctx.temp = id + 1
+        let name = tempName(index = id)
+        appendLine(sink = out.ctx.lines, text = "  " + name + " = call ptr @bk_char_to_heap_string(i64 " + text + ")")
+        out.text = name
+        return out
+    if srcTag == 7 && dstWidth > 1:
+        ; 布尔转整数：零扩展即真值一，与数值语义不冲突。
+        op = "zext"
+    elif srcWidth > 0 && dstTag == 7:
+        let id = out.ctx.temp
+        out.ctx.temp = id + 1
+        let name = tempName(index = id)
+        appendLine(sink = out.ctx.lines, text = "  " + name + " = icmp ne " + srcName + " " + text + ", 0")
+        out.text = name
+        return out
+    elif srcName == "double":
+        op = "fptosi"
+        if isUnsignedTag(tag = dstTag):
+            op = "fptoui"
+    elif dstName == "double":
+        op = "sitofp"
+        if isUnsignedTag(tag = srcTag):
+            op = "uitofp"
+    elif srcWidth > 0 && dstWidth > srcWidth:
+        op = "sext"
+        if isUnsignedTag(tag = srcTag):
+            op = "zext"
+    elif srcWidth > 0 && dstWidth > 0 && dstWidth < srcWidth:
+        op = "trunc"
+    elif srcName == "ptr" && dstWidth > 0:
+        op = "ptrtoint"
+    elif srcWidth > 0 && dstName == "ptr":
+        op = "inttoptr"
+    if len(op) == 0:
+        out.ctx = addGap(ctx = out.ctx, gap = "转换 " + srcName + " 到 " + dstName)
+        return out
+    let id = out.ctx.temp
+    out.ctx.temp = id + 1
+    let name = tempName(index = id)
+    appendLine(sink = out.ctx.lines, text = "  " + name + " = " + op + " " + srcName + " " + text + " to " + dstName)
+    out.text = name
     return out
 
 ; 内建调用：符号与搬参法都来自表，本函数只按形状码补指令。
@@ -308,6 +615,12 @@ emitBuiltinCall|func(out: ExprOut, module: IrModule, node: IrNode, row: BuiltinE
         return emitElementAppend(ctx = receiver.ctx, module = module, receiverText = receiver.text, valueId = node.kids[1], symbol = row.symbol)
     if row.shape == shapeDirectCall() && len(node.kids) == 1:
         return emitDirectCall(ctx = done.ctx, module = module, node = node, symbol = row.symbol)
+    if row.shape == shapeZeroCall() && len(node.kids) == 0:
+        return emitZeroCall(ctx = done.ctx, module = module, node = node, symbol = row.symbol)
+    if row.shape == shapePredicate() && len(node.kids) == 1:
+        return emitPredicateCall(ctx = done.ctx, module = module, node = node, symbol = row.symbol)
+    if row.shape == shapeTryRead() && len(node.kids) == 1:
+        return emitTryReadCall(ctx = done.ctx, module = module, node = node, symbol = row.symbol)
     done.ctx = addGap(ctx = done.ctx, gap = "内建形状 " + row.name + " " + countText(row.shape))
     return done
 
@@ -361,6 +674,77 @@ emitDirectCall|func(ctx: BodyCtx, module: IrModule, node: IrNode, symbol: String
     out.ctx.temp = id + 1
     let name = tempName(index = id)
     appendLine(sink = out.ctx.lines, text = "  " + name + " = call " + retType + " @" + symbol + "(" + argType + " " + arg.text + ")")
+    out.text = name
+    return out
+
+; 零参直呼：结果按节点类型出；宿主查询族没有接收者，查表时接收者类别记负一。
+emitZeroCall|func(ctx: BodyCtx, module: IrModule, node: IrNode, symbol: String,) -> (ExprOut,):
+    var out = ExprOut()
+    out.ctx = ctx
+    useExtern(use = out.ctx.externs, name = symbol)
+    let retType = llvmTypeName(pool = module.types, typeId = node.typeId)
+    let id = out.ctx.temp
+    out.ctx.temp = id + 1
+    let name = tempName(index = id)
+    appendLine(sink = out.ctx.lines, text = "  " + name + " = call " + retType + " @" + symbol + "()")
+    out.text = name
+    return out
+
+; 谓词：运行时答 i32，本层收成 i1；布尔在 IR 上是 i1，不能把 i32 直接当条件跳。
+emitPredicateCall|func(ctx: BodyCtx, module: IrModule, node: IrNode, symbol: String,) -> (ExprOut,):
+    var out = ExprOut()
+    let arg = emitExpr(ctx = ctx, module = module, nodeId = node.kids[0])
+    out.ctx = arg.ctx
+    useExtern(use = out.ctx.externs, name = symbol)
+    let hitId = out.ctx.temp
+    out.ctx.temp = hitId + 1
+    let hit = tempName(index = hitId)
+    appendLine(sink = out.ctx.lines, text = "  " + hit + " = call i32 @" + symbol + "(ptr " + arg.text + ")")
+    let id = out.ctx.temp
+    out.ctx.temp = id + 1
+    let name = tempName(index = id)
+    appendLine(sink = out.ctx.lines, text = "  " + name + " = icmp ne i32 " + hit + ", 0")
+    out.text = name
+    return out
+
+; 结果读取：错误字走调用方给的出参槽，内容非空即 ok；两路拼回结果聚合，位置按契约三槽。
+emitTryReadCall|func(ctx: BodyCtx, module: IrModule, node: IrNode, symbol: String,) -> (ExprOut,):
+    var out = ExprOut()
+    let arg = emitExpr(ctx = ctx, module = module, nodeId = node.kids[0])
+    out.ctx = arg.ctx
+    let slot = allocSlot(ctx = out.ctx, typeName = "i64")
+    out.ctx = slot.ctx
+    appendLine(sink = out.ctx.lines, text = "  store i64 0, ptr " + slot.text)
+    useExtern(use = out.ctx.externs, name = symbol)
+    let contentId = out.ctx.temp
+    out.ctx.temp = contentId + 1
+    let content = tempName(index = contentId)
+    appendLine(sink = out.ctx.lines, text = "  " + content + " = call ptr @" + symbol + "(ptr " + arg.text + ", ptr " + slot.text + ")")
+    let okId = out.ctx.temp
+    out.ctx.temp = okId + 1
+    let ok = tempName(index = okId)
+    appendLine(sink = out.ctx.lines, text = "  " + ok + " = icmp ne ptr " + content + ", null")
+    let tagId = out.ctx.temp
+    out.ctx.temp = tagId + 1
+    let tag = tempName(index = tagId)
+    appendLine(sink = out.ctx.lines, text = "  " + tag + " = select i1 " + ok + ", i64 0, i64 1")
+    let agg = llvmTypeName(pool = module.types, typeId = node.typeId)
+    let taggedId = out.ctx.temp
+    out.ctx.temp = taggedId + 1
+    let tagged = tempName(index = taggedId)
+    appendLine(sink = out.ctx.lines, text = "  " + tagged + " = insertvalue " + agg + " zeroinitializer, i64 " + tag + ", 0")
+    let filledId = out.ctx.temp
+    out.ctx.temp = filledId + 1
+    let filled = tempName(index = filledId)
+    appendLine(sink = out.ctx.lines, text = "  " + filled + " = insertvalue " + agg + " " + tagged + ", ptr " + content + ", 1")
+    let wordId = out.ctx.temp
+    out.ctx.temp = wordId + 1
+    let word = tempName(index = wordId)
+    appendLine(sink = out.ctx.lines, text = "  " + word + " = load i64, ptr " + slot.text)
+    let id = out.ctx.temp
+    out.ctx.temp = id + 1
+    let name = tempName(index = id)
+    appendLine(sink = out.ctx.lines, text = "  " + name + " = insertvalue " + agg + " " + filled + ", i64 " + word + ", 2")
     out.text = name
     return out
 
@@ -431,6 +815,9 @@ printValue|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (BodyCtx,):
         appendLine(sink = out.lines, text = "  " + wide + " = sext i8 " + one.text + " to i32")
         appendLine(sink = out.lines, text = "  call i32 (ptr, ...) @printf(ptr @fmt_int, i32 " + wide + ")")
         return out
+    if ty == "i32":
+        appendLine(sink = out.lines, text = "  call i32 (ptr, ...) @printf(ptr @fmt_int, i32 " + one.text + ")")
+        return out
     if ty == "i64":
         let id = out.temp
         out.temp = id + 1
@@ -484,6 +871,817 @@ emitAssert|func(ctx: BodyCtx, module: IrModule, node: IrNode,) -> (BodyCtx,):
     appendLine(sink = out.lines, text = endLabel + ":")
     return out
 
+; 栈槽：按类型名开一格，登记进 head 由发射入口统一放到函数首块。
+;  行不通  就地 alloca：循环体里按次长栈，长跑进程的内存随迭代数线性上涨。
+allocSlot|func(ctx: BodyCtx, typeName: String,) -> (ExprOut,):
+    var out = ExprOut()
+    out.ctx = ctx
+    let id = out.ctx.temp
+    out.ctx.temp = id + 1
+    let name = tempName(index = id)
+    out.ctx.head = out.ctx.head.append("  " + name + " = alloca " + typeName)
+    out.text = name
+    return out
+
+; 槽地址：聚合指针加常量槽号；槽号由调用方按槽表算好，这里只出 GEP。
+slotPtr|func(ctx: BodyCtx, agg: String, base: String, slot: I32,) -> (ExprOut,):
+    var out = ExprOut()
+    out.ctx = ctx
+    let id = out.ctx.temp
+    out.ctx.temp = id + 1
+    let name = tempName(index = id)
+    appendLine(sink = out.ctx.lines, text = "  " + name + " = getelementptr " + agg + ", ptr " + base + ", i32 0, i32 " + countText(slot))
+    out.text = name
+    return out
+
+; 名义箱：尺寸取聚合的过尾指针，类型标识取 IR 类型下标；头四格由运行时段写。
+nominalAlloc|func(ctx: BodyCtx, agg: String, typeId: I32,) -> (ExprOut,):
+    var out = ExprOut()
+    out.ctx = ctx
+    let endId = out.ctx.temp
+    out.ctx.temp = endId + 1
+    let endName = tempName(index = endId)
+    appendLine(sink = out.ctx.lines, text = "  " + endName + " = getelementptr " + agg + ", ptr null, i32 1")
+    let sizeId = out.ctx.temp
+    out.ctx.temp = sizeId + 1
+    let sizeName = tempName(index = sizeId)
+    appendLine(sink = out.ctx.lines, text = "  " + sizeName + " = ptrtoint ptr " + endName + " to i64")
+    useExtern(use = out.ctx.externs, name = "bk_nominal_alloc")
+    let boxId = out.ctx.temp
+    out.ctx.temp = boxId + 1
+    let box = tempName(index = boxId)
+    appendLine(sink = out.ctx.lines, text = "  " + box + " = call ptr @bk_nominal_alloc(i64 " + sizeName + ", i32 " + countText(typeId) + ")")
+    out.text = box
+    return out
+
+; 具名构造：分配箱后逐字段清零，再按「字段号 + 表达式」对覆盖带初值的字段。
+; 对子是降载期展开的声明初值，按字段声明序给；没有对子的字段保留零值。
+emitConstruct|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut,):
+    var done = out
+    let agg = llvmAggregateName(pool = module.types, typeId = node.typeId)
+    if len(agg) == 0:
+        done.ctx = addGap(ctx = done.ctx, gap = "构造的类型不是名义类型")
+        return done
+    let box = nominalAlloc(ctx = done.ctx, agg = agg, typeId = node.typeId)
+    done.ctx = box.ctx
+    done.text = box.text
+    let decl = declAt(table = module.decls, typeId = node.typeId)
+    var i = 0
+    while i < len(decl.fields):
+        let fieldType = decl.fields[i].typeId
+        if fieldType >= 0:
+            let typeName = llvmTypeName(pool = module.types, typeId = fieldType)
+            let at = slotPtr(ctx = done.ctx, agg = agg, base = done.text, slot = fieldSlotIndex(table = module.slots, fieldIndex = i))
+            done.ctx = at.ctx
+            appendLine(sink = done.ctx.lines, text = "  store " + typeName + " " + zeroTextOf(typeName = typeName) + ", ptr " + at.text)
+        i = i + 1
+    var k = 0
+    while k + 1 < len(node.kids):
+        let fieldIndex = irNodeAt(pool = module.nodes, id = node.kids[k]).intValue as I32
+        let value = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[k + 1])
+        done.ctx = value.ctx
+        if fieldIndex >= 0 && fieldIndex < len(decl.fields):
+            let fieldType = decl.fields[fieldIndex].typeId
+            if fieldType >= 0:
+                let typeName = llvmTypeName(pool = module.types, typeId = fieldType)
+                let at = slotPtr(ctx = done.ctx, agg = agg, base = done.text, slot = fieldSlotIndex(table = module.slots, fieldIndex = fieldIndex))
+                done.ctx = at.ctx
+                let fromType = irNodeAt(pool = module.nodes, id = node.kids[k + 1]).typeId
+                let shaped = storeValue(ctx = done.ctx, module = module, text = value.text, fromType = fromType, toType = fieldType)
+                done.ctx = shaped.ctx
+                appendLine(sink = done.ctx.lines, text = "  store " + typeName + " " + shaped.text + ", ptr " + at.text)
+        k = k + 2
+    return done
+
+; 枚举载荷槽类型：聚合按最宽用例占位，故同一下标的槽类型取那条用例的声明类型。
+enumSlotType|func(module: IrModule, typeId: I32, index: I32, fallback: I32,) -> (I32,):
+    let decl = declAt(table = module.decls, typeId = typeId)
+    let widest = widestCaseIndex(cases = decl.cases)
+    if widest >= 0:
+        let payload = decl.cases[widest].payload
+        if index >= 0 && index < len(payload):
+            return payload[index]
+    return fallback
+
+; 枚举构造：分配箱后写标签，再按用例载荷序逐格存值；载荷类型取聚合的槽类型。
+emitEnumConstruct|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut,):
+    var done = out
+    let agg = llvmAggregateName(pool = module.types, typeId = node.typeId)
+    if len(agg) == 0:
+        done.ctx = addGap(ctx = done.ctx, gap = "枚举构造的类型不是枚举")
+        return done
+    let box = nominalAlloc(ctx = done.ctx, agg = agg, typeId = node.typeId)
+    done.ctx = box.ctx
+    done.text = box.text
+    let tagAt = slotPtr(ctx = done.ctx, agg = agg, base = done.text, slot = module.slots.headSlots)
+    done.ctx = tagAt.ctx
+    appendLine(sink = done.ctx.lines, text = "  store i32 " + countText(node.op) + ", ptr " + tagAt.text)
+    var i = 0
+    while i < len(node.kids):
+        let value = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[i])
+        done.ctx = value.ctx
+        let fieldType = enumSlotType(module = module, typeId = node.typeId, index = i, fallback = irNodeAt(pool = module.nodes, id = node.kids[i]).typeId)
+        let typeName = llvmTypeName(pool = module.types, typeId = fieldType)
+        let at = slotPtr(ctx = done.ctx, agg = agg, base = done.text, slot = module.slots.payloadBase + i)
+        done.ctx = at.ctx
+        let shaped = storeValue(ctx = done.ctx, module = module, text = value.text, fromType = irNodeAt(pool = module.nodes, id = node.kids[i]).typeId, toType = fieldType)
+        done.ctx = shaped.ctx
+        appendLine(sink = done.ctx.lines, text = "  store " + typeName + " " + shaped.text + ", ptr " + at.text)
+        i = i + 1
+    return done
+
+; 字段读：基址是名义箱，槽号按槽表换算；读出的类型取节点类型，不按槽猜。
+emitFieldGet|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut,):
+    var done = out
+    if len(node.kids) == 0:
+        done.ctx = addGap(ctx = done.ctx, gap = "字段读缺接收者")
+        return done
+    let base = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[0])
+    done.ctx = base.ctx
+    let baseType = irNodeAt(pool = module.nodes, id = node.kids[0]).typeId
+    let agg = llvmAggregateName(pool = module.types, typeId = baseType)
+    if len(agg) == 0:
+        done.ctx = addGap(ctx = done.ctx, gap = "字段读的接收者不是名义类型")
+        return done
+    let at = slotPtr(ctx = done.ctx, agg = agg, base = base.text, slot = fieldSlotIndex(table = module.slots, fieldIndex = node.op))
+    done.ctx = at.ctx
+    let typeName = llvmTypeName(pool = module.types, typeId = node.typeId)
+    let id = done.ctx.temp
+    done.ctx.temp = id + 1
+    let name = tempName(index = id)
+    appendLine(sink = done.ctx.lines, text = "  " + name + " = load " + typeName + ", ptr " + at.text)
+    done.text = name
+    return done
+
+; 字段写：与字段读同一槽号口径；写进箱里的是值本身，份额动作由中端另标，本层不算。
+emitFieldStore|func(ctx: BodyCtx, module: IrModule, node: IrNode,) -> (BodyCtx,):
+    var out = ctx
+    if len(node.kids) < 2:
+        return addGap(ctx = out, gap = "字段写缺操作数")
+    let base = emitExpr(ctx = out, module = module, nodeId = node.kids[0])
+    out = base.ctx
+    let value = emitExpr(ctx = out, module = module, nodeId = node.kids[1])
+    out = value.ctx
+    let baseType = irNodeAt(pool = module.nodes, id = node.kids[0]).typeId
+    let agg = llvmAggregateName(pool = module.types, typeId = baseType)
+    if len(agg) == 0:
+        return addGap(ctx = out, gap = "字段写的接收者不是名义类型")
+    let at = slotPtr(ctx = out, agg = agg, base = base.text, slot = fieldSlotIndex(table = module.slots, fieldIndex = node.op))
+    out = at.ctx
+    let typeName = llvmTypeName(pool = module.types, typeId = node.typeId)
+    let shaped = storeValue(ctx = out, module = module, text = value.text, fromType = irNodeAt(pool = module.nodes, id = node.kids[1]).typeId, toType = node.typeId)
+    out = shaped.ctx
+    appendLine(sink = out.lines, text = "  store " + typeName + " " + shaped.text + ", ptr " + at.text)
+    return out
+
+; 标签读：枚举读箱里的标签格，可选与结果读聚合首格；三族都收成 i32。
+emitEnumTagGet|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut,):
+    var done = out
+    if len(node.kids) == 0:
+        done.ctx = addGap(ctx = done.ctx, gap = "标签读缺操作数")
+        return done
+    let base = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[0])
+    done.ctx = base.ctx
+    let baseType = irNodeAt(pool = module.nodes, id = node.kids[0]).typeId
+    let tag = typeTagAt(module = module, typeId = baseType)
+    if tag == 15:
+        let agg = llvmAggregateName(pool = module.types, typeId = baseType)
+        if len(agg) == 0:
+            done.ctx = addGap(ctx = done.ctx, gap = "标签读的枚举没有聚合名")
+            return done
+        let at = slotPtr(ctx = done.ctx, agg = agg, base = base.text, slot = module.slots.headSlots)
+        done.ctx = at.ctx
+        let id = done.ctx.temp
+        done.ctx.temp = id + 1
+        let name = tempName(index = id)
+        appendLine(sink = done.ctx.lines, text = "  " + name + " = load i32, ptr " + at.text)
+        done.text = name
+        return done
+    if tag == 10 || tag == 13:
+        let agg = llvmTypeName(pool = module.types, typeId = baseType)
+        let wideId = done.ctx.temp
+        done.ctx.temp = wideId + 1
+        let wide = tempName(index = wideId)
+        appendLine(sink = done.ctx.lines, text = "  " + wide + " = extractvalue " + agg + " " + base.text + ", 0")
+        let id = done.ctx.temp
+        done.ctx.temp = id + 1
+        let name = tempName(index = id)
+        appendLine(sink = done.ctx.lines, text = "  " + name + " = trunc i64 " + wide + " to i32")
+        done.text = name
+        return done
+    done.ctx = addGap(ctx = done.ctx, gap = "标签读的操作数不是带标签值 类别码 " + countText(tag))
+    return done
+
+; 载荷读：枚举按载荷窗口取格，结果按用例名分 ok 与错误字两格，可选只有一格。
+emitEnumPayloadGet|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut,):
+    var done = out
+    if len(node.kids) == 0:
+        done.ctx = addGap(ctx = done.ctx, gap = "载荷读缺操作数")
+        return done
+    let base = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[0])
+    done.ctx = base.ctx
+    let baseType = irNodeAt(pool = module.nodes, id = node.kids[0]).typeId
+    let tag = typeTagAt(module = module, typeId = baseType)
+    let typeName = llvmTypeName(pool = module.types, typeId = node.typeId)
+    if tag == 15:
+        let agg = llvmAggregateName(pool = module.types, typeId = baseType)
+        if len(agg) == 0:
+            done.ctx = addGap(ctx = done.ctx, gap = "载荷读的枚举没有聚合名")
+            return done
+        let at = slotPtr(ctx = done.ctx, agg = agg, base = base.text, slot = module.slots.payloadBase + node.op)
+        done.ctx = at.ctx
+        let id = done.ctx.temp
+        done.ctx.temp = id + 1
+        let name = tempName(index = id)
+        appendLine(sink = done.ctx.lines, text = "  " + name + " = load " + typeName + ", ptr " + at.text)
+        done.text = name
+        return done
+    if tag == 10 || tag == 13:
+        var slot = node.op + 1
+        if tag == 10 && node.text >= 0:
+            let caseName = textAt(module = module, id = node.text)
+            if caseName != "ok":
+                slot = 2
+        let agg = llvmTypeName(pool = module.types, typeId = baseType)
+        let id = done.ctx.temp
+        done.ctx.temp = id + 1
+        let name = tempName(index = id)
+        appendLine(sink = done.ctx.lines, text = "  " + name + " = extractvalue " + agg + " " + base.text + ", " + countText(slot))
+        done.text = name
+        return done
+    done.ctx = addGap(ctx = done.ctx, gap = "载荷读的操作数不是带标签值 类别码 " + countText(tag))
+    return done
+
+; 负下标尾计数：取长度后加上下标，从尾部数；越界由运行时陷阱，本层不夹界。
+tailIndex|func(ctx: BodyCtx, containerText: String, indexText: String,) -> (ExprOut,):
+    var out = ExprOut()
+    out.ctx = ctx
+    useExtern(use = out.ctx.externs, name = "bk_array_len")
+    let lenId = out.ctx.temp
+    out.ctx.temp = lenId + 1
+    let lenName = tempName(index = lenId)
+    appendLine(sink = out.ctx.lines, text = "  " + lenName + " = call i32 @bk_array_len(ptr " + containerText + ")")
+    let negId = out.ctx.temp
+    out.ctx.temp = negId + 1
+    let negName = tempName(index = negId)
+    appendLine(sink = out.ctx.lines, text = "  " + negName + " = icmp slt i32 " + indexText + ", 0")
+    let adjId = out.ctx.temp
+    out.ctx.temp = adjId + 1
+    let adjName = tempName(index = adjId)
+    appendLine(sink = out.ctx.lines, text = "  " + adjName + " = add i32 " + lenName + ", " + indexText)
+    let id = out.ctx.temp
+    out.ctx.temp = id + 1
+    let name = tempName(index = id)
+    appendLine(sink = out.ctx.lines, text = "  " + name + " = select i1 " + negName + ", i32 " + adjName + ", i32 " + indexText)
+    out.text = name
+    return out
+
+; 下标读：按容器类别分派；数组负值尾计数，字串走字素通道，字典按键取。
+emitSubscriptGet|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut,):
+    var done = out
+    if len(node.kids) < 2:
+        done.ctx = addGap(ctx = done.ctx, gap = "下标读缺操作数")
+        return done
+    let container = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[0])
+    done.ctx = container.ctx
+    let index = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[1])
+    done.ctx = index.ctx
+    let containerTag = typeTagOf(module = module, nodeId = node.kids[0])
+    if containerTag == 8:
+        useExtern(use = done.ctx.externs, name = "bk_string_char_at")
+        let id = done.ctx.temp
+        done.ctx.temp = id + 1
+        let name = tempName(index = id)
+        let args = "ptr " + container.text + ", i32 " + index.text
+        appendLine(sink = done.ctx.lines, text = "  " + name + " = call i64 @bk_string_char_at(" + args + ")")
+        done.text = name
+        return done
+    if containerTag == 16:
+        return emitDictGet(ctx = done.ctx, module = module, node = node, containerText = container.text, keyText = index.text)
+    let eff = tailIndex(ctx = done.ctx, containerText = container.text, indexText = index.text)
+    done.ctx = eff.ctx
+    useExtern(use = done.ctx.externs, name = "bk_array_get")
+    let boxId = done.ctx.temp
+    done.ctx.temp = boxId + 1
+    let box = tempName(index = boxId)
+    appendLine(sink = done.ctx.lines, text = "  " + box + " = call ptr @bk_array_get(ptr " + container.text + ", i32 " + eff.text + ")")
+    let typeName = llvmTypeName(pool = module.types, typeId = node.typeId)
+    let id = done.ctx.temp
+    done.ctx.temp = id + 1
+    let name = tempName(index = id)
+    appendLine(sink = done.ctx.lines, text = "  " + name + " = load " + typeName + ", ptr " + box)
+    done.text = name
+    return done
+
+; 字典读：键先按自身宽度与标签装箱，再交给运行时；取回的是元素地址，按值类型读。
+emitDictGet|func(ctx: BodyCtx, module: IrModule, node: IrNode, containerText: String, keyText: String,) -> (ExprOut,):
+    var out = ExprOut()
+    out.ctx = ctx
+    let keyType = irNodeAt(pool = module.nodes, id = node.kids[1]).typeId
+    let width = elementWidth(pool = module.types, typeId = keyType, pointerBytes = out.ctx.pointerBytes)
+    let keyTag = elementTag(pool = module.types, typeId = keyType)
+    if width == 0 || keyTag < 0:
+        out.ctx = addGap(ctx = out.ctx, gap = "字典键装箱 类别码 " + countText(typeTagAt(module = module, typeId = keyType)))
+        return out
+    let keyName = llvmTypeName(pool = module.types, typeId = keyType)
+    let box = allocSlot(ctx = out.ctx, typeName = keyName)
+    out.ctx = box.ctx
+    appendLine(sink = out.ctx.lines, text = "  store " + keyName + " " + keyText + ", ptr " + box.text)
+    useExtern(use = out.ctx.externs, name = "bk_dict_get")
+    let rawId = out.ctx.temp
+    out.ctx.temp = rawId + 1
+    let raw = tempName(index = rawId)
+    let args = "ptr " + containerText + ", ptr " + box.text + ", i32 " + countText(width) + ", i32 " + countText(keyTag)
+    appendLine(sink = out.ctx.lines, text = "  " + raw + " = call ptr @bk_dict_get(" + args + ")")
+    let valueName = llvmTypeName(pool = module.types, typeId = node.typeId)
+    let id = out.ctx.temp
+    out.ctx.temp = id + 1
+    let name = tempName(index = id)
+    appendLine(sink = out.ctx.lines, text = "  " + name + " = load " + valueName + ", ptr " + raw)
+    out.text = name
+    return out
+
+; 下标写：值先装箱，再交给运行时写元素；返回的新句柄写回容器所在的槽或字段。
+emitSubscriptStore|func(ctx: BodyCtx, module: IrModule, node: IrNode,) -> (BodyCtx,):
+    var out = ctx
+    if len(node.kids) < 3:
+        return addGap(ctx = out, gap = "下标写缺操作数")
+    let container = emitExpr(ctx = out, module = module, nodeId = node.kids[0])
+    out = container.ctx
+    let index = emitExpr(ctx = out, module = module, nodeId = node.kids[1])
+    out = index.ctx
+    let value = emitExpr(ctx = out, module = module, nodeId = node.kids[2])
+    out = value.ctx
+    let width = elementWidth(pool = module.types, typeId = node.typeId, pointerBytes = out.pointerBytes)
+    let elemTag = elementTag(pool = module.types, typeId = node.typeId)
+    if width == 0 || elemTag < 0:
+        return addGap(ctx = out, gap = "下标写元素装箱 类别码 " + countText(typeTagAt(module = module, typeId = node.typeId)))
+    let typeName = llvmTypeName(pool = module.types, typeId = node.typeId)
+    let box = allocSlot(ctx = out, typeName = typeName)
+    out = box.ctx
+    let shaped = storeValue(ctx = out, module = module, text = value.text, fromType = irNodeAt(pool = module.nodes, id = node.kids[2]).typeId, toType = node.typeId)
+    out = shaped.ctx
+    appendLine(sink = out.lines, text = "  store " + typeName + " " + shaped.text + ", ptr " + box.text)
+    let containerTag = typeTagOf(module = module, nodeId = node.kids[0])
+    if containerTag == 16:
+        return emitDictStore(ctx = out, module = module, node = node, containerText = container.text, keyText = index.text, box = box.text, width = width, tag = elemTag)
+    useExtern(use = out.externs, name = "bk_array_set")
+    let nextId = out.temp
+    out.temp = nextId + 1
+    let next = tempName(index = nextId)
+    let args = "ptr " + container.text + ", i32 " + index.text + ", ptr " + box.text + ", i32 " + countText(width) + ", i32 " + countText(elemTag)
+    appendLine(sink = out.lines, text = "  " + next + " = call ptr @bk_array_set(" + args + ")")
+    return storeHandleBack(ctx = out, module = module, containerId = node.kids[0], text = next)
+
+; 字典写：键与值各装一箱，返回的新句柄同样写回容器所在位置。
+emitDictStore|func(ctx: BodyCtx, module: IrModule, node: IrNode, containerText: String, keyText: String, box: String, width: I32, tag: I32,) -> (BodyCtx,):
+    var out = ctx
+    let keyType = irNodeAt(pool = module.nodes, id = node.kids[1]).typeId
+    let keyWidth = elementWidth(pool = module.types, typeId = keyType, pointerBytes = out.pointerBytes)
+    let keyTag = elementTag(pool = module.types, typeId = keyType)
+    if keyWidth == 0 || keyTag < 0:
+        return addGap(ctx = out, gap = "字典写键装箱 类别码 " + countText(typeTagAt(module = module, typeId = keyType)))
+    let keyName = llvmTypeName(pool = module.types, typeId = keyType)
+    let keyBox = allocSlot(ctx = out, typeName = keyName)
+    out = keyBox.ctx
+    appendLine(sink = out.lines, text = "  store " + keyName + " " + keyText + ", ptr " + keyBox.text)
+    useExtern(use = out.externs, name = "bk_dict_set")
+    let nextId = out.temp
+    out.temp = nextId + 1
+    let next = tempName(index = nextId)
+    var args = "ptr " + containerText + ", ptr " + keyBox.text + ", i32 " + countText(keyWidth) + ", i32 " + countText(keyTag)
+    args = args + ", ptr " + box + ", i32 " + countText(width) + ", i32 " + countText(tag)
+    appendLine(sink = out.lines, text = "  " + next + " = call ptr @bk_dict_set(" + args + ")")
+    return storeHandleBack(ctx = out, module = module, containerId = node.kids[0], text = next)
+
+; 句柄写回：写容器换出的新句柄必须被槽或字段接住，否则那次写只落在旧箱上。
+storeHandleBack|func(ctx: BodyCtx, module: IrModule, containerId: I32, text: String,) -> (BodyCtx,):
+    var out = ctx
+    let node = irNodeAt(pool = module.nodes, id = containerId)
+    if node.kind == 5:
+        appendLine(sink = out.lines, text = "  store ptr " + text + ", ptr " + slotNameOf(ctx = out, slot = node.intValue as I32))
+        return out
+    if node.kind == 28:
+        let baseType = irNodeAt(pool = module.nodes, id = node.kids[0]).typeId
+        let agg = llvmAggregateName(pool = module.types, typeId = baseType)
+        if len(agg) > 0:
+            let base = emitExpr(ctx = out, module = module, nodeId = node.kids[0])
+            out = base.ctx
+            let at = slotPtr(ctx = out, agg = agg, base = base.text, slot = fieldSlotIndex(table = module.slots, fieldIndex = node.op))
+            out = at.ctx
+            appendLine(sink = out.lines, text = "  store ptr " + text + ", ptr " + at.text)
+    return out
+
+; 切片：字串交给运行时段按字素切，数组按元素逐个搬进新句柄；两界都先夹到 [0, len]。
+emitSliceCall|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut,):
+    var done = out
+    if len(node.kids) < 3:
+        done.ctx = addGap(ctx = done.ctx, gap = "切片缺操作数")
+        return done
+    let container = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[0])
+    done.ctx = container.ctx
+    let start = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[1])
+    done.ctx = start.ctx
+    let end = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[2])
+    done.ctx = end.ctx
+    let containerTag = typeTagOf(module = module, nodeId = node.kids[0])
+    if containerTag == 8:
+        useExtern(use = done.ctx.externs, name = "bk_string_slice")
+        let id = done.ctx.temp
+        done.ctx.temp = id + 1
+        let name = tempName(index = id)
+        var args = "ptr " + container.text + ", i32 1, i32 " + start.text
+        args = args + ", i32 1, i32 " + end.text
+        appendLine(sink = done.ctx.lines, text = "  " + name + " = call ptr @bk_string_slice(" + args + ")")
+        done.text = name
+        return done
+    return emitArraySlice(out = done, module = module, node = node, containerText = container.text, startText = start.text, endText = end.text)
+
+; 界夹取：负数按尾计数，再夹到 [0, count]；返回一个 i32 值串。
+clampBound|func(ctx: BodyCtx, lenText: String, boundText: String,) -> (ExprOut,):
+    var out = ExprOut()
+    out.ctx = ctx
+    let negId = out.ctx.temp
+    out.ctx.temp = negId + 1
+    let neg = tempName(index = negId)
+    appendLine(sink = out.ctx.lines, text = "  " + neg + " = icmp slt i32 " + boundText + ", 0")
+    let adjId = out.ctx.temp
+    out.ctx.temp = adjId + 1
+    let adj = tempName(index = adjId)
+    appendLine(sink = out.ctx.lines, text = "  " + adj + " = add i32 " + lenText + ", " + boundText)
+    let baseId = out.ctx.temp
+    out.ctx.temp = baseId + 1
+    let base = tempName(index = baseId)
+    appendLine(sink = out.ctx.lines, text = "  " + base + " = select i1 " + neg + ", i32 " + adj + ", i32 " + boundText)
+    let lowId = out.ctx.temp
+    out.ctx.temp = lowId + 1
+    let low = tempName(index = lowId)
+    appendLine(sink = out.ctx.lines, text = "  " + low + " = icmp slt i32 " + base + ", 0")
+    let zeroId = out.ctx.temp
+    out.ctx.temp = zeroId + 1
+    let zero = tempName(index = zeroId)
+    appendLine(sink = out.ctx.lines, text = "  " + zero + " = select i1 " + low + ", i32 0, i32 " + base)
+    let highId = out.ctx.temp
+    out.ctx.temp = highId + 1
+    let high = tempName(index = highId)
+    appendLine(sink = out.ctx.lines, text = "  " + high + " = icmp sgt i32 " + zero + ", " + lenText)
+    let id = out.ctx.temp
+    out.ctx.temp = id + 1
+    let name = tempName(index = id)
+    appendLine(sink = out.ctx.lines, text = "  " + name + " = select i1 " + high + ", i32 " + lenText + ", i32 " + zero)
+    out.text = name
+    return out
+
+; 数组切片：先夹界再建新句柄，逐元素搬字节；源数组不动，结果自带一份存储。
+emitArraySlice|func(out: ExprOut, module: IrModule, node: IrNode, containerText: String, startText: String, endText: String,) -> (ExprOut,):
+    var done = out
+    var elementType = -1
+    if node.typeId >= 0 && node.typeId < irTypeCount(module.types):
+        let kids = irTypeAt(pool = module.types, id = node.typeId).kids
+        if len(kids) > 0:
+            elementType = kids[0]
+    let width = elementWidth(pool = module.types, typeId = elementType, pointerBytes = done.ctx.pointerBytes)
+    let elemTag = elementTag(pool = module.types, typeId = elementType)
+    if width == 0 || elemTag < 0:
+        done.ctx = addGap(ctx = done.ctx, gap = "切片元素装箱 类别码 " + countText(typeTagAt(module = module, typeId = elementType)))
+        return done
+    useExtern(use = done.ctx.externs, name = "bk_array_len")
+    let countId = done.ctx.temp
+    done.ctx.temp = countId + 1
+    let count = tempName(index = countId)
+    appendLine(sink = done.ctx.lines, text = "  " + count + " = call i32 @bk_array_len(ptr " + containerText + ")")
+    let lo = clampBound(ctx = done.ctx, lenText = count, boundText = startText)
+    done.ctx = lo.ctx
+    let hi = clampBound(ctx = done.ctx, lenText = count, boundText = endText)
+    done.ctx = hi.ctx
+    let spanId = done.ctx.temp
+    done.ctx.temp = spanId + 1
+    let span = tempName(index = spanId)
+    appendLine(sink = done.ctx.lines, text = "  " + span + " = sub i32 " + hi.text + ", " + lo.text)
+    let negId = done.ctx.temp
+    done.ctx.temp = negId + 1
+    let neg = tempName(index = negId)
+    appendLine(sink = done.ctx.lines, text = "  " + neg + " = icmp slt i32 " + span + ", 0")
+    let lenId = done.ctx.temp
+    done.ctx.temp = lenId + 1
+    let length = tempName(index = lenId)
+    appendLine(sink = done.ctx.lines, text = "  " + length + " = select i1 " + neg + ", i32 0, i32 " + span)
+    useExtern(use = done.ctx.externs, name = "bk_array_create")
+    let makeId = done.ctx.temp
+    done.ctx.temp = makeId + 1
+    let made = tempName(index = makeId)
+    appendLine(sink = done.ctx.lines, text = "  " + made + " = call ptr @bk_array_create(i32 " + length + ")")
+    let hold = allocSlot(ctx = done.ctx, typeName = "ptr")
+    done.ctx = hold.ctx
+    appendLine(sink = done.ctx.lines, text = "  store ptr " + made + ", ptr " + hold.text)
+    let cursor = allocSlot(ctx = done.ctx, typeName = "i32")
+    done.ctx = cursor.ctx
+    appendLine(sink = done.ctx.lines, text = "  store i32 0, ptr " + cursor.text)
+    let at = done.ctx.label
+    done.ctx.label = at + 1
+    let condLabel = labelName(prefix = "slice.cond.", index = at)
+    let bodyLabel = labelName(prefix = "slice.body.", index = at)
+    let incLabel = labelName(prefix = "slice.inc.", index = at)
+    let endLabel = labelName(prefix = "slice.end.", index = at)
+    appendLine(sink = done.ctx.lines, text = "  br label %" + condLabel)
+    appendLine(sink = done.ctx.lines, text = condLabel + ":")
+    let kId = done.ctx.temp
+    done.ctx.temp = kId + 1
+    let k = tempName(index = kId)
+    appendLine(sink = done.ctx.lines, text = "  " + k + " = load i32, ptr " + cursor.text)
+    let inId = done.ctx.temp
+    done.ctx.temp = inId + 1
+    let inside = tempName(index = inId)
+    appendLine(sink = done.ctx.lines, text = "  " + inside + " = icmp slt i32 " + k + ", " + length)
+    appendLine(sink = done.ctx.lines, text = "  br i1 " + inside + ", label %" + bodyLabel + ", label %" + endLabel)
+    appendLine(sink = done.ctx.lines, text = bodyLabel + ":")
+    let curId = done.ctx.temp
+    done.ctx.temp = curId + 1
+    let cur = tempName(index = curId)
+    appendLine(sink = done.ctx.lines, text = "  " + cur + " = load ptr, ptr " + hold.text)
+    let srcId = done.ctx.temp
+    done.ctx.temp = srcId + 1
+    let src = tempName(index = srcId)
+    appendLine(sink = done.ctx.lines, text = "  " + src + " = add i32 " + lo.text + ", " + k)
+    useExtern(use = done.ctx.externs, name = "bk_array_get")
+    let boxId = done.ctx.temp
+    done.ctx.temp = boxId + 1
+    let box = tempName(index = boxId)
+    appendLine(sink = done.ctx.lines, text = "  " + box + " = call ptr @bk_array_get(ptr " + containerText + ", i32 " + src + ")")
+    useExtern(use = done.ctx.externs, name = "bk_array_set")
+    let nextId = done.ctx.temp
+    done.ctx.temp = nextId + 1
+    let next = tempName(index = nextId)
+    var args = "ptr " + cur + ", i32 " + k + ", ptr " + box
+    args = args + ", i32 " + countText(width) + ", i32 " + countText(elemTag)
+    appendLine(sink = done.ctx.lines, text = "  " + next + " = call ptr @bk_array_set(" + args + ")")
+    appendLine(sink = done.ctx.lines, text = "  store ptr " + next + ", ptr " + hold.text)
+    appendLine(sink = done.ctx.lines, text = "  br label %" + incLabel)
+    appendLine(sink = done.ctx.lines, text = incLabel + ":")
+    let stepId = done.ctx.temp
+    done.ctx.temp = stepId + 1
+    let moved = tempName(index = stepId)
+    appendLine(sink = done.ctx.lines, text = "  " + moved + " = load i32, ptr " + cursor.text)
+    let bumpedId = done.ctx.temp
+    done.ctx.temp = bumpedId + 1
+    let bumped = tempName(index = bumpedId)
+    appendLine(sink = done.ctx.lines, text = "  " + bumped + " = add i32 " + moved + ", 1")
+    appendLine(sink = done.ctx.lines, text = "  store i32 " + bumped + ", ptr " + cursor.text)
+    appendLine(sink = done.ctx.lines, text = "  br label %" + condLabel)
+    appendLine(sink = done.ctx.lines, text = endLabel + ":")
+    let id = done.ctx.temp
+    done.ctx.temp = id + 1
+    let name = tempName(index = id)
+    appendLine(sink = done.ctx.lines, text = "  " + name + " = load ptr, ptr " + hold.text)
+    done.text = name
+    return done
+
+; 短路：先求左侧，结果已定就不求值右侧；两侧都汇到同一出口，右侧块只被条件边进入。
+emitShortCircuit|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut,):
+    var done = out
+    let lhs = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[0])
+    done.ctx = lhs.ctx
+    let slot = allocSlot(ctx = done.ctx, typeName = "i1")
+    done.ctx = slot.ctx
+    appendLine(sink = done.ctx.lines, text = "  store i1 " + lhs.text + ", ptr " + slot.text)
+    let at = done.ctx.label
+    done.ctx.label = at + 1
+    let rhsLabel = labelName(prefix = "sc.rhs.", index = at)
+    let endLabel = labelName(prefix = "sc.end.", index = at)
+    if node.op == 2:
+        appendLine(sink = done.ctx.lines, text = "  br i1 " + lhs.text + ", label %" + endLabel + ", label %" + rhsLabel)
+    else:
+        appendLine(sink = done.ctx.lines, text = "  br i1 " + lhs.text + ", label %" + rhsLabel + ", label %" + endLabel)
+    appendLine(sink = done.ctx.lines, text = rhsLabel + ":")
+    let rhs = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[1])
+    done.ctx = rhs.ctx
+    appendLine(sink = done.ctx.lines, text = "  store i1 " + rhs.text + ", ptr " + slot.text)
+    appendLine(sink = done.ctx.lines, text = "  br label %" + endLabel)
+    appendLine(sink = done.ctx.lines, text = endLabel + ":")
+    let id = done.ctx.temp
+    done.ctx.temp = id + 1
+    let name = tempName(index = id)
+    appendLine(sink = done.ctx.lines, text = "  " + name + " = load i1, ptr " + slot.text)
+    done.text = name
+    return done
+
+; 双参字符串调用：接收者与实参各求值一次；判据收 i32 再收成 i1，切分与查位按节点类型回值。
+emitStringPairCall|func(out: ExprOut, module: IrModule, node: IrNode, symbol: String, asBool: Bool,) -> (ExprOut,):
+    var done = out
+    let receiver = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[0])
+    done.ctx = receiver.ctx
+    let arg = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[1])
+    done.ctx = arg.ctx
+    useExtern(use = done.ctx.externs, name = symbol)
+    let hitId = done.ctx.temp
+    done.ctx.temp = hitId + 1
+    let hit = tempName(index = hitId)
+    var retType = llvmTypeName(pool = module.types, typeId = node.typeId)
+    if asBool:
+        retType = "i32"
+    appendLine(sink = done.ctx.lines, text = "  " + hit + " = call " + retType + " @" + symbol + "(ptr " + receiver.text + ", ptr " + arg.text + ")")
+    if asBool:
+        let id = done.ctx.temp
+        done.ctx.temp = id + 1
+        let name = tempName(index = id)
+        appendLine(sink = done.ctx.lines, text = "  " + name + " = icmp ne i32 " + hit + ", 0")
+        done.text = name
+        return done
+    done.text = hit
+    return done
+
+; 子串：两界原样交给运行时段，负值尾计数与夹界都在那一侧，调用点不重复实现。
+emitStringSubstring|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut,):
+    var done = out
+    let receiver = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[0])
+    done.ctx = receiver.ctx
+    let start = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[1])
+    done.ctx = start.ctx
+    let end = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[2])
+    done.ctx = end.ctx
+    useExtern(use = done.ctx.externs, name = "bk_substring")
+    let id = done.ctx.temp
+    done.ctx.temp = id + 1
+    let name = tempName(index = id)
+    var args = "ptr " + receiver.text + ", i32 " + start.text + ", i32 " + end.text
+    appendLine(sink = done.ctx.lines, text = "  " + name + " = call ptr @bk_substring(" + args + ")")
+    done.text = name
+    return done
+
+; 追加一段：把指针交给运行时拼接，句柄槽接住新句柄；空槽由运行时按零长度起步。
+appendToBuffer|func(ctx: BodyCtx, slot: String, piece: String,) -> (BodyCtx,):
+    var out = ctx
+    useExtern(use = out.externs, name = "bk_str_append_cstr")
+    let curId = out.temp
+    out.temp = curId + 1
+    let cur = tempName(index = curId)
+    appendLine(sink = out.lines, text = "  " + cur + " = load ptr, ptr " + slot)
+    let nextId = out.temp
+    out.temp = nextId + 1
+    let next = tempName(index = nextId)
+    appendLine(sink = out.lines, text = "  " + next + " = call ptr @bk_str_append_cstr(ptr " + cur + ", ptr " + piece + ", i32 1)")
+    appendLine(sink = out.lines, text = "  store ptr " + next + ", ptr " + slot)
+    return out
+
+; 插值段：字串直接借出，标量与字符先落成 C 串；聚合与容器没有单行写法，报缺口不猜。
+emitPiece|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
+    var out = ExprOut()
+    out.ctx = ctx
+    if nodeId < 0 || nodeId >= irNodeCount(module.nodes):
+        out.ctx = addGap(ctx = out.ctx, gap = "悬空插值段")
+        return out
+    let node = irNodeAt(pool = module.nodes, id = nodeId)
+    let tag = typeTagAt(module = module, typeId = node.typeId)
+    let value = emitExpr(ctx = out.ctx, module = module, nodeId = nodeId)
+    out.ctx = value.ctx
+    if tag == 8:
+        out.text = value.text
+        return out
+    if tag == 7:
+        let id = out.ctx.temp
+        out.ctx.temp = id + 1
+        let sel = tempName(index = id)
+        appendLine(sink = out.ctx.lines, text = "  " + sel + " = select i1 " + value.text + ", ptr @fmt_bool_true, ptr @fmt_bool_false")
+        out.text = sel
+        return out
+    if tag == 6:
+        useExtern(use = out.ctx.externs, name = "bk_double_to_string")
+        let id = out.ctx.temp
+        out.ctx.temp = id + 1
+        let name = tempName(index = id)
+        appendLine(sink = out.ctx.lines, text = "  " + name + " = call ptr @bk_double_to_string(double " + value.text + ")")
+        out.text = name
+        return out
+    if tag == 9:
+        useExtern(use = out.ctx.externs, name = "bk_char_to_heap_string")
+        let id = out.ctx.temp
+        out.ctx.temp = id + 1
+        let name = tempName(index = id)
+        appendLine(sink = out.ctx.lines, text = "  " + name + " = call ptr @bk_char_to_heap_string(i64 " + value.text + ")")
+        out.text = name
+        return out
+    if tag == 1 || tag == 2 || tag == 3 || tag == 4 || tag == 5:
+        var wide = value.text
+        if tag == 2 || tag == 3:
+            let wideId = out.ctx.temp
+            out.ctx.temp = wideId + 1
+            let name = tempName(index = wideId)
+            appendLine(sink = out.ctx.lines, text = "  " + name + " = trunc i64 " + value.text + " to i32")
+            wide = name
+        if tag == 4 || tag == 5:
+            let smallId = out.ctx.temp
+            out.ctx.temp = smallId + 1
+            let small = tempName(index = smallId)
+            appendLine(sink = out.ctx.lines, text = "  " + small + " = sext i8 " + value.text + " to i32")
+            wide = small
+        let buf = allocSlot(ctx = out.ctx, typeName = "[32 x i8]")
+        out.ctx = buf.ctx
+        useExtern(use = out.ctx.externs, name = "snprintf")
+        let args = "ptr " + buf.text + ", i64 32, ptr @fmt_int, i32 " + wide
+        appendLine(sink = out.ctx.lines, text = "  call i32 (ptr, i64, ptr, ...) @snprintf(" + args + ")")
+        out.text = buf.text
+        return out
+    out.ctx = addGap(ctx = out.ctx, gap = "插值段 类别码 " + countText(tag))
+    return out
+
+; 插值串：逐段追加进同一条句柄，段间不再各造一次常量；结果按节点类型是串。
+emitInterp|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut,):
+    var done = out
+    let slot = allocSlot(ctx = done.ctx, typeName = "ptr")
+    done.ctx = slot.ctx
+    appendLine(sink = done.ctx.lines, text = "  store ptr null, ptr " + slot.text)
+    var i = 0
+    while i < len(node.kids):
+        let piece = emitPiece(ctx = done.ctx, module = module, nodeId = node.kids[i])
+        done.ctx = piece.ctx
+        if len(piece.text) == 0:
+            return done
+        done.ctx = appendToBuffer(ctx = done.ctx, slot = slot.text, piece = piece.text)
+        i = i + 1
+    let id = done.ctx.temp
+    done.ctx.temp = id + 1
+    let name = tempName(index = id)
+    appendLine(sink = done.ctx.lines, text = "  " + name + " = load ptr, ptr " + slot.text)
+    done.text = name
+    return done
+
+; 数组连接：首个元素前不加分隔符，其余逐个先补分隔符再追加；空数组得空串。
+emitArrayJoin|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut,):
+    var done = out
+    let array = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[0])
+    done.ctx = array.ctx
+    let separator = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[1])
+    done.ctx = separator.ctx
+    useExtern(use = done.ctx.externs, name = "bk_array_len")
+    let countId = done.ctx.temp
+    done.ctx.temp = countId + 1
+    let count = tempName(index = countId)
+    appendLine(sink = done.ctx.lines, text = "  " + count + " = call i32 @bk_array_len(ptr " + array.text + ")")
+    let slot = allocSlot(ctx = done.ctx, typeName = "ptr")
+    done.ctx = slot.ctx
+    appendLine(sink = done.ctx.lines, text = "  store ptr null, ptr " + slot.text)
+    let cursor = allocSlot(ctx = done.ctx, typeName = "i32")
+    done.ctx = cursor.ctx
+    appendLine(sink = done.ctx.lines, text = "  store i32 0, ptr " + cursor.text)
+    let at = done.ctx.label
+    done.ctx.label = at + 1
+    let condLabel = labelName(prefix = "join.cond.", index = at)
+    let bodyLabel = labelName(prefix = "join.body.", index = at)
+    let sepLabel = labelName(prefix = "join.sep.", index = at)
+    let elemLabel = labelName(prefix = "join.elem.", index = at)
+    let incLabel = labelName(prefix = "join.inc.", index = at)
+    let endLabel = labelName(prefix = "join.end.", index = at)
+    appendLine(sink = done.ctx.lines, text = "  br label %" + condLabel)
+    appendLine(sink = done.ctx.lines, text = condLabel + ":")
+    let kId = done.ctx.temp
+    done.ctx.temp = kId + 1
+    let k = tempName(index = kId)
+    appendLine(sink = done.ctx.lines, text = "  " + k + " = load i32, ptr " + cursor.text)
+    let inId = done.ctx.temp
+    done.ctx.temp = inId + 1
+    let inside = tempName(index = inId)
+    appendLine(sink = done.ctx.lines, text = "  " + inside + " = icmp slt i32 " + k + ", " + count)
+    appendLine(sink = done.ctx.lines, text = "  br i1 " + inside + ", label %" + bodyLabel + ", label %" + endLabel)
+    appendLine(sink = done.ctx.lines, text = bodyLabel + ":")
+    let firstId = done.ctx.temp
+    done.ctx.temp = firstId + 1
+    let first = tempName(index = firstId)
+    appendLine(sink = done.ctx.lines, text = "  " + first + " = icmp eq i32 " + k + ", 0")
+    appendLine(sink = done.ctx.lines, text = "  br i1 " + first + ", label %" + elemLabel + ", label %" + sepLabel)
+    appendLine(sink = done.ctx.lines, text = sepLabel + ":")
+    done.ctx = appendToBuffer(ctx = done.ctx, slot = slot.text, piece = separator.text)
+    appendLine(sink = done.ctx.lines, text = "  br label %" + elemLabel)
+    appendLine(sink = done.ctx.lines, text = elemLabel + ":")
+    useExtern(use = done.ctx.externs, name = "bk_array_get")
+    let boxId = done.ctx.temp
+    done.ctx.temp = boxId + 1
+    let box = tempName(index = boxId)
+    appendLine(sink = done.ctx.lines, text = "  " + box + " = call ptr @bk_array_get(ptr " + array.text + ", i32 " + k + ")")
+    let elemId = done.ctx.temp
+    done.ctx.temp = elemId + 1
+    let elem = tempName(index = elemId)
+    appendLine(sink = done.ctx.lines, text = "  " + elem + " = load ptr, ptr " + box)
+    done.ctx = appendToBuffer(ctx = done.ctx, slot = slot.text, piece = elem)
+    appendLine(sink = done.ctx.lines, text = "  br label %" + incLabel)
+    appendLine(sink = done.ctx.lines, text = incLabel + ":")
+    let stepId = done.ctx.temp
+    done.ctx.temp = stepId + 1
+    let moved = tempName(index = stepId)
+    appendLine(sink = done.ctx.lines, text = "  " + moved + " = load i32, ptr " + cursor.text)
+    let bumpedId = done.ctx.temp
+    done.ctx.temp = bumpedId + 1
+    let bumped = tempName(index = bumpedId)
+    appendLine(sink = done.ctx.lines, text = "  " + bumped + " = add i32 " + moved + ", 1")
+    appendLine(sink = done.ctx.lines, text = "  store i32 " + bumped + ", ptr " + cursor.text)
+    appendLine(sink = done.ctx.lines, text = "  br label %" + condLabel)
+    appendLine(sink = done.ctx.lines, text = endLabel + ":")
+    let id = done.ctx.temp
+    done.ctx.temp = id + 1
+    let name = tempName(index = id)
+    appendLine(sink = done.ctx.lines, text = "  " + name + " = load ptr, ptr " + slot.text)
+    done.text = name
+    return done
+
 ; 语句序列：逐条发射；块已由返回收口时，后续语句不再发，免出不可达指令。
 emitStmts|func(ctx: BodyCtx, module: IrModule, ids: Array<I32>,) -> (BodyCtx,):
     var out = ctx
@@ -502,18 +1700,24 @@ emitStmt|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (BodyCtx,):
     if node.kind == 101:
         let slot = node.intValue as I32
         let typeName = llvmTypeName(pool = module.types, typeId = node.typeId)
-        appendLine(sink = out.lines, text = "  " + slotName(slot = slot) + " = alloca " + typeName)
+        let defined = defineSlot(ctx = out, slot = slot)
+        out = defined.ctx
+        out.head = out.head.append("  " + defined.text + " = alloca " + typeName)
         if len(node.kids) > 0:
             let one = emitExpr(ctx = out, module = module, nodeId = node.kids[0])
             out = one.ctx
-            appendLine(sink = out.lines, text = "  store " + typeName + " " + one.text + ", ptr " + slotName(slot = slot))
+            let shaped = storeValue(ctx = out, module = module, text = one.text, fromType = irNodeAt(pool = module.nodes, id = node.kids[0]).typeId, toType = node.typeId)
+            out = shaped.ctx
+            appendLine(sink = out.lines, text = "  store " + typeName + " " + shaped.text + ", ptr " + defined.text)
         return out
     if node.kind == 102:
         let slot = node.intValue as I32
         let typeName = llvmTypeName(pool = module.types, typeId = node.typeId)
         let one = emitExpr(ctx = out, module = module, nodeId = node.kids[0])
         out = one.ctx
-        appendLine(sink = out.lines, text = "  store " + typeName + " " + one.text + ", ptr " + slotName(slot = slot))
+        let shaped = storeValue(ctx = out, module = module, text = one.text, fromType = irNodeAt(pool = module.nodes, id = node.kids[0]).typeId, toType = node.typeId)
+        out = shaped.ctx
+        appendLine(sink = out.lines, text = "  store " + typeName + " " + shaped.text + ", ptr " + slotNameOf(ctx = out, slot = slot))
         return out
     if node.kind == 103:
         return emitIf(ctx = out, module = module, node = node)
@@ -526,7 +1730,46 @@ emitStmt|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (BodyCtx,):
             return out
         let one = emitExpr(ctx = out, module = module, nodeId = node.kids[0])
         return one.ctx
+    if node.kind == 110:
+        return emitSubscriptStore(ctx = out, module = module, node = node)
+    if node.kind == 111:
+        return emitJump(ctx = out, depth = node.op, isBreak = true)
+    if node.kind == 112:
+        return emitJump(ctx = out, depth = node.op, isBreak = false)
+    if node.kind == 113:
+        return emitPanic(ctx = out, module = module, node = node)
+    if node.kind == 115:
+        return emitFieldStore(ctx = out, module = module, node = node)
     return addGap(ctx = out, gap = nodeGap(ctx = out, kind = node.kind))
+
+; 跳出：帧深从一数，一即最内层循环；没有可跳的帧时报缺口，不产裸跳转。
+emitJump|func(ctx: BodyCtx, depth: I32, isBreak: Bool,) -> (BodyCtx,):
+    var out = ctx
+    if depth < 1 || depth > len(out.loopEnds):
+        return addGap(ctx = out, gap = "跳出深度 " + countText(depth))
+    let at = len(out.loopEnds) - depth
+    var target = out.loopEnds[at]
+    if !isBreak:
+        target = out.loopHeads[at]
+    appendLine(sink = out.lines, text = "  br label %" + target)
+    out.closed = true
+    return out
+
+; 无条件陷阱：消息先入常量池，再交给运行时段；陷阱不返回，块以 unreachable 收口。
+emitPanic|func(ctx: BodyCtx, module: IrModule, node: IrNode,) -> (BodyCtx,):
+    var out = ctx
+    var message = "Pini runtime error: panic"
+    if node.text >= 0:
+        message = textAt(module = module, id = node.text)
+    let at = internString(pool = out.strings, value = message)
+    let id = out.temp
+    out.temp = id + 1
+    let pointer = stringValue(lines = out.lines, pool = out.strings, index = at, temp = id)
+    useExtern(use = out.externs, name = "bk_panic")
+    appendLine(sink = out.lines, text = "  call void @bk_panic(ptr " + pointer + ")")
+    appendLine(sink = out.lines, text = "  unreachable")
+    out.closed = true
+    return out
 
 ; 条件分支：条件求值后跳两段，未收口的段补跳转；两段都已返回时整条分支收口。
 ; 收口状态按段各记一份：一段返回一段落空是常态，不能拿一段的状态替另一段判。
@@ -570,6 +1813,7 @@ emitIf|func(ctx: BodyCtx, module: IrModule, node: IrNode,) -> (BodyCtx,):
     return done
 
 ; 循环：头块判条件，体块回跳；体内已返回时省掉回跳，跳出边仍落在尾块。
+; 循环帧只给体内语句用，出循环即还原，嵌套时各层各记自己的一对标签。
 emitWhile|func(ctx: BodyCtx, module: IrModule, node: IrNode,) -> (BodyCtx,):
     var out = ctx
     var bodyIds: Array<I32> = []
@@ -588,7 +1832,13 @@ emitWhile|func(ctx: BodyCtx, module: IrModule, node: IrNode,) -> (BodyCtx,):
     out = cond.ctx
     appendLine(sink = out.lines, text = "  br i1 " + cond.text + ", label %" + bodyLabel + ", label %" + endLabel)
     appendLine(sink = out.lines, text = bodyLabel + ":")
+    let savedEnds = out.loopEnds
+    let savedHeads = out.loopHeads
+    out.loopEnds = out.loopEnds.append(endLabel)
+    out.loopHeads = out.loopHeads.append(condLabel)
     var bodyCtx = emitStmts(ctx = out, module = module, ids = bodyIds)
+    bodyCtx.loopEnds = savedEnds
+    bodyCtx.loopHeads = savedHeads
     if !bodyCtx.closed:
         appendLine(sink = bodyCtx.lines, text = "  br label %" + condLabel)
     bodyCtx.closed = false
@@ -609,6 +1859,9 @@ emitReturn|func(ctx: BodyCtx, module: IrModule, node: IrNode,) -> (BodyCtx,):
         return out
     let one = emitExpr(ctx = out, module = module, nodeId = node.kids[0])
     out = one.ctx
-    appendLine(sink = out.lines, text = "  ret " + llvmTypeName(pool = module.types, typeId = fn.returnType) + " " + one.text)
+    let typeName = llvmTypeName(pool = module.types, typeId = fn.returnType)
+    let shaped = storeValue(ctx = out, module = module, text = one.text, fromType = irNodeAt(pool = module.nodes, id = node.kids[0]).typeId, toType = fn.returnType)
+    out = shaped.ctx
+    appendLine(sink = out.lines, text = "  ret " + typeName + " " + shaped.text)
     out.closed = true
     return out

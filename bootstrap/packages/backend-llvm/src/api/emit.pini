@@ -7,11 +7,17 @@ _backend_kit = "../../../backend-kit"
 ; 有缺口即整份不出：失败只回缺口清单，不落半份文本。
 ; 收尾按函数补：未由返回收口的块补 void 或 main 的零返回，保证每块有终结指令。
 
+; 能力族：本后端声明为已接的族码，驱动按这份登记，测试也照抄，三处不再各写一串。
+; 族码与 backend-kit 同序；未登记的族在缺口里写作「族未声明」，与「已声明但没接」分开。
+llvmFamilies|func() -> (Array<I32>,):
+    return [0, 1, 2, 3, 4, 5, 6, 10]
+
 ; 无体函数跳过：它是降载缺口，声明出来也只会在链接期报缺符号。
 needsBody|func(fn: IrFunction,) -> (Bool,):
     return len(fn.body) > 0
 
-; 收尾补返回：已收口的不补；main 补零，其余补 void。
+; 收尾补返回：已收口的不补；main 补零，其余按声明返回类型补零值。
+;  行不通  一律补 ret void：非空返回的函数会在校验期被判类型不符。
 closeFunction|func(ctx: BodyCtx, module: IrModule,) -> (BodyCtx,):
     var out = ctx
     if out.closed:
@@ -19,10 +25,22 @@ closeFunction|func(ctx: BodyCtx, module: IrModule,) -> (BodyCtx,):
     let fn = module.functions[out.fnIndex]
     if fn.name == "main" && fn.returnType < 0:
         appendLine(sink = out.lines, text = "  ret i32 0")
-    else:
+    elif fn.returnType < 0:
         appendLine(sink = out.lines, text = "  ret void")
+    else:
+        let ty = llvmTypeName(pool = module.types, typeId = fn.returnType)
+        appendLine(sink = out.lines, text = "  ret " + ty + " " + zeroTextOf(typeName = ty))
     out.closed = true
     return out
+
+; 同名定义：模块里同名的第二份定义在链接期必撞，调用点也只认首个，故只发第一份。
+alreadyEmitted|func(names: Array<String>, name: String,) -> (Bool,):
+    var i = 0
+    while i < len(names):
+        if names[i] == name:
+            return true
+        i = i + 1
+    return false
 
 ; 参数落槽：形参按各自槽位出 alloca 与 store，值名按位置编号。
 ; 不落槽的话，函数体里按槽位读会引用到未定义的槽名，LLVM 校验期才炸。
@@ -33,6 +51,15 @@ seedParams|func(sink: LineSink, pool: IrTypePool, fn: IrFunction,) -> ():
         let ty = llvmTypeName(pool = pool, typeId = fn.params[i].typeId)
         appendLine(sink = sink, text = "  " + slotName(slot = slot) + " = alloca " + ty)
         appendLine(sink = sink, text = "  store " + ty + " %p" + countText(i) + ", ptr " + slotName(slot = slot))
+        i = i + 1
+    return
+
+; 转抄：把旁支容器的行按序补进主容器。
+; 函数体先写旁支，首块栈槽才能排在它前面：栈槽落在 entry 里，循环体里不再按次长栈。
+copyLines|func(sink: LineSink, from: Array<String>,) -> ():
+    var i = 0
+    while i < len(from):
+        appendLine(sink = sink, text = from[i])
         i = i + 1
     return
 
@@ -65,16 +92,19 @@ emitModule|func(entry: BackendEntry, target: TargetProfile, module: IrModule,) -
     let builtins = builtinTable()
     var strings = StringPool()
     var externs = ExternUse()
+    var emitted: Array<String> = []
     i = 0
     while i < len(module.functions):
         let fn = module.functions[i]
-        if needsBody(fn = fn):
+        if needsBody(fn = fn) && !alreadyEmitted(names = emitted, name = fn.name):
+            emitted = emitted.append(fn.name)
             appendLine(sink = sink, text = llvmSignature(pool = module.types, fn = fn, isDefine = true) + " {")
             appendLine(sink = sink, text = "entry:")
             appendLine(sink = sink, text = "  " + boxName() + " = alloca [8 x i8], align 8")
             seedParams(sink = sink, pool = module.types, fn = fn)
+            var body = LineSink()
             var ctx = BodyCtx()
-            ctx.lines = sink
+            ctx.lines = body
             ctx.fnIndex = i
             ctx.families = families
             ctx.declared = entry.families
@@ -84,6 +114,8 @@ emitModule|func(entry: BackendEntry, target: TargetProfile, module: IrModule,) -
             ctx.pointerBytes = target.pointerWidth
             ctx = emitStmts(ctx = ctx, module = module, ids = fn.body)
             ctx = closeFunction(ctx = ctx, module = module)
+            copyLines(sink = sink, from = ctx.head)
+            copyLines(sink = sink, from = body.lines)
             var k = 0
             while k < len(ctx.gaps):
                 gaps = mergeGap(gaps = gaps, gap = ctx.gaps[k])

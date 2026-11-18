@@ -2,9 +2,9 @@
 _ir = "../../../ir"
 _backend_kit = "../../../backend-kit"
 
-; 类型面：IR 类型下标到 LLVM 类型拼写，外加值语义名义类型的结构声明。
-; 标量直出，字符按 i64 装箱；字符串、容器、指针与对象一律 ptr，运行时按句柄搬。
-; 槽是布局单位：结构体按槽数出 i64 格，宽度与对齐归目标描述，不在这里逐槽判型。
+; 类型面：IR 类型下标到 LLVM 类型拼写，外加名义类型的聚合声明。
+; 标量与内联聚合直出；字符串、容器、指针与名义箱一律 ptr，运行时按句柄搬。
+; 结果与可选按整块聚合出：标签格在前，载荷与错误字各占一格，不做箱。
 
 ; 类型拼写：无类型答 void；越界与未认类别答 ptr，宁可宽一格也不出错误拼写。
 llvmTypeName|func(pool: IrTypePool, typeId: I32,) -> (String,):
@@ -30,24 +30,72 @@ llvmTypeName|func(pool: IrTypePool, typeId: I32,) -> (String,):
         return "i1"
     if tag == 9:
         return "i64"
+    if tag == 10:
+        return resultSpelling(pool = pool, kids = entry.kids)
+    if tag == 13:
+        return optionalSpelling(pool = pool, kids = entry.kids)
     return "ptr"
 
-; 结构名：按 IR 名编码一次，非 ASCII 逐标量写 `_u`；值语义名义类型专用。
-llvmStructName|func(name: String,) -> (String,):
-    return "%struct." + mangleName(name = name)
+; 结果拼写：三槽，标签 · ok 载荷 · 错误字；载荷缺席时按 i64 兜底，错误字恒为 i64。
+resultSpelling|func(pool: IrTypePool, kids: Array<I32>,) -> (String,):
+    var payload = "i64"
+    if len(kids) > 0:
+        payload = llvmTypeName(pool = pool, typeId = kids[0])
+    return "{ i64, " + payload + ", i64 }"
 
-; 结构体身：按槽数出 i64 格；槽数为零或未约定时留一格，避免零宽类型。
-structBody|func(count: I32,) -> (String,):
-    if count <= 0:
-        return " { i64 }"
-    var out = " {"
+; 可选拼写：两槽，标签 · 载荷；载荷缺席时按 i64 兜底。
+optionalSpelling|func(pool: IrTypePool, kids: Array<I32>,) -> (String,):
+    var payload = "i64"
+    if len(kids) > 0:
+        payload = llvmTypeName(pool = pool, typeId = kids[0])
+    return "{ i64, " + payload + " }"
+
+; 聚合名：结构、对象、枚举各一前缀，同名不同类型因此不撞；非名义类型答空串。
+llvmAggregateName|func(pool: IrTypePool, typeId: I32,) -> (String,):
+    if typeId < 0 || typeId >= irTypeCount(pool):
+        return ""
+    let entry = irTypeAt(pool = pool, id = typeId)
+    let tag = irTypeTag(entry.kind)
+    if tag == 14:
+        if irIsObjectType(pool = pool, id = typeId):
+            return "%object." + mangleName(name = entry.name)
+        return "%struct." + mangleName(name = entry.name)
+    if tag == 15:
+        return "%enum." + mangleName(name = entry.name)
+    return ""
+
+; 结构体身：头四格照运行时头的拼写（计数 · 弱计数 · 类型标识 · 旁表），字段按自身类型排在后面。
+structBody|func(pool: IrTypePool, decl: IrDecl,) -> (String,):
+    var out = " { i32, i32, i32, ptr"
     var i = 0
-    while i < count:
-        if i > 0:
-            out = out + ","
-        out = out + " i64"
+    while i < len(decl.fields):
+        out = out + ", " + llvmTypeName(pool = pool, typeId = decl.fields[i].typeId)
         i = i + 1
     return out + " }"
+
+; 枚举体：头四格后是标签格，载荷窗口按最宽用例占位；窄用例只写自己的前几格。
+enumBody|func(pool: IrTypePool, decl: IrDecl,) -> (String,):
+    var out = " { i32, i32, i32, ptr, i32"
+    let widest = widestCaseIndex(cases = decl.cases)
+    if widest >= 0:
+        let payload = decl.cases[widest].payload
+        var i = 0
+        while i < len(payload):
+            out = out + ", " + llvmTypeName(pool = pool, typeId = payload[i])
+            i = i + 1
+    return out + " }"
+
+; 最宽用例：载荷个数最多的那一条，并列取声明序在前者；载荷窗口的拼写只认它。
+widestCaseIndex|func(cases: Array<IrCase>,) -> (I32,):
+    var best = -1
+    var width = 0
+    var i = 0
+    while i < len(cases):
+        if len(cases[i].payload) > width:
+            width = len(cases[i].payload)
+            best = i
+        i = i + 1
+    return best
 
 ; 元素装箱宽度：按字节给，认不出答零；容器族搬元素只认这一个数。
 ; 指针宽度的类别随目标走，其余按标量自身宽度，与槽宽无关。
@@ -63,10 +111,12 @@ elementWidth|func(pool: IrTypePool, typeId: I32, pointerBytes: I32,) -> (I32,):
         return 1
     if tag == 8 || tag == 11 || tag == 12 || tag == 16 || tag == 17 || tag == 21:
         return pointerBytes
+    if tag == 14 || tag == 15:
+        return pointerBytes
     return 0
 
-; 元素装箱标签：决定销毁时如何归还成员，认不出答负一。
-; 标量无成员份额，容器与串的份额归运行时按标签处理；标签错了就是悬垂或泄漏。
+; 元素装箱标签：决定销毁与覆盖时如何归还成员，认不出答负一。
+; 串与字符按裸指针记：本后端不 retain，若按计数标签，覆盖时运行时会释放别处仍在读的值。
 elementTag|func(pool: IrTypePool, typeId: I32,) -> (I32,):
     if typeId < 0 || typeId >= irTypeCount(pool):
         return -1
@@ -78,23 +128,31 @@ elementTag|func(pool: IrTypePool, typeId: I32,) -> (I32,):
     if tag == 7:
         return 2
     if tag == 8:
-        return 3
+        return 6
     if tag == 9:
-        return 7
+        return 6
     if tag == 11 || tag == 21:
         return 6
     if tag == 12 || tag == 16 || tag == 17:
         return 4
+    if tag == 14 || tag == 15:
+        return 6
     return -1
 
-; 类型声明：只为值语义名义类型出结构体；对象与枚举走句柄，不出声明。
+; 类型声明：结构、对象、枚举三族各出聚合；无声明条目的类型跳过，取值点会自行报缺口。
 llvmTypeDecls|func(module: IrModule,) -> (Array<String>,):
     var lines: Array<String> = []
     var i = 0
     while i < irTypeCount(module.types):
         let entry = irTypeAt(pool = module.types, id = i)
-        if irTypeTag(entry.kind) == 14 && !irIsObjectType(pool = module.types, id = i):
-            let count = slotCountOf(table = module.slots, typeId = i)
-            lines = lines.append(llvmStructName(name = entry.name) + " = type" + structBody(count = count))
+        let tag = irTypeTag(entry.kind)
+        if tag == 14 || tag == 15:
+            let decl = declAt(table = module.decls, typeId = i)
+            if len(decl.name) > 0:
+                let name = llvmAggregateName(pool = module.types, typeId = i)
+                var body = structBody(pool = module.types, decl = decl)
+                if tag == 15:
+                    body = enumBody(pool = module.types, decl = decl)
+                lines = lines.append(name + " = type" + body)
         i = i + 1
     return lines

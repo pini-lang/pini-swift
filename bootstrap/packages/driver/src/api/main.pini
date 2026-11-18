@@ -102,7 +102,7 @@ main|func() -> ():
         if len(产物.check.errors) > 0:
             print("emit-blocked", len(产物.check.errors))
             return
-        let entry = makeBackendOf(name = "llvm", outputCode = backendOutputNativeCode(), families = [0, 1, 2], entry = 2)
+        let entry = makeBackendOf(name = "llvm", outputCode = backendOutputNativeCode(), families = llvmFamilies(), entry = 2)
         let emitted = emitModule(entry = entry, target = defaultTarget(), module = 产物.module)
         if emitted.failed:
             print("emit-gaps", emitGapCount(result = emitted), emitted.detail)
@@ -120,6 +120,10 @@ main|func() -> ():
         print("workspace-ok", plan.packageCount(), true)
         return
     print("workspace-plan-failed", plan.errorCount())
+    var 故障 = 0
+    while 故障 < len(plan.errors):
+        print("计划错误", manifestErrorKindName(plan.errors[故障].kind), plan.errors[故障].path, plan.errors[故障].detail)
+        故障 = 故障 + 1
     return
 
 ; 装配并降载：规划、装载、世界、填表、形态与槽、降载、校验；规划失败时包数为零。

@@ -5,9 +5,9 @@ _backend_kit = "../../backend-kit"
 ; 发射判据：手搭模块只喂发射器，不经过装配链；真实模块由 lower 与 validate 另行验证。
 ; 每条判据只钉一类行：函数头、槽位、二元指令、缺口与确定性；手搭反而能精确到一条。
 
-; 发射造记录：族表只声明控制流、标量、变量与运算三族，入口码取二。
+; 发射造记录：族表照后端自己声明的那份，入口码取二；测试与驱动因此不会各说一套。
 发射造记录|func(outputCode: I32,) -> (BackendEntry,):
-    return makeBackendOf(name = "llvm", outputCode = outputCode, families = [0, 1, 2], entry = 2)
+    return makeBackendOf(name = "llvm", outputCode = outputCode, families = llvmFamilies(), entry = 2)
 
 ; 发射造类型池：一个 i32。
 发射造类型池|func() -> (IrTypePool,):
@@ -62,15 +62,15 @@ _backend_kit = "../../backend-kit"
 族未声明|test() -> ():
     var module = 发射造模块()
     var pool = module.nodes
-    var list = irMakeNode(kind = tagOfName(name = "subscriptGet"), typeId = 0)
-    let placed = irAppendNode(pool = pool, node = list)
+    var load = irMakeNode(kind = tagOfName(name = "pointerLoad"), typeId = 0)
+    let placed = irAppendNode(pool = pool, node = load)
     module.nodes = placed.pool
     module.functions[0].body = [placed.id]
     let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
     assert(result.failed, "未声明族的节点应失败")
     assert(len(result.text) == 0, "失败时不应出半份文本")
     assert(emitGapCount(result = result) > 0, "失败应带缺口")
-    assert(含子串(text = result.gaps[0], needle = "族未声明 collections"), "缺口应点名族")
+    assert(含子串(text = result.gaps[0], needle = "族未声明 pointers"), "缺口应点名族")
     return
 
 ; 档次：转储档次不接受，直接拒发；记录与发射器判据同源。
@@ -342,4 +342,370 @@ _backend_kit = "../../backend-kit"
     assert(含子串(text = result.text, needle = "declare i32 @bk_ord(i64)"), "ord 声明应与调用同形")
     assert(含子串(text = result.text, needle = "declare ptr @bk_chars(ptr)"), "chars 声明应与调用同形")
     assert(含子串(text = result.text, needle = "declare ptr @bk_temp_utf8_bytes(ptr)"), "字节桥声明应与调用同形")
+    return
+
+; 名义模块的类型池：i32 与值语义名义类型 Point；对象位为零。
+发射造名义类型池|func() -> (IrTypePool,):
+    var pool = IrTypePool()
+    let intType = irScalarTypeOfCode(pool = pool, code = 1, name = "i32")
+    let point = irScalarTypeOfCode(pool = intType.pool, code = 14, name = "Point")
+    return point.pool
+
+; 名义模块：类型、一条字段声明、槽表基准与三条语句；声明与槽表先建局部再整体写回。
+发射造名义模块|func() -> (IrModule,):
+    var module = IrModule()
+    module.types = 发射造名义类型池()
+    var decl = IrDecl()
+    decl.typeId = 1
+    decl.name = "Point"
+    var field = IrField()
+    field.name = "x"
+    field.typeId = 0
+    decl.fields = decl.fields.append(field)
+    var decls = IrDeclTable()
+    decls.entries = decls.entries.append(decl)
+    module.decls = decls
+    var slots = IrSlotTable()
+    slots.headSlots = 4
+    slots.payloadBase = 5
+    module.slots = slots
+    var nodes = IrNodePool()
+    var seven = irMakeNode(kind = tagOfName(name = "intConst"), typeId = 0)
+    seven.intValue = 7
+    let placedSeven = irAppendNode(pool = nodes, node = seven)
+    nodes = placedSeven.pool
+    var made = irMakeNode(kind = tagOfName(name = "construct"), typeId = 1)
+    let placedMade = irAppendNode(pool = nodes, node = made)
+    nodes = placedMade.pool
+    var alloc = irMakeNode(kind = tagOfName(name = "allocVar"), typeId = 1)
+    alloc.intValue = 0
+    alloc.kids = [placedMade.id]
+    let placedAlloc = irAppendNode(pool = nodes, node = alloc)
+    nodes = placedAlloc.pool
+    var base = irMakeNode(kind = tagOfName(name = "load"), typeId = 1)
+    base.intValue = 0
+    let placedBase = irAppendNode(pool = nodes, node = base)
+    nodes = placedBase.pool
+    var stored = irMakeNode(kind = tagOfName(name = "fieldStore"), typeId = 0)
+    stored.op = 0
+    stored.kids = [placedBase.id, placedSeven.id]
+    let placedStored = irAppendNode(pool = nodes, node = stored)
+    nodes = placedStored.pool
+    var reloaded = irMakeNode(kind = tagOfName(name = "load"), typeId = 1)
+    reloaded.intValue = 0
+    let placedReloaded = irAppendNode(pool = nodes, node = reloaded)
+    nodes = placedReloaded.pool
+    var read = irMakeNode(kind = tagOfName(name = "fieldGet"), typeId = 0)
+    read.op = 0
+    read.kids = [placedReloaded.id]
+    let placedRead = irAppendNode(pool = nodes, node = read)
+    nodes = placedRead.pool
+    var printed = irMakeNode(kind = tagOfName(name = "printCall"), typeId = -1)
+    printed.kids = [placedRead.id]
+    let placedPrintCall = irAppendNode(pool = nodes, node = printed)
+    nodes = placedPrintCall.pool
+    var printStmt = irMakeNode(kind = tagOfName(name = "exprStmt"), typeId = -1)
+    printStmt.kids = [placedPrintCall.id]
+    let placedPrint = irAppendNode(pool = nodes, node = printStmt)
+    nodes = placedPrint.pool
+    var back = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    let placedBack = irAppendNode(pool = nodes, node = back)
+    nodes = placedBack.pool
+    module.nodes = nodes
+    var fn = IrFunction()
+    fn.name = "main"
+    fn.returnType = -1
+    fn.body = [placedAlloc.id, placedStored.id, placedPrint.id, placedBack.id]
+    module.functions = module.functions.append(fn)
+    return module
+
+; 名义面：聚合按头四格加字段出声明，构造分配箱并清零，字段读写落在第 4 槽。
+名义构造与字段|test() -> ():
+    let module = 发射造名义模块()
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    if result.failed:
+        assert(false, "缺口：" + result.gaps[0])
+    assert(含子串(text = result.text, needle = "%struct.Point = type { i32, i32, i32, ptr, i32 }"), "聚合应按头加字段出声明")
+    assert(含子串(text = result.text, needle = "call ptr @bk_nominal_alloc(i64"), "构造应分配名义箱")
+    assert(含子串(text = result.text, needle = "getelementptr %struct.Point, ptr null, i32 1"), "箱尺寸应取过尾指针")
+    assert(含子串(text = result.text, needle = "getelementptr %struct.Point, ptr %t2, i32 0, i32 4"), "字段应先清零")
+    assert(含子串(text = result.text, needle = "store i32 0, ptr %t3"), "清零应写零值")
+    assert(含子串(text = result.text, needle = "getelementptr %struct.Point, ptr %t4, i32 0, i32 4"), "字段写应落在第 4 槽")
+    assert(含子串(text = result.text, needle = "store i32 7, ptr %t5"), "字段写应存值")
+    assert(含子串(text = result.text, needle = "load i32, ptr %t7"), "字段读应按字段类型读")
+    assert(含子串(text = result.text, needle = "declare ptr @bk_nominal_alloc(i64, i32)"), "分配符号应出声明")
+    return
+
+; 枚举模块：i32 与枚举 Color（一个带 I32 载荷的用例），标签与载荷各读一次。
+发射造枚举模块|func() -> (IrModule,):
+    var module = IrModule()
+    var pool = IrTypePool()
+    let intType = irScalarTypeOfCode(pool = pool, code = 1, name = "i32")
+    pool = intType.pool
+    let color = irScalarTypeOfCode(pool = pool, code = 15, name = "Color")
+    module.types = color.pool
+    var decl = IrDecl()
+    decl.typeId = 1
+    decl.name = "Color"
+    decl.kind = irDeclKindOf(shapeCode = 3)
+    var only = IrCase()
+    only.name = "red"
+    only.tag = 0
+    only.payload = only.payload.append(0)
+    decl.cases = decl.cases.append(only)
+    var decls = IrDeclTable()
+    decls.entries = decls.entries.append(decl)
+    module.decls = decls
+    var slots = IrSlotTable()
+    slots.headSlots = 4
+    slots.payloadBase = 5
+    module.slots = slots
+    module.texts = module.texts.append("red")
+    var nodes = IrNodePool()
+    var payload = irMakeNode(kind = tagOfName(name = "intConst"), typeId = 0)
+    payload.intValue = 5
+    let placedPayload = irAppendNode(pool = nodes, node = payload)
+    nodes = placedPayload.pool
+    var made = irMakeNode(kind = tagOfName(name = "enumConstruct"), typeId = 1)
+    made.op = 0
+    made.text = 0
+    made.kids = [placedPayload.id]
+    let placedMade = irAppendNode(pool = nodes, node = made)
+    nodes = placedMade.pool
+    var alloc = irMakeNode(kind = tagOfName(name = "allocVar"), typeId = 1)
+    alloc.intValue = 0
+    alloc.kids = [placedMade.id]
+    let placedAlloc = irAppendNode(pool = nodes, node = alloc)
+    nodes = placedAlloc.pool
+    var base = irMakeNode(kind = tagOfName(name = "load"), typeId = 1)
+    base.intValue = 0
+    let placedBase = irAppendNode(pool = nodes, node = base)
+    nodes = placedBase.pool
+    var tagRead = irMakeNode(kind = tagOfName(name = "enumTagGet"), typeId = 0)
+    tagRead.kids = [placedBase.id]
+    let placedTag = irAppendNode(pool = nodes, node = tagRead)
+    nodes = placedTag.pool
+    var tagPrintCall = irMakeNode(kind = tagOfName(name = "printCall"), typeId = -1)
+    tagPrintCall.kids = [placedTag.id]
+    let placedTagPrint = irAppendNode(pool = nodes, node = tagPrintCall)
+    nodes = placedTagPrint.pool
+    var tagStmt = irMakeNode(kind = tagOfName(name = "exprStmt"), typeId = -1)
+    tagStmt.kids = [placedTagPrint.id]
+    let placedTagStmt = irAppendNode(pool = nodes, node = tagStmt)
+    nodes = placedTagStmt.pool
+    var again = irMakeNode(kind = tagOfName(name = "load"), typeId = 1)
+    again.intValue = 0
+    let placedAgain = irAppendNode(pool = nodes, node = again)
+    nodes = placedAgain.pool
+    var valueRead = irMakeNode(kind = tagOfName(name = "enumPayloadGet"), typeId = 0)
+    valueRead.op = 0
+    valueRead.text = 0
+    valueRead.kids = [placedAgain.id]
+    let placedValue = irAppendNode(pool = nodes, node = valueRead)
+    nodes = placedValue.pool
+    var valuePrintCall = irMakeNode(kind = tagOfName(name = "printCall"), typeId = -1)
+    valuePrintCall.kids = [placedValue.id]
+    let placedValuePrint = irAppendNode(pool = nodes, node = valuePrintCall)
+    nodes = placedValuePrint.pool
+    var valueStmt = irMakeNode(kind = tagOfName(name = "exprStmt"), typeId = -1)
+    valueStmt.kids = [placedValuePrint.id]
+    let placedValueStmt = irAppendNode(pool = nodes, node = valueStmt)
+    nodes = placedValueStmt.pool
+    var back = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    let placedBack = irAppendNode(pool = nodes, node = back)
+    nodes = placedBack.pool
+    module.nodes = nodes
+    var fn = IrFunction()
+    fn.name = "main"
+    fn.returnType = -1
+    fn.body = [placedAlloc.id, placedTagStmt.id, placedValueStmt.id, placedBack.id]
+    module.functions = module.functions.append(fn)
+    return module
+
+; 枚举面：标签进第 4 槽、载荷从第 5 槽起；读侧按标签格与载荷窗口各取一次。
+枚举构造与读|test() -> ():
+    let module = 发射造枚举模块()
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    if result.failed:
+        assert(false, "缺口：" + result.gaps[0])
+    assert(含子串(text = result.text, needle = "%enum.Color = type { i32, i32, i32, ptr, i32, i32 }"), "枚举应按头加标签加最宽载荷出声明")
+    assert(含子串(text = result.text, needle = "getelementptr %enum.Color, ptr %t2, i32 0, i32 4"), "标签应写第 4 槽")
+    assert(含子串(text = result.text, needle = "getelementptr %enum.Color, ptr %t2, i32 0, i32 5"), "载荷应写第 5 槽")
+    assert(含子串(text = result.text, needle = "store i32 0, ptr %t3"), "标签应写声明序")
+    assert(含子串(text = result.text, needle = "load i32, ptr %t6"), "标签应按 i32 读")
+    assert(含子串(text = result.text, needle = "load i32, ptr %t9"), "载荷应按自身类型读")
+    return
+
+; 字符串模块：字串常量两个，contains 与 indexOf 各一次；宿主查询三条。
+发射造字符串模块|func() -> (IrModule,):
+    var module = IrModule()
+    var pool = IrTypePool()
+    let intType = irScalarTypeOfCode(pool = pool, code = 1, name = "i32")
+    pool = intType.pool
+    let boolType = irScalarTypeOfCode(pool = pool, code = 7, name = "Bool")
+    pool = boolType.pool
+    let textType = irScalarTypeOfCode(pool = pool, code = 8, name = "String")
+    module.types = textType.pool
+    module.texts = module.texts.append("ab")
+    module.texts = module.texts.append("b")
+    var nodes = IrNodePool()
+    var haystack = irMakeNode(kind = tagOfName(name = "stringConst"), typeId = 2)
+    haystack.text = 0
+    let placedHaystack = irAppendNode(pool = nodes, node = haystack)
+    nodes = placedHaystack.pool
+    var needle = irMakeNode(kind = tagOfName(name = "stringConst"), typeId = 2)
+    needle.text = 1
+    let placedNeedle = irAppendNode(pool = nodes, node = needle)
+    nodes = placedNeedle.pool
+    var found = irMakeNode(kind = tagOfName(name = "stringContains"), typeId = 1)
+    found.kids = [placedHaystack.id, placedNeedle.id]
+    let placedFound = irAppendNode(pool = nodes, node = found)
+    nodes = placedFound.pool
+    var foundPrintCall = irMakeNode(kind = tagOfName(name = "printCall"), typeId = -1)
+    foundPrintCall.kids = [placedFound.id]
+    let placedFoundPrint = irAppendNode(pool = nodes, node = foundPrintCall)
+    nodes = placedFoundPrint.pool
+    var foundStmt = irMakeNode(kind = tagOfName(name = "exprStmt"), typeId = -1)
+    foundStmt.kids = [placedFoundPrint.id]
+    let placedFoundStmt = irAppendNode(pool = nodes, node = foundStmt)
+    nodes = placedFoundStmt.pool
+    var at = irMakeNode(kind = tagOfName(name = "stringIndexOf"), typeId = 0)
+    at.kids = [placedHaystack.id, placedNeedle.id]
+    let placedAt = irAppendNode(pool = nodes, node = at)
+    nodes = placedAt.pool
+    var atPrintCall = irMakeNode(kind = tagOfName(name = "printCall"), typeId = -1)
+    atPrintCall.kids = [placedAt.id]
+    let placedAtPrint = irAppendNode(pool = nodes, node = atPrintCall)
+    nodes = placedAtPrint.pool
+    var atStmt = irMakeNode(kind = tagOfName(name = "exprStmt"), typeId = -1)
+    atStmt.kids = [placedAtPrint.id]
+    let placedAtStmt = irAppendNode(pool = nodes, node = atStmt)
+    nodes = placedAtStmt.pool
+    var root = irMakeNode(kind = tagOfName(name = "call"), typeId = 2)
+    root.text = 2
+    let placedRoot = irAppendNode(pool = nodes, node = root)
+    nodes = placedRoot.pool
+    var present = irMakeNode(kind = tagOfName(name = "call"), typeId = 1)
+    present.text = 3
+    present.kids = [placedHaystack.id]
+    let placedPresent = irAppendNode(pool = nodes, node = present)
+    nodes = placedPresent.pool
+    var presentPrintCall = irMakeNode(kind = tagOfName(name = "printCall"), typeId = -1)
+    presentPrintCall.kids = [placedPresent.id]
+    let placedPresentPrint = irAppendNode(pool = nodes, node = presentPrintCall)
+    nodes = placedPresentPrint.pool
+    var presentStmt = irMakeNode(kind = tagOfName(name = "exprStmt"), typeId = -1)
+    presentStmt.kids = [placedPresentPrint.id]
+    let placedPresentStmt = irAppendNode(pool = nodes, node = presentStmt)
+    nodes = placedPresentStmt.pool
+    var back = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    let placedBack = irAppendNode(pool = nodes, node = back)
+    nodes = placedBack.pool
+    module.nodes = nodes
+    module.texts = module.texts.append("moduleRoot")
+    module.texts = module.texts.append("exists")
+    var fn = IrFunction()
+    fn.name = "main"
+    fn.returnType = -1
+    var rootStmt = irMakeNode(kind = tagOfName(name = "exprStmt"), typeId = -1)
+    rootStmt.kids = [placedRoot.id]
+    let placedRootStmt = irAppendNode(pool = nodes, node = rootStmt)
+    module.nodes = placedRootStmt.pool
+    fn.body = [placedFoundStmt.id, placedAtStmt.id, placedRootStmt.id, placedPresentStmt.id, placedBack.id]
+    module.functions = module.functions.append(fn)
+    return module
+
+; 字符串与宿主面：双参串调用收成 i1 或 i32，无参内建按零参直呼，谓词把 i32 收成 i1。
+字符串与宿主|test() -> ():
+    let module = 发射造字符串模块()
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    if result.failed:
+        assert(false, "缺口：" + result.gaps[0])
+    assert(含子串(text = result.text, needle = "call i32 @bk_string_contains(ptr %t0, ptr %t1)"), "contains 应两串进、i32 出")
+    assert(含子串(text = result.text, needle = "icmp ne i32 %t2, 0"), "contains 应收成 i1")
+    assert(含子串(text = result.text, needle = "call i32 @bk_string_index_of(ptr"), "indexOf 应两串进、i32 出")
+    assert(含子串(text = result.text, needle = "call ptr @bk_module_root()"), "零参内建应按零参直呼")
+    assert(含子串(text = result.text, needle = "call i32 @bk_exists(ptr"), "谓词内建应按 i32 出")
+    assert(含子串(text = result.text, needle = "declare ptr @bk_module_root()"), "零参声明应无形参")
+    return
+
+; 容器模块：数组字面量、负下标读、切片各一次。
+发射造下标模块|func() -> (IrModule,):
+    var module = IrModule()
+    var pool = IrTypePool()
+    let intType = irScalarTypeOfCode(pool = pool, code = 1, name = "i32")
+    pool = intType.pool
+    let arrayType = irWrapTypeOfCode(pool = pool, code = 12, name = "", inner = intType.id)
+    module.types = arrayType.pool
+    var nodes = IrNodePool()
+    var literal = irMakeNode(kind = tagOfName(name = "arrayLiteral"), typeId = 1)
+    let placedLiteral = irAppendNode(pool = nodes, node = literal)
+    nodes = placedLiteral.pool
+    var alloc = irMakeNode(kind = tagOfName(name = "allocVar"), typeId = 1)
+    alloc.intValue = 0
+    alloc.kids = [placedLiteral.id]
+    let placedAlloc = irAppendNode(pool = nodes, node = alloc)
+    nodes = placedAlloc.pool
+    var base = irMakeNode(kind = tagOfName(name = "load"), typeId = 1)
+    base.intValue = 0
+    let placedBase = irAppendNode(pool = nodes, node = base)
+    nodes = placedBase.pool
+    var minusOne = irMakeNode(kind = tagOfName(name = "intConst"), typeId = 0)
+    minusOne.intValue = 0 - 1
+    let placedMinus = irAppendNode(pool = nodes, node = minusOne)
+    nodes = placedMinus.pool
+    var read = irMakeNode(kind = tagOfName(name = "subscriptGet"), typeId = 0)
+    read.kids = [placedBase.id, placedMinus.id]
+    let placedRead = irAppendNode(pool = nodes, node = read)
+    nodes = placedRead.pool
+    var printed = irMakeNode(kind = tagOfName(name = "printCall"), typeId = -1)
+    printed.kids = [placedRead.id]
+    let placedPrintCall = irAppendNode(pool = nodes, node = printed)
+    nodes = placedPrintCall.pool
+    var printStmt = irMakeNode(kind = tagOfName(name = "exprStmt"), typeId = -1)
+    printStmt.kids = [placedPrintCall.id]
+    let placedPrint = irAppendNode(pool = nodes, node = printStmt)
+    nodes = placedPrint.pool
+    var zero = irMakeNode(kind = tagOfName(name = "intConst"), typeId = 0)
+    let placedZero = irAppendNode(pool = nodes, node = zero)
+    nodes = placedZero.pool
+    var again = irMakeNode(kind = tagOfName(name = "load"), typeId = 1)
+    again.intValue = 0
+    let placedAgain = irAppendNode(pool = nodes, node = again)
+    nodes = placedAgain.pool
+    var two = irMakeNode(kind = tagOfName(name = "intConst"), typeId = 0)
+    two.intValue = 2
+    let placedTwo = irAppendNode(pool = nodes, node = two)
+    nodes = placedTwo.pool
+    var sliced = irMakeNode(kind = tagOfName(name = "sliceCall"), typeId = 1)
+    sliced.kids = [placedAgain.id, placedZero.id, placedTwo.id]
+    let placedSliced = irAppendNode(pool = nodes, node = sliced)
+    nodes = placedSliced.pool
+    var sliceStmt = irMakeNode(kind = tagOfName(name = "exprStmt"), typeId = -1)
+    sliceStmt.kids = [placedSliced.id]
+    let placedSliceStmt = irAppendNode(pool = nodes, node = sliceStmt)
+    nodes = placedSliceStmt.pool
+    var back = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    let placedBack = irAppendNode(pool = nodes, node = back)
+    nodes = placedBack.pool
+    module.nodes = nodes
+    var fn = IrFunction()
+    fn.name = "main"
+    fn.returnType = -1
+    fn.body = [placedAlloc.id, placedPrint.id, placedSliceStmt.id, placedBack.id]
+    module.functions = module.functions.append(fn)
+    return module
+
+; 容器面：负下标先取长度再换算，切片夹界后建新句柄并逐元素搬。
+下标与切片|test() -> ():
+    let module = 发射造下标模块()
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    if result.failed:
+        assert(false, "缺口：" + result.gaps[0])
+    assert(含子串(text = result.text, needle = "call i32 @bk_array_len(ptr %t1)"), "负下标应先取长度")
+    assert(含子串(text = result.text, needle = "select i1 %t3, i32 %t4, i32 -1"), "负下标应按尾计数换算")
+    assert(含子串(text = result.text, needle = "call ptr @bk_array_get(ptr %t1, i32 %t5)"), "下标读应取元素地址")
+    assert(含子串(text = result.text, needle = "call ptr @bk_array_create(i32 %t"), "切片应先建新句柄")
+    assert(含子串(text = result.text, needle = "call ptr @bk_array_set(ptr"), "切片应逐元素写新句柄")
+    assert(含子串(text = result.text, needle = "br label %slice.cond.0"), "切片应进循环")
     return

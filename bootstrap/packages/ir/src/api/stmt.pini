@@ -123,12 +123,14 @@ lowerAssignRhs|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map
     done.id = one.id
     return done
 
-; 记语句：节点并进池、下标追加到语句序列，并记一条源位置；源序即节点序。
+; 记语句：节点并进池、下标写成本条语句自己的序列，并记一条源位置；源序即节点序。
+;  行不通  追加到入口的 ids：调用方按条累积，上一段（then）的语句会跟着进下一段（else）。
 appendStmtNode|func(out: LowerStmt, node: IrNode, offset: I32,) -> (LowerStmt,):
     var done = out
     let inserted = irAppendNode(pool = done.pool, node = node)
     done.pool = inserted.pool
-    done.ids = done.ids.append(inserted.id)
+    var fresh: Array<I32> = [inserted.id]
+    done.ids = fresh
     done.positions = recordPosition(positions = done.positions, node = inserted.id, offset = offset)
     return done
 
@@ -709,6 +711,7 @@ lowerMatchStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map
                     let placedName = internText(texts = done.texts, value = name)
                     var local = irMakeNode(kind = irStmtTag(.irAllocVar), typeId = typeId)
                     local.text = placedName.id
+                    local.intValue = done.frame.nextSlot as I64
                     local.kids = [insertedRead.id]
                     let insertedLocal = irAppendNode(pool = done.pool, node = local)
                     done.pool = insertedLocal.pool

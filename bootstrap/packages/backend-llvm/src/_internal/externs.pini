@@ -54,4 +54,61 @@ externSignature|func(name: String,) -> (String,):
         return "declare ptr @bk_chars(ptr)"
     if name == "bk_temp_utf8_bytes":
         return "declare ptr @bk_temp_utf8_bytes(ptr)"
+    if name == "bk_temp_byte_to_int":
+        return "declare i32 @bk_temp_byte_to_int(i8)"
+    if name == "bk_temp_int_to_byte":
+        return "declare i8 @bk_temp_int_to_byte(i32)"
+    if name == "bk_char_to_heap_string":
+        return "declare ptr @bk_char_to_heap_string(i64)"
+    ; 字符串族：入参按 C 串借出，结果按带头串交回。
+    if name == "bk_str_concat":
+        return "declare ptr @bk_str_concat(ptr, ptr, i32)"
+    if name == "bk_char_equal_string":
+        return "declare i32 @bk_char_equal_string(i64, ptr)"
+    if name == "strcmp":
+        return "declare i32 @strcmp(ptr, ptr)"
+    if name == "bk_string_contains":
+        return "declare i32 @bk_string_contains(ptr, ptr)"
+    if name == "bk_string_index_of":
+        return "declare i32 @bk_string_index_of(ptr, ptr)"
+    if name == "bk_substring":
+        return "declare ptr @bk_substring(ptr, i32, i32)"
+    if name == "bk_string_slice":
+        return "declare ptr @bk_string_slice(ptr, i32, i32, i32, i32)"
+    if name == "bk_string_split":
+        return "declare ptr @bk_string_split(ptr, ptr)"
+    if name == "bk_string_char_at":
+        return "declare i64 @bk_string_char_at(ptr, i32)"
+    if name == "bk_str_append_cstr":
+        return "declare ptr @bk_str_append_cstr(ptr, ptr, i32)"
+    ; 容器族：元素按地址搬运，宽度与标签由发射层给。
+    if name == "bk_array_get":
+        return "declare ptr @bk_array_get(ptr, i32)"
+    if name == "bk_array_set":
+        return "declare ptr @bk_array_set(ptr, i32, ptr, i32, i32)"
+    if name == "bk_dict_get":
+        return "declare ptr @bk_dict_get(ptr, ptr, i32, i32)"
+    if name == "bk_dict_set":
+        return "declare ptr @bk_dict_set(ptr, ptr, i32, i32, ptr, i32, i32)"
+    ; 名义箱族：头四格由运行时段写，尺寸与类型标识由发射层给。
+    if name == "bk_nominal_alloc":
+        return "declare ptr @bk_nominal_alloc(i64, i32)"
+    ; IO 与宿主查询族：路径按 C 串借出，读出内容按带头串交回。
+    if name == "bk_read_file":
+        return "declare ptr @bk_read_file(ptr)"
+    if name == "bk_list_dir":
+        return "declare ptr @bk_list_dir(ptr)"
+    if name == "bk_exists":
+        return "declare i32 @bk_exists(ptr)"
+    if name == "bk_is_dir":
+        return "declare i32 @bk_is_dir(ptr)"
+    if name == "bk_try_read_file":
+        return "declare ptr @bk_try_read_file(ptr, ptr)"
+    if name == "bk_argv":
+        return "declare ptr @bk_argv()"
+    if name == "bk_module_root":
+        return "declare ptr @bk_module_root()"
+    ; 格式化族：插值与非串元素渲染都按定长缓冲写，长度含 NUL。
+    if name == "snprintf":
+        return "declare i32 @snprintf(ptr, i64, ptr, ...)"
     return ""

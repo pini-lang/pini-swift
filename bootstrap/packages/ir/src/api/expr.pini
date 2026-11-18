@@ -663,6 +663,40 @@ zeroConstructType|func(map: TypeMap, name: String, isObject: Bool,) -> (I32,):
         flags = 1
     return irFindType(pool = map.pool, kind = .irTypeNominal, name = name, kids = [], ret = -1, uses = [], flags = flags)
 
+; 零参构造：字段初值按声明序展开成「字段号 + 表达式」对，随节点带走。
+; 无初值或初值定不了型的字段不发对子，后端按字段类型清零；初值在声明所在单元取表达式。
+lowerConstructDefaults|func(out: LowerExpr, map: TypeMap, types: ExprTypes, ref: DeclRef, typeId: I32,) -> (LowerExpr,):
+    var done = out
+    let declUnit = done.frame.world.units[ref.unit]
+    let decl = declUnit.ast.decls[ref.decl]
+    let declBytes = unitBytes(declUnit)
+    var kids: Array<I32> = []
+    var index = 0
+    var i = 0
+    while i < len(decl.kids):
+        let child = declUnit.ast.decls[decl.kids[i]]
+        if isFieldDeclCode(child.kind):
+            if len(child.kids) > 0:
+                let before = done
+                let one = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = declUnit, unitIndex = ref.unit, bytes = declBytes, frame = done.frame, id = child.kids[0])
+                if !one.failed:
+                    var mark = irMakeNode(kind = irExprTag(.irIntConst), typeId = map.i32Id)
+                    mark.intValue = index as I64
+                    let placed = irAppendNode(pool = one.pool, node = mark)
+                    done.pool = placed.pool
+                    done.texts = one.texts
+                    done.frame = one.frame
+                    kids = kids.append(placed.id)
+                    kids = kids.append(one.id)
+                else:
+                    done = before
+            index = index + 1
+        i = i + 1
+    let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irConstruct), typeId = typeId, op = 0, kids = kids)
+    done.pool = inserted.pool
+    done.id = inserted.id
+    return done
+
 ; 具名调用：实参按形参序归位，接收者（若有）排在最前；归位失败即报缺口。
 lowerNamedCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32, name: String, actuals: Array<IrActual>, params: Array<CallParam>, leading: I32, ret: I32,) -> (LowerExpr,):
     var done = out
@@ -805,9 +839,11 @@ lowerCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: Typ
                 if isStructDeclCode(decl.kind) || isObjectDeclCode(decl.kind):
                     let typeId = zeroConstructType(map = map, name = name, isObject = isObject)
                     if typeId >= 0:
-                        let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irConstruct), typeId = typeId, op = 0, kids = [])
-                        done.pool = inserted.pool
-                        done.id = inserted.id
+                        let shaped = lowerConstructDefaults(out = done, map = map, types = types, ref = ref, typeId = typeId)
+                        done.pool = shaped.pool
+                        done.texts = shaped.texts
+                        done.frame = shaped.frame
+                        done.id = shaped.id
                         return done
         if !resolved.found:
             resolved.name = name

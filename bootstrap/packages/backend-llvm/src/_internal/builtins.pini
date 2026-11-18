@@ -5,7 +5,8 @@ _ir = "../../../ir"
 ; 表只登记符号与搬参法，指令由发射面按形状补；同形状加内建只加行，新形状先落发射面。
 ; 接收者类别取类型类别码：同名内建落在不同容器上就是两行，表外名字照旧报缺口。
 
-; 形状码：一 句柄计数；二 元素追加；三 单参直呼，实参按自身类型传、结果按节点类型出。
+; 形状码：一 句柄计数；二 元素追加；三 单参直呼；四 零参直呼；五 谓词；六 结果读取。
+; 单参直呼按实参类型传、按节点类型出；谓词把 i32 收成 i1；结果读取把内容与错误字拼成聚合。
 shapeHandleCount|func() -> (I32,):
     return 1
 
@@ -14,6 +15,15 @@ shapeElementAppend|func() -> (I32,):
 
 shapeDirectCall|func() -> (I32,):
     return 3
+
+shapeZeroCall|func() -> (I32,):
+    return 4
+
+shapePredicate|func() -> (I32,):
+    return 5
+
+shapeTryRead|func() -> (I32,):
+    return 6
 
 ; 内建行：名字、接收者类别、符号与形状；`symbol` 空即未登记，调用方据此报缺口。
 (BuiltinEntry)
@@ -31,7 +41,8 @@ makeBuiltinOf|func(name: String, receiver: I32, symbol: String, shape: I32,) -> 
     out.shape = shape
     return out
 
-; 内建表：一行一条；接收者类别码是类型类别（i32 一、字串八、字符九、数组十二、字典十六、集合十七）。
+; 内建表：一行一条；接收者类别码是类型类别（i32 一、u8 四、字串八、字符九、数组十二、字典十六、集合十七）。
+; 零参内建没有接收者，类别记负一，查表按名字与负一双命中。
 builtinTable|func() -> (Array<BuiltinEntry>,):
     var out: Array<BuiltinEntry> = []
     out = out.append(makeBuiltinOf(name = "len", receiver = 12, symbol = "bk_array_len", shape = 1))
@@ -42,6 +53,15 @@ builtinTable|func() -> (Array<BuiltinEntry>,):
     out = out.append(makeBuiltinOf(name = "ord", receiver = 9, symbol = "bk_ord", shape = 3))
     out = out.append(makeBuiltinOf(name = "chars", receiver = 8, symbol = "bk_chars", shape = 3))
     out = out.append(makeBuiltinOf(name = "tempUtf8Bytes", receiver = 8, symbol = "bk_temp_utf8_bytes", shape = 3))
+    out = out.append(makeBuiltinOf(name = "tempByteToInt", receiver = 4, symbol = "bk_temp_byte_to_int", shape = 3))
+    out = out.append(makeBuiltinOf(name = "tempIntToByte", receiver = 1, symbol = "bk_temp_int_to_byte", shape = 3))
+    out = out.append(makeBuiltinOf(name = "readFile", receiver = 8, symbol = "bk_read_file", shape = 3))
+    out = out.append(makeBuiltinOf(name = "listDir", receiver = 8, symbol = "bk_list_dir", shape = 3))
+    out = out.append(makeBuiltinOf(name = "exists", receiver = 8, symbol = "bk_exists", shape = 5))
+    out = out.append(makeBuiltinOf(name = "isDir", receiver = 8, symbol = "bk_is_dir", shape = 5))
+    out = out.append(makeBuiltinOf(name = "tryReadFile", receiver = 8, symbol = "bk_try_read_file", shape = 6))
+    out = out.append(makeBuiltinOf(name = "argv", receiver = -1, symbol = "bk_argv", shape = 4))
+    out = out.append(makeBuiltinOf(name = "moduleRoot", receiver = -1, symbol = "bk_module_root", shape = 4))
     out = out.append(makeBuiltinOf(name = "Array.append", receiver = 12, symbol = "bk_array_append", shape = 2))
     return out
 
