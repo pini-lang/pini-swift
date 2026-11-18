@@ -1,0 +1,91 @@
+[llvm_test|import]
+_ir = "../../ir"
+_backend_kit = "../../backend-kit"
+
+; 发射判据：手搭模块只喂发射器，不经过装配链；真实模块由 lower 与 validate 另行验证。
+; 每条判据只钉一类行：函数头、槽位、二元指令、缺口与确定性；手搭反而能精确到一条。
+
+; 发射造记录：族表只声明控制流、标量、变量与运算三族，入口码取二。
+发射造记录|func(outputCode: I32,) -> (BackendEntry,):
+    return makeBackendOf(name = "llvm", outputCode = outputCode, families = [0, 1, 2], entry = 2)
+
+; 发射造类型池：一个 i32。
+发射造类型池|func() -> (IrTypePool,):
+    var pool = IrTypePool()
+    let intType = irScalarTypeOfCode(pool = pool, code = 1, name = "i32")
+    return intType.pool
+
+; 发射造模块：main 里一条变量声明、一条返回；变量槽为零。
+; 常量先入池，再入声明与返回，体按装入序给两条语句。
+发射造模块|func() -> (IrModule,):
+    var module = IrModule()
+    module.types = 发射造类型池()
+    var nodes = IrNodePool()
+    var literal = irMakeNode(kind = tagOfName(name = "intConst"), typeId = 0)
+    literal.intValue = 2
+    let placedLiteral = irAppendNode(pool = nodes, node = literal)
+    nodes = placedLiteral.pool
+    var alloc = irMakeNode(kind = tagOfName(name = "allocVar"), typeId = 0)
+    alloc.text = 0
+    alloc.intValue = 0
+    alloc.kids = [placedLiteral.id]
+    let placedAlloc = irAppendNode(pool = nodes, node = alloc)
+    nodes = placedAlloc.pool
+    var back = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    let placedBack = irAppendNode(pool = nodes, node = back)
+    nodes = placedBack.pool
+    module.nodes = nodes
+    module.texts = module.texts.append("a")
+    var fn = IrFunction()
+    fn.name = "main"
+    fn.returnType = -1
+    fn.body = [placedAlloc.id, placedBack.id]
+    module.functions = module.functions.append(fn)
+    return module
+
+; 含子串：成员被调走参数接收者，避开「字段读后直接成员被调」的定型盲区。
+含子串|func(text: String, needle: String,) -> (Bool,):
+    return text.indexOf(needle) >= 0
+
+; 函数头与槽位：main 按 i32 出，变量按槽位名出，常量直接进存储。
+发射形状|test() -> ():
+    let module = 发射造模块()
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    assert(!result.failed, "最小模块应发得出来")
+    assert(含子串(text = result.text, needle = "define i32 @main() {"), "main 应按 i32 出定义")
+    assert(含子串(text = result.text, needle = "%s0 = alloca i32"), "变量应按槽位名出 alloca")
+    assert(含子串(text = result.text, needle = "store i32 2, ptr %s0"), "初始值应直接进存储")
+    assert(含子串(text = result.text, needle = "ret i32 0"), "main 应补零返回")
+    return
+
+; 缺口：族未声明时按族报，且整份文本不出；失败不静默。
+族未声明|test() -> ():
+    var module = 发射造模块()
+    var pool = module.nodes
+    var list = irMakeNode(kind = tagOfName(name = "arrayLiteral"), typeId = 0)
+    let placed = irAppendNode(pool = pool, node = list)
+    module.nodes = placed.pool
+    module.functions[0].body = [placed.id]
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    assert(result.failed, "未声明族的节点应失败")
+    assert(len(result.text) == 0, "失败时不应出半份文本")
+    assert(emitGapCount(result = result) > 0, "失败应带缺口")
+    assert(含子串(text = result.gaps[0], needle = "族未声明 collections"), "缺口应点名族")
+    return
+
+; 档次：转储档次不接受，直接拒发；记录与发射器判据同源。
+档次不符|test() -> ():
+    let module = 发射造模块()
+    let result = emitModule(entry = 发射造记录(outputCode = 3), target = defaultTarget(), module = module)
+    assert(result.failed, "非本机码档次应失败")
+    assert(含子串(text = result.detail, needle = "不接受档次 dump"), "细节应点名档次")
+    return
+
+; 确定性：同一模块两遍发射逐字节相同，行读数与换行数相等。
+确定性|test() -> ():
+    let module = 发射造模块()
+    let once = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    let twice = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    assert(once.text == twice.text, "两遍发射应逐字节相同")
+    assert(once.lines == twice.lines, "两遍行读数应相同")
+    return

@@ -17,6 +17,7 @@ irRuleCaseTag
 irRulePayloadIndex
 irRuleVarType
 irRuleEmptyBody
+irRuleVarSlot
 
 ; 校验结果：违约表与走查节点数；节点数用于「校验确实走过整棵树」的判据。
 (IrValidation)
@@ -46,6 +47,8 @@ irRuleName|func(_rule: IrRule,) -> (String,):
             return "变量类型"
         case irRuleEmptyBody:
             return "空体对照"
+        case irRuleVarSlot:
+            return "变量槽位"
     return "规则"
 
 ; 报一条：结果只累加，不中断走查；同一节点可同时触发多条。
@@ -157,6 +160,10 @@ validateNode|func(module: IrModule, nodeId: I32, file: String, positions: Array<
         out = checkPayloadIndex(module = module, node = node, result = out, file = file, offset = offset)
     if node.kind == irStmtTag(.irAllocVar) && node.typeId < 0:
         out = reportRule(result = out, rule = .irRuleVarType, file = file, offset = offset, detail = "变量声明没有类型")
+    if node.kind == irStmtTag(.irAllocVar) || node.kind == irStmtTag(.irStoreVar) || node.kind == irExprTag(.irLoad):
+        let slot = node.intValue as I32
+        if slot < 0:
+            out = reportRule(result = out, rule = .irRuleVarSlot, file = file, offset = offset, detail = "节点 " + countText(nodeId) + " 没有槽位")
     k = 0
     while k < len(node.kids):
         let kid = node.kids[k]

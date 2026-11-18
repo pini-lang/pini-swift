@@ -1,0 +1,60 @@
+[types|import]
+_ir = "../../../ir"
+_backend_kit = "../../../backend-kit"
+
+; 类型面：IR 类型下标到 LLVM 类型拼写，外加值语义名义类型的结构声明。
+; 标量直出；字符串、容器、指针与对象一律 ptr，运行时按句柄搬。
+; 槽是布局单位：结构体按槽数出 i64 格，宽度与对齐归目标描述，不在这里逐槽判型。
+
+; 类型拼写：无类型答 void；越界与未认类别答 ptr，宁可宽一格也不出错误拼写。
+llvmTypeName|func(pool: IrTypePool, typeId: I32,) -> (String,):
+    if typeId < 0:
+        return "void"
+    if typeId >= irTypeCount(pool):
+        return "ptr"
+    let entry = irTypeAt(pool = pool, id = typeId)
+    let tag = irTypeTag(entry.kind)
+    if tag == 1:
+        return "i32"
+    if tag == 2:
+        return "i64"
+    if tag == 3:
+        return "i64"
+    if tag == 4:
+        return "i8"
+    if tag == 5:
+        return "i8"
+    if tag == 6:
+        return "double"
+    if tag == 7:
+        return "i1"
+    return "ptr"
+
+; 结构名：按 IR 名编码一次，非 ASCII 逐标量写 `_u`；值语义名义类型专用。
+llvmStructName|func(name: String,) -> (String,):
+    return "%struct." + mangleName(name = name)
+
+; 结构体身：按槽数出 i64 格；槽数为零或未约定时留一格，避免零宽类型。
+structBody|func(count: I32,) -> (String,):
+    if count <= 0:
+        return " { i64 }"
+    var out = " {"
+    var i = 0
+    while i < count:
+        if i > 0:
+            out = out + ","
+        out = out + " i64"
+        i = i + 1
+    return out + " }"
+
+; 类型声明：只为值语义名义类型出结构体；对象与枚举走句柄，不出声明。
+llvmTypeDecls|func(module: IrModule,) -> (Array<String>,):
+    var lines: Array<String> = []
+    var i = 0
+    while i < irTypeCount(module.types):
+        let entry = irTypeAt(pool = module.types, id = i)
+        if irTypeTag(entry.kind) == 14 && !irIsObjectType(pool = module.types, id = i):
+            let count = slotCountOf(table = module.slots, typeId = i)
+            lines = lines.append(llvmStructName(name = entry.name) + " = type" + structBody(count = count))
+        i = i + 1
+    return lines

@@ -51,3 +51,22 @@ instanceMethodName|func(method: String, owner: String,) -> (String,):
 ; 本型方法名：`own__方法__类型`，与实例方法分处两个符号，一名一义。
 ownMethodName|func(method: String, owner: String,) -> (String,):
     return "own__" + mangleName(name = method) + "__" + mangleName(name = owner)
+
+; 族码表：下标即节点类别码，长度盖到语句段末位，空位留 -1。
+; 后端只查这条表判能力族，不自带映射；一次建表，按码取，免得逐节点重扫契约表。
+irContractFamilies|func() -> (Array<I32>,):
+    let table = contractTable()
+    var out: Array<I32> = []
+    var i = 0
+    while i < 118:
+        out = out.append(-1)
+        i = i + 1
+    i = 0
+    while i < len(table.entries):
+        let one = table.entries[i]
+        if one.tag >= 0 && one.tag < len(out):
+            var grown = out
+            grown[one.tag] = one.family
+            out = grown
+        i = i + 1
+    return out

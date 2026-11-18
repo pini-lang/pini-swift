@@ -634,3 +634,14 @@ irSetNodeType|func(pool: IrNodePool, id: I32, typeId: I32,) -> (IrNodePool,):
     node.typeId = typeId
     out.nodes[id] = node
     return out
+
+; 变量槽位：只有声明、读、写三类节点把槽位放在 intValue，其余节点该位不作槽位解释。
+; 后端一律按槽位取变量；名字只留作诊断，不参与寻址。
+irHasVarSlot|func(kind: I32,) -> (Bool,):
+    if kind == irExprTag(.irLoad):
+        return true
+    if kind == irStmtTag(.irAllocVar):
+        return true
+    if kind == irStmtTag(.irStoreVar):
+        return true
+    return false

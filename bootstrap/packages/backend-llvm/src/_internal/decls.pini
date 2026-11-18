@@ -1,0 +1,41 @@
+[decls|import]
+_semantics = "../../../semantics"
+_ir = "../../../ir"
+_backend_kit = "../../../backend-kit"
+
+; 声明面：函数头、形参表与符号拼写；有体出定义，无体出声明。
+; 符号只按 IR 名编码一次；目标前缀留给外部符号，内部函数不带，两代之间符号不漂。
+; 参数名按位置编号，与源码名字无关：源码名可能在模块里重复，槽位才是身份。
+
+; 形参表：类型 + 位置名；无参答空串，调用点与定义共用这一份拼法。
+llvmParams|func(pool: IrTypePool, fn: IrFunction,) -> (String,):
+    var out = ""
+    var i = 0
+    while i < len(fn.params):
+        if i > 0:
+            out = out + ", "
+        out = out + llvmTypeName(pool = pool, typeId = fn.params[i].typeId) + " %p" + countText(i)
+        i = i + 1
+    return out
+
+; 返回类型：无返回类型答 void；main 例外按 i32 出，退出码由运行时约定。
+llvmReturnType|func(pool: IrTypePool, fn: IrFunction,) -> (String,):
+    if fn.name == "main" && fn.returnType < 0:
+        return "i32"
+    return llvmTypeName(pool = pool, typeId = fn.returnType)
+
+; 函数头：define 或 declare 加返回类型、编码名与形参表。
+llvmSignature|func(pool: IrTypePool, fn: IrFunction, isDefine: Bool,) -> (String,):
+    var head = "declare"
+    if isDefine:
+        head = "define"
+    return head + " " + llvmReturnType(pool = pool, fn = fn) + " @" + mangleName(name = fn.name) + "(" + llvmParams(pool = pool, fn = fn) + ")"
+
+; 函数表位置：按名查，未命中答 -1；发射器据此判调用点是内部还是外部。
+findIrFunctionIndex|func(module: IrModule, name: String,) -> (I32,):
+    var i = 0
+    while i < len(module.functions):
+        if module.functions[i].name == name:
+            return i
+        i = i + 1
+    return -1

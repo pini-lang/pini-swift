@@ -5,6 +5,7 @@ _semantics = "../../../semantics"
 _ir = "../../../ir"
 _backend_kit = "../../../backend-kit"
 _backend_dump = "../../../backend-dump"
+_backend_llvm = "../../../backend-llvm"
 
 ; 降载产物：模块、结构校验、包数与已定型表达式数；lower 与 dump 共用同一条装配链。
 (降载产物)
@@ -22,6 +23,7 @@ main|func() -> ():
     var 全量 = false
     var 降载 = false
     var 转储 = false
+    var 发射 = false
     if len(args) > 0 && args[0] == "check":
         全量 = true
         if len(args) > 1:
@@ -32,6 +34,10 @@ main|func() -> ():
             root = args[1]
     if len(args) > 0 && args[0] == "dump":
         转储 = true
+        if len(args) > 1:
+            root = args[1]
+    if len(args) > 0 && args[0] == "emit":
+        发射 = true
         if len(args) > 1:
             root = args[1]
     if len(args) > 0 && args[0] == "cases":
@@ -81,9 +87,32 @@ main|func() -> ():
             print("dump-blocked", len(产物.check.errors))
             return
         let entry = makeBackendOf(name = "dump", outputCode = backendOutputDumpCode(), families = backendFamilyCodes(), entry = 1)
-        let emitted = dumpModule(module = 产物.module)
+        let emitted = dumpModule(entry = entry, target = defaultTarget(), module = 产物.module)
+        if emitted.failed:
+            print("dump-failed", emitted.detail, emitGapCount(result = emitted))
+            return
         print("dump-ok", 产物.packages, emitted.lines, len(emitted.text))
         print("dump-backend", entry.name, backendOutputName(entry.output), len(entry.families))
+        print(emitted.text)
+        return
+    if 发射:
+        let 产物 = 降载工作区(root = root)
+        if 产物.packages == 0:
+            return
+        if len(产物.check.errors) > 0:
+            print("emit-blocked", len(产物.check.errors))
+            return
+        let entry = makeBackendOf(name = "llvm", outputCode = backendOutputNativeCode(), families = [0, 1, 2], entry = 2)
+        let emitted = emitModule(entry = entry, target = defaultTarget(), module = 产物.module)
+        if emitted.failed:
+            print("emit-gaps", emitGapCount(result = emitted), emitted.detail)
+            var g = 0
+            while g < len(emitted.gaps):
+                print("缺口", emitted.gaps[g])
+                g = g + 1
+            return
+        print("emit-ok", 产物.packages, emitted.lines, len(emitted.text))
+        print("emit-backend", entry.name, backendOutputName(entry.output), len(entry.families))
         print(emitted.text)
         return
     let plan = planWorkspace(root)

@@ -1,0 +1,15 @@
+[package]
+name = "backend_llvm"
+
+[require]
+semantics = "*"
+ir = "*"
+backend_kit = "*"
+
+[lib]
+name = "backend-llvm"
+entry = "src/api/emit.pini"
+
+[[test]]
+name = "backend-llvm-tests"
+entry = "tests"

@@ -1,0 +1,6 @@
+[package]
+name = "mini"
+
+[lib]
+name = "mini"
+entry = "src/api/main.pini"

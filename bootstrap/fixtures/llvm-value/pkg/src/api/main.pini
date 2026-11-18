@@ -1,0 +1,13 @@
+; 最小样例：纯 i32 计算，覆盖变量、调用、分支与循环，供发射与执行验收。
+加三|func(x: I32,) -> (I32,):
+    return x + 3
+
+main|func() -> (I32,):
+    var a: I32 = 2
+    var b: I32 = 加三(x = a)
+    while b > 0:
+        a = a + b
+        b = b - 1
+    if a > 5:
+        a = a - 1
+    return a

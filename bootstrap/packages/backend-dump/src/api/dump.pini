@@ -113,6 +113,8 @@ dumpNode|func(module: IrModule, nodeId: I32, depth: I32, names: Array<String>, p
     line = line + " type=" + irTypeText(pool = module.types, id = node.typeId)
     line = line + " op=" + countText(node.op)
     line = line + " text=" + textAt(module = module, id = node.text)
+    if irHasVarSlot(kind = node.kind):
+        line = line + " slot=" + countText(node.intValue as I32)
     line = line + " kids=" + countText(len(node.kids))
     line = line + " tail=" + countText(node.tail)
     if isStmt:
@@ -179,10 +181,13 @@ dumpErrors|func(module: IrModule,) -> (Array<String>,):
     return lines
 
 ; 入口：按固定节序组装；两次调用得到同一串文本，末尾恒有一个换行。
-dumpModule|func(module: IrModule,) -> (EmitResult,):
+; 记录与目标由调用方给：档次不是转储即拒发，目标行只印给对读，不参与文本形状。
+dumpModule|func(entry: BackendEntry, target: TargetProfile, module: IrModule,) -> (EmitResult,):
+    if backendOutputCode(entry.output) != backendOutputDumpCode():
+        return failedEmit(detail = "转储后端不接受档次 " + backendOutputName(entry.output))
     var lines: Array<String> = []
     lines = lines.append("module functions=" + countText(len(module.functions)) + " nodes=" + countText(irNodeCount(module.nodes)) + " types=" + countText(irTypeCount(module.types)) + " decls=" + countText(declCount(table = module.decls)) + " slots=" + countText(slotRowCount(table = module.slots)) + " errors=" + countText(len(module.errors)))
-    let target = defaultTarget()
+    lines = lines.append("backend name=" + entry.name + " output=" + backendOutputName(entry.output) + " families=" + countText(len(entry.families)) + " entry=" + countText(entry.entry))
     lines = lines.append("target name=" + target.name + " pointer=" + countText(target.pointerWidth) + " slot=" + countText(target.slotWidth))
     let 类型行 = dumpTypes(module = module)
     var 类型行i = 0

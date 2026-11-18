@@ -1,4 +1,4 @@
-测试目标: 工作区 .（11 个测试 target）
+测试目标: 工作区 .（12 个测试 target）
 包 support / support-tests（7 个测试，7 通过）
 包 diagnostics / diagnostics-tests（20 个测试，20 通过）
 包 package / package-tests（23 个测试，23 通过）
@@ -9,5 +9,6 @@
 包 ir / ir-tests（34 个测试，34 通过）
 包 backend_kit / backend-kit-tests（4 个测试，4 通过）
 包 backend_dump / backend-dump-tests（5 个测试，5 通过）
+包 backend_llvm / backend-llvm-tests（4 个测试，4 通过）
 包 driver / driver-tests（16 个测试，16 通过）
-结果: 600 通过, 0 失败（用时）
+结果: 604 通过, 0 失败（用时）

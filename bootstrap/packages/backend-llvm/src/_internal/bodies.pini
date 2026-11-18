@@ -1,0 +1,371 @@
+[bodies|import]
+_semantics = "../../../semantics"
+_ir = "../../../ir"
+_backend_kit = "../../../backend-kit"
+
+; 函数体：表达式逐节点出临时值，语句按类别分派；未接的类别记缺口，不产占位指令。
+; 临时值与标签按遍历序编号，同一模块两遍发射逐字节相同。
+; 块终结按段记：返回收口的段不补跳转，两段都收口时整条分支也收口。
+
+; 发射上下文：行容器、临时值水位、标签水位、缺口与失败位；每函数一份。
+; 行容器是引用，函数级状态是值：上下文复制便宜，状态也不互相污染。
+{BodyCtx}
+lines: LineSink = LineSink()
+temp: I32 = 0
+label: I32 = 0
+gaps: Array<String> = []
+failed: Bool = false
+fnIndex: I32 = 0
+closed: Bool = false
+families: Array<I32> = []
+declared: Array<I32> = []
+
+; 表达式结果：上下文与值串；值串只给操作数，类型由所在指令给。
+(ExprOut)
+ctx: BodyCtx = BodyCtx()
+text: String = ""
+
+; 临时值名：按水位编号，不按源码名。
+tempName|func(index: I32,) -> (String,):
+    return "%t" + countText(index)
+
+; 槽名：按槽位编号；同名变量的不同声明因此在文本里也分得开。
+slotName|func(slot: I32,) -> (String,):
+    return "%s" + countText(slot)
+
+; 标签名：前缀加编号，前缀只作可读性，不参与判等。
+labelName|func(prefix: String, index: I32,) -> (String,):
+    return prefix + countText(index)
+
+; 记缺口：去重后追加；同一类别码只留一条，行数不随节点数膨胀。
+addGap|func(ctx: BodyCtx, gap: String,) -> (BodyCtx,):
+    var out = ctx
+    out.failed = true
+    var i = 0
+    while i < len(out.gaps):
+        if out.gaps[i] == gap:
+            return out
+        i = i + 1
+    out.gaps = out.gaps.append(gap)
+    return out
+
+; 族已声明：族码在记录表里即算；空表表示不声明任何族。
+hasFamily|func(ids: Array<I32>, family: I32,) -> (Bool,):
+    var i = 0
+    while i < len(ids):
+        if ids[i] == family:
+            return true
+        i = i + 1
+    return false
+
+; 缺口按声明写：先认类别码，再认族；族未声明与「族已声明但没接」分开说，不混成一类。
+nodeGap|func(ctx: BodyCtx, kind: I32,) -> (String,):
+    var family = -1
+    if kind >= 0 && kind < len(ctx.families):
+        family = ctx.families[kind]
+    if family < 0:
+        return "类别码 " + countText(kind) + " 不在契约表"
+    if !hasFamily(ids = ctx.declared, family = family):
+        return "族未声明 " + backendFamilyName(code = family) + " 类别码 " + countText(kind)
+    return "类别码 " + countText(kind) + " 未接"
+
+; 节点类型是否为浮点：二元与一元据此换指令族。
+isFloatNode|func(module: IrModule, nodeId: I32,) -> (Bool,):
+    if nodeId < 0 || nodeId >= irNodeCount(module.nodes):
+        return false
+    let typeId = irNodeAt(pool = module.nodes, id = nodeId).typeId
+    if typeId < 0 || typeId >= irTypeCount(module.types):
+        return false
+    return irTypeTag(irTypeAt(pool = module.types, id = typeId).kind) == 6
+
+; 二元指令：整数一套，浮点一套；min/max 走比较加选择，其余直出。
+binaryOpText|func(op: I32, isFloat: Bool,) -> (String,):
+    if op == 1:
+        if isFloat:
+            return "fadd"
+        return "add"
+    if op == 2:
+        if isFloat:
+            return "fsub"
+        return "sub"
+    if op == 3:
+        if isFloat:
+            return "fmul"
+        return "mul"
+    if op == 4:
+        if isFloat:
+            return "fdiv"
+        return "sdiv"
+    if op == 5:
+        return "srem"
+    if op == 6:
+        if isFloat:
+            return "fcmp oeq"
+        return "icmp eq"
+    if op == 7:
+        if isFloat:
+            return "fcmp une"
+        return "icmp ne"
+    if op == 8:
+        if isFloat:
+            return "fcmp olt"
+        return "icmp slt"
+    if op == 9:
+        if isFloat:
+            return "fcmp ole"
+        return "icmp sle"
+    if op == 10:
+        if isFloat:
+            return "fcmp ogt"
+        return "icmp sgt"
+    if op == 11:
+        if isFloat:
+            return "fcmp oge"
+        return "icmp sge"
+    if op == 12:
+        return "and"
+    if op == 13:
+        return "or"
+    if op == 14:
+        return "xor"
+    if op == 15:
+        return "shl"
+    if op == 16:
+        return "ashr"
+    return ""
+
+; 一元指令：取负写 sub 零减，取反写异或全一，逻辑非写比较；转换与绝对值尚未接。
+unaryOpText|func(op: I32,) -> (String,):
+    if op == 1:
+        return "sub"
+    if op == 2:
+        return "icmp eq"
+    if op == 3:
+        return "xor"
+    return ""
+
+; 表达式：先发子节点，再发本节点；值串交给上层拼指令。
+emitExpr|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
+    var out = ExprOut()
+    out.ctx = ctx
+    out.text = "0"
+    if nodeId < 0 || nodeId >= irNodeCount(module.nodes):
+        out.ctx = addGap(ctx = out.ctx, gap = "悬空表达式")
+        return out
+    let node = irNodeAt(pool = module.nodes, id = nodeId)
+    let typeName = llvmTypeName(pool = module.types, typeId = node.typeId)
+    if node.kind == 1:
+        out.text = countText(node.intValue as I32)
+        return out
+    if node.kind == 3:
+        let flag = node.intValue as I32
+        if flag != 0:
+            out.text = "true"
+        else:
+            out.text = "false"
+        return out
+    if node.kind == 5:
+        let slot = node.intValue as I32
+        let id = out.ctx.temp
+        out.ctx.temp = id + 1
+        let name = tempName(index = id)
+        appendLine(sink = out.ctx.lines, text = "  " + name + " = load " + typeName + ", ptr " + slotName(slot = slot))
+        out.text = name
+        return out
+    if node.kind == 6:
+        let left = emitExpr(ctx = out.ctx, module = module, nodeId = node.kids[0])
+        let right = emitExpr(ctx = left.ctx, module = module, nodeId = node.kids[1])
+        out.ctx = right.ctx
+        let isFloat = isFloatNode(module = module, nodeId = node.kids[0])
+        if node.op >= 17:
+            out.ctx = addGap(ctx = out.ctx, gap = "二元运算 min/max")
+            return out
+        let opText = binaryOpText(op = node.op, isFloat = isFloat)
+        if len(opText) == 0:
+            out.ctx = addGap(ctx = out.ctx, gap = "二元运算码 " + countText(node.op))
+            return out
+        let id = out.ctx.temp
+        out.ctx.temp = id + 1
+        let name = tempName(index = id)
+        let opType = llvmTypeName(pool = module.types, typeId = irNodeAt(pool = module.nodes, id = node.kids[0]).typeId)
+        appendLine(sink = out.ctx.lines, text = "  " + name + " = " + opText + " " + opType + " " + left.text + ", " + right.text)
+        out.text = name
+        return out
+    if node.kind == 7:
+        let one = emitExpr(ctx = out.ctx, module = module, nodeId = node.kids[0])
+        out.ctx = one.ctx
+        let opText = unaryOpText(op = node.op)
+        if len(opText) == 0:
+            out.ctx = addGap(ctx = out.ctx, gap = "一元运算码 " + countText(node.op))
+            return out
+        let id = out.ctx.temp
+        out.ctx.temp = id + 1
+        let name = tempName(index = id)
+        let opType = llvmTypeName(pool = module.types, typeId = irNodeAt(pool = module.nodes, id = node.kids[0]).typeId)
+        if node.op == 1:
+            appendLine(sink = out.ctx.lines, text = "  " + name + " = sub " + opType + " 0, " + one.text)
+        elif node.op == 2:
+            appendLine(sink = out.ctx.lines, text = "  " + name + " = icmp eq " + opType + " " + one.text + ", false")
+        else:
+            appendLine(sink = out.ctx.lines, text = "  " + name + " = xor " + opType + " " + one.text + ", -1")
+        out.text = name
+        return out
+    if node.kind == 8:
+        let callee = textAt(module = module, id = node.text)
+        if findIrFunctionIndex(module = module, name = callee) < 0:
+            out.ctx = addGap(ctx = out.ctx, gap = "外部调用 " + callee)
+            return out
+        var args = ""
+        var i = 0
+        while i < len(node.kids):
+            let one = emitExpr(ctx = out.ctx, module = module, nodeId = node.kids[i])
+            out.ctx = one.ctx
+            if i > 0:
+                args = args + ", "
+            args = args + llvmTypeName(pool = module.types, typeId = irNodeAt(pool = module.nodes, id = node.kids[i]).typeId) + " " + one.text
+            i = i + 1
+        let id = out.ctx.temp
+        out.ctx.temp = id + 1
+        let name = tempName(index = id)
+        let retType = llvmTypeName(pool = module.types, typeId = node.typeId)
+        if len(retType) == 0:
+            out.ctx = addGap(ctx = out.ctx, gap = "调用缺返回类型")
+            return out
+        if retType == "void":
+            appendLine(sink = out.ctx.lines, text = "  call void @" + mangleName(name = callee) + "(" + args + ")")
+            out.text = ""
+        else:
+            appendLine(sink = out.ctx.lines, text = "  " + name + " = call " + retType + " @" + mangleName(name = callee) + "(" + args + ")")
+            out.text = name
+        return out
+    out.ctx = addGap(ctx = out.ctx, gap = nodeGap(ctx = out.ctx, kind = node.kind))
+    return out
+
+; 语句序列：逐条发射；块已由返回收口时，后续语句不再发，免出不可达指令。
+emitStmts|func(ctx: BodyCtx, module: IrModule, ids: Array<I32>,) -> (BodyCtx,):
+    var out = ctx
+    var i = 0
+    while i < len(ids) && !out.closed:
+        out = emitStmt(ctx = out, module = module, nodeId = ids[i])
+        i = i + 1
+    return out
+
+; 单条语句：按类别码分派；未接的类别记缺口，不产占位指令。
+emitStmt|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (BodyCtx,):
+    var out = ctx
+    if nodeId < 0 || nodeId >= irNodeCount(module.nodes):
+        return addGap(ctx = out, gap = "悬空语句")
+    let node = irNodeAt(pool = module.nodes, id = nodeId)
+    if node.kind == 101:
+        let slot = node.intValue as I32
+        let typeName = llvmTypeName(pool = module.types, typeId = node.typeId)
+        appendLine(sink = out.lines, text = "  " + slotName(slot = slot) + " = alloca " + typeName)
+        if len(node.kids) > 0:
+            let one = emitExpr(ctx = out, module = module, nodeId = node.kids[0])
+            out = one.ctx
+            appendLine(sink = out.lines, text = "  store " + typeName + " " + one.text + ", ptr " + slotName(slot = slot))
+        return out
+    if node.kind == 102:
+        let slot = node.intValue as I32
+        let typeName = llvmTypeName(pool = module.types, typeId = node.typeId)
+        let one = emitExpr(ctx = out, module = module, nodeId = node.kids[0])
+        out = one.ctx
+        appendLine(sink = out.lines, text = "  store " + typeName + " " + one.text + ", ptr " + slotName(slot = slot))
+        return out
+    if node.kind == 103:
+        return emitIf(ctx = out, module = module, node = node)
+    if node.kind == 104:
+        return emitWhile(ctx = out, module = module, node = node)
+    if node.kind == 106:
+        return emitReturn(ctx = out, module = module, node = node)
+    if node.kind == 107:
+        if len(node.kids) == 0:
+            return out
+        let one = emitExpr(ctx = out, module = module, nodeId = node.kids[0])
+        return one.ctx
+    return addGap(ctx = out, gap = nodeGap(ctx = out, kind = node.kind))
+
+; 条件分支：条件求值后跳两段，未收口的段补跳转；两段都已返回时整条分支收口。
+; 收口状态按段各记一份：一段返回一段落空是常态，不能拿一段的状态替另一段判。
+emitIf|func(ctx: BodyCtx, module: IrModule, node: IrNode,) -> (BodyCtx,):
+    var out = ctx
+    let cond = emitExpr(ctx = out, module = module, nodeId = node.kids[0])
+    out = cond.ctx
+    var thenIds: Array<I32> = []
+    var elseIds: Array<I32> = []
+    var i = 1
+    while i < len(node.kids):
+        if i < node.tail:
+            thenIds = thenIds.append(node.kids[i])
+        else:
+            elseIds = elseIds.append(node.kids[i])
+        i = i + 1
+    let at = out.label
+    out.label = at + 1
+    let thenLabel = labelName(prefix = "if.then.", index = at)
+    let elseLabel = labelName(prefix = "if.else.", index = at)
+    let endLabel = labelName(prefix = "if.end.", index = at)
+    appendLine(sink = out.lines, text = "  br i1 " + cond.text + ", label %" + thenLabel + ", label %" + elseLabel)
+    appendLine(sink = out.lines, text = thenLabel + ":")
+    var thenCtx = emitStmts(ctx = out, module = module, ids = thenIds)
+    let thenClosed = thenCtx.closed
+    if !thenClosed:
+        appendLine(sink = thenCtx.lines, text = "  br label %" + endLabel)
+    var elseCtx = thenCtx
+    elseCtx.closed = false
+    appendLine(sink = elseCtx.lines, text = elseLabel + ":")
+    elseCtx = emitStmts(ctx = elseCtx, module = module, ids = elseIds)
+    let elseClosed = elseCtx.closed
+    if !elseClosed:
+        appendLine(sink = elseCtx.lines, text = "  br label %" + endLabel)
+    var done = elseCtx
+    if thenClosed && elseClosed:
+        done.closed = true
+    else:
+        appendLine(sink = done.lines, text = endLabel + ":")
+        done.closed = false
+    return done
+
+; 循环：头块判条件，体块回跳；体内已返回时省掉回跳，跳出边仍落在尾块。
+emitWhile|func(ctx: BodyCtx, module: IrModule, node: IrNode,) -> (BodyCtx,):
+    var out = ctx
+    var bodyIds: Array<I32> = []
+    var i = 1
+    while i < len(node.kids):
+        bodyIds = bodyIds.append(node.kids[i])
+        i = i + 1
+    let at = out.label
+    out.label = at + 1
+    let condLabel = labelName(prefix = "while.cond.", index = at)
+    let bodyLabel = labelName(prefix = "while.body.", index = at)
+    let endLabel = labelName(prefix = "while.end.", index = at)
+    appendLine(sink = out.lines, text = "  br label %" + condLabel)
+    appendLine(sink = out.lines, text = condLabel + ":")
+    let cond = emitExpr(ctx = out, module = module, nodeId = node.kids[0])
+    out = cond.ctx
+    appendLine(sink = out.lines, text = "  br i1 " + cond.text + ", label %" + bodyLabel + ", label %" + endLabel)
+    appendLine(sink = out.lines, text = bodyLabel + ":")
+    var bodyCtx = emitStmts(ctx = out, module = module, ids = bodyIds)
+    if !bodyCtx.closed:
+        appendLine(sink = bodyCtx.lines, text = "  br label %" + condLabel)
+    bodyCtx.closed = false
+    appendLine(sink = bodyCtx.lines, text = endLabel + ":")
+    return bodyCtx
+
+; 返回：有值按函数返回类型出，无值出 void；main 例外恒返回零。
+emitReturn|func(ctx: BodyCtx, module: IrModule, node: IrNode,) -> (BodyCtx,):
+    var out = ctx
+    let fn = module.functions[out.fnIndex]
+    if fn.name == "main" && fn.returnType < 0:
+        appendLine(sink = out.lines, text = "  ret i32 0")
+        out.closed = true
+        return out
+    if len(node.kids) == 0:
+        appendLine(sink = out.lines, text = "  ret void")
+        out.closed = true
+        return out
+    let one = emitExpr(ctx = out, module = module, nodeId = node.kids[0])
+    out = one.ctx
+    appendLine(sink = out.lines, text = "  ret " + llvmTypeName(pool = module.types, typeId = fn.returnType) + " " + one.text)
+    out.closed = true
+    return out
