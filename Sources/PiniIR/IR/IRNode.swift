@@ -450,6 +450,12 @@ public indirect enum IRExpr: Equatable {
     /// declaration-order index; payloads store by value into the typed
     /// slots of the tagged union.
     case enumConstruct(enumName: String, caseName: String, tag: Int, payloads: [IRExpr], payloadTypes: [IRType], type: IRType)
+    /// 判别式读：枚举 / `Optional` / `Result` 的标签位，结果为 `i32`。
+    /// 三个族的槽位不同（枚举在箱头之后，`Optional` 与 `Result` 是值聚合的首槽），由值自身的类型分辨。
+    case enumTagGet(value: IRExpr)
+    /// 关联值读：该值当前用例的第 `index` 个载荷；`caseName` 是调用方匹配到的用例，
+    /// `type` 是载荷的静态类型。用例名与标签不符即读错了用例，验证期按声明核对载荷数与类型。
+    case enumPayloadGet(value: IRExpr, caseName: String, index: Int, type: IRType)
     /// Nominal field read `base.field` (G3). `type` is the field's type.
     case fieldGet(base: IRExpr, field: String, type: IRType)
     /// Dictionary / set literal (G5). Entries carry pre-lowered key/value
@@ -625,6 +631,8 @@ extension IRExpr {
         case .construct(let type): return type
         case .fieldGet(_, _, let type): return type
         case .enumConstruct(_, _, _, _, _, let type): return type
+        case .enumTagGet: return .i32
+        case .enumPayloadGet(_, _, _, let type): return type
         case .dictLiteral(_, let type): return type
         case .setLiteral(_, let type): return type
         case .tupleConstruct(_, _, let type): return type

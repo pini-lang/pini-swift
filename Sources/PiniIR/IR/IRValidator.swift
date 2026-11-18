@@ -811,6 +811,84 @@ private struct Walker {
             }
             for payload in payloads { walk(payload, at: location) }
 
+        case .enumTagGet(let value):
+            if let subject = effectiveType(of: value) {
+                switch subject {
+                case .enumeration, .optional, .result: break
+                default:
+                    report(
+                        .nodeShape,
+                        "判别式读的对象是 \(subject.display)，不是枚举 / Optional / Result",
+                        at: location)
+                }
+            }
+            walk(value, at: location)
+
+        case .enumPayloadGet(let value, let caseName, let index, let type):
+            if let subject = effectiveType(of: value) {
+                switch subject {
+                case .enumeration(let enumName):
+                    if let decl = enums[enumName] {
+                        if let enumCase = decl.cases.first(where: { $0.name == caseName }) {
+                            if index < 0 || index >= enumCase.payloadTypes.count {
+                                report(
+                                    .enumPayloadArity,
+                                    "用例 '\(enumName).\(caseName)' 有 \(enumCase.payloadTypes.count) 个载荷槽，"
+                                        + "节点读第 \(index) 个",
+                                    at: location)
+                            } else if !type.isAssignable(to: enumCase.payloadTypes[index]) {
+                                report(
+                                    .typeMismatch,
+                                    "载荷 '\(enumName).\(caseName).\(index)' 是 "
+                                        + "\(enumCase.payloadTypes[index].display)，节点写 \(type.display)",
+                                    at: location)
+                            }
+                        } else {
+                            report(.unknownEnumCase, "枚举 '\(enumName)' 没有用例 '\(caseName)'", at: location)
+                        }
+                    } else {
+                        report(.unknownNominal, "枚举 '\(enumName)' 未登记", at: location)
+                    }
+                case .optional(let wrapped):
+                    if caseName != "some" {
+                        report(.unknownEnumCase, "Optional 的载荷只属于 some，节点写 '\(caseName)'", at: location)
+                    }
+                    if index != 0 {
+                        report(.enumPayloadArity, "Optional 只有一个载荷槽，节点读第 \(index) 个", at: location)
+                    }
+                    if !type.isAssignable(to: wrapped) {
+                        report(
+                            .typeMismatch,
+                            "Optional 的载荷是 \(wrapped.display)，节点写 \(type.display)",
+                            at: location)
+                    }
+                case .result(let ok):
+                    if caseName == "ok" {
+                        if !type.isAssignable(to: ok) {
+                            report(.typeMismatch, "ok 载荷是 \(ok.display)，节点写 \(type.display)", at: location)
+                        }
+                    } else if caseName == "err" {
+                        if type != .i64 {
+                            report(
+                                .typeMismatch,
+                                "错误载荷是类型擦除后的 i64，节点写 \(type.display)",
+                                at: location)
+                        }
+                    } else {
+                        report(.unknownEnumCase, "Result 的用例只有 ok / err，节点写 '\(caseName)'", at: location)
+                    }
+                    if index != 0 {
+                        report(.enumPayloadArity, "Result 的每个用例只有一个载荷槽，节点读第 \(index) 个", at: location)
+                    }
+                default:
+                    report(
+                        .nodeShape,
+                        "载荷读的对象是 \(subject.display)，不是枚举 / Optional / Result",
+                        at: location)
+                }
+            }
+            walk(value, at: location)
+
         case .fieldGet(let base, let fieldName, let type):
             checkField(base: base, field: fieldName, type: type, at: location)
             walk(base, at: location)

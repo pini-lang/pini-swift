@@ -407,6 +407,8 @@ private struct Builder {
             throw unsupported("容器节点", .collections, "容器要有运行时句柄与 COW 规则")
         case .construct, .enumConstruct, .fieldGet:
             throw unsupported("具名类型节点", .nominals, "字段偏移与标签位属名义布局")
+        case .enumTagGet, .enumPayloadGet:
+            throw unsupported("带标签值的读", .resultAndOptional, "标签与载荷槽不在本 profile")
         case .tupleConstruct, .tupleIndexGet:
             throw unsupported("元组节点", .collections, "聚合布局不在本 profile")
         case .closureLiteral, .functionValue, .cFunctionAddress, .indirectCall:

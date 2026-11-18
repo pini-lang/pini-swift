@@ -120,7 +120,7 @@ extension IRExpr {
     ///  注意  `optionalGet` 不在列内：下标读出的 `Optional` 是当场构造的聚合，不是别名。
     public var yieldsAlias: Bool {
         switch self {
-        case .load, .subscriptGet, .fieldGet, .tupleIndexGet: return true
+        case .load, .subscriptGet, .fieldGet, .tupleIndexGet, .enumPayloadGet: return true
         default: return false
         }
     }
@@ -146,11 +146,11 @@ extension IRExpr {
         // 常量与标量运算：值不是份额。
         case .intConst, .floatConst, .boolConst, .binary, .shortCircuit, .unary, .lenCall, .isAsciiDigit,
             .stringContains, .stringIndexOf, .pointerLoad, .pointerStore, .addressOfVar,
-            .foreignDataAddress,
+            .foreignDataAddress, .enumTagGet,
             .printCall, .printMulti, .assertCall, .fileWrite, .fileAppend:
             return .inert
         // 全局常量与变量 / 字段 / 元素槽：份额在别处。
-        case .stringConst, .load, .fieldGet,
+        case .stringConst, .load, .fieldGet, .enumPayloadGet,
             .lazyRefValue, .functionValue, .cFunctionAddress, .givenInstance:
             return .borrowed
         /// `Array<Char>` 的元素由数组持有（借用）；`String` 下标当场构造一个 `Char`，那是新份额。

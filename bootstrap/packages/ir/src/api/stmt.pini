@@ -1,8 +1,9 @@
 [stmt|import]
 _syntax = "../../../syntax"
 _semantics = "../../../semantics"
+_module_loader = "../../../module-loader"
 
-; 语句降载：块、变量、赋值、表达式、分支、循环与返回；体是语句序列，控制流节点的
+; 语句降载：块、变量、赋值、表达式、分支、循环、匹配与返回；体是语句序列，控制流节点的
 ; `kids` 用 `tail` 切成两段，前段是体、后段是 else。任一语句降不了即整函数失败：
 ; 半截体在发射期能跑却少了语句。`adopt` 与 `releaseOld` 留缺省，份额判定落地时统一补。
 
@@ -512,6 +513,236 @@ lowerBlockOf|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: 
     done.frame = closeBlock(frame = done.frame, mark = mark)
     return done
 
+; 匹配族：按主体类型分派读法；0 为裸值，1 枚举，2 可选，3 结果。
+matchFamilyOf|func(map: TypeMap, typeId: I32,) -> (I32,):
+    if typeId < 0 || typeId >= irTypeCount(map.pool):
+        return 0
+    let entry = irTypeAt(pool = map.pool, id = typeId)
+    let tag = irTypeTag(entry.kind)
+    if tag == irTypeTag(.irTypeEnumeration):
+        return 1
+    if tag == irTypeTag(.irTypeOptional):
+        return 2
+    if tag == irTypeTag(.irTypeResult):
+        return 3
+    return 0
+
+; 固定标签：可选的 some / none 与结果的 ok / err 由语义定死；枚举按声明序另算，其余答 -1。
+matchCaseTagOf|func(family: I32, caseName: String,) -> (I32,):
+    if family == 2:
+        if caseName == "some":
+            return 0
+        if caseName == "none":
+            return 1
+        return -1
+    if family == 3:
+        if caseName == "ok":
+            return 0
+        if caseName == "err":
+            return 1
+        return -1
+    return -1
+
+; 枚举载荷的 IR 下标：按用例声明序找第 index 个载荷的标注，再经映射表取像。
+enumPayloadIrType|func(frame: LowerFrame, map: TypeMap, owner: String, caseName: String, index: I32,) -> (I32,):
+    let symbol = lookupTopByName(index = frame.world.symbols, name = owner)
+    let ref = symbolDecl(world = frame.world, symbol = symbol)
+    if ref.unit < 0:
+        return -1
+    let unit = frame.world.units[ref.unit]
+    let decl = unit.ast.decls[ref.decl]
+    let bytes = unitBytes(unit)
+    var i = 0
+    while i < len(decl.kids):
+        let child = unit.ast.decls[decl.kids[i]]
+        if isVariantDeclCode(child.kind):
+            let name = decodeSpelling(bytes = bytes, start = child.nameStart, end = child.nameEnd)
+            if name == caseName:
+                if index < 0 || index >= len(child.kids):
+                    return -1
+                let param = unit.ast.decls[child.kids[index]]
+                let resolved = annotationType(world = frame.world, unit = unit, node = param.typeId, pool = frame.world.types.pool)
+                return irIdOf(map = map, semanticId = resolved.id)
+        i = i + 1
+    return -1
+
+; 绑定类型：枚举查声明，可选取包装分量，结果按用例取 ok 载荷或类型擦除后的错误字。
+matchBindingIrType|func(frame: LowerFrame, map: TypeMap, family: I32, subjectType: I32, owner: String, caseName: String, index: I32,) -> (I32,):
+    let kids = irTypeKids(pool = map.pool, id = subjectType)
+    if family == 1:
+        return enumPayloadIrType(frame = frame, map = map, owner = owner, caseName = caseName, index = index)
+    if family == 2:
+        if index == 0 && len(kids) > 0:
+            return kids[0]
+        return -1
+    if family == 3:
+        if caseName == "ok":
+            if index == 0 && len(kids) > 0:
+                return kids[0]
+            return -1
+        if caseName == "err" && index == 0:
+            return map.i64Id
+        return -1
+    return -1
+
+; 匹配：主体只求值一次并存进临时局部，各分支链成 if / else。
+; 带标签值按标签比较，裸值按字面量比较；未命中时枚举 / 可选 / 结果补陷阱，裸值静默落到之后。
+lowerMatchStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32,) -> (LowerStmt,):
+    let kids = unit.ast.stmtAt(stmtId).kids
+    if len(kids) < 3:
+        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "缺分支的匹配")
+    var done = out
+    let subject = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = kids[0])
+    done.pool = subject.pool
+    done.texts = subject.texts
+    done.frame = subject.frame
+    if subject.failed:
+        return takeStmtFailure(out = done, detail = subject.detail, offset = subject.offset)
+    let subjectType = irNodeAt(pool = done.pool, id = subject.id).typeId
+    if subjectType < 0:
+        return missStmt(out = done, unit = unit, stmtId = stmtId, what = "匹配主体类型未定")
+    let family = matchFamilyOf(map = map, typeId = subjectType)
+    var owner = ""
+    if subjectType < irTypeCount(map.pool):
+        owner = irTypeAt(pool = map.pool, id = subjectType).name
+    let intType = map.i32Id
+    let tempName = "$match" + countText(stmtId)
+    let placedTemp = internText(texts = done.texts, value = tempName)
+    var anchor = irMakeNode(kind = irStmtTag(.irAllocVar), typeId = subjectType)
+    anchor.text = placedTemp.id
+    anchor.kids = [subject.id]
+    let insertedAnchor = irAppendNode(pool = done.pool, node = anchor)
+    done.texts = placedTemp.texts
+    done.pool = insertedAnchor.pool
+    done.frame = declareIrLocal(frame = done.frame, name = tempName, typeId = subjectType, mutable = false)
+    let reload = makeLoadNode(pool = done.pool, texts = done.texts, name = tempName, typeId = subjectType)
+    done.pool = reload.pool
+    done.texts = reload.texts
+    var conds: Array<I32> = []
+    var blockIds: Array<I32> = []
+    var blockStart: Array<I32> = []
+    var blockLen: Array<I32> = []
+    var elseIds: Array<I32> = []
+    var i = 1
+    while i + 1 < len(kids):
+        let info = classifyPattern(unit = unit, node = kids[i])
+        var caseName = info.name
+        if caseName == "nil":
+            caseName = "none"
+        var condId = -1
+        if caseName != "_":
+            if family == 0:
+                let one = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = kids[i])
+                done.pool = one.pool
+                done.texts = one.texts
+                done.frame = one.frame
+                if one.failed:
+                    return takeStmtFailure(out = done, detail = one.detail, offset = one.offset)
+                let cmp = addIrNode(pool = done.pool, kind = irExprTag(.irBinary), typeId = map.booleanId, op = irBinaryTag(.irEqual), kids = [reload.id, one.id])
+                done.pool = cmp.pool
+                condId = cmp.id
+            else:
+                var tag = matchCaseTagOf(family = family, caseName = caseName)
+                if family == 1:
+                    tag = enumCaseTag(frame = done.frame, owner = owner, caseName = caseName)
+                if tag < 0:
+                    return missStmt(out = done, unit = unit, stmtId = stmtId, what = "用例 " + caseName + " 不在 " + owner + " 的声明序里")
+                let read = addIrNode(pool = done.pool, kind = irExprTag(.irEnumTagGet), typeId = intType, op = 0, kids = [reload.id])
+                done.pool = read.pool
+                var literal = irMakeNode(kind = irExprTag(.irIntConst), typeId = intType)
+                literal.intValue = tag as I64
+                let insertedLiteral = irAppendNode(pool = done.pool, node = literal)
+                done.pool = insertedLiteral.pool
+                let cmp = addIrNode(pool = done.pool, kind = irExprTag(.irBinary), typeId = map.booleanId, op = irBinaryTag(.irEqual), kids = [read.id, insertedLiteral.id])
+                done.pool = cmp.pool
+                condId = cmp.id
+        let mark = frameMark(frame = done.frame)
+        var armIds: Array<I32> = []
+        if family != 0:
+            var b = 0
+            while b < len(info.bindings):
+                let name = info.bindings[b]
+                if name != "_":
+                    let typeId = matchBindingIrType(frame = done.frame, map = map, family = family, subjectType = subjectType, owner = owner, caseName = caseName, index = b)
+                    if typeId < 0:
+                        return missStmt(out = done, unit = unit, stmtId = stmtId, what = "绑定 " + name + " 的载荷类型未定")
+                    let placedCase = internText(texts = done.texts, value = caseName)
+                    var read = irMakeNode(kind = irExprTag(.irEnumPayloadGet), typeId = typeId)
+                    read.op = b
+                    read.text = placedCase.id
+                    read.kids = [reload.id]
+                    let insertedRead = irAppendNode(pool = done.pool, node = read)
+                    done.pool = insertedRead.pool
+                    done.texts = placedCase.texts
+                    let placedName = internText(texts = done.texts, value = name)
+                    var local = irMakeNode(kind = irStmtTag(.irAllocVar), typeId = typeId)
+                    local.text = placedName.id
+                    local.kids = [insertedRead.id]
+                    let insertedLocal = irAppendNode(pool = done.pool, node = local)
+                    done.pool = insertedLocal.pool
+                    done.frame = declareIrLocal(frame = done.frame, name = name, typeId = typeId, mutable = false)
+                    armIds = armIds.append(insertedLocal.id)
+                b = b + 1
+        elif len(info.bindings) > 0:
+            return missStmt(out = done, unit = unit, stmtId = stmtId, what = "裸值匹配的绑定")
+        let body = lowerBlockOf(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, blockId = kids[i + 1])
+        done.pool = body.pool
+        done.texts = body.texts
+        done.frame = body.frame
+        if body.failed:
+            return takeStmtFailure(out = done, detail = body.detail, offset = body.offset)
+        var k = 0
+        while k < len(body.ids):
+            armIds = armIds.append(body.ids[k])
+            k = k + 1
+        done.frame = closeBlock(frame = done.frame, mark = mark)
+        if condId < 0:
+            elseIds = armIds
+        else:
+            conds = conds.append(condId)
+            blockStart = blockStart.append(len(blockIds))
+            blockLen = blockLen.append(len(armIds))
+            k = 0
+            while k < len(armIds):
+                blockIds = blockIds.append(armIds[k])
+                k = k + 1
+        i = i + 2
+    if family != 0 && len(elseIds) == 0:
+        let placedMsg = internText(texts = done.texts, value = "Pini runtime error: match value matched no case")
+        var trap = irMakeNode(kind = irStmtTag(.irPanicStmt), typeId = -1)
+        trap.text = placedMsg.id
+        let insertedTrap = irAppendNode(pool = done.pool, node = trap)
+        done.texts = placedMsg.texts
+        done.pool = insertedTrap.pool
+        elseIds = [insertedTrap.id]
+    var ids = elseIds
+    var n = len(conds) - 1
+    while n >= 0:
+        var nodes: Array<I32> = [conds[n]]
+        var e = 0
+        while e < blockLen[n]:
+            nodes = nodes.append(blockIds[blockStart[n] + e])
+            e = e + 1
+        let tail = len(nodes)
+        var f = 0
+        while f < len(ids):
+            nodes = nodes.append(ids[f])
+            f = f + 1
+        var node = irMakeNode(kind = irStmtTag(.irIfStmt), typeId = -1)
+        node.kids = nodes
+        node.tail = tail
+        let inserted = irAppendNode(pool = done.pool, node = node)
+        done.pool = inserted.pool
+        ids = [inserted.id]
+        n = n - 1
+    var allIds: Array<I32> = [insertedAnchor.id]
+    var m = 0
+    while m < len(ids):
+        allIds = allIds.append(ids[m])
+        m = m + 1
+    done.ids = allIds
+    return done
+
 ; 跳出与继续：只接无标签形态，深度一；带标签的控制流等标签面接线。
 lowerJumpStmt|func(out: LowerStmt, unit: CompilationUnit, stmtId: I32, kind: IrStmtKind,) -> (LowerStmt,):
     let stmt = unit.ast.stmtAt(stmtId)
@@ -542,6 +773,8 @@ lowerStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: Typ
         return lowerIfStmt(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId)
     if unit.ast.isWhileStmt(stmtId):
         return lowerWhileStmt(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId)
+    if unit.ast.isMatchStmt(stmtId):
+        return lowerMatchStmt(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId)
     if unit.ast.isBreakStmt(stmtId):
         return lowerJumpStmt(out = out, unit = unit, stmtId = stmtId, kind = .irBreakStmt)
     if unit.ast.isContinueStmt(stmtId):

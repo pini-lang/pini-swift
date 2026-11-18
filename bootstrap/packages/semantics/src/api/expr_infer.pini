@@ -371,6 +371,8 @@ inferNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
         return inferCall(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out, bytes = bytes)
     if unit.ast.isBinaryExpr(node):
         return inferBinary(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out, bytes = bytes)
+    if unit.ast.isUnaryExpr(node):
+        return inferUnary(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out, bytes = bytes)
     if unit.ast.isArrayExpr(node) || unit.ast.isSetExpr(node) || unit.ast.isDictionaryExpr(node):
         return inferContainer(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out, bytes = bytes, expected = expected)
     if unit.ast.isSubscriptExpr(node) || unit.ast.isSliceExpr(node):
@@ -551,6 +553,26 @@ inferMemberCall|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, 
     if entry.ret >= 0:
         done.typeId = entry.ret
         done.types = writeExprType(table = done.types, unit = unitIndex, node = node, typeId = done.typeId)
+    return done
+
+; 一元：操作数先推；`!` 答布尔，取负与按位取反都不改类型。
+; 缺这一条时，以 `-1` 起头的声明没有类型，下游的数组字面量与成员读会连着落空。
+inferUnary|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, out: InferResult, bytes: Array<U8>,) -> (InferResult,):
+    let operand = unit.ast.childOf(id = node, index = 0)
+    let inner = inferNode(world = world, unit = unit, unitIndex = unitIndex, node = operand, names = names, pool = out.pool, types = out.types, bytes = bytes, expected = noExpectation())
+    var done = out
+    done.pool = inner.pool
+    done.types = inner.types
+    if inner.typeId < 0:
+        return done
+    let expr = unit.ast.exprAt(node)
+    if opSymbol(expr.op) == "!":
+        let made = boolType(done.pool)
+        done.pool = made.pool
+        done.typeId = made.id
+    else:
+        done.typeId = inner.typeId
+    done.types = writeExprType(table = done.types, unit = unitIndex, node = node, typeId = done.typeId)
     return done
 
 ; 二元：两侧都推得出才判；标签实参的 `=` 不是运算，运算面自然拒绝。

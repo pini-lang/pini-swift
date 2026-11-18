@@ -60,6 +60,8 @@ irGivenInstance
 irForeignDataAddress
 irCFunctionAddress
 irShortCircuit
+irEnumTagGet
+irEnumPayloadGet
 
 ; 语句节点类别：项序即类别码，码段从 101 起，与表达式段分开。
 [IrStmtKind]
@@ -254,6 +256,10 @@ irExprTag|func(_kind: IrExprKind,) -> (I32,):
             return 55
         case irShortCircuit:
             return 56
+        case irEnumTagGet:
+            return 57
+        case irEnumPayloadGet:
+            return 58
     return 0
 
 ; 语句类别码：与枚举项序一致，码段从 101 起。

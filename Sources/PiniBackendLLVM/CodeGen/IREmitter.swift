@@ -2813,6 +2813,54 @@ public final class IREmitter {
             }
             return IRValue(llvmType: type.llvmSpelling, ssaName: ptr)
 
+        case .enumTagGet(let value):
+            /// 判别式按值自身的类型分派：枚举是箱，标签在箱头之后；`Optional` 与 `Result` 是值聚合，
+            /// 标签是首成员。位宽不一，统一收成 i32 —— 标签只用于比较，取值集合远小于 32 位。
+            let subject = emitExpr(value)
+            if case .enumeration = value.staticType {
+                guard let aggregate = value.staticType?.nominalAggregateSpelling else {
+                    fatalError("IREmitter: enumTagGet on enum without aggregate spelling")
+                }
+                let tagPtr = builder.freshTemp()
+                bodyIR +=
+                    builder.fmtGEP(
+                        name: tagPtr, aggregate: aggregate, base: subject.ssaName,
+                        indices: [0, layout.enumTagSlot]) + "\n"
+                let raw = builder.freshTemp()
+                bodyIR += builder.fmtLoad(name: raw, type: "i32", ptr: tagPtr) + "\n"
+                return IRValue(llvmType: "i32", ssaName: raw)
+            }
+            let widened = builder.freshTemp()
+            bodyIR += " \(widened) = extractvalue \(subject.llvmType) \(subject.ssaName), 0\n"
+            let narrowed = builder.freshTemp()
+            bodyIR += " \(narrowed) = trunc i64 \(widened) to i32\n"
+            return IRValue(llvmType: "i32", ssaName: narrowed)
+
+        case .enumPayloadGet(let value, let caseName, let index, let type):
+            /// 载荷槽同样按族分派。`Result` 的 ok 与错误字各占一槽，故槽位取决于用例名；
+            /// `Optional` 只有一个载荷，落在标签之后。
+            let subject = emitExpr(value)
+            if case .enumeration = value.staticType {
+                guard let aggregate = value.staticType?.nominalAggregateSpelling else {
+                    fatalError("IREmitter: enumPayloadGet on enum without aggregate spelling")
+                }
+                let fieldPtr = builder.freshTemp()
+                bodyIR +=
+                    builder.fmtGEP(
+                        name: fieldPtr, aggregate: aggregate, base: subject.ssaName,
+                        indices: [0, layout.enumPayloadSlot(of: index)]) + "\n"
+                let loaded = builder.freshTemp()
+                bodyIR += builder.fmtLoad(name: loaded, type: type.llvmSpelling, ptr: fieldPtr) + "\n"
+                return IRValue(llvmType: type.llvmSpelling, ssaName: loaded)
+            }
+            var slot = index + 1
+            if case .result = value.staticType, caseName != "ok" {
+                slot = 2
+            }
+            let loaded = builder.freshTemp()
+            bodyIR += " \(loaded) = extractvalue \(subject.llvmType) \(subject.ssaName), \(slot)\n"
+            return IRValue(llvmType: type.llvmSpelling, ssaName: loaded)
+
         case .dictLiteral(let entries, let type):
             return emitDictLiteral(entries: entries, type: type)
 

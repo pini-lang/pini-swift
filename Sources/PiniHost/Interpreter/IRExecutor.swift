@@ -871,6 +871,45 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
                     parentEnum: enumName
                 ))
 
+        case .enumTagGet(let value):
+            // Optional and Result are `some` / `none` and `ok` / `err` at runtime, so the same reader serves both.
+            // A user enum answers its declaration-order index — the number `enumConstruct` wrote.
+            let subject = try evaluate(value)
+            guard case .enumValue(let enumValue) = subject else {
+                throw RuntimeError.invalidOperation(
+                    reason: "IR executor: enumTagGet on a value that is not enum, optional or result",
+                    location: IRExecutor.noLocation
+                )
+            }
+            if let parent = enumValue.parentEnum, let decl = enums[parent],
+                let position = decl.cases.firstIndex(where: { $0.name == enumValue.caseName })
+            {
+                return .int(position)
+            }
+            switch enumValue.caseName {
+            case "some", "ok": return .int(0)
+            case "none", "err": return .int(1)
+            default:
+                throw RuntimeError.invalidOperation(
+                    reason: "IR executor: enumTagGet on case '\(enumValue.caseName)' with no declaration",
+                    location: IRExecutor.noLocation
+                )
+            }
+
+        case .enumPayloadGet(let value, let caseName, let index, _):
+            // The case name is the caller's claim about which arm matched; a mismatch would silently
+            // read a sibling's payload, so it fails loud instead.
+            let subject = try evaluate(value)
+            guard case .enumValue(let enumValue) = subject, enumValue.caseName == caseName,
+                enumValue.associatedValues.indices.contains(index)
+            else {
+                throw RuntimeError.invalidOperation(
+                    reason: "IR executor: enumPayloadGet wants case '\(caseName)' payload \(index)",
+                    location: IRExecutor.noLocation
+                )
+            }
+            return enumValue.associatedValues[index]
+
         // MARK: Nominal instances and their fields
 
         case .construct(let type):

@@ -134,6 +134,7 @@ public struct JSONBackend: PiniBackend {
         case .intConst, .floatConst, .boolConst, .stringConst, .load, .binary, .shortCircuit, .unary,
             .call, .printCall, .resultConstruct, .arrayLiteral, .subscriptGet, .lenCall,
             .optionalGet, .optionalConstruct, .sliceCall, .construct, .enumConstruct,
+            .enumTagGet, .enumPayloadGet,
             .fieldGet, .dictLiteral, .setLiteral, .tupleConstruct, .tupleIndexGet,
             .closureLiteral, .functionValue, .cFunctionAddress, .indirectCall, .pointerLoad, .pointerStore,
             .addressOfVar, .foreignDataAddress, .printMulti, .assertCall, .fileWrite, .fileAppend, .fileRead,
