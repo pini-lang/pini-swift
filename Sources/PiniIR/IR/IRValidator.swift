@@ -450,12 +450,12 @@ private struct Walker {
             walk(scrutinee, at: location)
             walk(cases: cases, scrutineeType: scrutineeType, at: location)
 
-        case .fieldStore(let base, let fieldName, let value, let fieldType, _, _):
-            checkField(base: base, field: fieldName, type: fieldType, at: location)
+        case .fieldStore(let base, let slot, let value, let fieldType, _, _):
+            checkField(base: base, slot: slot, type: fieldType, at: location)
             if let valueType = effectiveType(of: value), !valueType.isAssignable(to: fieldType) {
                 report(
                     .typeMismatch,
-                    "字段 '\(fieldName)' 的值是 \(valueType.display)，字段类型是 \(fieldType.display)",
+                    "字段第 \(slot) 槽的值是 \(valueType.display)，字段类型是 \(fieldType.display)",
                     at: location)
             }
             walk(base, at: location)
@@ -585,7 +585,7 @@ private struct Walker {
         }
     }
 
-    mutating func checkField(base: IRExpr, field: String, type: IRType, at location: SourceLocation?) {
+    mutating func checkField(base: IRExpr, slot: Int, type: IRType, at location: SourceLocation?) {
         guard let baseType = effectiveType(of: base) else { return }
         guard case .nominal(let name, _) = baseType else {
             report(.nodeShape, "字段位的基类型是 \(baseType.display)，不是名义类型", at: location)
@@ -595,14 +595,18 @@ private struct Walker {
             report(.unknownNominal, "字段位的基类型 '\(name)' 未登记", at: location)
             return
         }
-        guard let declared = decl.fields.first(where: { $0.name == field }) else {
-            report(.unknownField, "具名类型 '\(name)' 没有字段 '\(field)'", at: location)
+        guard slot >= 0 && slot < decl.fields.count else {
+            report(
+                .unknownField,
+                "具名类型 '\(name)' 只有 \(decl.fields.count) 个字段，节点要读第 \(slot) 个",
+                at: location)
             return
         }
+        let declared = decl.fields[slot]
         if !declared.type.isAssignable(to: type), !type.isAssignable(to: declared.type) {
             report(
                 .typeMismatch,
-                "字段 '\(name).\(field)' 声明为 \(declared.type.display)，节点写的是 \(type.display)",
+                "字段 '\(name)' 的第 \(slot) 槽声明为 \(declared.type.display)，节点写的是 \(type.display)",
                 at: location)
         }
     }
@@ -889,8 +893,8 @@ private struct Walker {
             }
             walk(value, at: location)
 
-        case .fieldGet(let base, let fieldName, let type):
-            checkField(base: base, field: fieldName, type: type, at: location)
+        case .fieldGet(let base, let slot, let type):
+            checkField(base: base, slot: slot, type: type, at: location)
             walk(base, at: location)
 
         case .dictLiteral(let entries, let type):

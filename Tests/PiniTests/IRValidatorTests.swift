@@ -152,7 +152,7 @@ struct IRValidatorTests: Sendable, PiniSourceLowering {
             [
                 .exprStmt(
                     .fieldGet(
-                        base: .construct(type: .nominal(name: "盒", isObject: false)), field: "缺",
+                        base: .construct(type: .nominal(name: "盒", isObject: false)), slot: 0,
                         type: .i32))
             ], types: [decl])
         #expect(rules(module) == [.unknownField])

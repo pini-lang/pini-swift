@@ -60,7 +60,7 @@ struct ShareEffectTests: Sendable {
                 enumName: "E", caseName: "c", tag: 0, payloads: [], payloadTypes: [],
                 type: .enumeration(name: "E")), .fresh
         ),
-        ("fieldGet", .fieldGet(base: construct, field: "f", type: .i32), .borrowed),
+        ("fieldGet", .fieldGet(base: construct, slot: 0, type: .i32), .borrowed),
         ("dictLiteral", .dictLiteral(entries: [], type: .dict(key: .string, value: .i32)), .fresh),
         ("setLiteral", .setLiteral(elements: [], type: .set(element: .i32)), .fresh),
         ("tupleConstruct", tuple, .inert),
@@ -123,7 +123,7 @@ struct ShareEffectTests: Sendable {
         let aliases: [IRExpr] = [
             .load(name: "s", type: .string),
             .subscriptGet(container: Self.array, index: Self.scalar, type: .i32),
-            .fieldGet(base: Self.construct, field: "s", type: .string),
+            .fieldGet(base: Self.construct, slot: 0, type: .string),
             .tupleIndexGet(base: Self.tuple, index: 0, type: .i32),
         ]
         for node in aliases {

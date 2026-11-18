@@ -456,8 +456,9 @@ public indirect enum IRExpr: Equatable {
     /// 关联值读：该值当前用例的第 `index` 个载荷；`caseName` 是调用方匹配到的用例，
     /// `type` 是载荷的静态类型。用例名与标签不符即读错了用例，验证期按声明核对载荷数与类型。
     case enumPayloadGet(value: IRExpr, caseName: String, index: Int, type: IRType)
-    /// Nominal field read `base.field` (G3). `type` is the field's type.
-    case fieldGet(base: IRExpr, field: String, type: IRType)
+    /// 具名字段读 `base.field`：`slot` 是字段在声明序里的位置，槽位基准见契约第 6 节；
+    /// 名字只在降载期当查找键，不进节点 —— 后端因此不必自己数序号。
+    case fieldGet(base: IRExpr, slot: Int, type: IRType)
     /// Dictionary / set literal (G5). Entries carry pre-lowered key/value
     /// pairs; construction goes through the runtime C ABI.
     case dictLiteral(entries: [IRDictEntry], type: IRType)
@@ -868,10 +869,9 @@ public indirect enum IRStmt: Equatable {
     /// arms compare the `{ i64, T }` tag (some=0, none=1); enum scrutinees use their own tag layout through
     /// the same node. Unmatched values panic at runtime (interpreter matchNotExhaustive parity).
     case matchStmt(scrutinee: IRExpr, cases: [IRMatchCase], scrutineeType: IRType)
-    /// Nominal field store `base.field = value` (G3). GEP + store through
-    /// the base pointer; objects offset past the refcount header. `releaseOld` mirrors `storeVar`:
-    /// a field is a holder, so an overwrite drops what it held.
-    case fieldStore(base: IRExpr, field: String, value: IRExpr, fieldType: IRType, adopt: IRAdopt, releaseOld: Bool)
+    /// 具名字段写 `base.field = value`：`slot` 与 `fieldGet` 同一口径（声明序）。
+    /// `releaseOld` 与 `storeVar` 同规：字段是持有位置，覆盖即丢旧值。
+    case fieldStore(base: IRExpr, slot: Int, value: IRExpr, fieldType: IRType, adopt: IRAdopt, releaseOld: Bool)
     /// `capture name`: a marker statement inside a closure body. The capture itself resolves at the
     /// closure-literal creation point, so this lowers to nothing — it exists so the statement kind is
     /// accepted inside lowered bodies rather than gated.

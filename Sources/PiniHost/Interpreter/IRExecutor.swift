@@ -915,11 +915,11 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
         case .construct(let type):
             return try constructValue(type)
 
-        case .fieldGet(let base, let field, _):
+        case .fieldGet(let base, let slot, _):
             // The static type travels in the node and is dropped here: the
             // receiver's own value kind decides which field table is read, the
             // way `Interpreter.evaluateMember` decides it.
-            return try fieldRead(from: try evaluate(base), field: field)
+            return try fieldRead(from: try evaluate(base), slot: slot)
 
         // MARK: Closures and function values
 
@@ -1458,24 +1458,38 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
         return .structInstance(StructInstance(typeName: name, fields: fieldValues))
     }
 
+    /// 槽位换名字：解释器按名字存字段，节点只带槽位，故读写的这一刻把槽换回名字。
+    /// 越界不可达：降载期按声明序算槽，验证器在读取模块前已核过一遍。
+    private func fieldName(of typeName: String, slot: Int) throws -> String {
+        guard let decl = types[typeName], slot >= 0, slot < decl.fields.count else {
+            throw RuntimeError.invalidOperation(
+                reason: "IR executor: '\(typeName)' carries no field at slot \(slot)",
+                location: IRExecutor.noLocation
+            )
+        }
+        return decl.fields[slot].name
+    }
+
     /// `base.field` — the read half of the interpreter's member branch; a miss reports the disagreement, never `.null`.
     /// A missing field is unreachable: the lowerer resolves the field statically and refuses to build this node.
     /// Not mirrored: the `_`-visibility gate and the bound-method fallback — the checker and the lowerer reject both.
-    private func fieldRead(from base: Value, field: String) throws -> Value {
+    private func fieldRead(from base: Value, slot: Int) throws -> Value {
         switch base {
         case .structInstance(let instance):
-            guard let value = instance.fields[field] else {
-                throw missingField(field, on: instance.typeName)
+            let name = try fieldName(of: instance.typeName, slot: slot)
+            guard let value = instance.fields[name] else {
+                throw missingField(name, on: instance.typeName)
             }
             return value
         case .objectReference(let object):
-            guard let value = object.fields[field] else {
-                throw missingField(field, on: object.typeName)
+            let name = try fieldName(of: object.typeName, slot: slot)
+            guard let value = object.fields[name] else {
+                throw missingField(name, on: object.typeName)
             }
             return value
         default:
             throw RuntimeError.invalidOperation(
-                reason: "IR executor: field read '.\(field)' needs a nominal receiver, got "
+                reason: "IR executor: field read at slot \(slot) needs a nominal receiver, got "
                     + "\(RuntimeOps.describeValueKind(base))",
                 location: IRExecutor.noLocation
             )
@@ -1503,12 +1517,12 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
     }
 
     /// 字段位的自追加形态 `obj.f = obj.f.append(v)`：只认接收者与目标同一处，接收者求值两次会多跑副作用。
-    private func storeFieldByAppending(base: IRExpr, field: String, value: IRExpr) throws -> Bool {
+    private func storeFieldByAppending(base: IRExpr, slot: Int, value: IRExpr) throws -> Bool {
         guard case .call(let function, let arguments, _) = value,
             function == "Array.append",
             arguments.count == 2,
-            case .fieldGet(let receiverBase, let receiverField, _) = arguments[0],
-            receiverField == field,
+            case .fieldGet(let receiverBase, let receiverSlot, _) = arguments[0],
+            receiverSlot == slot,
             receiverBase == base
         else { return false }
         let element = try evaluate(arguments[1])
@@ -1522,22 +1536,24 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
         // 字段先让出：槽位不空则数组存两份引用，就地增长永远判不成立。
         switch receiver {
         case .structInstance(let instance):
-            guard var slot = instance.fields[field] else { return false }
-            instance.fields[field] = .null
-            if RuntimeOps.appendConsuming(&slot, element) {
-                instance.fields[field] = slot
+            let name = try fieldName(of: instance.typeName, slot: slot)
+            guard var current = instance.fields[name] else { return false }
+            instance.fields[name] = .null
+            if RuntimeOps.appendConsuming(&current, element) {
+                instance.fields[name] = current
                 return true
             }
-            instance.fields[field] = try RuntimeOps.builtinArrayAppend([slot, element])
+            instance.fields[name] = try RuntimeOps.builtinArrayAppend([current, element])
             return true
         case .objectReference(let object):
-            guard var slot = object.fields[field] else { return false }
-            object.fields[field] = .null
-            if RuntimeOps.appendConsuming(&slot, element) {
-                object.fields[field] = slot
+            let name = try fieldName(of: object.typeName, slot: slot)
+            guard var current = object.fields[name] else { return false }
+            object.fields[name] = .null
+            if RuntimeOps.appendConsuming(&current, element) {
+                object.fields[name] = current
                 return true
             }
-            object.fields[field] = try RuntimeOps.builtinArrayAppend([slot, element])
+            object.fields[name] = try RuntimeOps.builtinArrayAppend([current, element])
             return true
         default:
             return false
@@ -1547,14 +1563,14 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
     /// `base.field = value` — the write half of the interpreter's `performMemberAssign`, arm for arm.
     /// The `let`-bound struct rule triggers on a receiver written as an identifier other than `self`; `self` is exempt.
     /// Not mirrored: the deep copy of the incoming value (no fixture observes it) and the `_` gate (rejected statically).
-    private func storeField(base: IRExpr, field: String, value: Value) throws {
-        try storeField(on: try evaluate(base), base: base, field: field, value: value)
+    private func storeField(base: IRExpr, slot: Int, value: Value) throws {
+        try storeField(on: try evaluate(base), base: base, slot: slot, value: value)
     }
 
     /// `storeField` 的**已求值接收者**那一半：让 `obj.field[i] = v` 复用**同一次**接收者求值。
     /// 那里若改调 `storeField(base:…)`，接收者会被求值两次，带副作用时（`f().xs[i] = v`）会多跑一次调用。
     /// 发射侧只求值一次，故两腿不等价 —— 拆分正是为了避免这一点。
-    private func storeField(on receiver: Value, base: IRExpr, field: String, value: Value) throws {
+    private func storeField(on receiver: Value, base: IRExpr, slot: Int, value: Value) throws {
         if case .load(let rootName, _) = base, rootName != "self",
             case .structInstance = receiver,
             let mutable = currentEnv.isMutable(name: rootName), !mutable
@@ -1563,9 +1579,9 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
         }
         switch receiver {
         case .structInstance(let instance):
-            instance.fields[field] = value
+            instance.fields[try fieldName(of: instance.typeName, slot: slot)] = value
         case .objectReference(let object):
-            object.fields[field] = value
+            object.fields[try fieldName(of: object.typeName, slot: slot)] = value
         default:
             throw RuntimeError.invalidOperation(
                 reason: "无法赋值的对象类型",
@@ -1909,12 +1925,12 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
 
         // MARK: Nominal field store
 
-        case .fieldStore(let base, let field, let value, _, _, _):
+        case .fieldStore(let base, let slot, let value, _, _, _):
             // Right-hand side first, receiver second — the order the interpreter's assignment path uses.
             // Observable only when both have effects, which is exactly when a guessed mirror would be caught late.
             // 字段位的自追加形态同样走消费路径；其余形态照旧深拷结构体。
-            if try !storeFieldByAppending(base: base, field: field, value: value) {
-                try storeField(base: base, field: field, value: RuntimeOps.copyIfStruct(try evaluate(value)))
+            if try !storeFieldByAppending(base: base, slot: slot, value: value) {
+                try storeField(base: base, slot: slot, value: RuntimeOps.copyIfStruct(try evaluate(value)))
             }
         }
     }
@@ -1971,19 +1987,19 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
             )
             try storeSubscript(target: inner, index: innerIndexValue, newValue: updated)
 
-        case .fieldGet(let baseExpr, let field, _):
+        case .fieldGet(let baseExpr, let slot, _):
             // `obj.field[i] = v` —— 对**字段值**写下标，再把新容器**写回该字段**。
             // 写回是必需的：容器写入可能分裂出新句柄，不回写则那次写会**静默丢失**。
-            // `base` 只求值**一次**（同一接收者用于读字段与写回），理由见 `storeField(on:base:field:value:)`。
+            // `base` 只求值**一次**（同一接收者用于读字段与写回），理由见 `storeField(on:base:slot:value:)`。
             let receiver = try evaluate(baseExpr)
-            let containerValue = try fieldRead(from: receiver, field: field)
+            let containerValue = try fieldRead(from: receiver, slot: slot)
             let updated = try SubscriptWriteStrategy.write(
                 container: containerValue,
                 index: index,
                 newValue: newValue,
                 location: IRExecutor.noLocation
             )
-            try storeField(on: receiver, base: baseExpr, field: field, value: updated)
+            try storeField(on: receiver, base: baseExpr, slot: slot, value: updated)
 
         default:
             // 兜底：本引擎到此仍不认的目标形态（既非变量、非嵌套下标、也非字段）。

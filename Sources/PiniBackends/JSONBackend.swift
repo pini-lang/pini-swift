@@ -116,8 +116,8 @@ public struct JSONBackend: PiniBackend {
         case .matchStmt(let scrutinee, let cases, let scrutineeType):
             return ("matchStmt", "\(spell(scrutineeType)) cases=\(cases.count) "
                 + "scrutinee=\(exprKind(scrutinee))")
-        case .fieldStore(_, let field, let value, let fieldType, let adopt, let releaseOld):
-            return ("fieldStore", ".\(field): \(spell(fieldType)) adopt=\(adopt) "
+        case .fieldStore(_, let slot, let value, let fieldType, let adopt, let releaseOld):
+            return ("fieldStore", ".#\(slot): \(spell(fieldType)) adopt=\(adopt) "
                 + "releaseOld=\(releaseOld) value=\(exprKind(value))")
         case .captureMarker(let name):
             return ("captureMarker", name)
