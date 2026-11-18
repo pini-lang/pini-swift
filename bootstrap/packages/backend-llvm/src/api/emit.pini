@@ -1,0 +1,93 @@
+[emit|import]
+_semantics = "../../../semantics"
+_ir = "../../../ir"
+_backend_kit = "../../../backend-kit"
+
+; 发射入口：先类型声明，再逐函数；有体出定义，无体跳过，不编外部签名。
+; 有缺口即整份不出：失败只回缺口清单，不落半份文本。
+; 收尾按函数补：未由返回收口的块补 void 或 main 的零返回，保证每块有终结指令。
+
+; 无体函数跳过：它是降载缺口，声明出来也只会在链接期报缺符号。
+needsBody|func(fn: IrFunction,) -> (Bool,):
+    return len(fn.body) > 0
+
+; 收尾补返回：已收口的不补；main 补零，其余补 void。
+closeFunction|func(ctx: BodyCtx, module: IrModule,) -> (BodyCtx,):
+    var out = ctx
+    if out.closed:
+        return out
+    let fn = module.functions[out.fnIndex]
+    if fn.name == "main" && fn.returnType < 0:
+        appendLine(sink = out.lines, text = "  ret i32 0")
+    else:
+        appendLine(sink = out.lines, text = "  ret void")
+    out.closed = true
+    return out
+
+; 参数落槽：形参按各自槽位出 alloca 与 store，值名按位置编号。
+; 不落槽的话，函数体里按槽位读会引用到未定义的槽名，LLVM 校验期才炸。
+seedParams|func(sink: LineSink, pool: IrTypePool, fn: IrFunction,) -> ():
+    var i = 0
+    while i < len(fn.params):
+        let slot = fn.params[i].slot
+        let ty = llvmTypeName(pool = pool, typeId = fn.params[i].typeId)
+        appendLine(sink = sink, text = "  " + slotName(slot = slot) + " = alloca " + ty)
+        appendLine(sink = sink, text = "  store " + ty + " %p" + countText(i) + ", ptr " + slotName(slot = slot))
+        i = i + 1
+    return
+
+; 缺口合并：按类别全局去重，同一类只留一条；跨函数重复不再按函数计数。
+mergeGap|func(gaps: Array<String>, gap: String,) -> (Array<String>,):
+    var i = 0
+    while i < len(gaps):
+        if gaps[i] == gap:
+            return gaps
+        i = i + 1
+    return gaps.append(gap)
+
+; 发射：档次不是本机码即拒；缺口按类别去重，决定是否出文本。
+emitModule|func(entry: BackendEntry, target: TargetProfile, module: IrModule,) -> (EmitResult,):
+    if backendOutputCode(entry.output) != backendOutputNativeCode():
+        return failedEmit(detail = "LLVM 后端不接受档次 " + backendOutputName(entry.output))
+    var sink = LineSink()
+    let head = llvmHeader(entry = entry, target = target)
+    var i = 0
+    while i < len(head):
+        appendLine(sink = sink, text = head[i])
+        i = i + 1
+    let 类型行 = llvmTypeDecls(module = module)
+    i = 0
+    while i < len(类型行):
+        appendLine(sink = sink, text = 类型行[i])
+        i = i + 1
+    var gaps: Array<String> = []
+    let families = irContractFamilies()
+    i = 0
+    while i < len(module.functions):
+        let fn = module.functions[i]
+        if needsBody(fn = fn):
+            appendLine(sink = sink, text = llvmSignature(pool = module.types, fn = fn, isDefine = true) + " {")
+            appendLine(sink = sink, text = "entry:")
+            seedParams(sink = sink, pool = module.types, fn = fn)
+            var ctx = BodyCtx()
+            ctx.lines = sink
+            ctx.fnIndex = i
+            ctx.families = families
+            ctx.declared = entry.families
+            ctx = emitStmts(ctx = ctx, module = module, ids = fn.body)
+            ctx = closeFunction(ctx = ctx, module = module)
+            var k = 0
+            while k < len(ctx.gaps):
+                gaps = mergeGap(gaps = gaps, gap = ctx.gaps[k])
+                k = k + 1
+            appendLine(sink = sink, text = "}")
+        i = i + 1
+    var result = EmitResult()
+    result.detail = "llvm"
+    result.gaps = gaps
+    if len(gaps) > 0:
+        result.failed = true
+        return result
+    result.text = sinkText(sink = sink)
+    result.lines = sinkCount(sink = sink)
+    return result

@@ -1,0 +1,24 @@
+[glue|import]
+_semantics = "../../../semantics"
+_ir = "../../../ir"
+_backend_kit = "../../../backend-kit"
+
+; 胶水：模块头与份额注记；计数与释放的调用点等运行时符号面接上再补。
+; 份额动作先印成行尾注释，供与转储对读；注释不进语义，不影响两遍一致。
+; 目标只进头注释：符号前缀、指针宽度与槽宽都由目标描述给，发射器不判平台。
+
+; 模块头：固定两行，先产品名后后端记录；两行都不参与语义。
+llvmHeader|func(entry: BackendEntry, target: TargetProfile,) -> (Array<String>,):
+    var lines: Array<String> = []
+    lines = lines.append("; pini llvm module")
+    lines = lines.append("; backend " + entry.name + " target " + target.name + " pointer=" + countText(target.pointerWidth))
+    return lines
+
+; 份额注记：存储点带接收动作或旧值归还时出一段行尾注释，其余节点答空串。
+glueNote|func(node: IrNode,) -> (String,):
+    if node.adopt == 0 && !node.releaseOld:
+        return ""
+    var flag = "false"
+    if node.releaseOld:
+        flag = "true"
+    return " ; adopt=" + irAdoptName(code = node.adopt) + " releaseOld=" + flag

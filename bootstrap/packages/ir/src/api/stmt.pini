@@ -84,6 +84,7 @@ lowerVariableStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, 
         kids = kids.append(valueId)
     var node = irMakeNode(kind = irStmtTag(.irAllocVar), typeId = typeId)
     node.text = placed.id
+    node.intValue = done.frame.nextSlot as I64
     if mutable:
         node.op = 1
     node.kids = kids
@@ -197,6 +198,7 @@ lowerStoreStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map
         let placed = internText(texts = done.texts, value = name)
         var node = irMakeNode(kind = irStmtTag(.irStoreVar), typeId = typeId)
         node.text = placed.id
+        node.intValue = done.frame.locals[at].slot as I64
         node.kids = [rhs.id]
         node = fillStore(node = node, pool = map.pool, nodes = done.pool, targetTypeId = typeId, valueId = rhs.id, sharingStructs = false, covers = true)
         done.texts = placed.texts
@@ -281,7 +283,7 @@ lowerCompoundStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, 
         if at < 0:
             return missStmt(out = done, unit = unit, stmtId = stmtId, what = "非局部变量的赋值目标")
         let typeId = done.frame.locals[at].typeId
-        let load = makeLoadNode(pool = done.pool, texts = done.texts, name = name, typeId = typeId)
+        let load = makeLoadNode(pool = done.pool, texts = done.texts, name = name, typeId = typeId, slot = done.frame.locals[at].slot)
         done.pool = load.pool
         done.texts = load.texts
         let rhs = lowerAssignRhs(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId)
@@ -295,6 +297,7 @@ lowerCompoundStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, 
         let placed = internText(texts = done.texts, value = name)
         var node = irMakeNode(kind = irStmtTag(.irStoreVar), typeId = typeId)
         node.text = placed.id
+        node.intValue = done.frame.locals[at].slot as I64
         node.kids = [sum.id]
         node = fillStore(node = node, pool = map.pool, nodes = done.pool, targetTypeId = typeId, valueId = sum.id, sharingStructs = false, covers = true)
         done.texts = placed.texts
@@ -637,13 +640,14 @@ lowerMatchStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map
     let placedTemp = internText(texts = done.texts, value = tempName)
     var anchor = irMakeNode(kind = irStmtTag(.irAllocVar), typeId = subjectType)
     anchor.text = placedTemp.id
+    anchor.intValue = done.frame.nextSlot as I64
     anchor.kids = [subject.id]
     let insertedAnchor = irAppendNode(pool = done.pool, node = anchor)
     done.texts = placedTemp.texts
     done.pool = insertedAnchor.pool
     done.positions = recordPosition(positions = done.positions, node = insertedAnchor.id, offset = unit.ast.stmtAt(stmtId).start)
     done.frame = declareIrLocal(frame = done.frame, name = tempName, typeId = subjectType, mutable = false)
-    let reload = makeLoadNode(pool = done.pool, texts = done.texts, name = tempName, typeId = subjectType)
+    let reload = makeLoadNode(pool = done.pool, texts = done.texts, name = tempName, typeId = subjectType, slot = done.frame.nextSlot - 1)
     done.pool = reload.pool
     done.texts = reload.texts
     var conds: Array<I32> = []

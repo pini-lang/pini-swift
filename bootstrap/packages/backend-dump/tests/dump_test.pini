@@ -1,8 +1,13 @@
 [dump_test|import]
 _ir = "../../ir"
+_backend_kit = "../../backend-kit"
 
 ; 转储判据：手搭模块只喂转储，不经过装配链；真实模块由 lower 与 validate 另行验证。
 ; 每条判据只钉一类行：声明、槽表、函数体与份额、错误表；手搭反而能精确到一条。
+
+; 转储记录：档次为转储、全族声明，入口码取一；记录由调用方给，转储只读它。
+转储造记录|func() -> (BackendEntry,):
+    return makeBackendOf(name = "dump", outputCode = backendOutputDumpCode(), families = backendFamilyCodes(), entry = 1)
 
 ; 转储造类型池：i32 与 String 两个标量，外加一个数组。
 转储造类型池|func() -> (IrTypePool,):
@@ -121,7 +126,7 @@ _ir = "../../ir"
 ; 结构转储：声明与字段各占一行，字段序即槽位；槽表头两个常量先出。
 结构转储|test() -> ():
     let module = 转储造模块()
-    let result = dumpModule(module = module)
+    let result = dumpModule(entry = 转储造记录(), target = defaultTarget(), module = module)
     assert(含子串(text = result.text, needle = "types\n"), "应有类型池一节")
     assert(含子串(text = result.text, needle = "decl 0 struct 点 fields=1 cases=0"), "结构声明应带字段数")
     assert(含子串(text = result.text, needle = "field 0 x type=i32"), "字段行应带序号与拼写")
@@ -134,7 +139,7 @@ _ir = "../../ir"
 ; 函数体：语句行带位置、类别名与份额动作；类别名按码印，不印数字。
 函数体|test() -> ():
     let module = 转储造模块()
-    let result = dumpModule(module = module)
+    let result = dumpModule(entry = 转储造记录(), target = defaultTarget(), module = module)
     assert(含子串(text = result.text, needle = "func 0 f params=0"), "函数行应带形参数")
     assert(含子串(text = result.text, needle = "kind=allocVar"), "应有变量声明语句")
     assert(含子串(text = result.text, needle = "adopt=retain"), "存储点应带接收动作")
@@ -146,8 +151,8 @@ _ir = "../../ir"
 ; 确定性：同一模块两遍转储逐字节相同，行读数与文本换行数相等。
 确定性|test() -> ():
     let module = 转储造模块()
-    let once = dumpModule(module = module)
-    let twice = dumpModule(module = module)
+    let once = dumpModule(entry = 转储造记录(), target = defaultTarget(), module = module)
+    let twice = dumpModule(entry = 转储造记录(), target = defaultTarget(), module = module)
     assert(once.text == twice.text, "两遍转储应逐字节相同")
     assert(once.lines == 行数(text = once.text), "行读数应等于换行数")
     assert(!once.failed, "转储不应失败")
@@ -161,7 +166,7 @@ _ir = "../../ir"
     module.functions = module.functions.append(empty)
     module.errors = appendLowerError(errors = module.errors, error = makeLowerErrorOfCode(code = 4, file = "样例.pini", offset = 7, detail = "空：缺能力"))
     module.typeErrors = appendLowerError(errors = module.typeErrors, error = makeLowerErrorOfCode(code = 1, file = "", offset = 0, detail = "未知类型"))
-    let result = dumpModule(module = module)
+    let result = dumpModule(entry = 转储造记录(), target = defaultTarget(), module = module)
     assert(含子串(text = result.text, needle = "empty=true"), "空体函数应标 empty")
     assert(含子串(text = result.text, needle = "error E6-004 样例.pini:7 空：缺能力"), "函数缺口应带码与位置")
     assert(含子串(text = result.text, needle = "typeError E6-001 未知类型"), "类型缺口应单独成行")
@@ -189,8 +194,8 @@ _ir = "../../ir"
         k = k + 1
     fn.body = body
     module.functions = module.functions.append(fn)
-    let result = dumpModule(module = module)
-    assert(result.lines == len(body) + 8, "行数应为节点数加六节表头")
+    let result = dumpModule(entry = 转储造记录(), target = defaultTarget(), module = module)
+    assert(result.lines == len(body) + 9, "行数应为节点数加七节表头")
     let names = irTagNames()
     i = 1
     while i < 201:

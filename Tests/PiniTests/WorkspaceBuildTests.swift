@@ -135,6 +135,7 @@ struct WorkspaceBuildTests {
             _ir = "../../../ir"
             _backend_kit = "../../../backend-kit"
             _backend_dump = "../../../backend-dump"
+            _backend_llvm = "../../../backend-llvm"
 
             main|func() -> ():
                 let 结果 = package.normalizeMemberPath("./x")
@@ -188,7 +189,7 @@ struct WorkspaceBuildTests {
         #expect(FileManager.default.isExecutableFile(atPath: binary.path))
         let execution = try WorkspaceTestSupport.run(binary.path, [], cwd: root)
         #expect(execution.status == 0, "执行失败：\(execution.stderr)")
-        #expect(execution.stdout == "workspace-ok 12 true\n", "工作区读数不符：\(execution.stdout)")
+        #expect(execution.stdout == "workspace-ok 13 true\n", "工作区读数不符：\(execution.stdout)")
         let interface = root.appendingPathComponent(
             ".build/debug/packages/support/interface.txt")
         let text = try String(contentsOf: interface, encoding: .utf8)
@@ -211,6 +212,7 @@ struct WorkspaceBuildTests {
             _ir = "../../../ir"
             _backend_kit = "../../../backend-kit"
             _backend_dump = "../../../backend-dump"
+            _backend_llvm = "../../../backend-llvm"
 
             main|func() -> ():
                 let 结果 = package.normalizeMemberPath("./x")

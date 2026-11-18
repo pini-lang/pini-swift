@@ -20,3 +20,8 @@ __pycache__/
 # Pini草稿.md —— 外部设计意图文件，不纳入本仓
 # 性质：语言设计者的个人意图稿，**不是**本仓治理资产，故不随仓分发。
 Pini草稿.md
+
+# 夹具验收产物
+bootstrap/fixtures/*/value
+bootstrap/fixtures/*/value.ll
+bootstrap/fixtures/*/value.bc

@@ -37,11 +37,13 @@ entry: I32 = 0
 
 ; 发射结果：文本、行数与失败原因；失败时文本可为空，细节写缺口。
 ; 计数与结构化信息留在模块里，本结构只承载「一份产物 + 是否发得出来」。
+; 缺口按条累积：一条只说一类，含类别码与样例位置，判定与打印都不靠切串。
 (EmitResult)
 text: String = ""
 lines: I32 = 0
 failed: Bool = false
 detail: String = ""
+gaps: Array<String> = []
 
 ; 族数：与契约族表同长，判据与全族码共用。
 backendFamilyCount|func() -> (I32,):
@@ -131,6 +133,10 @@ backendOutputOf|func(code: I32,) -> (BackendOutput,):
 backendOutputDumpCode|func() -> (I32,):
     return 3
 
+; 本机码档次码：LLVM 文本属本机码通道的中间产物，按这一档装配。
+backendOutputNativeCode|func() -> (I32,):
+    return 1
+
 ; 造记录：族表按值抄入，入口码由调用方给。
 makeBackend|func(name: String, output: BackendOutput, families: Array<I32>, entry: I32,) -> (BackendEntry,):
     var out = BackendEntry()
@@ -163,3 +169,14 @@ failedEmit|func(detail: String,) -> (EmitResult,):
     out.failed = true
     out.detail = detail
     return out
+
+; 追加缺口：置失败位并留一条细节；调用方按类别聚合，重复类别只加计数不加行。
+addEmitGap|func(result: EmitResult, gap: String,) -> (EmitResult,):
+    var out = result
+    out.failed = true
+    out.gaps = out.gaps.append(gap)
+    return out
+
+; 缺口数：零即发得出来；驱动拿它和文本长度一起判是否落盘。
+emitGapCount|func(result: EmitResult,) -> (I32,):
+    return len(result.gaps)

@@ -337,6 +337,9 @@ lowerIdentifier|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, ma
     let placed = internText(texts = out.texts, value = name)
     var node = irMakeNode(kind = irExprTag(.irLoad), typeId = typeId)
     node.text = placed.id
+    let at = findIrLocal(frame = out.frame, name = name)
+    if at >= 0:
+        node.intValue = out.frame.locals[at].slot as I64
     let inserted = irAppendNode(pool = out.pool, node = node)
     var done = out
     done.texts = placed.texts
@@ -460,11 +463,13 @@ receiverOwner|func(map: TypeMap, typeId: I32,) -> (String,):
         return entry.name
     return ""
 
-; 读节点：名字与类型给定，造一个按名读并把名字驻留进文本池。
-makeLoadNode|func(pool: IrNodePool, texts: IrTextPool, name: String, typeId: I32,) -> (IrLoadNode,):
+; 读节点：名字、槽位与类型给定，造一个按槽位读并把名字驻留进文本池。
+; 名字只为诊断留底，后端按 `intValue` 的槽位取变量，不再解析名字。
+makeLoadNode|func(pool: IrNodePool, texts: IrTextPool, name: String, typeId: I32, slot: I32,) -> (IrLoadNode,):
     let placed = internText(texts = texts, value = name)
     var node = irMakeNode(kind = irExprTag(.irLoad), typeId = typeId)
     node.text = placed.id
+    node.intValue = slot as I64
     let inserted = irAppendNode(pool = pool, node = node)
     var out = IrLoadNode()
     out.pool = inserted.pool
