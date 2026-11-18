@@ -3,6 +3,7 @@ name = "backend_llvm"
 
 [require]
 semantics = "*"
+unicode = "*"
 ir = "*"
 backend_kit = "*"
 
