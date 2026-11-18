@@ -725,13 +725,45 @@ parseVariantLines|self() -> (Array<I32>,):
         self.advance()
         var fields: Array<I32> = []
         if self.at(.leftParen):
-            fields = self.parseParams()
+            fields = self.parseVariantPayload()
         let id: I32 = self.newDecl(kind = .declVariant, start = start, end = self.previousEnd())
         self.setDeclName(id = id, start = nameStart, end = nameEnd)
         self.setDeclKids(id = id, kids = fields)
         variants = variants.append(id)
         self.skipNewlines()
     return variants
+; 变体载荷：`变体(I32, 点)` 只写类型，不写参数名；每个类型登记成一个载荷参数。
+; 载荷参数的名字留空、类型位写标注，语义层按参数形状绑定；名字面不进语言。
+parseVariantPayload|self() -> (Array<I32>,):
+    var params: Array<I32> = []
+    self.advance()
+    self.skipNewlines()
+    while !self.at(.rightParen) && !self.atEnd():
+        let start: I32 = self.current().start
+        var nameStart: I32 = start
+        var nameEnd: I32 = self.current().end
+        var named = false
+        if self.at(.identifier) && self.isKindAt(offset = 1, kind = .colon):
+            named = true
+            nameStart = self.current().nameStart
+            nameEnd = self.current().nameEnd
+            self.advance()
+            self.advance()
+        let typeId: I32 = self.parseType()
+        if typeId >= 0:
+            let id: I32 = self.newDecl(kind = .declParam, start = start, end = self.previousEnd())
+            if named:
+                self.setDeclName(id = id, start = nameStart, end = nameEnd)
+            self.setDeclType(id = id, typeId = typeId)
+            params = params.append(id)
+        if self.at(.comma):
+            self.advance()
+        elif !self.at(.rightParen) && !self.atEnd() && self.current().start == start:
+            ; 坏语料：类型没解析也没前进，吞一格继续，否则循环不收敛。
+            self.advance()
+        self.skipNewlines()
+    self.expect(kind = .rightParen, what = "`)`")
+    return params
 ; 方法块：`名字|self(_...)` 逐行读取，遇到非方法行即收尾。
 ; 扩展块成员判定：名字后跟 `|self` 或 `|own` 才算方法；`|func` 等顶层声明即闭合本块。
 isMethodLine|self() -> (Bool,):
