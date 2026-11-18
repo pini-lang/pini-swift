@@ -141,7 +141,7 @@
 |---|---|---|---|
 | 26 | `construct(type:)` | 具名类型构造；字段取声明默认值，无默认则零值；对象获得新的同一性 | 引用计数初值是实现 |
 | 27 | `enumConstruct(enumName:caseName:tag:payloads:payloadTypes:type:)` | 枚举 case 构造；`tag` 为 case 的声明序索引 | 载荷按值存入 tagged union |
-| 28 | `fieldGet(base:field:type:)` | 具名字段读，按声明序 | 布局是约定 |
+| 28 | `fieldGet(base:slot:type:)` | 字段读，`slot` 是字段在声明序里的位置，槽位基准见第 6 节 | 名字只是降载期的查找键，不进节点：后端不按名查表，槽位也没有第二个来源 |
 
 ### 2.7 指针与取址
 
@@ -242,7 +242,7 @@
 | 12 | `continueStmt(depth:)` | 继续第 `depth` 个帧 | 目标只能是循环帧，不能是 `if` 帧 |
 | 13 | `panicStmt(message:)` | 无条件运行时陷阱，固定消息，块终止 | 用于解释器仅在运行时才发现的逃逸 |
 | 14 | `matchStmt(scrutinee:cases:scrutineeType:)` | `match` 分派；可分派于枚举、Optional 与裸值字面量 | 枚举 / Optional 未匹配即 panic；裸值字面量未匹配且无通配时静默落到 match 之后 |
-| 15 | `fieldStore(base:field:value:fieldType:adopt:releaseOld:)` | 具名字段写；字段是持有者，`releaseOld` 管旧值 | 对象需越过引用头 |
+| 15 | `fieldStore(base:slot:value:fieldType:adopt:releaseOld:)` | 字段写，`slot` 与 `fieldGet` 同一口径；字段是持有者，`releaseOld` 管旧值 | 对象需越过引用头 |
 | 16 | `captureMarker(name:)` | 闭包体内的 `capture` 标记；捕获在闭包创建点解析，本节点降级为无操作 | 存在意义是让该语句种类在闭包体内被接受 |
 | 17 | `detachStmt(inner:)` | 求值操作数（须为 `Future`），把它从父任务剪枝，父返回时不再取消它 | 剪枝在各后端都没有可观测的输出差异，判据只能是结构级 |
 

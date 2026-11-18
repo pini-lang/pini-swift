@@ -51,6 +51,9 @@ _semantics = "../../semantics"
     var input = LowerWorld()
     input.world = 世界
     input.types = 填.types
+    let shapes = makeShapeTable(世界)
+    input.shapes = shapes
+    input.layouts = layoutAll(shapes = shapes, pool = 世界.types.pool)
     return lowerWorkspace(input = input)
 
 ; 函数表：一个文件的顶层函数按声明序进表，名字保留原始拼写。

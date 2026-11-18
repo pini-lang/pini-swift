@@ -5,14 +5,15 @@ _module_loader = "../../../module-loader"
 
 ; 语句降载：块、变量、赋值、表达式、分支、循环、匹配与返回；体是语句序列，控制流节点的
 ; `kids` 用 `tail` 切成两段，前段是体、后段是 else。任一语句降不了即整函数失败：
-; 半截体在发射期能跑却少了语句。`adopt` 与 `releaseOld` 留缺省，份额判定落地时统一补。
+; 半截体在发射期能跑却少了语句。存储点在这里填 `adopt` 与 `releaseOld`，后端只翻译不另判。
 
-; 语句降载结果：池、文本池、帧、语句产出的节点序列与失败原因。
+; 语句降载结果：池、文本池、帧、语句产出、逐语句源位置与失败原因。
 (LowerStmt)
 pool: IrNodePool = IrNodePool()
 texts: IrTextPool = IrTextPool()
 frame: LowerFrame = LowerFrame()
 ids: Array<I32> = []
+positions: Array<IrPosition> = []
 failed: Bool = false
 detail: String = ""
 offset: I32 = 0
@@ -86,10 +87,9 @@ lowerVariableStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, 
     if mutable:
         node.op = 1
     node.kids = kids
-    let inserted = irAppendNode(pool = done.pool, node = node)
+    node = fillStore(node = node, pool = map.pool, nodes = done.pool, targetTypeId = typeId, valueId = valueId, sharingStructs = false, covers = false)
     done.texts = placed.texts
-    done.pool = inserted.pool
-    done.ids = done.ids.append(inserted.id)
+    done = appendStmtNode(out = done, node = node, offset = stmt.start)
     done.frame = declareIrLocal(frame = done.frame, name = name, typeId = typeId, mutable = mutable)
     return done
 
@@ -122,30 +122,46 @@ lowerAssignRhs|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map
     done.id = one.id
     return done
 
-; 记语句：节点并进池并把下标追加到语句序列，源序即节点序。
-appendStmtNode|func(out: LowerStmt, node: IrNode,) -> (LowerStmt,):
+; 记语句：节点并进池、下标追加到语句序列，并记一条源位置；源序即节点序。
+appendStmtNode|func(out: LowerStmt, node: IrNode, offset: I32,) -> (LowerStmt,):
     var done = out
     let inserted = irAppendNode(pool = done.pool, node = node)
     done.pool = inserted.pool
     done.ids = done.ids.append(inserted.id)
+    done.positions = recordPosition(positions = done.positions, node = inserted.id, offset = offset)
     return done
 
-; 字段读：接收者与字段名给定，造一个按声明序取的字段读。
-makeFieldGet|func(pool: IrNodePool, texts: IrTextPool, fieldName: String, typeId: I32, base: I32,) -> (IrLoadNode,):
-    let placed = internText(texts = texts, value = fieldName)
+; 字段槽：按接收者的 IR 类型与字段拼写查声明序，未命中答 -1。
+; 槽位口径只有这一处：字段名是诊断用的拼写，节点里存的是槽。
+fieldSlotInFrame|func(frame: LowerFrame, receiverTypeId: I32, name: String,) -> (I32,):
+    return fieldSlotOf(table = frame.decls, typeId = receiverTypeId, name = name)
+
+; 字段读：槽位按声明序取，接收者一个子节点；方法值不走这条。
+makeFieldGet|func(pool: IrNodePool, texts: IrTextPool, slot: I32, typeId: I32, base: I32,) -> (IrLoadNode,):
     var node = irMakeNode(kind = irExprTag(.irFieldGet), typeId = typeId)
-    node.text = placed.id
+    node.op = slot
     node.kids = [base]
     let inserted = irAppendNode(pool = pool, node = node)
     var out = IrLoadNode()
     out.pool = inserted.pool
-    out.texts = placed.texts
+    out.texts = texts
     out.id = inserted.id
     return out
 
 ; 下标读：容器与下标给定，越界由运行时陷阱承担。
 makeSubscriptGet|func(pool: IrNodePool, typeId: I32, container: I32, index: I32,) -> (IrNodeInsert,):
     return addIrNode(pool = pool, kind = irExprTag(.irSubscriptGet), typeId = typeId, op = 0, kids = [container, index])
+
+; 存储点动作：按目标类型与值的求值效果填接收动作；`covers` 说这条语句覆盖的是既有槽。
+; 声明新槽不还旧值，赋值、字段写与下标写要还；容器元素按箱共享，故另给一个开关。
+fillStore|func(node: IrNode, pool: IrTypePool, nodes: IrNodePool, targetTypeId: I32, valueId: I32, sharingStructs: Bool, covers: Bool,) -> (IrNode,):
+    var out = node
+    if valueId >= 0:
+        let effect = irShareEffectOf(pool = pool, nodes = nodes, nodeId = valueId)
+        out.adopt = irAdoptOf(pool = pool, targetTypeId = targetTypeId, effect = effect, sharingStructs = sharingStructs)
+    if covers:
+        out.releaseOld = irHoldsShare(pool = pool, typeId = targetTypeId)
+    return out
 
 ; 赋值：复合运算按「读—算—写」接成三节，普通赋值只写一次。
 lowerAssignStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32,) -> (LowerStmt,):
@@ -182,8 +198,9 @@ lowerStoreStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map
         var node = irMakeNode(kind = irStmtTag(.irStoreVar), typeId = typeId)
         node.text = placed.id
         node.kids = [rhs.id]
+        node = fillStore(node = node, pool = map.pool, nodes = done.pool, targetTypeId = typeId, valueId = rhs.id, sharingStructs = false, covers = true)
         done.texts = placed.texts
-        return appendStmtNode(out = done, node = node)
+        return appendStmtNode(out = done, node = node, offset = stmt.start)
     if unit.ast.isMemberExpr(target):
         return writeField(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId, target = target)
     if unit.ast.isSubscriptExpr(target):
@@ -212,12 +229,14 @@ writeField|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: Ty
     if rhs.failed:
         return takeStmtFailure(out = done, detail = rhs.detail, offset = rhs.offset)
     let fieldName = decodeSpelling(bytes = bytes, start = member.nameStart, end = member.nameEnd)
-    let placed = internText(texts = done.texts, value = fieldName)
+    let slot = fieldSlotInFrame(frame = done.frame, receiverTypeId = irNodeAt(pool = done.pool, id = recvOne.id).typeId, name = fieldName)
+    if slot < 0:
+        return missStmt(out = done, unit = unit, stmtId = stmtId, what = "字段 " + fieldName + " 不在声明里")
     var node = irMakeNode(kind = irStmtTag(.irFieldStore), typeId = typeId)
-    node.text = placed.id
+    node.op = slot
     node.kids = [recvOne.id, rhs.id]
-    done.texts = placed.texts
-    return appendStmtNode(out = done, node = node)
+    node = fillStore(node = node, pool = map.pool, nodes = done.pool, targetTypeId = typeId, valueId = rhs.id, sharingStructs = false, covers = true)
+    return appendStmtNode(out = done, node = node, offset = unit.ast.stmtAt(stmtId).start)
 
 ; 下标写：容器、下标与值三个子节点，元素类型取自推导表；越界写由运行时报错。
 writeSubscript|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32, target: I32,) -> (LowerStmt,):
@@ -247,7 +266,8 @@ writeSubscript|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map
         return takeStmtFailure(out = done, detail = rhs.detail, offset = rhs.offset)
     var node = irMakeNode(kind = irStmtTag(.irSubscriptStore), typeId = typeId)
     node.kids = [kids[0], kids[1], rhs.id]
-    return appendStmtNode(out = done, node = node)
+    node = fillStore(node = node, pool = map.pool, nodes = done.pool, targetTypeId = typeId, valueId = rhs.id, sharingStructs = true, covers = true)
+    return appendStmtNode(out = done, node = node, offset = unit.ast.stmtAt(stmtId).start)
 
 ; 复合赋值：读—算—写分三节，接收者只收标识符，其余形态会被求值两次。
 lowerCompoundStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32, base: I32,) -> (LowerStmt,):
@@ -276,8 +296,9 @@ lowerCompoundStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, 
         var node = irMakeNode(kind = irStmtTag(.irStoreVar), typeId = typeId)
         node.text = placed.id
         node.kids = [sum.id]
+        node = fillStore(node = node, pool = map.pool, nodes = done.pool, targetTypeId = typeId, valueId = sum.id, sharingStructs = false, covers = true)
         done.texts = placed.texts
-        return appendStmtNode(out = done, node = node)
+        return appendStmtNode(out = done, node = node, offset = stmt.start)
     if unit.ast.isMemberExpr(target):
         return compoundField(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId, target = target, base = base)
     if unit.ast.isSubscriptExpr(target):
@@ -302,7 +323,10 @@ compoundField|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map:
     if typeId < 0:
         return missStmt(out = done, unit = unit, stmtId = stmtId, what = "字段类型未定")
     let fieldName = decodeSpelling(bytes = bytes, start = member.nameStart, end = member.nameEnd)
-    let get = makeFieldGet(pool = done.pool, texts = done.texts, fieldName = fieldName, typeId = typeId, base = recvOne.id)
+    let slot = fieldSlotInFrame(frame = done.frame, receiverTypeId = irNodeAt(pool = done.pool, id = recvOne.id).typeId, name = fieldName)
+    if slot < 0:
+        return missStmt(out = done, unit = unit, stmtId = stmtId, what = "字段 " + fieldName + " 不在声明里")
+    let get = makeFieldGet(pool = done.pool, texts = done.texts, slot = slot, typeId = typeId, base = recvOne.id)
     done.pool = get.pool
     done.texts = get.texts
     let rhs = lowerAssignRhs(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId)
@@ -313,12 +337,11 @@ compoundField|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map:
         return takeStmtFailure(out = done, detail = rhs.detail, offset = rhs.offset)
     let sum = addIrNode(pool = done.pool, kind = irExprTag(.irBinary), typeId = typeId, op = base, kids = [get.id, rhs.id])
     done.pool = sum.pool
-    let placed = internText(texts = done.texts, value = fieldName)
     var node = irMakeNode(kind = irStmtTag(.irFieldStore), typeId = typeId)
-    node.text = placed.id
+    node.op = slot
     node.kids = [recvOne.id, sum.id]
-    done.texts = placed.texts
-    return appendStmtNode(out = done, node = node)
+    node = fillStore(node = node, pool = map.pool, nodes = done.pool, targetTypeId = typeId, valueId = sum.id, sharingStructs = false, covers = true)
+    return appendStmtNode(out = done, node = node, offset = unit.ast.stmtAt(stmtId).start)
 
 ; 下标复合赋值：容器只收标识符，读—算—写落在同一个容器与下标上。
 compoundSubscript|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32, target: I32, base: I32,) -> (LowerStmt,):
@@ -355,7 +378,8 @@ compoundSubscript|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, 
     done.pool = sum.pool
     var node = irMakeNode(kind = irStmtTag(.irSubscriptStore), typeId = typeId)
     node.kids = [container.id, indexOne.id, sum.id]
-    return appendStmtNode(out = done, node = node)
+    node = fillStore(node = node, pool = map.pool, nodes = done.pool, targetTypeId = typeId, valueId = sum.id, sharingStructs = true, covers = true)
+    return appendStmtNode(out = done, node = node, offset = unit.ast.stmtAt(stmtId).start)
 
 ; 表达式语句：求值并丢弃结果。
 lowerExprStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32,) -> (LowerStmt,):
@@ -369,10 +393,9 @@ lowerExprStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map:
     done.frame = one.frame
     if one.failed:
         return takeStmtFailure(out = done, detail = one.detail, offset = one.offset)
-    let inserted = addIrNode(pool = done.pool, kind = irStmtTag(.irExprStmt), typeId = -1, op = 0, kids = [one.id])
-    done.pool = inserted.pool
-    done.ids = done.ids.append(inserted.id)
-    return done
+    var node = irMakeNode(kind = irStmtTag(.irExprStmt), typeId = -1)
+    node.kids = [one.id]
+    return appendStmtNode(out = done, node = node, offset = stmt.start)
 
 ; 返回：有值降值，无值留空子表。
 lowerReturnStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32,) -> (LowerStmt,):
@@ -387,10 +410,11 @@ lowerReturnStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, ma
         if one.failed:
             return takeStmtFailure(out = done, detail = one.detail, offset = one.offset)
         kids = kids.append(one.id)
-    let inserted = addIrNode(pool = done.pool, kind = irStmtTag(.irReturnStmt), typeId = -1, op = 0, kids = kids)
-    done.pool = inserted.pool
-    done.ids = done.ids.append(inserted.id)
-    return done
+    var node = irMakeNode(kind = irStmtTag(.irReturnStmt), typeId = -1)
+    node.kids = kids
+    if len(kids) > 0:
+        node = fillStore(node = node, pool = map.pool, nodes = done.pool, targetTypeId = irNodeAt(pool = done.pool, id = kids[0]).typeId, valueId = kids[0], sharingStructs = false, covers = false)
+    return appendStmtNode(out = done, node = node, offset = stmt.start)
 
 ; 分支：kids 交替是「条件、块」，末尾可能有孤立 else 块；elif 链按嵌套 if 收成一条语句。
 ; 先按源序降条件与块，再从末段往前搭节点 —— 节点序不参与发射次序，块序保持不变。
@@ -448,6 +472,7 @@ lowerIfStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: T
         node.tail = tail
         let inserted = irAppendNode(pool = done.pool, node = node)
         done.pool = inserted.pool
+        done.positions = recordPosition(positions = done.positions, node = inserted.id, offset = unit.ast.stmtAt(stmtId).start)
         ids = [inserted.id]
         k = k - 1
     done.ids = ids
@@ -482,6 +507,7 @@ lowerWhileStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map
     let inserted = irAppendNode(pool = done.pool, node = node)
     done.pool = inserted.pool
     done.ids = [inserted.id]
+    done.positions = recordPosition(positions = done.positions, node = inserted.id, offset = unit.ast.stmtAt(stmtId).start)
     return done
 
 ; 块：进块记边界，逐条降载，退块只收回名字。
@@ -498,6 +524,7 @@ lowerBlockOf|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: 
         done.pool = one.pool
         done.texts = one.texts
         done.frame = one.frame
+        done.positions = one.positions
         if one.failed:
             done.failed = true
             done.detail = one.detail
@@ -614,6 +641,7 @@ lowerMatchStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map
     let insertedAnchor = irAppendNode(pool = done.pool, node = anchor)
     done.texts = placedTemp.texts
     done.pool = insertedAnchor.pool
+    done.positions = recordPosition(positions = done.positions, node = insertedAnchor.id, offset = unit.ast.stmtAt(stmtId).start)
     done.frame = declareIrLocal(frame = done.frame, name = tempName, typeId = subjectType, mutable = false)
     let reload = makeLoadNode(pool = done.pool, texts = done.texts, name = tempName, typeId = subjectType)
     done.pool = reload.pool
@@ -680,6 +708,12 @@ lowerMatchStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map
                     local.kids = [insertedRead.id]
                     let insertedLocal = irAppendNode(pool = done.pool, node = local)
                     done.pool = insertedLocal.pool
+                    done.positions = recordPosition(positions = done.positions, node = insertedLocal.id, offset = unit.ast.stmtAt(stmtId).start)
+                    var bound = irNodeAt(pool = done.pool, id = insertedLocal.id)
+                    bound = fillStore(node = bound, pool = map.pool, nodes = done.pool, targetTypeId = typeId, valueId = insertedRead.id, sharingStructs = false, covers = false)
+                    var boundPool = done.pool
+                    boundPool.nodes[insertedLocal.id] = bound
+                    done.pool = boundPool
                     done.frame = declareIrLocal(frame = done.frame, name = name, typeId = typeId, mutable = false)
                     armIds = armIds.append(insertedLocal.id)
                 b = b + 1
@@ -689,6 +723,7 @@ lowerMatchStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map
         done.pool = body.pool
         done.texts = body.texts
         done.frame = body.frame
+        done.positions = body.positions
         if body.failed:
             return takeStmtFailure(out = done, detail = body.detail, offset = body.offset)
         var k = 0
@@ -714,6 +749,7 @@ lowerMatchStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map
         let insertedTrap = irAppendNode(pool = done.pool, node = trap)
         done.texts = placedMsg.texts
         done.pool = insertedTrap.pool
+        done.positions = recordPosition(positions = done.positions, node = insertedTrap.id, offset = unit.ast.stmtAt(stmtId).start)
         elseIds = [insertedTrap.id]
     var ids = elseIds
     var n = len(conds) - 1
@@ -733,6 +769,7 @@ lowerMatchStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map
         node.tail = tail
         let inserted = irAppendNode(pool = done.pool, node = node)
         done.pool = inserted.pool
+        done.positions = recordPosition(positions = done.positions, node = inserted.id, offset = unit.ast.stmtAt(stmtId).start)
         ids = [inserted.id]
         n = n - 1
     var allIds: Array<I32> = [insertedAnchor.id]
@@ -750,7 +787,7 @@ lowerJumpStmt|func(out: LowerStmt, unit: CompilationUnit, stmtId: I32, kind: IrS
         return missStmt(out = out, unit = unit, stmtId = stmtId, what = "带标签的跳出")
     var node = irMakeNode(kind = irStmtTag(kind), typeId = -1)
     node.op = 1
-    return appendStmtNode(out = out, node = node)
+    return appendStmtNode(out = out, node = node, offset = stmt.start)
 
 ; 单条语句：按类别分派；`pass` 不产节点，其余未知类别报缺口。
 lowerStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32,) -> (LowerStmt,):

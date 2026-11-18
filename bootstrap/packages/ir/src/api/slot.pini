@@ -1,0 +1,195 @@
+[slot|import]
+_semantics = "../../../semantics"
+
+; 槽位面：把语义槽布局折成 IR 槽表，后端据此算偏移，不再自己数槽。
+; 槽是布局单位不是字节；宽度、对齐与聚合拼写仍归后端的目标描述。
+; 头槽数与载荷基址随表带上，改头只改语义侧一处，模块按值转述。
+
+; 槽表：按类型下标升序，附头槽数与载荷基址两个常量；引用语义承载，逐层传的是同一份。
+; 放在文件开头：解析器只在这个位置接受花括号类型，写到结构之后会被当成语句。
+{IrSlotTable}
+entries: Array<IrSlotRow> = []
+headSlots: I32 = 0
+payloadBase: I32 = 0
+
+; 槽角色：与语义侧同名同序，编码一到十二；后端按编码分派，不比枚举项。
+[IrSlotRole]
+irSlotStrongCount
+irSlotWeakCount
+irSlotTypeIdentity
+irSlotWeakTable
+irSlotField
+irSlotCaseTag
+irSlotPayload
+irSlotResultTag
+irSlotResultOk
+irSlotResultError
+irSlotOptionalTag
+irSlotOptionalPayload
+
+; 槽：序号、角色、名字与 IR 类型下标；载荷窗口的类型留 -1，逐用例的类型在看例表里。
+(IrSlot)
+index: I32 = 0
+role: IrSlotRole = .irSlotField
+name: String = ""
+typeId: I32 = -1
+
+; 用例槽：用例名与逐位载荷的 IR 类型下标；载荷起始槽由表头给。
+(IrSlotCase)
+name: String = ""
+payload: Array<I32> = []
+
+; 槽行：类型下标、形态码、槽数、槽表与用例表；槽数 -1 表示该类别没有约定槽位。
+(IrSlotRow)
+typeId: I32 = -1
+shapeCode: I32 = 0
+slotCount: I32 = -1
+slots: Array<IrSlot> = []
+cases: Array<IrSlotCase> = []
+
+; 角色编码：与语义侧同序，1 到 12；未登记答 0。
+irSlotRoleCode|func(_role: IrSlotRole,) -> (I32,):
+    match _role:
+        case irSlotStrongCount:
+            return 1
+        case irSlotWeakCount:
+            return 2
+        case irSlotTypeIdentity:
+            return 3
+        case irSlotWeakTable:
+            return 4
+        case irSlotField:
+            return 5
+        case irSlotCaseTag:
+            return 6
+        case irSlotPayload:
+            return 7
+        case irSlotResultTag:
+            return 8
+        case irSlotResultOk:
+            return 9
+        case irSlotResultError:
+            return 10
+        case irSlotOptionalTag:
+            return 11
+        case irSlotOptionalPayload:
+            return 12
+    return 0
+
+; 编码到角色：语义侧给了 1 到 12 的码，未登记按字段槽兜底（校验面会另行报错）。
+irSlotRoleOf|func(code: I32,) -> (IrSlotRole,):
+    if code == 1:
+        return .irSlotStrongCount
+    if code == 2:
+        return .irSlotWeakCount
+    if code == 3:
+        return .irSlotTypeIdentity
+    if code == 4:
+        return .irSlotWeakTable
+    if code == 6:
+        return .irSlotCaseTag
+    if code == 7:
+        return .irSlotPayload
+    if code == 8:
+        return .irSlotResultTag
+    if code == 9:
+        return .irSlotResultOk
+    if code == 10:
+        return .irSlotResultError
+    if code == 11:
+        return .irSlotOptionalTag
+    if code == 12:
+        return .irSlotOptionalPayload
+    return .irSlotField
+
+; 槽类型取像：-1 表示该槽不吃类型（计数、标签、擦除后的错误字），照抄。
+mapSlotType|func(map: TypeMap, semanticId: I32,) -> (I32,):
+    if semanticId < 0:
+        return -1
+    return irIdOf(map = map, semanticId = semanticId)
+
+; 槽表：逐槽取像并转角色；序号照抄语义侧，不在这里重算。
+mapSlots|func(map: TypeMap, slots: Array<Slot>,) -> (Array<IrSlot>,):
+    var out: Array<IrSlot> = []
+    var i = 0
+    while i < len(slots):
+        var row = IrSlot()
+        row.index = slots[i].index
+        row.role = irSlotRoleOf(code = slotRoleCode(slots[i].role))
+        row.name = slots[i].name
+        row.typeId = mapSlotType(map = map, semanticId = slots[i].typeId)
+        out = out.append(row)
+        i = i + 1
+    return out
+
+; 用例表：载荷逐位取像，用例名照抄；载荷序即槽序。
+mapSlotCases|func(map: TypeMap, cases: Array<CaseLayout>,) -> (Array<IrSlotCase>,):
+    var out: Array<IrSlotCase> = []
+    var i = 0
+    while i < len(cases):
+        var row = IrSlotCase()
+        row.name = cases[i].name
+        var payload: Array<I32> = []
+        var k = 0
+        while k < len(cases[i].payload):
+            payload = payload.append(mapSlotType(map = map, semanticId = cases[i].payload[k]))
+            k = k + 1
+        row.payload = payload
+        out = out.append(row)
+        i = i + 1
+    return out
+
+; 单行：类型下标取像后照抄形状、槽数与两张子表；取不到像的类型不入表。
+makeSlotRow|func(layouts: LayoutTable, map: TypeMap, at: I32,) -> (IrSlotRow,):
+    var out = IrSlotRow()
+    let entry = layouts.entries[at]
+    let typeId = irIdOf(map = map, semanticId = entry.typeId)
+    if typeId < 0:
+        return out
+    out.typeId = typeId
+    out.shapeCode = shapeKindCode(kind = entry.shape)
+    out.slotCount = entry.slotCount
+    out.slots = mapSlots(map = map, slots = entry.slots)
+    out.cases = mapSlotCases(map = map, cases = entry.cases)
+    return out
+
+; 建表：布局表逐条转槽行，并转述语义侧的槽位基准；同一输入两次建表逐项相同。
+makeSlotTable|func(layouts: LayoutTable, map: TypeMap,) -> (IrSlotTable,):
+    var out = IrSlotTable()
+    out.headSlots = headSlotCount()
+    out.payloadBase = payloadFirstSlot()
+    var i = 0
+    while i < len(layouts.entries):
+        let row = makeSlotRow(layouts = layouts, map = map, at = i)
+        if row.typeId >= 0:
+            out.entries = out.entries.append(row)
+        i = i + 1
+    return out
+
+; 条目数：下标合法区间是 0 到 count - 1。
+slotRowCount|func(table: IrSlotTable,) -> (I32,):
+    return len(table.entries)
+
+; 按类型下标查槽行：升序表线性扫，未命中答 -1。
+findSlotRow|func(table: IrSlotTable, typeId: I32,) -> (I32,):
+    var i = 0
+    while i < len(table.entries):
+        if table.entries[i].typeId == typeId:
+            return i
+        i = i + 1
+    return -1
+
+; 取槽行：未命中答空行（槽数 -1），调用方不必先判下标。
+slotRowAt|func(table: IrSlotTable, typeId: I32,) -> (IrSlotRow,):
+    let at = findSlotRow(table = table, typeId = typeId)
+    if at < 0:
+        return IrSlotRow()
+    return table.entries[at]
+
+; 槽数：该类型的槽位个数，未约定答 -1；后端算字节尺寸前先问它。
+slotCountOf|func(table: IrSlotTable, typeId: I32,) -> (I32,):
+    return slotRowAt(table = table, typeId = typeId).slotCount
+
+; 字段槽位：头槽数加字段序，与契约第 6 节同一算式；后端不再做这个加法。
+fieldSlotIndex|func(table: IrSlotTable, fieldIndex: I32,) -> (I32,):
+    return table.headSlots + fieldIndex

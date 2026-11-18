@@ -104,8 +104,8 @@ public enum IRPrinter {
                 lines.append(contentsOf: dumpBody(matchCase.body, indent: level + 2))
             }
             return lines
-        case .fieldStore(let base, let field, let value, _, _, _):
-            return ["\(pad)\(exprText(base)).\(field) = \(exprText(value))"]
+        case .fieldStore(let base, let slot, let value, _, _, _):
+            return ["\(pad)\(exprText(base)).#\(slot) = \(exprText(value))"]
         case .captureMarker(let name):
             return ["\(pad)capture \(name)"]
         case .detachStmt(let inner):
@@ -175,8 +175,8 @@ public enum IRPrinter {
             return "(\(items))"
         case .tupleIndexGet(let base, let index, _):
             return "\(exprText(base)).#\(index)"
-        case .fieldGet(let base, let field, let type):
-            return "\(exprText(base)).\(field)@\(type.llvmSpelling)"
+        case .fieldGet(let base, let slot, let type):
+            return "\(exprText(base)).#\(slot)@\(type.llvmSpelling)"
         case .stringCase(let isUpper, let receiver):
             return "\(exprText(receiver)).\(isUpper ? "upper" : "lower")()"
         case .stringContains(let receiver, let needle):

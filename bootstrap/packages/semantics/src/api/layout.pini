@@ -77,6 +77,36 @@ slotRoleName|func(_role: SlotRole,) -> (String,):
 isSlotRole|func(role: SlotRole, expected: SlotRole,) -> (Bool,):
     return slotRoleName(role) == slotRoleName(expected)
 
+; 角色编码：跨包读槽表的调用方按数比，不依赖枚举项能否跨包。
+; 码序与枚举项序一致，1 到 12；新增角色追加在末尾，已有码不变。
+slotRoleCode|func(_role: SlotRole,) -> (I32,):
+    match _role:
+        case slotStrongCount:
+            return 1
+        case slotWeakCount:
+            return 2
+        case slotTypeIdentity:
+            return 3
+        case slotWeakTable:
+            return 4
+        case slotField:
+            return 5
+        case slotCaseTag:
+            return 6
+        case slotPayload:
+            return 7
+        case slotResultTag:
+            return 8
+        case slotResultOk:
+            return 9
+        case slotResultError:
+            return 10
+        case slotOptionalTag:
+            return 11
+        case slotOptionalPayload:
+            return 12
+    return 0
+
 ; 头槽数：结构、对象、枚举三族共用，字段与标签的槽位基准只有这一处。
 headSlotCount|func() -> (I32,):
     return 4

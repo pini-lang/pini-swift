@@ -26,6 +26,9 @@ module: IrModule = IrModule()
     var input = LowerWorld()
     input.world = world
     input.types = 填.types
+    let shapes = makeShapeTable(world)
+    input.shapes = shapes
+    input.layouts = layoutAll(shapes = shapes, pool = world.types.pool)
     var out = 降载样例()
     out.module = lowerWorkspace(input = input)
     return out

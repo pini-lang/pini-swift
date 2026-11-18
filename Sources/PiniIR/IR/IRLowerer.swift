@@ -2344,11 +2344,17 @@ public enum IRLowerer {
                         at: location
                     )
                 }
+                guard let fieldSlot = nominalFieldSlot(of: loweredBase.type, field: fieldName, in: context) else {
+                    throw unsupported(
+                        "no field slot for '\(fieldName)' on '\(loweredBase.type)'",
+                        at: location
+                    )
+                }
                 let loweredValue = try lowerExpr(value, expected: fieldType, into: &context)
                 try requireAssignable(loweredValue.type, to: fieldType, at: location)
                 return [
                     .fieldStore(
-                        base: loweredBase.node, field: fieldName,
+                        base: loweredBase.node, slot: fieldSlot,
                         value: loweredValue.node, fieldType: fieldType,
                         adopt: fieldType.adoption(of: loweredValue.node),
                         releaseOld: fieldType.holdsAShare
@@ -3147,8 +3153,11 @@ public enum IRLowerer {
                 let selfType = IRType.nominal(
                     name: context.selfTypeNameLowered ?? "", isObject: context.selfIsObjectLowered
                 )
+                guard let fieldSlot = nominalFieldSlot(of: selfType, field: name, in: context) else {
+                    throw unsupported("no field slot for bare field '\(name)'", at: location)
+                }
                 return LoweredExpr(
-                    node: .fieldGet(base: .load(name: "self", type: selfType), field: name, type: fieldType),
+                    node: .fieldGet(base: .load(name: "self", type: selfType), slot: fieldSlot, type: fieldType),
                     type: fieldType
                 )
             }
@@ -3373,8 +3382,11 @@ public enum IRLowerer {
             guard let fieldType = nominalFieldType(of: loweredBase.type, field: name, in: context) else {
                 throw unsupported("no field '\(name)' on '\(loweredBase.type)'", at: location)
             }
+            guard let fieldSlot = nominalFieldSlot(of: loweredBase.type, field: name, in: context) else {
+                throw unsupported("no field slot for '\(name)' on '\(loweredBase.type)'", at: location)
+            }
             return LoweredExpr(
-                node: .fieldGet(base: loweredBase.node, field: name, type: fieldType),
+                node: .fieldGet(base: loweredBase.node, slot: fieldSlot, type: fieldType),
                 type: fieldType
             )
 
@@ -5654,18 +5666,21 @@ public enum IRLowerer {
                     "prefix '\(op)' target must be I32, got '\(fieldType)'", at: location
                 )
             }
+            guard let fieldSlot = nominalFieldSlot(of: loweredBase.type, field: fieldName, in: context) else {
+                throw unsupported("prefix '\(op)' target has no field slot", at: location)
+            }
             let value = IRExpr.binary(
                 op: baseOp,
-                lhs: .fieldGet(base: loweredBase.node, field: fieldName, type: fieldType),
+                lhs: .fieldGet(base: loweredBase.node, slot: fieldSlot, type: fieldType),
                 rhs: one, type: fieldType
             )
             return (
                 .fieldStore(
-                    base: loweredBase.node, field: fieldName,
+                    base: loweredBase.node, slot: fieldSlot,
                     value: value, fieldType: fieldType,
                     adopt: fieldType.adoption(of: value), releaseOld: fieldType.holdsAShare
                 ),
-                .fieldGet(base: loweredBase.node, field: fieldName, type: fieldType),
+                .fieldGet(base: loweredBase.node, slot: fieldSlot, type: fieldType),
                 fieldType
             )
 
@@ -5923,6 +5938,18 @@ public enum IRLowerer {
             return nil
         }
         return resolveAnnotationType(fieldDecl.typeAnnotation, userTypes: context.userTypes)
+    }
+
+    /// 字段槽：字段在声明序里的位置。槽是 IR 里唯一的字段身份，名字只在降载期当查找键；
+    /// 后端因此不必自己数序号，也不会与 §6 的槽位基准分家。
+    private static func nominalFieldSlot(of type: IRType, field: String, in context: FunctionContext) -> Int? {
+        guard case .nominal(let name, _) = type,
+            let info = context.nominalTypes[name],
+            let index = info.fields.firstIndex(where: { $0.name == field })
+        else {
+            return nil
+        }
+        return index
     }
 
     /// Slice set: exact match only, plus `Char → String` (shared ABI, no coercion); the rule lives on

@@ -129,8 +129,8 @@ pool: IrTypePool = IrTypePool()
 id: I32 = -1
 
 ; 节点：类别码加通用字段；排布由类别码决定，字段比任何单个节点需要的都多。
-; `tail` 是 `kids` 里第二段序列的起始下标，-1 表示只有一段。
-; 控制流节点的体是语句序列：条件或表头在前，两段体的边界只能靠它切开。
+; `tail` 是 `kids` 里第二段序列的起始下标，-1 表示只有一段；控制流靠它切两段体。
+; `adopt` 与 `releaseOld` 只在存储点上有意义：前者是值的接收动作，后者说旧份额要不要还。
 (IrNode)
 kind: I32 = 0
 typeId: I32 = -1
@@ -139,6 +139,8 @@ intValue: I64 = 0
 floatValue: F64 = 0.0
 text: I32 = -1
 tail: I32 = -1
+adopt: I32 = 0
+releaseOld: Bool = false
 kids: Array<I32> = []
 
 ; 表达式类别码：与枚举项序一致，从 1 起。

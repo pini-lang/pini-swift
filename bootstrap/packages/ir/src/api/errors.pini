@@ -2,12 +2,13 @@
 ; 码沿用诊断码表的 E6 段，不新增条目；一条错误带文件与偏移，不中断整份模块的降载。
 ; 错误只记失败原因，不记建议修法 —— 修法归诊断渲染，那里有码可查。
 
-; 错误类别：与 E6 段的四条一一对应。
+; 错误类别：类型映射、表达式、语句、能力缺口四类，外加结构违约一条。
 [LowerErrorKind]
 lowerUnsupportedType
 lowerUnsupportedExpr
 lowerUnsupportedStmt
 lowerMissingCapability
+lowerStructural
 
 ; 降载错误：类别、文件、源内偏移与细节；细节写节点名或类型名，供定位。
 (LowerError)
@@ -27,9 +28,11 @@ lowerErrorName|func(_kind: LowerErrorKind,) -> (String,):
             return "语句不可降载"
         case lowerMissingCapability:
             return "能力缺口"
+        case lowerStructural:
+            return "结构违约"
     return "降载错误"
 
-; 诊断码：类型 E6-001、表达式 E6-002、语句 E6-003、其余 E6-004。
+; 诊断码：类型 E6-001、表达式 E6-002、语句 E6-003、其余 E6-004，结构违约 E6-011。
 lowerErrorCode|func(_kind: LowerErrorKind,) -> (String,):
     match _kind:
         case lowerUnsupportedType:
@@ -40,6 +43,8 @@ lowerErrorCode|func(_kind: LowerErrorKind,) -> (String,):
             return "E6-003"
         case lowerMissingCapability:
             return "E6-004"
+        case lowerStructural:
+            return "E6-011"
     return "E6-004"
 
 ; 造一条：字段直填；偏移为负表示与源码位置无关的池级错误。

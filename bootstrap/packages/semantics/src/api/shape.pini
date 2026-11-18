@@ -57,6 +57,24 @@ shapeKindName|func(_kind: ShapeKind,) -> (String,):
 isShapeKind|func(kind: ShapeKind, expected: ShapeKind,) -> (Bool,):
     return shapeKindName(kind) == shapeKindName(expected)
 
+; 类别编码：跨包读形态的调用方按数比，不依赖枚举项能否跨包。
+; 码序与枚举项序一致，1 到 6；新增形态追加在末尾，已有码不变。
+shapeKindCode|func(kind: ShapeKind,) -> (I32,):
+    match kind:
+        case shapeStruct:
+            return 1
+        case shapeObject:
+            return 2
+        case shapeEnum:
+            return 3
+        case shapeOptional:
+            return 4
+        case shapeResult:
+            return 5
+        case shapeUnknown:
+            return 6
+    return 6
+
 ; 名义声明：结构、对象与枚举三类，其余不算。
 isNominalDeclCode|func(_code: I32,) -> (Bool,):
     if isStructDeclCode(_code) || isObjectDeclCode(_code):

@@ -1531,10 +1531,10 @@ public final class IREmitter {
         case .matchStmt(let scrutinee, let cases, let scrutineeType):
             emitMatch(scrutinee: scrutinee, cases: cases, scrutineeType: scrutineeType)
 
-        case .fieldStore(let base, let field, let value, let fieldType, let adopt, let releaseOld):
+        case .fieldStore(let base, let slot, let value, let fieldType, let adopt, let releaseOld):
             let baseValue = emitExpr(base)
             let loweredValue = emitExpr(value)
-            let (aggregate, _, fieldIndex) = nominalField(of: base, field: field)
+            let (aggregate, fieldIndex) = fieldAggregate(of: base, slot: slot)
             let fieldPtr = builder.freshTemp()
             bodyIR += builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: baseValue.ssaName, indices: [0, fieldIndex]) + "\n"
             //  注意  顺序同 `storeVar`：新值先站住（注解给的接收动作），**再**释放字段旧值，最后写。
@@ -1914,9 +1914,9 @@ public final class IREmitter {
         if case .subscriptGet = container {
             return (emitUniqueContainerHandle(container), nil)
         }
-        if case .fieldGet(let baseExpr, let field, let fieldType) = container {
+        if case .fieldGet(let baseExpr, let slot, let fieldType) = container {
             let baseValue = emitExpr(baseExpr)
-            let (aggregate, _, fieldIndex) = nominalField(of: baseExpr, field: field)
+            let (aggregate, fieldIndex) = fieldAggregate(of: baseExpr, slot: slot)
             let fieldPtr = builder.freshTemp()
             bodyIR += builder.fmtGEP(
                 name: fieldPtr, aggregate: aggregate, base: baseValue.ssaName,
@@ -2894,9 +2894,9 @@ public final class IREmitter {
             releaseHeldTemporary(baseValue)
             return extracted
 
-        case .fieldGet(let base, let field, let type):
+        case .fieldGet(let base, let slot, let type):
             let baseValue = emitExpr(base)
-            let (aggregate, _, fieldIndex) = nominalField(of: base, field: field)
+            let (aggregate, fieldIndex) = fieldAggregate(of: base, slot: slot)
             let fieldPtr = builder.freshTemp()
             bodyIR += builder.fmtGEP(name: fieldPtr, aggregate: aggregate, base: baseValue.ssaName, indices: [0, fieldIndex]) + "\n"
             let value = builder.freshTemp()
@@ -3503,23 +3503,13 @@ public final class IREmitter {
 
     // MARK: - Nominal types (G3)
 
-    /// Field layout resolution for a nominal base expression: aggregate
-    /// spelling, the field's type, and its GEP index (objects offset past
-    /// the refcount header at field 0).
-    private func nominalField(of base: IRExpr, field: String) -> (aggregate: String, fieldType: IRType, index: Int) {
-        let baseType = irType(of: base)
-        guard case .nominal(let name, let isObject) = baseType else {
+    /// 字段定位：聚合拼写取自接收者类型，槽位由声明序换成布局槽（契约第 6 节的基准）。
+    /// 节点里存的就是声明序，这里不再按名字查声明表 —— 名字在降载期已经用掉。
+    private func fieldAggregate(of base: IRExpr, slot: Int) -> (aggregate: String, index: Int) {
+        guard let baseType = base.staticType, let aggregate = baseType.nominalAggregateSpelling else {
             fatalError("IREmitter: field access on non-nominal base (IRLowerer guarantees)")
         }
-        guard let decl = moduleTypes.first(where: { $0.name == name }),
-            let index = decl.fields.firstIndex(where: { $0.name == field })
-        else {
-            fatalError("IREmitter: unknown nominal field '\(name).\(field)' (IRLowerer guarantees)")
-        }
-        let aggregate = "%\(isObject ? "object" : "struct").\(IRName.mangle(name))"
-        /// 三族名义箱共用四格头 ⇒ 字段槽位一律问布局，发射器不再做加法。
-        /// `isObject` 仍决定聚合名拼写（`%object` / `%struct` 是两个类型名），但不影响字段偏移。
-        return (aggregate, decl.fields[index].type, layout.fieldSlot(of: index))
+        return (aggregate, layout.fieldSlot(of: slot))
     }
 
     /// 默认实例的取用点：`bk_given_get(槽位, 初始化函数, 字节数)` → 盒指针，再 `memcpy` 一份到本地。
