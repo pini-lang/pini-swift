@@ -116,6 +116,10 @@ step "自举测试入口自检"
 # 全量 623 项要先把整图装配一遍，单步五分钟；它按交付判据在本地或发版前跑，不进流水线。
 bash bootstrap/tools/test-gate.sh
 
+step "验收语料"
+# 八类共二十六例，逐例驱动宿主与自举；已知跨通道差异在 divergence-baseline.tsv，只许缩小。
+python3 bootstrap/tools/conformance.py
+
 step "support 原生测试门禁"
 # 同一批字节缓冲测试再走原生通道：解释器全绿不等于 LLVM 全绿。
 .build/debug/pini test-llvm bootstrap/packages/support
