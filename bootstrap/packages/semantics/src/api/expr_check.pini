@@ -73,7 +73,7 @@ knownName|func(world: MemberWorld, unit: CompilationUnit, locals: Array<String>,
         return true
     if hasName(items = locals, value = name):
         return true
-    if world.table.topIndex(keyOfText(name)) >= 0:
+    if lookupTopByName(index = world.symbols, name = name) >= 0:
         return true
     if world.table.importIndex(file = unit.path, key = keyOfText(name)) >= 0:
         return true
@@ -209,7 +209,7 @@ checkCallNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, by
     site.file = unit.path
     site.offset = unit.ast.exprAt(node).start
     site.unit = unitIndex
-    site.symbol = world.table.topIndex(keyOfText(name))
+    site.symbol = lookupTopByName(index = world.symbols, name = name)
     if site.symbol < 0:
         site.builtin = findBuiltinFunction(functions = world.functions, name = name)
     if site.symbol < 0 && site.builtin < 0:

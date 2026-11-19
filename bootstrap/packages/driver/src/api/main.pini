@@ -17,6 +17,7 @@ main|func() -> ():
     var 全量 = false
     var 结构化 = false
     var 降载 = false
+    var 分段 = 0
     var 转储 = false
     var 发射 = false
     if len(args) > 0 && args[0] == "check":
@@ -33,6 +34,10 @@ main|func() -> ():
         降载 = true
         if len(args) > 1:
             root = args[1]
+        if len(args) > 2 && args[2].indexOf("--stage=") == 0:
+            let 位数 = args[2].slice(8, len(args[2]))
+            if len(位数) > 0:
+                分段 = ord(位数[0]) - 48
     if len(args) > 0 && args[0] == "dump":
         转储 = true
         if len(args) > 1:
@@ -95,7 +100,14 @@ main|func() -> ():
         print("workspace-ok", report.packages, true)
         return
     if 降载:
-        let 产物 = 降载工作区(root = root)
+        var 产物 = 降载产物()
+        if 分段 > 0:
+            产物 = 降载工作区至(root = root, stage = 分段)
+            ; 分段读数只出到所指阶段：未走完的链不给全量读数，免得被当成通过。
+            if 分段 < 8:
+                return
+        else:
+            产物 = 降载工作区(root = root)
         if 产物.packages == 0:
             return
         let module = 产物.module
