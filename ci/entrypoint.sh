@@ -111,6 +111,11 @@ step "工作区测试门禁"
 # 单条占本步四成耗时。跳过规则零命中会直接红，用例改名时不会悄悄失效。
 .build/debug/pini test bootstrap --skip 自解析
 
+step "自举测试入口自检"
+# 失败夹具必须红、筛选与跳过必须绿、零命中必须非零：入口自身的判据先开火。
+# 全量 623 项要先把整图装配一遍，单步五分钟；它按交付判据在本地或发版前跑，不进流水线。
+bash bootstrap/tools/test-gate.sh
+
 step "support 原生测试门禁"
 # 同一批字节缓冲测试再走原生通道：解释器全绿不等于 LLVM 全绿。
 .build/debug/pini test-llvm bootstrap/packages/support

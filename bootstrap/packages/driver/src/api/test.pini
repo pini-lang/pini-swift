@@ -1,0 +1,103 @@
+[test|import]
+_support = "../../../support"
+_package = "../../../package"
+_module_loader = "../../../module-loader"
+_semantics = "../../../semantics"
+_ir = "../../../ir"
+_backend_kit = "../../../backend-kit"
+_backend_llvm = "../../../backend-llvm"
+_testkit = "../../../testkit"
+
+; 测试入口：装配、清单、选择、发射四段；报告由发射产物自己打印。
+; 标准输出只有一份 LLVM 文本，落盘、链接与运行归脚本；错误走陷阱的 stderr 并置非零。
+
+; 测试目标：从包计划取每个 [[test]] 的源码前缀与包根；归属按前缀算。
+testTargetsOf|func(plan: BuildPlan,) -> (Array<TestTarget>,):
+    var out: Array<TestTarget> = []
+    var i = 0
+    while i < len(plan.packages):
+        let pkg = plan.packages[i]
+        var t = 0
+        while t < len(pkg.targets):
+            if isTestTarget(pkg.targets[t]):
+                var row = TestTarget()
+                row.packageName = pkg.name
+                row.targetName = pkg.targets[t].name
+                row.rootPath = pkg.rootPath + "/" + pkg.targets[t].sourceRoot
+                row.basePath = plan.rootPath + "/" + pkg.rootPath
+                out = out.append(row)
+            t = t + 1
+        i = i + 1
+    return out
+
+; 发射计划：把选择结果折成后端要的形状；报告措辞全部来自 testkit。
+testEmitPlan|func(rootLabel: String, selection: TestSelection,) -> (EmitTestPlan,):
+    var out = EmitTestPlan()
+    out.header = testHeaderLine(rootLabel = rootLabel, targetCount = len(selection.groups))
+    var i = 0
+    while i < len(selection.groups):
+        var row = EmitTestGroup()
+        row.label = selection.groups[i].label
+        row.basePath = selection.groups[i].basePath
+        row.firstTest = selection.groups[i].firstTest
+        row.count = selection.groups[i].count
+        row.skipped = selection.groups[i].skipped
+        out.groups = out.groups.append(row)
+        i = i + 1
+    i = 0
+    while i < len(selection.refs):
+        out.selection = out.selection.append(selection.refs[i].name)
+        i = i + 1
+    out.fmtGroup = testGroupFormat()
+    out.fmtGroupSkipped = testGroupSkippedFormat()
+    out.fmtFail = testFailFormat()
+    out.fmtResult = testResultFormat()
+    return out
+
+; 清单：首行、逐目标、逐测试、汇总；只读装配结果，不发射。
+printTestList|func(rootLabel: String, selection: TestSelection,) -> ():
+    print(testHeaderLine(rootLabel = rootLabel, targetCount = len(selection.groups)))
+    var i = 0
+    while i < len(selection.groups):
+        print(testListGroupLine(group = selection.groups[i]))
+        var t = selection.groups[i].firstTest
+        while t < selection.groups[i].firstTest + selection.groups[i].count:
+            print(testListTestLine(name = selection.refs[t].name))
+            t = t + 1
+        i = i + 1
+    print(testListSummaryLine(selection = selection))
+    return
+
+; 主流程：清单错与结构错都非零退出；发射成功后整份文本写标准输出，由脚本落盘。
+runTest|func(root: String, filter: String, skips: Array<String>, listOnly: Bool,) -> ():
+    let plan = planWorkspace(root)
+    if !plan.isOK():
+        print("workspace-plan-failed", plan.errorCount())
+        assert(false, "工作区清单未通过")
+        return
+    let 产物 = 降载工作区(root = root)
+    if 产物.packages == 0:
+        assert(false, "工作区装配失败")
+        return
+    if len(产物.check.errors) > 0:
+        print("test-blocked", len(产物.check.errors))
+        assert(false, "结构校验未通过")
+        return
+    let targets = testTargetsOf(plan = plan)
+    let refs = discoverTests(module = 产物.module, targets = targets)
+    let selection = selectTests(refs = refs, targets = targets, filter = filter, skips = skips)
+    if selection.failed:
+        print("test-error", selection.errorText)
+        assert(false, selection.errorText)
+        return
+    if listOnly:
+        printTestList(rootLabel = root, selection = selection)
+        return
+    let entry = makeBackendOf(name = "llvm", outputCode = backendOutputNativeCode(), families = llvmFamilies(), entry = 3)
+    let emitted = emitTestModule(entry = entry, target = defaultTarget(), module = 产物.module, plan = testEmitPlan(rootLabel = root, selection = selection))
+    if emitted.failed:
+        print("test-emit-failed", emitted.detail, emitGapCount(result = emitted))
+        assert(false, emitted.detail)
+        return
+    print(emitted.text)
+    return
