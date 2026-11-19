@@ -19,7 +19,7 @@ file: String = ""
 offset: I32 = 0
 name: String = ""
 detail: String = ""
-code: String = "E3-003"
+code: String = "E3-001"
 
 ; 表达式检查结果：错误表与失败标记；错误按表达式池次序，天然有序。
 (ExprCheck)
@@ -119,7 +119,7 @@ checkIdentifierNode|func(world: MemberWorld, unit: CompilationUnit, bytes: Array
     let name = decodeRange(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
     if knownName(world = world, unit = unit, locals = locals, name = name):
         return out
-    return appendExprError(out = out, unit = unit, offset = expr.start, kind = .exprUndefined, name = name, detail = "文件内没有这个名字", code = "E3-003")
+    return appendExprError(out = out, unit = unit, offset = expr.start, kind = .exprUndefined, name = name, detail = "文件内没有这个名字", code = "E3-001")
 
 ; 成员缺失：接收者是顶层类型名且不是局部遮蔽时，按名义成员判一次。
 ; 类型名位不暴露字段，这与成员面的语义一致；接收者是变量时留给类型推导。
@@ -190,9 +190,9 @@ checkMemberCall|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, 
         return out
     return appendExprError(out = out, unit = unit, offset = site.offset, kind = .exprCallFailed, name = memberName, detail = callErrorName(checked.error.kind), code = callErrorCode(checked.error.kind))
 
-; 调用形状：被调是顶层函数或内建时按签名对实参标签与个数。
-; 外部符号跳过：变参尾与回调判据要实参类型，本层拿不到；未定义由标识符扫描报。
-checkCallNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, bytes: Array<U8>, shadow: Array<String>, types: ExprTypes, node: I32, out: ExprCheck,) -> (ExprCheck,):
+; 调用形状：被调是顶层函数或内建时按签名对实参标签与个数；外部符号只判 unsafe 上下文。
+; 变参尾与回调判据要实参类型，本层拿不到；未定义函数由本节点报 E3-002。
+checkCallNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, bytes: Array<U8>, shadow: Array<String>, types: ExprTypes, ranges: UnsafeRanges, node: I32, out: ExprCheck,) -> (ExprCheck,):
     let callee = calleeNode(unit = unit, node = node)
     if callee < 0:
         return out
@@ -213,10 +213,16 @@ checkCallNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, by
     if site.symbol < 0:
         site.builtin = findBuiltinFunction(functions = world.functions, name = name)
     if site.symbol < 0 && site.builtin < 0:
-        return out
+        ; 枚举项构造不是顶层符号，也不是未定义函数。
+        let owner = uniqueCaseOwner(index = world.symbols, name = name)
+        if len(owner) > 0:
+            return out
+        return appendExprError(out = out, unit = unit, offset = calleeExpr.start, kind = .exprUndefined, name = name, detail = "文件内没有这个函数", code = "E3-002")
     if site.symbol >= 0:
         let ref = symbolDecl(world = world, symbol = site.symbol)
         if ref.unit >= 0 && isForeignSymbolCode(world.units[ref.unit].ast.decls[ref.decl].kind):
+            if !inUnsafeRange(ranges = ranges, offset = calleeExpr.start):
+                return appendExprError(out = out, unit = unit, offset = calleeExpr.start, kind = .exprCallFailed, name = name, detail = "外部调用需要 unsafe 上下文", code = "E4-001")
             return out
     site.args = callArguments(unit = unit, unitIndex = unitIndex, node = node, types = types)
     let result = checkCall(world = world, site = site)
@@ -224,7 +230,63 @@ checkCallNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, by
         return out
     return appendExprError(out = out, unit = unit, offset = site.offset, kind = .exprCallFailed, name = name, detail = callErrorName(result.error.kind), code = callErrorCode(result.error.kind))
 
+; 不安全上下文区间：`|unsafe` 函数体与 `unsafe (...)` 表达式覆盖的偏移范围。
+; 判据按区间归属，闭包体不继承外层这一点在本层无对应节点，故不涉及。
+(UnsafeRanges)
+starts: Array<I32> = []
+ends: Array<I32> = []
+
+; 取区间：函数看声明体，表达式看 unsafe 节点自身。
+unsafeRangesOf|func(unit: CompilationUnit,) -> (UnsafeRanges,):
+    var out = UnsafeRanges()
+    var d = 0
+    while d < len(unit.ast.decls):
+        let decl = unit.ast.decls[d]
+        if decl.isUnsafe && decl.body >= 0:
+            out.starts = out.starts.append(decl.start)
+            out.ends = out.ends.append(decl.end)
+        d = d + 1
+    var i = 0
+    while i < unit.ast.exprCount():
+        if unit.ast.isUnsafeExpr(i):
+            let expr = unit.ast.exprAt(i)
+            out.starts = out.starts.append(expr.start)
+            out.ends = out.ends.append(expr.end)
+        i = i + 1
+    return out
+
+; 区间归属：起点含、终点含；偏移落在任一段内即不安全上下文。
+inUnsafeRange|func(ranges: UnsafeRanges, offset: I32,) -> (Bool,):
+    var i = 0
+    while i < len(ranges.starts):
+        if offset >= ranges.starts[i] && offset <= ranges.ends[i]:
+            return true
+        i = i + 1
+    return false
+
+; 被调名字节点：调用节点的首个子节点且是标识符；未定义函数归调用节点报。
+calleeNodeIds|func(unit: CompilationUnit,) -> (Array<I32>,):
+    var out: Array<I32> = []
+    var i = 0
+    while i < unit.ast.exprCount():
+        if unit.ast.isCallExpr(i):
+            let callee = calleeNode(unit = unit, node = i)
+            if callee >= 0 && unit.ast.isIdentifierExpr(callee):
+                out = out.append(callee)
+        i = i + 1
+    return out
+
+; 整数表包含：表小，线性扫够用。
+containsId|func(items: Array<I32>, value: I32,) -> (Bool,):
+    var i = 0
+    while i < len(items):
+        if items[i] == value:
+            return true
+        i = i + 1
+    return false
+
 ; 单元检查：逐个表达式节点分派；同一节点只走一条分支。
+; 被调名字由调用节点报（未定义函数是 E3-002），标识符扫描跳过它，免得同一名字报两条。
 checkUnitExprs|func(world: MemberWorld, unitIndex: I32, types: ExprTypes,) -> (ExprCheck,):
     var out = ExprCheck()
     if unitIndex < 0 || unitIndex >= len(world.units):
@@ -233,14 +295,17 @@ checkUnitExprs|func(world: MemberWorld, unitIndex: I32, types: ExprTypes,) -> (E
     let bytes = unitBytes(unit)
     let known = unitBareNames(unit = unit)
     let shadow = localOnlyNames(unit = unit)
+    let callees = calleeNodeIds(unit = unit)
+    let ranges = unsafeRangesOf(unit = unit)
     var i = 0
     while i < unit.ast.exprCount():
         if unit.ast.isIdentifierExpr(i):
-            out = checkIdentifierNode(world = world, unit = unit, bytes = bytes, locals = known, node = i, out = out)
+            if !containsId(items = callees, value = i):
+                out = checkIdentifierNode(world = world, unit = unit, bytes = bytes, locals = known, node = i, out = out)
         elif unit.ast.isMemberExpr(i):
             out = checkMemberNode(world = world, unit = unit, bytes = bytes, shadow = shadow, node = i, out = out)
         elif unit.ast.isCallExpr(i):
-            out = checkCallNode(world = world, unit = unit, unitIndex = unitIndex, bytes = bytes, shadow = shadow, types = types, node = i, out = out)
+            out = checkCallNode(world = world, unit = unit, unitIndex = unitIndex, bytes = bytes, shadow = shadow, types = types, ranges = ranges, node = i, out = out)
         i = i + 1
     out.failed = len(out.errors) > 0
     return out
