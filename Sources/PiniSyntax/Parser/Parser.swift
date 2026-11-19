@@ -3000,6 +3000,24 @@ public class Parser {
         return .simple(name: name, location: loc)
     }
 
+    /// 表达式起点：能进入主表达式或一元前缀的记号集合。
+    /// 括号里没有起点时，缺的是右括号而不是表达式，调用方据此选 E2-001 与 E2-006。
+    private func startsExpression() -> Bool {
+        switch currentToken {
+        case .identifier(_), .integerLiteral(_, _), .floatLiteral(_, _), .stringLiteral(_, _),
+            .interpolatedString(_, _), .boolLiteral(_, _),
+            .leftParen(_), .leftBracket(_), .leftBrace(_), .dot(_),
+            .minus(_), .plus(_), .logicalNot(_), .bitwiseNot(_), .bitwiseXor(_), .bitwiseAnd(_),
+            .increment(_), .decrement(_):
+            return true
+        case .keyword(.self, _), .keyword(.own, _), .keyword(.func, _), .keyword(.nil, _),
+            .keyword(.unsafe, _):
+            return true
+        default:
+            return false
+        }
+    }
+
     private func parseTupleOrParen() throws -> Expression {
         let loc = currentLocation
         advance()  // 跳过 (
@@ -3016,6 +3034,13 @@ public class Parser {
         var elements: [Expression] = []
 
         func parseElement() throws -> Expression {
+            /// 括号内没有可作表达式起点的记号时，缺的是右括号而不是表达式：
+            /// 报 E2-001（期望 `)`，实际得到该记号），与「表达式无效」的 E2-006 区分开。
+            guard startsExpression() else {
+                let actualDesc = tokenDescription(currentToken)
+                throw ParserError.unexpectedToken(
+                    expected: tokenDescription(.rightParen(loc)), actual: actualDesc, location: currentLocation)
+            }
             /// 标签元组元素同样用 `=`（构造侧同样是值的注入方向）。
             if case .identifier(let name, _) = currentToken,
                 case .assign(_) = peek(offset: 1)
