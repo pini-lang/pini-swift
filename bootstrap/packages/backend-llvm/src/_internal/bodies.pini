@@ -32,6 +32,7 @@ held: Array<String> = []
 heldTypes: Array<I32> = []
 ownedSlots: Array<String> = []
 ownedTypes: Array<I32> = []
+pendingSlot: I32 = -1
 
 ; 表达式结果：上下文与值串；值串只给操作数，类型由所在指令给。
 (ExprOut)
@@ -198,6 +199,19 @@ adoptValue|func(ctx: BodyCtx, module: IrModule, name: String, typeId: I32, adopt
     useExtern(use = out.externs, name = symbol)
     appendLine(sink = out.lines, text = "  call void @" + symbol + "(ptr " + name + ")")
     return out
+
+; 最左叶子槽：拼接与追加都把最左操作数当接收者，顺着左子树往下找到读槽为止。
+;  行不通  不认自赋值：x = x.append(y) 返回的可能就是同一个箱，覆盖时再还一次就把槽里的值还成悬垂。
+leftLeafSlot|func(module: IrModule, nodeId: I32, depth: I32,) -> (I32,):
+    if nodeId < 0 || nodeId >= irNodeCount(module.nodes) || depth > 8:
+        return -1
+    let node = irNodeAt(pool = module.nodes, id = nodeId)
+    if node.kind == 5:
+        return node.intValue as I32
+    if node.kind == 6 || node.kind == 8:
+        if len(node.kids) > 0:
+            return leftLeafSlot(module = module, nodeId = node.kids[0], depth = depth + 1)
+    return -1
 
 ; 旧值归还：覆盖槽或字段之前先还旧份额；容器元素由运行时在写入口归还，不走这条。
 releaseOldValue|func(ctx: BodyCtx, module: IrModule, at: String, typeId: I32,) -> (BodyCtx,):
@@ -582,7 +596,13 @@ emitStringFaceBinary|func(out: ExprOut, module: IrModule, node: IrNode, left: St
         let id = done.ctx.temp
         done.ctx.temp = id + 1
         let name = tempName(index = id)
-        let args = "ptr " + lhsPtr.text + ", ptr " + rhsPtr.text + ", i32 0"
+        var take = 0
+        if done.ctx.pendingSlot >= 0 && len(node.kids) > 0:
+            let leaf = irNodeAt(pool = module.nodes, id = node.kids[0])
+            if leaf.kind == 5 && leaf.intValue as I32 == done.ctx.pendingSlot:
+                take = 1
+                done.ctx.pendingSlot = -1
+        let args = "ptr " + lhsPtr.text + ", ptr " + rhsPtr.text + ", i32 " + countText(take)
         appendLine(sink = done.ctx.lines, text = "  " + name + " = call ptr @bk_str_concat(" + args + ")")
         done.text = name
         return done
@@ -1909,12 +1929,18 @@ emitStmtCore|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (BodyCtx,):
         let slot = node.intValue as I32
         let typeName = llvmTypeName(pool = module.types, typeId = node.typeId)
         let at = slotNameOf(ctx = out, slot = slot)
+        ; 自赋值：右侧最左叶子就是本槽。拼接据此把旧份额直接取走，追加则原样返回同一个箱，
+        ; 两条路都不该再还旧值 —— 再还一次就是把槽里的值还成悬垂。
+        let selfAppend = leftLeafSlot(module = module, nodeId = node.kids[0], depth = 0) == slot
+        if selfAppend:
+            out.pendingSlot = slot
         let one = emitExpr(ctx = out, module = module, nodeId = node.kids[0])
         out = one.ctx
+        out.pendingSlot = -1
         let shaped = storeValue(ctx = out, module = module, text = one.text, fromType = irNodeAt(pool = module.nodes, id = node.kids[0]).typeId, toType = node.typeId)
         out = shaped.ctx
         out = adoptValue(ctx = out, module = module, name = shaped.text, typeId = node.typeId, adopt = node.adopt)
-        if node.releaseOld:
+        if node.releaseOld && !selfAppend:
             out = releaseOldValue(ctx = out, module = module, at = at, typeId = node.typeId)
         appendLine(sink = out.lines, text = "  store " + typeName + " " + shaped.text + ", ptr " + at)
         return out
