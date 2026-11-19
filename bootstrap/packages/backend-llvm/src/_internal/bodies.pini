@@ -213,6 +213,19 @@ leftLeafSlot|func(module: IrModule, nodeId: I32, depth: I32,) -> (I32,):
             return leftLeafSlot(module = module, nodeId = node.kids[0], depth = depth + 1)
     return -1
 
+; 最左叶子的字段号：字段写右侧若从同一个字段起步，追加返回的箱可能复用同一块存储。
+;  行不通  照常还旧值：新值脚下的存储就是旧值那块，还掉它等于把刚写进去的值还成悬垂。
+leftLeafFieldOp|func(module: IrModule, nodeId: I32, depth: I32,) -> (I32,):
+    if nodeId < 0 || nodeId >= irNodeCount(module.nodes) || depth > 8:
+        return -1
+    let node = irNodeAt(pool = module.nodes, id = nodeId)
+    if node.kind == 28:
+        return node.op
+    if node.kind == 6 || node.kind == 8 || node.kind == 21:
+        if len(node.kids) > 0:
+            return leftLeafFieldOp(module = module, nodeId = node.kids[0], depth = depth + 1)
+    return -1
+
 ; 旧值归还：覆盖槽或字段之前先还旧份额；容器元素由运行时在写入口归还，不走这条。
 releaseOldValue|func(ctx: BodyCtx, module: IrModule, at: String, typeId: I32,) -> (BodyCtx,):
     var out = ctx
@@ -1229,7 +1242,8 @@ emitFieldStore|func(ctx: BodyCtx, module: IrModule, node: IrNode,) -> (BodyCtx,)
     let shaped = storeValue(ctx = out, module = module, text = value.text, fromType = irNodeAt(pool = module.nodes, id = node.kids[1]).typeId, toType = node.typeId)
     out = shaped.ctx
     out = adoptValue(ctx = out, module = module, name = shaped.text, typeId = node.typeId, adopt = node.adopt)
-    if node.releaseOld:
+    ; 自追加：右侧从同一个字段起步，旧份额已经随值进了追加，这里不能再还。
+    if node.releaseOld && leftLeafFieldOp(module = module, nodeId = node.kids[1], depth = 0) != node.op:
         out = releaseOldValue(ctx = out, module = module, at = at.text, typeId = node.typeId)
     appendLine(sink = out.lines, text = "  store " + typeName + " " + shaped.text + ", ptr " + at.text)
     return out
@@ -2122,8 +2136,8 @@ appendReleaseCall|func(lines: Array<String>, module: IrModule, name: String, typ
         return out.append("  call i32 @bk_nominal_release(ptr " + name + ")")
     if kind == 1:
         return out.append("  call void @bk_str_release(ptr " + name + ")")
-    if kind == 3 || kind == 4 || kind == 5 || kind == 8:
-        return out.append("  call void @bk_handle_release(ptr " + name + ")")
+    ; 容器字段暂不还：字段与别处共享同一句柄时，按箱还一次会撞上 swift 的过度释放断点。
+    ; 这一格是已知泄漏，等字段级共享判定落定再补；宁漏不悬垂。
     return out
 
 ; 结构体胶水：逐字段归还后还箱本身。

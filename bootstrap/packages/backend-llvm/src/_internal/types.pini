@@ -127,6 +127,7 @@ elementTag|func(pool: IrTypePool, typeId: I32,) -> (I32,):
         return 1
     if tag == 7:
         return 2
+    ; 串元素按裸指针放：容器覆盖时不归还，别处仍在读的串不会被提前释放。
     if tag == 8:
         return 6
     if tag == 9:
