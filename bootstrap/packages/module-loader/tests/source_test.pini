@@ -1,5 +1,5 @@
 ; 测试助手：把 I32 字面量列表转成字节数组，便于手写非法序列。
-bytesOf|func(_values: Array<I32>,) -> (Array<U8>,):
+sourceBytesOf|func(_values: Array<I32>,) -> (Array<U8>,):
     var out: Array<U8> = []
     var i = 0
     while i < len(_values):
@@ -9,15 +9,15 @@ bytesOf|func(_values: Array<I32>,) -> (Array<U8>,):
 
 ; 源文本检查：BOM、NUL、非法 UTF-8 各有专用类别，偏移指向首个问题字节。
 类别专用|test() -> ():
-    let bom = checkSourceBytes(bytesOf([239, 187, 191, 65]))
+    let bom = checkSourceBytes(sourceBytesOf([239, 187, 191, 65]))
     assert(!bom.passed, "BOM 应被拒绝")
     assert(isLoadErrorKind(kind = bom.kind, expected = .errorSourceBom), "BOM 应报专用类别")
     assert(bom.offset == 0, "BOM 偏移应在起点")
-    let nul = checkSourceBytes(bytesOf([65, 0, 66]))
+    let nul = checkSourceBytes(sourceBytesOf([65, 0, 66]))
     assert(!nul.passed, "NUL 应被拒绝")
     assert(isLoadErrorKind(kind = nul.kind, expected = .errorSourceNul), "NUL 应报专用类别")
     assert(nul.offset == 1, "NUL 偏移应指向该字节")
-    let broken = checkSourceBytes(bytesOf([65, 255, 66]))
+    let broken = checkSourceBytes(sourceBytesOf([65, 255, 66]))
     assert(!broken.passed, "非法 UTF-8 应被拒绝")
     assert(isLoadErrorKind(kind = broken.kind, expected = .errorSourceNotUtf8), "非法 UTF-8 应报专用类别")
     assert(broken.offset == 1, "偏移应指向坏字节")
@@ -25,17 +25,17 @@ bytesOf|func(_values: Array<I32>,) -> (Array<U8>,):
 
 ; 干净字节通过：ASCII 与多字节序列都不触发任何一类。
 合法字节通过|test() -> ():
-    let ascii = checkSourceBytes(bytesOf([109, 97, 105, 110]))
+    let ascii = checkSourceBytes(sourceBytesOf([109, 97, 105, 110]))
     assert(ascii.passed, "ASCII 应通过")
     let chinese = checkSourceBytes(tempUtf8Bytes("标识符"))
     assert(chinese.passed, "合法多字节应通过")
-    let empty = checkSourceBytes(bytesOf([]))
+    let empty = checkSourceBytes(sourceBytesOf([]))
     assert(empty.passed, "空源应通过")
     return
 
 ; 中途出现的 EF BB BF 不是 BOM：只认起点。
 中途序列不算BOM|test() -> ():
-    let inside = checkSourceBytes(bytesOf([65, 239, 187, 191]))
+    let inside = checkSourceBytes(sourceBytesOf([65, 239, 187, 191]))
     assert(inside.passed, "非起始的 BOM 序列不拒绝")
     return
 
