@@ -1,10 +1,2 @@
 # 跨通道差异基线：用例 slug、通道、实测值。只许缩小；某条转为一致时门禁会红，提示删掉它。
 # 值是制表符分隔的「码 行 列」或「exit=码|末行摘要」；新差异必须先把原因写进计划件再登记。
-cinterop-unsafe-required	bootstrap	exit=0|无诊断
-diag-syntax	host	E2-006	4	5
-illegal-arity	host	E4-005	6	14
-illegal-type-mismatch	host	E4-001	3	5
-illegal-undefined-name	bootstrap	E3-003	3	12
-legal-match	bootstrap	exit=1|链接失败
-unicode-nfc	bootstrap	exit=1|清单或发射失败
-unicode-zero-width	bootstrap	E2-005	1	1
