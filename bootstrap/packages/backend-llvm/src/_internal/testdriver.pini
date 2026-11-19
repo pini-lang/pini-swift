@@ -1,0 +1,185 @@
+[testdriver|import]
+_semantics = "../../../semantics"
+_ir = "../../../ir"
+_backend_kit = "../../../backend-kit"
+
+; 测试跑器：合成一条驱动器加一个进程入口，报告由运行中的程序自己打印。
+; 先跑完再打印：测试体的输出不会插进报告中间；失败只置位并返回，后续测试照跑。
+; 失败位与消息位是两个模块级插槽，每条测试前归零，避免上一条污染下一条。
+
+; 计划校验：选中名必须在模块里、必须是测试、形参能注零值、组与清单首尾相接。
+; 空串表示通过；任何一条不成立都整份拒发，不发半份跑器。
+testPlanError|func(module: IrModule, plan: EmitTestPlan,) -> (String,):
+    var i = 0
+    while i < len(plan.selection):
+        let at = findIrFunctionIndex(module = module, name = plan.selection[i])
+        if at < 0:
+            return "测试函数不在模块里：" + plan.selection[i]
+        let fn = module.functions[at]
+        if !fn.isTest:
+            return "清单里的函数不是测试：" + plan.selection[i]
+        var p = 0
+        while p < len(fn.params):
+            let ty = llvmTypeName(pool = module.types, typeId = fn.params[p].typeId)
+            if !zeroableType(typeName = ty):
+                return "测试形参类型未接：" + plan.selection[i] + " (" + ty + ")"
+            p = p + 1
+        i = i + 1
+    var expect = 0
+    var g = 0
+    while g < len(plan.groups):
+        if plan.groups[g].firstTest != expect:
+            return "测试组起点不连续：" + plan.groups[g].label
+        if plan.groups[g].count < 0 || plan.groups[g].firstTest + plan.groups[g].count > len(plan.selection):
+            return "测试组越出清单：" + plan.groups[g].label
+        expect = expect + plan.groups[g].count
+        g = g + 1
+    if expect != len(plan.selection):
+        return "测试组与选中清单条数不符"
+    return ""
+
+; 可注零值的形参类型：测试形参只收标量与指针，聚合要另立规则。
+zeroableType|func(typeName: String,) -> (Bool,):
+    if typeName == "i1" || typeName == "i8" || typeName == "i32" || typeName == "i64":
+        return true
+    if typeName == "double" || typeName == "ptr":
+        return true
+    return false
+
+; 零值文本：按 LLVM 拼写给；调用前已由计划校验保证类型在册。
+zeroText|func(typeName: String,) -> (String,):
+    if typeName == "double":
+        return "0.0"
+    if typeName == "ptr":
+        return "null"
+    if typeName == "i1":
+        return "false"
+    return "0"
+
+; 实参表：按形参类型逐个注零，与宿主测试通道的注零规则同形。
+testArgs|func(module: IrModule, fn: IrFunction,) -> (String,):
+    var out = ""
+    var i = 0
+    while i < len(fn.params):
+        if i > 0:
+            out = out + ", "
+        let ty = llvmTypeName(pool = module.types, typeId = fn.params[i].typeId)
+        out = out + ty + " " + zeroText(typeName = ty)
+        i = i + 1
+    return out
+
+; 取址：登记字符串并取载荷首址；首行、组标签、包根与测试名都在入口块里取，支配其后每个块。
+driverText|func(sink: LineSink, bundle: EmitPass, value: String, temp: I32,) -> (String,):
+    let index = internString(pool = bundle.strings, value = value)
+    return stringValue(lines = sink, pool = bundle.strings, index = index, temp = temp)
+
+; 跑器：写函数体，返回要追加的模块级常量行（报告格式）。
+emitTestDriver|func(sink: LineSink, module: IrModule, plan: EmitTestPlan, bundle: EmitPass,) -> (Array<String>,):
+    useExtern(use = bundle.externs, name = "printf")
+    useExtern(use = bundle.externs, name = "bk_set_program_base")
+    appendLine(sink = sink, text = "define i32 @__pini_test_main() {")
+    appendLine(sink = sink, text = "entry:")
+    appendLine(sink = sink, text = "  %d.fails = alloca i32")
+    appendLine(sink = sink, text = "  store i32 0, ptr %d.fails")
+    var g = 0
+    while g < len(plan.groups):
+        appendLine(sink = sink, text = "  %d.g" + countText(g) + " = alloca i32")
+        appendLine(sink = sink, text = "  store i32 0, ptr %d.g" + countText(g))
+        g = g + 1
+    var i = 0
+    while i < len(plan.selection):
+        appendLine(sink = sink, text = "  %d.o" + countText(i) + " = alloca i32")
+        appendLine(sink = sink, text = "  store i32 0, ptr %d.o" + countText(i))
+        appendLine(sink = sink, text = "  %d.m" + countText(i) + " = alloca ptr")
+        i = i + 1
+    var temp = 0
+    var headerPtr = ""
+    if len(plan.header) > 0:
+        headerPtr = driverText(sink = sink, bundle = bundle, value = plan.header, temp = temp)
+        temp = temp + 1
+    var labelPtrs: Array<String> = []
+    var basePtrs: Array<String> = []
+    g = 0
+    while g < len(plan.groups):
+        labelPtrs = labelPtrs.append(driverText(sink = sink, bundle = bundle, value = plan.groups[g].label, temp = temp))
+        temp = temp + 1
+        var basePtr = "null"
+        if len(plan.groups[g].basePath) > 0:
+            basePtr = driverText(sink = sink, bundle = bundle, value = plan.groups[g].basePath, temp = temp)
+            temp = temp + 1
+        basePtrs = basePtrs.append(basePtr)
+        g = g + 1
+    var namePtrs: Array<String> = []
+    i = 0
+    while i < len(plan.selection):
+        namePtrs = namePtrs.append(driverText(sink = sink, bundle = bundle, value = plan.selection[i], temp = temp))
+        temp = temp + 1
+        i = i + 1
+    g = 0
+    while g < len(plan.groups):
+        let group = plan.groups[g]
+        if group.count > 0:
+            if basePtrs[g] != "null":
+                appendLine(sink = sink, text = "  call void @bk_set_program_base(ptr " + basePtrs[g] + ")")
+            var j = group.firstTest
+            while j < group.firstTest + group.count:
+                let fn = module.functions[findIrFunctionIndex(module = module, name = plan.selection[j])]
+                appendLine(sink = sink, text = "  store i32 0, ptr @__pini_test_failed")
+                appendLine(sink = sink, text = "  store ptr null, ptr @__pini_test_msg")
+                appendLine(sink = sink, text = "  call void @" + mangleName(name = plan.selection[j]) + "(" + testArgs(module = module, fn = fn) + ")")
+                appendLine(sink = sink, text = "  %d.f" + countText(j) + " = load i32, ptr @__pini_test_failed")
+                appendLine(sink = sink, text = "  %d.b" + countText(j) + " = icmp ne i32 %d.f" + countText(j) + ", 0")
+                appendLine(sink = sink, text = "  %d.z" + countText(j) + " = zext i1 %d.b" + countText(j) + " to i32")
+                appendLine(sink = sink, text = "  %d.a" + countText(j) + " = load i32, ptr %d.fails")
+                appendLine(sink = sink, text = "  %d.n" + countText(j) + " = add i32 %d.a" + countText(j) + ", %d.z" + countText(j))
+                appendLine(sink = sink, text = "  store i32 %d.n" + countText(j) + ", ptr %d.fails")
+                appendLine(sink = sink, text = "  %d.ga" + countText(j) + " = load i32, ptr %d.g" + countText(g))
+                appendLine(sink = sink, text = "  %d.gn" + countText(j) + " = add i32 %d.ga" + countText(j) + ", %d.z" + countText(j))
+                appendLine(sink = sink, text = "  store i32 %d.gn" + countText(j) + ", ptr %d.g" + countText(g))
+                appendLine(sink = sink, text = "  store i32 %d.z" + countText(j) + ", ptr %d.o" + countText(j))
+                appendLine(sink = sink, text = "  %d.mv" + countText(j) + " = load ptr, ptr @__pini_test_msg")
+                appendLine(sink = sink, text = "  store ptr %d.mv" + countText(j) + ", ptr %d.m" + countText(j))
+                j = j + 1
+        g = g + 1
+    if len(headerPtr) > 0:
+        appendLine(sink = sink, text = "  call i32 (ptr, ...) @printf(ptr @fmt_string, ptr " + headerPtr + ")")
+        appendLine(sink = sink, text = "  call i32 (ptr, ...) @printf(ptr @fmt_newline)")
+    g = 0
+    while g < len(plan.groups):
+        let group = plan.groups[g]
+        if group.skipped:
+            appendLine(sink = sink, text = "  call i32 (ptr, ...) @printf(ptr @fmt_test_skipped, ptr " + labelPtrs[g] + ", i32 0)")
+        elif group.count > 0:
+            appendLine(sink = sink, text = "  %d.gp" + countText(g) + " = load i32, ptr %d.g" + countText(g))
+            appendLine(sink = sink, text = "  %d.gc" + countText(g) + " = sub i32 " + countText(group.count) + ", %d.gp" + countText(g))
+            appendLine(sink = sink, text = "  call i32 (ptr, ...) @printf(ptr @fmt_test_group, ptr " + labelPtrs[g] + ", i32 " + countText(group.count) + ", i32 %d.gc" + countText(g) + ")")
+            var j = group.firstTest
+            while j < group.firstTest + group.count:
+                appendLine(sink = sink, text = "  %d.ob" + countText(j) + " = load i32, ptr %d.o" + countText(j))
+                appendLine(sink = sink, text = "  %d.od" + countText(j) + " = icmp ne i32 %d.ob" + countText(j) + ", 0")
+                appendLine(sink = sink, text = "  br i1 %d.od" + countText(j) + ", label %d.show." + countText(j) + ", label %d.hide." + countText(j))
+                appendLine(sink = sink, text = "d.show." + countText(j) + ":")
+                appendLine(sink = sink, text = "  %d.om" + countText(j) + " = load ptr, ptr %d.m" + countText(j))
+                appendLine(sink = sink, text = "  call i32 (ptr, ...) @printf(ptr @fmt_test_fail, ptr " + namePtrs[j] + ", ptr %d.om" + countText(j) + ")")
+                appendLine(sink = sink, text = "  br label %d.hide." + countText(j))
+                appendLine(sink = sink, text = "d.hide." + countText(j) + ":")
+                j = j + 1
+        g = g + 1
+    appendLine(sink = sink, text = "  %d.fl = load i32, ptr %d.fails")
+    appendLine(sink = sink, text = "  %d.ps = sub i32 " + countText(len(plan.selection)) + ", %d.fl")
+    appendLine(sink = sink, text = "  call i32 (ptr, ...) @printf(ptr @fmt_test_result, i32 %d.ps, i32 %d.fl)")
+    appendLine(sink = sink, text = "  %d.bad = icmp ne i32 %d.fl, 0")
+    appendLine(sink = sink, text = "  %d.rc = zext i1 %d.bad to i32")
+    appendLine(sink = sink, text = "  ret i32 %d.rc")
+    appendLine(sink = sink, text = "}")
+    appendLine(sink = sink, text = "define i32 @main() {")
+    appendLine(sink = sink, text = "entry:")
+    appendLine(sink = sink, text = "  %d.main = call i32 @__pini_test_main()")
+    appendLine(sink = sink, text = "  ret i32 %d.main")
+    appendLine(sink = sink, text = "}")
+    var extra: Array<String> = []
+    extra = extra.append(cStringGlobal(name = "@fmt_test_group", value = plan.fmtGroup))
+    extra = extra.append(cStringGlobal(name = "@fmt_test_skipped", value = plan.fmtGroupSkipped))
+    extra = extra.append(cStringGlobal(name = "@fmt_test_fail", value = plan.fmtFail))
+    extra = extra.append(cStringGlobal(name = "@fmt_test_result", value = plan.fmtResult))
+    return extra

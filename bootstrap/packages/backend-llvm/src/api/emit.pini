@@ -3,9 +3,27 @@ _semantics = "../../../semantics"
 _ir = "../../../ir"
 _backend_kit = "../../../backend-kit"
 
-; 发射入口：先类型声明，再逐函数；有体出定义，无体跳过，不编外部签名。
-; 有缺口即整份不出：失败只回缺口清单，不落半份文本。
+; 发射入口：先类型声明，再逐函数；有体出定义，无体跳过，不编外部签名；有缺口整份不出。
 ; 收尾按函数补：未由返回收口的块补 void 或 main 的零返回，保证每块有终结指令。
+; 测试模式另开一条入口：跳过非测试 main、追加跑器；普通入口的文本路径不因它改动。
+
+; 计划里的测试组：标签、包根绝对路径与它在选中清单里的那一段。
+(EmitTestGroup)
+label: String = ""
+basePath: String = ""
+firstTest: I32 = 0
+count: I32 = 0
+skipped: Bool = false
+
+; 测试发射计划：首行、选中清单与报告格式；措辞由调用方给，本包不自己写文案。
+(EmitTestPlan)
+header: String = ""
+selection: Array<String> = []
+groups: Array<EmitTestGroup> = []
+fmtGroup: String = ""
+fmtGroupSkipped: String = ""
+fmtFail: String = ""
+fmtResult: String = ""
 
 ; 能力族：本后端声明为已接的族码，驱动按这份登记，测试也照抄，三处不再各写一串。
 ; 族码与 backend-kit 同序；未登记的族在缺口里写作「族未声明」，与「已声明但没接」分开。
@@ -77,10 +95,96 @@ mergeGap|func(gaps: Array<String>, gap: String,) -> (Array<String>,):
         i = i + 1
     return gaps.append(gap)
 
+; 重名定义：整图发射只留首个同名定义，第二份会被静默跳过，调用点便接到错的体。
+; 有体重名即拒发并指出后一处；测试助手跨包重名靠这条在发射期显形。
+duplicateDefinition|func(module: IrModule,) -> (String,):
+    var seen: Array<String> = []
+    var i = 0
+    while i < len(module.functions):
+        let fn = module.functions[i]
+        if needsBody(fn = fn):
+            if alreadyEmitted(names = seen, name = fn.name):
+                return fn.name + "（" + fn.sourceFile + "）"
+            seen = seen.append(fn.name)
+        i = i + 1
+    return ""
+
+; 发射走一遍：字符串池、外部符号、缺口与已发函数名随函数表累积，两处入口共用这一份状态。
+{EmitPass}
+strings: StringPool = StringPool()
+externs: ExternUse = ExternUse()
+gaps: Array<String> = []
+emitted: Array<String> = []
+
+; 函数段：逐函数出定义；测试模式跳过非测试 main，并给测试函数打开早退面。
+emitFunctions|func(sink: LineSink, module: IrModule, entry: BackendEntry, target: TargetProfile, testMode: Bool, bundle: EmitPass,) -> ():
+    let families = irContractFamilies()
+    let builtins = builtinTable()
+    var i = 0
+    while i < len(module.functions):
+        let fn = module.functions[i]
+        let skip = testMode && fn.name == "main" && !fn.isTest
+        if needsBody(fn = fn) && !skip && !alreadyEmitted(names = bundle.emitted, name = fn.name):
+            bundle.emitted = bundle.emitted.append(fn.name)
+            appendLine(sink = sink, text = llvmSignature(pool = module.types, fn = fn, isDefine = true) + " {")
+            appendLine(sink = sink, text = "entry:")
+            appendLine(sink = sink, text = "  " + boxName() + " = alloca [8 x i8], align 8")
+            var body = LineSink()
+            var ctx = BodyCtx()
+            ctx.lines = body
+            ctx.fnIndex = i
+            ctx.families = families
+            ctx.declared = entry.families
+            ctx.strings = bundle.strings
+            ctx.externs = bundle.externs
+            ctx.builtins = builtins
+            ctx.pointerBytes = target.pointerWidth
+            ctx.testExit = testMode && fn.isTest
+            ctx = seedParams(ctx = ctx, module = module, fn = fn)
+            ctx = emitStmts(ctx = ctx, module = module, ids = fn.body)
+            ctx = closeFunction(ctx = ctx, module = module)
+            copyLines(sink = sink, from = ctx.head)
+            copyLines(sink = sink, from = body.lines)
+            var k = 0
+            while k < len(ctx.gaps):
+                bundle.gaps = mergeGap(gaps = bundle.gaps, gap = ctx.gaps[k])
+                k = k + 1
+            appendLine(sink = sink, text = "}")
+        i = i + 1
+    return
+
+; 外部声明段：按首次调用序逐条出 declare。
+emitExterns|func(sink: LineSink, bundle: EmitPass,) -> ():
+    var i = 0
+    while i < externUseCount(use = bundle.externs):
+        appendLine(sink = sink, text = externSignature(name = bundle.externs.names[i]))
+        i = i + 1
+    return
+
+; 常量段：固定格式、测试报告格式与字符串池三者同序追加。
+emitConstants|func(sink: LineSink, extra: Array<String>, bundle: EmitPass,) -> ():
+    let formats = formatConstants()
+    var i = 0
+    while i < len(formats):
+        appendLine(sink = sink, text = formats[i])
+        i = i + 1
+    i = 0
+    while i < len(extra):
+        appendLine(sink = sink, text = extra[i])
+        i = i + 1
+    i = 0
+    while i < len(bundle.strings.values):
+        appendLine(sink = sink, text = stringGlobalLine(pool = bundle.strings, index = i))
+        i = i + 1
+    return
+
 ; 发射：档次不是本机码即拒；缺口按类别去重，决定是否出文本。
 emitModule|func(entry: BackendEntry, target: TargetProfile, module: IrModule,) -> (EmitResult,):
     if backendOutputCode(entry.output) != backendOutputNativeCode():
         return failedEmit(detail = "LLVM 后端不接受档次 " + backendOutputName(entry.output))
+    let duplicate = duplicateDefinition(module = module)
+    if len(duplicate) > 0:
+        return failedEmit(detail = "同名函数重复定义：" + duplicate)
     var sink = LineSink()
     let head = llvmHeader(entry = entry, target = target)
     var i = 0
@@ -92,68 +196,75 @@ emitModule|func(entry: BackendEntry, target: TargetProfile, module: IrModule,) -
     while i < len(类型行):
         appendLine(sink = sink, text = 类型行[i])
         i = i + 1
-    var gaps: Array<String> = []
-    let families = irContractFamilies()
-    let builtins = builtinTable()
-    var strings = StringPool()
-    var externs = ExternUse()
-    var emitted: Array<String> = []
+    var bundle = EmitPass()
     let 胶水 = llvmReleaseGlues(module = module)
     if len(胶水) > 0:
         ; 胶水体自己要用三条归还入口，登记一次，免得只在胶水里出现的符号漏声明。
-        useExtern(use = externs, name = "bk_str_release")
-        useExtern(use = externs, name = "bk_handle_release")
-        useExtern(use = externs, name = "bk_nominal_release")
+        useExtern(use = bundle.externs, name = "bk_str_release")
+        useExtern(use = bundle.externs, name = "bk_handle_release")
+        useExtern(use = bundle.externs, name = "bk_nominal_release")
     i = 0
     while i < len(胶水):
         appendLine(sink = sink, text = 胶水[i])
         i = i + 1
-    i = 0
-    while i < len(module.functions):
-        let fn = module.functions[i]
-        if needsBody(fn = fn) && !alreadyEmitted(names = emitted, name = fn.name):
-            emitted = emitted.append(fn.name)
-            appendLine(sink = sink, text = llvmSignature(pool = module.types, fn = fn, isDefine = true) + " {")
-            appendLine(sink = sink, text = "entry:")
-            appendLine(sink = sink, text = "  " + boxName() + " = alloca [8 x i8], align 8")
-            var body = LineSink()
-            var ctx = BodyCtx()
-            ctx.lines = body
-            ctx.fnIndex = i
-            ctx.families = families
-            ctx.declared = entry.families
-            ctx.strings = strings
-            ctx.externs = externs
-            ctx.builtins = builtins
-            ctx.pointerBytes = target.pointerWidth
-            ctx = seedParams(ctx = ctx, module = module, fn = fn)
-            ctx = emitStmts(ctx = ctx, module = module, ids = fn.body)
-            ctx = closeFunction(ctx = ctx, module = module)
-            copyLines(sink = sink, from = ctx.head)
-            copyLines(sink = sink, from = body.lines)
-            var k = 0
-            while k < len(ctx.gaps):
-                gaps = mergeGap(gaps = gaps, gap = ctx.gaps[k])
-                k = k + 1
-            appendLine(sink = sink, text = "}")
-        i = i + 1
-    i = 0
-    while i < externUseCount(use = externs):
-        appendLine(sink = sink, text = externSignature(name = externs.names[i]))
-        i = i + 1
-    let formats = formatConstants()
-    i = 0
-    while i < len(formats):
-        appendLine(sink = sink, text = formats[i])
-        i = i + 1
-    i = 0
-    while i < len(strings.values):
-        appendLine(sink = sink, text = stringGlobalLine(pool = strings, index = i))
-        i = i + 1
+    emitFunctions(sink = sink, module = module, entry = entry, target = target, testMode = false, bundle = bundle)
+    emitExterns(sink = sink, bundle = bundle)
+    emitConstants(sink = sink, extra = [], bundle = bundle)
     var result = EmitResult()
     result.detail = "llvm"
-    result.gaps = gaps
-    if len(gaps) > 0:
+    result.gaps = bundle.gaps
+    if len(bundle.gaps) > 0:
+        result.failed = true
+        return result
+    result.text = sinkText(sink = sink)
+    result.lines = sinkCount(sink = sink)
+    return result
+
+; 测试发射：与普通发射同一条骨架，差别只在跳过非测试 main、追加跑器与报告常量。
+emitTestModule|func(entry: BackendEntry, target: TargetProfile, module: IrModule, plan: EmitTestPlan,) -> (EmitResult,):
+    if backendOutputCode(entry.output) != backendOutputNativeCode():
+        return failedEmit(detail = "LLVM 后端不接受档次 " + backendOutputName(entry.output))
+    let duplicate = duplicateDefinition(module = module)
+    if len(duplicate) > 0:
+        return failedEmit(detail = "同名函数重复定义：" + duplicate)
+    if len(plan.selection) == 0:
+        return failedEmit(detail = "测试清单为空")
+    if len(plan.fmtGroup) == 0 || len(plan.fmtFail) == 0 || len(plan.fmtResult) == 0:
+        return failedEmit(detail = "测试报告格式缺失")
+    let planError = testPlanError(module = module, plan = plan)
+    if len(planError) > 0:
+        return failedEmit(detail = planError)
+    var sink = LineSink()
+    let head = llvmHeader(entry = entry, target = target)
+    var i = 0
+    while i < len(head):
+        appendLine(sink = sink, text = head[i])
+        i = i + 1
+    let 类型行 = llvmTypeDecls(module = module)
+    i = 0
+    while i < len(类型行):
+        appendLine(sink = sink, text = 类型行[i])
+        i = i + 1
+    var bundle = EmitPass()
+    let 胶水 = llvmReleaseGlues(module = module)
+    if len(胶水) > 0:
+        useExtern(use = bundle.externs, name = "bk_str_release")
+        useExtern(use = bundle.externs, name = "bk_handle_release")
+        useExtern(use = bundle.externs, name = "bk_nominal_release")
+    i = 0
+    while i < len(胶水):
+        appendLine(sink = sink, text = 胶水[i])
+        i = i + 1
+    emitFunctions(sink = sink, module = module, entry = entry, target = target, testMode = true, bundle = bundle)
+    appendLine(sink = sink, text = "@__pini_test_failed = internal global i32 0")
+    appendLine(sink = sink, text = "@__pini_test_msg = internal global ptr null")
+    let extra = emitTestDriver(sink = sink, module = module, plan = plan, bundle = bundle)
+    emitExterns(sink = sink, bundle = bundle)
+    emitConstants(sink = sink, extra = extra, bundle = bundle)
+    var result = EmitResult()
+    result.detail = "llvm"
+    result.gaps = bundle.gaps
+    if len(bundle.gaps) > 0:
         result.failed = true
         return result
     result.text = sinkText(sink = sink)
