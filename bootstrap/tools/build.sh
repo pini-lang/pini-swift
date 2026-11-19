@@ -22,6 +22,18 @@ fi
 started="$(date +%s)"
 echo "构建开始 $(date '+%Y-%m-%d %H:%M:%S')，临时目录 $tmp"
 
+# 运行时段走 release：产物每次值操作都跨 C ABI 进来，debug 构建实测慢五倍且产物相同。
+. "$(dirname "${BASH_SOURCE[0]}")/runtime-lib.sh"
+runtime_log="$tmp/runtime-build.log"
+if ! swift build -c release --product PiniRuntime --disable-sandbox > "$runtime_log" 2>&1; then
+    echo " 行不通  [构建] 运行时段构建失败；日志 $runtime_log" >&2
+    tail -20 "$runtime_log" >&2
+    exit 1
+fi
+runtime="$(pini_runtime_lib "$root")" || exit 1
+export PINI_RUNTIME_LIB="$runtime"
+echo "运行时段 $runtime"
+
 TMPDIR="$tmp" "$pini" build "$root/bootstrap"
 code=$?
 if [ "$code" -ne 0 ]; then

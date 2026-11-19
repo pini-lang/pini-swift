@@ -6,6 +6,7 @@ set -uo pipefail
 
 root="$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")"
 cd "$root" || exit 1
+. "$root/bootstrap/tools/runtime-lib.sh"
 
 gen1="${PINI_BOOTSTRAP_BIN:-$root/bootstrap/.build/debug/bin/pini-bootstrap}"
 if [ ! -x "$gen1" ]; then
@@ -25,11 +26,9 @@ if ! mkdir -p "$work"; then
     exit 1
 fi
 
-runtime_dir="$root/.build/debug"
-link_args=(-o "$work/gen2" "$work/gen2.ll")
-if [ -f "$runtime_dir/libPiniRuntime.dylib" ] || [ -f "$runtime_dir/libPiniRuntime.so" ]; then
-    link_args=(-L"$runtime_dir" -lPiniRuntime -Wl,-rpath,"$runtime_dir" "${link_args[@]}")
-fi
+runtime="$(pini_runtime_lib "$root")" || exit 1
+runtime_dir="$(dirname "$runtime")"
+link_args=(-o "$work/gen2" "$work/gen2.ll" -L"$runtime_dir" -lPiniRuntime -Wl,-rpath,"$runtime_dir")
 
 # 首代发射整图；先两行读数，其后才是 LLVM 文本。
 if ! "$gen1" emit "$root/bootstrap" > "$work/gen2.txt"; then

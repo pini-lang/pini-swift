@@ -5,6 +5,10 @@ set -uo pipefail
 
 root="$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")"
 cd "$root" || exit 1
+. "$root/bootstrap/tools/runtime-lib.sh"
+
+runtime="$(pini_runtime_lib "$root")" || exit 1
+runtime_dir="$(dirname "$runtime")"
 
 pini="$root/bootstrap/.build/debug/bin/pini-bootstrap"
 clang_bin="$(command -v clang || true)"
@@ -27,8 +31,8 @@ run_case() {
         echo " 行不通  [测试自检] $name 发射失败" >&2
         return 2
     fi
-    if ! "$clang_bin" -o "$bin" "$ll" -L"$root/.build/debug" -lPiniRuntime \
-        -Wl,-rpath,"$root/.build/debug" >/dev/null 2>&1; then
+    if ! "$clang_bin" -o "$bin" "$ll" -L"$runtime_dir" -lPiniRuntime \
+        -Wl,-rpath,"$runtime_dir" >/dev/null 2>&1; then
         echo " 行不通  [测试自检] $name 链接失败" >&2
         return 2
     fi
