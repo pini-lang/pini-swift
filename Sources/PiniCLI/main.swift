@@ -1840,7 +1840,8 @@ func runCheckPath(_ path: String) {
         do {
             try runCheckCommand(source: source, fileName: path)
         } catch {
-            printError("Error: \(error.localizedDescription)"); exit(1)
+            if !diagnosticRow(error) { printError("Error: \(error.localizedDescription)") }
+            exit(1)
         }
         return
     }
@@ -1848,14 +1849,16 @@ func runCheckPath(_ path: String) {
     // —— 目录 ——
     let manifest: ModuleManifest?
     do { manifest = try FileLoader.loadManifest(directory: path) } catch {
-        printError(formatCLIError(error: error, source: nil)); exit(1)
+        if !diagnosticRow(error) { printError(formatCLIError(error: error, source: nil)) }
+        exit(1)
     }
 
     if let manifest = manifest {
         // 显式多文件模块
         let pkg: Package
         do { pkg = try loadPackageWithGenerated(path: path, manifest: manifest) } catch {
-            printError(formatCLIError(error: error, source: nil)); exit(1)
+            if !diagnosticRow(error) { printError(formatCLIError(error: error, source: nil)) }
+            exit(1)
         }
         // build 漂移检查（run 同款；仅对采用依赖通道的清单生效）。
         let driftResult = Result {
@@ -1894,7 +1897,8 @@ func runCheckPath(_ path: String) {
         } catch let err as TypeError {
             handleTypeError(err); exit(1)
         } catch {
-            printError("Error: \(error.localizedDescription)"); exit(1)
+            if !diagnosticRow(error) { printError("Error: \(error.localizedDescription)") }
+            exit(1)
         }
         return
     }
@@ -2160,7 +2164,7 @@ func runBuildPath(_ path: String, printPlan: Bool = false) {
         try buildWorkspace(workspace)
         CommentStyleHint.emit()
     } catch {
-        printError(formatCLIError(error: error, source: nil))
+        if !diagnosticRow(error) { printError(formatCLIError(error: error, source: nil)) }
         exit(1)
     }
 }
@@ -2523,12 +2527,39 @@ func runLLICommand(source: String, fileName: String) throws {
     exit(childExitStatus(of: process))
 }
 
+/// 结构化诊断开关：语料对照读它；关着时输出与既有渲染逐字节相同。
+nonisolated(unsafe) var diagnosticsTSV = false
+
+/// 开结构化诊断时打一行（文件、起止行列、严重级、码）并返回真；否则返回假，调用方按原样渲染。
+@discardableResult
+func diagnosticRow(_ error: Error) -> Bool {
+    guard diagnosticsTSV else { return false }
+    guard let d = error as? any DiagnosticProviding else {
+        print("\t0\t0\t0\t0\terror\t")
+        return true
+    }
+    let loc = d.diagnosticLocation
+    let span = d.span
+    let severity: String
+    switch d.diagnosticSeverity {
+    case .error: severity = "error"
+    case .warning: severity = "warning"
+    case .information, .hint: severity = "info"
+    }
+    print(
+        "\(loc.fileName)\t\(span.startLine)\t\(span.startColumn)\t"
+            + "\(span.endLine)\t\(span.endColumn)\t\(severity)\t\(d.diagnosticCode)")
+    return true
+}
+
 func handleSemanticError(_ error: SemanticError) {
     // T11（A4）：收敛消息源——check 多文件路径复用 ErrorFormatter，源码按诊断位置回读。
+    guard !diagnosticRow(error) else { return }
     printError(ErrorFormatter.formatSemanticError(error, source: sourceFor(error)))
 }
 
 func handleTypeError(_ error: TypeError) {
+    guard !diagnosticRow(error) else { return }
     printError(ErrorFormatter.formatTypeError(error, source: sourceFor(error)))
 }
 
@@ -2655,7 +2686,9 @@ case "repl":
 case "check":
     var checkPath: String? = nil
     for arg in args.dropFirst(2) {
-        if arg.hasPrefix("--") {
+        if arg == "--diagnostics-tsv" {
+            diagnosticsTSV = true
+        } else if arg.hasPrefix("--") {
             printError("Error: \(arg)")
             printError("  合法用法：pini \(command) <路径>")
             exit(1)
@@ -2686,6 +2719,9 @@ case "build":
             cursor += 1
         case "--print-plan":
             printPlan = true
+            cursor += 1
+        case "--diagnostics-tsv":
+            diagnosticsTSV = true
             cursor += 1
         case "-o":
             guard cursor + 1 < args.count else {
