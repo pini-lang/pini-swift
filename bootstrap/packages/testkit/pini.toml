@@ -1,0 +1,14 @@
+[package]
+name = "testkit"
+
+[require]
+support = "*"
+ir = "*"
+
+[lib]
+name = "testkit"
+entry = "src/api/discover.pini"
+
+[[test]]
+name = "testkit-tests"
+entry = "tests"
