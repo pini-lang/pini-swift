@@ -100,8 +100,32 @@ if [ "$code" -eq 0 ]; then
     fail=1
 fi
 
+# 分段降载：stage 1 只到装载，读数应止于 stage-load；默认路径仍一路到降载与校验。
+stage_out="$("$pini" lower "$fixture" --stage=1 2>/dev/null)"
+case "$stage_out" in
+*"stage-load"*) ;;
+*)
+    echo " 行不通  [测试自检] 分段降载缺 stage-load 读数" >&2
+    fail=1
+    ;;
+esac
+case "$stage_out" in
+*"stage-lower"* | *"lower-ok"*)
+    echo " 行不通  [测试自检] stage 1 不应继续降载" >&2
+    fail=1
+    ;;
+esac
+full_out="$("$pini" lower "$fixture" 2>/dev/null)"
+case "$full_out" in
+*"validate-ok"*) ;;
+*)
+    echo " 行不通  [测试自检] 默认降载应跑到校验" >&2
+    fail=1
+    ;;
+esac
+
 if [ "$fail" -ne 0 ]; then
     exit 1
 fi
-echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出"
+echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段"
 exit 0
