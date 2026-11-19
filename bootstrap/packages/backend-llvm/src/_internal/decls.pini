@@ -9,11 +9,14 @@ _unicode = "../../../unicode"
 ; 参数名按位置编号，与源码名字无关：源码名可能在模块里重复，槽位才是身份。
 
 ; 形参表：类型 + 位置名；无参答空串，调用点与定义共用这一份拼法。
+; 闭包在形参前多一个 env 指针，与 `{ ptr, ptr }` 调用协议同序。
 llvmParams|func(pool: IrTypePool, fn: IrFunction,) -> (String,):
     var out = ""
+    if fn.isClosure:
+        out = "ptr %env"
     var i = 0
     while i < len(fn.params):
-        if i > 0:
+        if len(out) > 0:
             out = out + ", "
         out = out + llvmTypeName(pool = pool, typeId = fn.params[i].typeId) + " %p" + countText(i)
         i = i + 1

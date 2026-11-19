@@ -147,6 +147,9 @@ validateNode|func(module: IrModule, nodeId: I32, file: String, positions: Array<
             var wantStmt = false
             if isStmt && stmtKidIsBody(kind = node.kind, index = k):
                 wantStmt = true
+            ; 闭包体挂在节点上：`kids` 全是语句，不是表达式。
+            if isExpr && node.kind == irExprTag(.irClosureLiteral):
+                wantStmt = true
             if wantStmt && !irIsStmtTag(kidNode.kind):
                 out = reportRule(result = out, rule = .irRuleKidSegment, file = file, offset = offset, detail = "节点 " + countText(nodeId) + " 的第 " + countText(k) + " 个子节点应为语句")
             if !wantStmt && !irIsExprTag(kidNode.kind):

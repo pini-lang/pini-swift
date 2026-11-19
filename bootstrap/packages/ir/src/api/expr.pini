@@ -3,6 +3,90 @@ _syntax = "../../../syntax"
 _semantics = "../../../semantics"
 _module_loader = "../../../module-loader"
 
+; 函数字面量：体挂在本节点的 `kids`，另建同体函数条目供发射期出定义。
+; 帧换成闭包帧：形参占低位槽，外层可见名字按首次使用登记为捕获；
+; 捕获槽记的是创建点外层帧的槽位，env 由发射期按同序填槽地址。
+lowerClosure|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
+    let expr = unit.ast.exprAt(id)
+    var done = out
+    let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
+    if typeId < 0:
+        return missType(out = done, unit = unit, id = id, bytes = bytes)
+    var closure = LowerFrame()
+    closure.world = done.frame.world
+    closure.decls = done.frame.decls
+    closure.externData = done.frame.externData
+    closure.outerLocals = done.frame.locals
+    var params: Array<IrParam> = []
+    var body = -1
+    var i = 0
+    while i < len(expr.kids):
+        let kid = expr.kids[i]
+        if i == len(expr.kids) - 1 && unit.ast.isBlockStmt(kid):
+            body = kid
+        else:
+            let decl = unit.ast.decls[kid]
+            let name = decodeSpelling(bytes = bytes, start = decl.nameStart, end = decl.nameEnd)
+            var param = IrParam()
+            param.name = name
+            ; 形参类型取声明标注：匿名函数的形参不经过顶层声明面，类型表里查不到。
+            if decl.typeId >= 0:
+                let resolved = annotationType(world = closure.world, unit = unit, node = decl.typeId, pool = closure.world.types.pool)
+                param.typeId = irIdOf(map = map, semanticId = resolved.id)
+            param.slot = closure.nextSlot
+            params = params.append(param)
+            closure = declareIrLocal(frame = closure, name = name, typeId = param.typeId, mutable = true)
+        i = i + 1
+    var ret = -1
+    if expr.op >= 0:
+        let resolved = annotationType(world = closure.world, unit = unit, node = expr.op, pool = closure.world.types.pool)
+        if isEmptyTupleType(pool = resolved.pool, id = resolved.id):
+            ret = -1
+        else:
+            ret = irIdOf(map = map, semanticId = resolved.id)
+    if body < 0:
+        return missExpr(out = done, unit = unit, id = id, what = "函数字面量缺体块")
+    var start = LowerStmt()
+    start.pool = done.pool
+    start.texts = done.texts
+    start.frame = closure
+    let lowered = lowerBlockOf(out = start, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, blockId = body)
+    if lowered.failed:
+        done.failed = true
+        done.detail = lowered.detail
+        done.offset = lowered.offset
+        return done
+    var fn = IrFunction()
+    fn.name = "__closure_" + countText(id)
+    fn.params = params
+    fn.returnType = ret
+    fn.body = lowered.ids
+    fn.positions = lowered.positions
+    fn.isClosure = true
+    fn.closureId = id
+    fn.captures = lowered.frame.captures
+    var c = 0
+    while c < len(lowered.frame.closures):
+        done.frame.closures = done.frame.closures.append(lowered.frame.closures[c])
+        c = c + 1
+    done.frame.closures = done.frame.closures.append(fn)
+    let placed = internText(texts = lowered.texts, value = fn.name)
+    var node = irMakeNode(kind = irExprTag(.irClosureLiteral), typeId = typeId)
+    node.text = placed.id
+    node.intValue = id as I64
+    node.kids = lowered.ids
+    var slots: Array<I32> = []
+    var s = 0
+    while s < len(lowered.frame.captures):
+        slots = slots.append(lowered.frame.captures[s].slot)
+        s = s + 1
+    node.captureSlots = slots
+    let inserted = irAppendNode(pool = lowered.pool, node = node)
+    done.pool = inserted.pool
+    done.texts = placed.texts
+    done.id = inserted.id
+    return done
+
 ; 表达式降载：AST 节点 + 推导表 + 局部帧 → IR 节点。
 ; 运算符按符号映射，不看记号码；类型一律取自推导表经映射后的下标。
 ; 推不出类型或类别未支持即整函数留空并报缺口，不产占位节点。
@@ -275,6 +359,9 @@ exprIrType|func(map: TypeMap, types: ExprTypes, unit: CompilationUnit, unitIndex
         let at = findIrLocal(frame = frame, name = name)
         if at >= 0:
             return frame.locals[at].typeId
+        let outerAt = findOuterLocal(frame = frame, name = name)
+        if outerAt >= 0:
+            return frame.outerLocals[outerAt].typeId
     return fallbackIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = frame, bytes = bytes, id = id)
 
 ; 报写法需改：与 missExpr 分开，因为这句话不是能力缺口，而是调用点该换写法。
@@ -335,10 +422,12 @@ lowerIdentifier|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, ma
     let expr = unit.ast.exprAt(id)
     let name = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
     let placed = internText(texts = out.texts, value = name)
-    let at = findIrLocal(frame = out.frame, name = name)
+    var current = out
+    current.frame = ensureIrLocal(frame = current.frame, name = name)
+    let at = findIrLocal(frame = current.frame, name = name)
     if at < 0:
         ; 外部数据符号：值位读的是符号存储的当前值，故取址后立即 pointerLoad。
-        let dataType = foreignDataType(frame = out.frame, map = map, name = name)
+        let dataType = foreignDataType(frame = current.frame, map = map, name = name)
         if dataType >= 0:
             var address = irMakeNode(kind = irExprTag(.irForeignDataAddress), typeId = dataType)
             address.text = placed.id
@@ -355,9 +444,10 @@ lowerIdentifier|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, ma
     var node = irMakeNode(kind = irExprTag(.irLoad), typeId = typeId)
     node.text = placed.id
     if at >= 0:
-        node.intValue = out.frame.locals[at].slot as I64
+        node.intValue = current.frame.locals[at].slot as I64
     let inserted = irAppendNode(pool = out.pool, node = node)
     var done = out
+    done.frame = current.frame
     done.texts = placed.texts
     done.pool = inserted.pool
     done.id = inserted.id
@@ -444,6 +534,7 @@ lowerAddressOf|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map
     var done = out
     let placed = internText(texts = done.texts, value = name)
     done.texts = placed.texts
+    done.frame = ensureIrLocal(frame = done.frame, name = name)
     let at = findIrLocal(frame = done.frame, name = name)
     if at < 0:
         let dataType = foreignDataType(frame = done.frame, map = map, name = name)
@@ -934,6 +1025,70 @@ lowerPlainCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map
     done.id = inserted.id
     return done
 
+; 惰性引用构造：`LazyRef<T>(closure)` 只认一个初值闭包，返回 `T` 的句柄。
+; 元素类型取自类型实参，初值闭包的返回须与它同型；不同型即缺口，不做隐式转换。
+lowerLazyRefConstruct|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32, callee: I32,) -> (LowerExpr,):
+    var done = out
+    let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
+    if typeId < 0:
+        return missType(out = done, unit = unit, id = id, bytes = bytes)
+    let expr = unit.ast.exprAt(id)
+    var argument = expr.kids[0]
+    if callee != id:
+        if len(expr.kids) != 2:
+            return missNeed(out = done, unit = unit, id = id, what = "LazyRef 需要恰好一个初值闭包")
+        argument = expr.kids[1]
+    elif len(expr.kids) != 1:
+        return missNeed(out = done, unit = unit, id = id, what = "LazyRef 需要恰好一个初值闭包")
+    let one = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = argument)
+    done.pool = one.pool
+    done.texts = one.texts
+    done.frame = one.frame
+    if one.failed:
+        return takeFailure(out = done, one = one)
+    let lazyType = irTypeAt(pool = map.pool, id = typeId)
+    if irTypeTag(lazyType.kind) != irTypeTag(.irTypeLazyRef) || len(lazyType.kids) != 1:
+        return missType(out = done, unit = unit, id = id, bytes = bytes)
+    let closure = irNodeAt(pool = done.pool, id = one.id)
+    if irTypeTag(irTypeAt(pool = map.pool, id = closure.typeId).kind) != irTypeTag(.irTypeFunction):
+        return missNeed(out = done, unit = unit, id = id, what = "LazyRef 的实参不是闭包")
+    if irTypeAt(pool = map.pool, id = closure.typeId).ret != lazyType.kids[0]:
+        return missNeed(out = done, unit = unit, id = id, what = "初值闭包的返回与 LazyRef 元素类型不符")
+    let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irLazyRefConstruct), typeId = typeId, op = 0, kids = [one.id])
+    done.pool = inserted.pool
+    done.id = inserted.id
+    return done
+
+; 间接调用：被调是函数值，首个子节点是值的读取；形参类型取自函数类型，返回取签名尾。
+; 实参个数与签名不符即缺口 —— 后端按签名定型，少一个多一个都会错位。
+lowerIndirectCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, callId: I32, calleeId: I32, fnType: I32,) -> (LowerExpr,):
+    var done = out
+    let calleeOne = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = calleeId)
+    done.pool = calleeOne.pool
+    done.texts = calleeOne.texts
+    done.frame = calleeOne.frame
+    if calleeOne.failed:
+        return takeFailure(out = done, one = calleeOne)
+    let signature = irTypeAt(pool = map.pool, id = fnType)
+    let expr = unit.ast.exprAt(callId)
+    if len(expr.kids) - 1 != len(signature.kids):
+        return missNeed(out = done, unit = unit, id = callId, what = "函数值调用的实参个数与签名不符")
+    var kids: Array<I32> = [calleeOne.id]
+    var i = 1
+    while i < len(expr.kids):
+        let one = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = expr.kids[i])
+        done.pool = one.pool
+        done.texts = one.texts
+        done.frame = one.frame
+        if one.failed:
+            return takeFailure(out = done, one = one)
+        kids = kids.append(one.id)
+        i = i + 1
+    let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irIndirectCall), typeId = signature.ret, op = 0, kids = kids)
+    done.pool = inserted.pool
+    done.id = inserted.id
+    return done
+
 ; 调用：被调先解析成 IR 名与形参序，再按源序降实参，最后按形参序归位。
 ; 方法名按「方法__类型」出符号；标签实参在这里解包，标签本身不进节点。
 lowerCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
@@ -947,6 +1102,8 @@ lowerCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: Typ
     var builtinMember = ""
     var builtinType = -1
     var maybeCase = ""
+    if unit.ast.isGenericExpr(callee):
+        return lowerLazyRefConstruct(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id, callee = callee)
     if unit.ast.isMemberExpr(callee):
         let member = unit.ast.exprAt(callee)
         if len(member.kids) < 1:
@@ -969,6 +1126,12 @@ lowerCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: Typ
             resolved = calleeOfMethod(frame = done.frame, map = map, pool = done.pool, receiver = receiver, memberName = memberName)
             if !resolved.found:
                 let recvType = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = recvNode)
+                let lazyElement = irLazyRefElement(pool = map.pool, id = recvType)
+                if memberName == "value" && lazyElement >= 0 && len(expr.kids) == 1:
+                    let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irLazyRefValue), typeId = lazyElement, op = 0, kids = [receiver])
+                    done.pool = inserted.pool
+                    done.id = inserted.id
+                    return done
                 if isArrayMember(memberName = memberName, receiverType = recvType, map = map):
                     builtinMember = memberName
                     builtinType = recvType
@@ -982,6 +1145,14 @@ lowerCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: Typ
     elif unit.ast.isIdentifierExpr(callee):
         let calleeExpr = unit.ast.exprAt(callee)
         let name = decodeSpelling(bytes = bytes, start = calleeExpr.nameStart, end = calleeExpr.nameEnd)
+        ; 省略类型实参的构造：元素类型取自初值闭包的返回。
+        if name == "LazyRef" && len(expr.kids) == 2:
+            return lowerLazyRefConstruct(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id, callee = -1)
+        ; 局部函数值：名字在帧里且类型是函数，即间接调用。
+        let localType = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = callee)
+        if (findIrLocal(frame = done.frame, name = name) >= 0 || findOuterLocal(frame = done.frame, name = name) >= 0) && localType >= 0 && localType < irTypeCount(map.pool):
+            if irTypeTag(irTypeAt(pool = map.pool, id = localType).kind) == irTypeTag(.irTypeFunction):
+                return lowerIndirectCall(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, callId = id, calleeId = callee, fnType = localType)
         resolved = calleeOfFunction(frame = done.frame, map = map, name = name)
         if !resolved.found && len(expr.kids) == 1:
             let symbol = lookupTopByName(index = done.frame.world.symbols, name = name)
@@ -1117,6 +1288,17 @@ lowerStringNode|func(out: LowerExpr, unit: CompilationUnit, id: I32, kind: IrExp
     done.id = inserted.id
     return done
 
+; 惰性引用元素：非 LazyRef 或实参缺席答 -1。
+irLazyRefElement|func(pool: IrTypePool, id: I32,) -> (I32,):
+    if id < 0 || id >= irTypeCount(pool):
+        return -1
+    let entry = irTypeAt(pool = pool, id = id)
+    if irTypeTag(entry.kind) != irTypeTag(.irTypeLazyRef):
+        return -1
+    if len(entry.kids) != 1:
+        return -1
+    return entry.kids[0]
+
 ; 成员读：接收者一个子节点，字段名驻留进文本池；方法值不走这条。
 lowerMember|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
     let expr = unit.ast.exprAt(id)
@@ -1134,6 +1316,12 @@ lowerMember|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: T
         return missType(out = done, unit = unit, id = id, bytes = bytes)
     let fieldName = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
     let receiverType = irNodeAt(pool = done.pool, id = one.id).typeId
+    let element = irLazyRefElement(pool = map.pool, id = receiverType)
+    if fieldName == "value" && element >= 0:
+        let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irLazyRefValue), typeId = element, op = 0, kids = [one.id])
+        done.pool = inserted.pool
+        done.id = inserted.id
+        return done
     let slot = fieldSlotOf(table = done.frame.decls, typeId = receiverType, name = fieldName)
     if slot < 0:
         return missExpr(out = done, unit = unit, id = id, what = "字段 " + fieldName + " 不在声明里")
@@ -1458,6 +1646,10 @@ lowerExpr|func(pool: IrNodePool, texts: IrTextPool, map: TypeMap, types: ExprTyp
         return lowerInterp(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
     if unit.ast.isCastExpr(id):
         return lowerCast(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
+    if unit.ast.isFunctionExpr(id):
+        return lowerClosure(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
+    if unit.ast.isGenericExpr(id):
+        return lowerLazyRefConstruct(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id, callee = id)
     if unit.ast.isNilExpr(id):
         return lowerNil(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
     if unit.ast.isArrayExpr(id):

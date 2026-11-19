@@ -17,6 +17,11 @@ nextSlot: I32 = 0
 world: MemberWorld = MemberWorld()
 decls: IrDeclTable = IrDeclTable()
 externData: Array<IrExternData> = []
+; 闭包帧专用：创建点可见的外层局部快照、已结算的捕获表与待入模块的闭包函数。
+; 外层快照按值复制，嵌套闭包因此能沿已结算的捕获继续向外追。
+outerLocals: Array<IrLocal> = []
+captures: Array<IrCaptureSlot> = []
+closures: Array<IrFunction> = []
 
 ; 声明局部：槽位取当前水位，随后水位加一。
 declareIrLocal|func(frame: LowerFrame, name: String, typeId: I32, mutable: Bool,) -> (LowerFrame,):
@@ -38,6 +43,32 @@ findIrLocal|func(frame: LowerFrame, name: String,) -> (I32,):
             return i
         i = i - 1
     return -1
+
+; 外层命中：只在创建点快照里找，不登记捕获；未命中答 -1。
+findOuterLocal|func(frame: LowerFrame, name: String,) -> (I32,):
+    var i = len(frame.outerLocals) - 1
+    while i >= 0:
+        if frame.outerLocals[i].name == name:
+            return i
+        i = i - 1
+    return -1
+
+; 结算局部：本地已有即原样返回；只有外层可见才登记捕获，槽位取当前水位。
+; 捕获按体内首次使用序入表，节点与环境都照这张表排；深一层的外层名字不猜，留给缺口。
+ensureIrLocal|func(frame: LowerFrame, name: String,) -> (LowerFrame,):
+    if findIrLocal(frame = frame, name = name) >= 0:
+        return frame
+    let at = findOuterLocal(frame = frame, name = name)
+    if at < 0:
+        return frame
+    let outer = frame.outerLocals[at]
+    var out = declareIrLocal(frame = frame, name = name, typeId = outer.typeId, mutable = outer.mutable)
+    var row = IrCaptureSlot()
+    row.slot = outer.slot
+    row.localSlot = out.locals[len(out.locals) - 1].slot
+    row.typeId = outer.typeId
+    out.captures = out.captures.append(row)
+    return out
 
 ; 块边界：块内声明从这一位开始，退出时截断到它。
 frameMark|func(frame: LowerFrame,) -> (I32,):

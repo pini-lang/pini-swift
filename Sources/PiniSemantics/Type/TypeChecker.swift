@@ -2873,6 +2873,17 @@ public final class TypeChecker {
                 }
                 // 词法作用域优先：形参与顶层函数同名时，调用点的答案在局部那份；标准库的形参
                 // 因此不会被用户的同名函数顶替。
+                if calleeName == "LazyRef" {
+                    // 类型构造器不是用户函数：只判「一个初值闭包」，元素类型由初值的返回给出。
+                    if arguments.count != 1 {
+                        try report(
+                            TypeError.mismatch(
+                                expected: "LazyRef 的一个初值闭包实参",
+                                got: "\(arguments.count) 个实参",
+                                location: location))
+                    }
+                    return
+                }
                 if let varType = typeEnv.lookupVariable(name: calleeName),
                     case .function(let params, let returns, _, let usingIndices, _) = varType
                 {
@@ -3115,6 +3126,28 @@ public final class TypeChecker {
                             got: typeArgs.count,
                             location: location
                         ))
+                }
+            } else if typeName == "LazyRef" {
+                // 初值闭包的返回须与元素类型实参同型；不同型时后端会按目标类型重解释，静默错值。
+                if typeArgs.count != 1 {
+                    try report(
+                        TypeError.genericArgumentCountMismatch(
+                            typeName: typeName, expected: 1, got: typeArgs.count, location: location))
+                } else if arguments.count != 1 {
+                    try report(
+                        TypeError.mismatch(
+                            expected: "LazyRef 的一个初值闭包实参",
+                            got: "\(arguments.count) 个实参",
+                            location: location))
+                } else if case .funcLiteral(let decl, _) = arguments[0].expression,
+                    decl.returnTypes.count == 1,
+                    decl.returnTypes[0].describe() != typeArgs[0].describe()
+                {
+                    try report(
+                        TypeError.mismatch(
+                            expected: typeArgs[0].describe(),
+                            got: decl.returnTypes[0].describe(),
+                            location: location))
                 }
             }
 

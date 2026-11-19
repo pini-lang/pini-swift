@@ -167,6 +167,9 @@ checkMemberCall|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, 
     if receiverType < 0:
         return out
     let memberName = decodeRange(bytes = bytes, start = member.nameStart, end = member.nameEnd)
+    ; 惰性引用的 `.value` 是内建读，不在名义成员表里。
+    if memberName == "value" && isLazyRefType(pool = world.types.pool, id = receiverType):
+        return out
     let access = memberAccess(receiver = receiverType, name = memberName, isTypeName = isTypeName, owner = "", file = unit.path, offset = member.start)
     let result = checkMember(world = world, access = access)
     if result.failed:
@@ -203,6 +206,9 @@ checkCallNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, by
     let calleeExpr = unit.ast.exprAt(callee)
     let name = decodeRange(bytes = bytes, start = calleeExpr.nameStart, end = calleeExpr.nameEnd)
     if hasName(items = shadow, value = name):
+        return out
+    ; `LazyRef` 是类型构造器，名字不在顶层符号表；形状由降载面判。
+    if name == "LazyRef":
         return out
     if name == "load" || name == "store":
         var pointerSite = CallSite()

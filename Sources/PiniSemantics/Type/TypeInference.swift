@@ -214,6 +214,13 @@ public final class TypeInference {
                         return .tuple(labels: [], elements: returns, location: loc)
                     }
                 }
+                /// `LazyRef(closure)`：元素类型取自初值闭包的返回，省略的类型实参在此补齐。
+                if name == "LazyRef", arguments.count == 1,
+                    case .function(_, let returns, _, _, _)? = infer(expression: arguments[0].expression),
+                    returns.count == 1
+                {
+                    return .generic(name: "LazyRef", params: [returns[0]], location: loc)
+                }
                 if let sig = env.lookupFunction(name: name) {
                     if sig.returns.count == 1 {
                         return sig.returns[0]
@@ -266,6 +273,10 @@ public final class TypeInference {
             case .simple(let typeName, _):
                 return env.lookupField(typeName: typeName, fieldName: name)
             case .generic(let typeName, let typeArgs, _):
+                /// `LazyRef<T>.value` 是句柄内建读，元素类型就是类型实参；它不在名义字段表里。
+                if typeName == "LazyRef", name == "value", typeArgs.count == 1 {
+                    return typeArgs[0]
+                }
                 return env.lookupSpecializedField(
                     typeName: typeName,
                     typeArgs: typeArgs,

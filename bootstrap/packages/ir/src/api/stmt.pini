@@ -187,6 +187,7 @@ lowerStoreStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map
     if unit.ast.isIdentifierExpr(target):
         let expr = unit.ast.exprAt(target)
         let name = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
+        done.frame = ensureIrLocal(frame = done.frame, name = name)
         let at = findIrLocal(frame = done.frame, name = name)
         if at < 0:
             return missStmt(out = done, unit = unit, stmtId = stmtId, what = "非局部变量的赋值目标")
@@ -281,6 +282,7 @@ lowerCompoundStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, 
     if unit.ast.isIdentifierExpr(target):
         let expr = unit.ast.exprAt(target)
         let name = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
+        done.frame = ensureIrLocal(frame = done.frame, name = name)
         let at = findIrLocal(frame = done.frame, name = name)
         if at < 0:
             return missStmt(out = done, unit = unit, stmtId = stmtId, what = "非局部变量的赋值目标")
@@ -824,5 +826,8 @@ lowerStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: Typ
     if unit.ast.isContinueStmt(stmtId):
         return lowerJumpStmt(out = out, unit = unit, stmtId = stmtId, kind = .irContinueStmt)
     if unit.ast.isPassStmt(stmtId):
+        return out
+    ; 捕获声明只在语义层生效：降载按首次使用登记捕获，声明行不产节点。
+    if unit.ast.isCaptureStmt(stmtId):
         return out
     return missStmt(out = out, unit = unit, stmtId = stmtId, what = "该语句类别尚未降载")

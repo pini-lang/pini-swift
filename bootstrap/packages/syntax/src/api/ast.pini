@@ -92,6 +92,7 @@ exprTry
 exprUnsafe
 exprJoin
 exprDictEntry
+exprGeneric
 
 ; 语句类别：`stmtIf` 的 `kids` 是条件、体、否则如果对与否则体，缺省体答 -1。
 [StmtKind]
@@ -207,6 +208,8 @@ exprKindTag|func(_kind: ExprKind,) -> (I32,):
             return 24
         case exprDictEntry:
             return 25
+        case exprGeneric:
+            return 26
     return 0
 
 ; 表达式类别名：降载与诊断按名报缺口，不暴露类别码。
@@ -259,6 +262,8 @@ exprKindName|func(_code: I32,) -> (String,):
         return "等待前缀"
     if _code == exprKindTag(.exprDictEntry):
         return "字典条目"
+    if _code == exprKindTag(.exprGeneric):
+        return "泛型构造"
     return "该表达式类别"
 
 ; 语句类别码。
@@ -443,6 +448,12 @@ isMemberExpr|self(_id: I32,) -> (Bool,):
     return self.exprs[_id].kind == exprKindTag(.exprMember)
 isCallExpr|self(_id: I32,) -> (Bool,):
     return self.exprs[_id].kind == exprKindTag(.exprCall)
+; 泛型构造：类型位存泛型类型节点，`kids` 只收实参。
+isGenericExpr|self(_id: I32,) -> (Bool,):
+    return self.exprs[_id].kind == exprKindTag(.exprGeneric)
+; 函数字面量：`kids` 是形参声明与体块，`op` 存返回类型节点。
+isFunctionExpr|self(_id: I32,) -> (Bool,):
+    return self.exprs[_id].kind == exprKindTag(.exprFunction)
 isBinaryExpr|self(_id: I32,) -> (Bool,):
     return self.exprs[_id].kind == exprKindTag(.exprBinary)
 ; 一元运算：前缀或后缀运算符，操作数是唯一子节点。
