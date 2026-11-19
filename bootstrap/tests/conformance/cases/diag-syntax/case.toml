@@ -1,0 +1,8 @@
+[case]
+name = "括号未闭合"
+category = "diagnostics"
+kind = "error"
+code = "E2-001"
+line = 4
+col = 5
+spec = "诊断表 E2-001 期望与实际不符；缺右括号报在下一记号处"

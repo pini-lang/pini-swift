@@ -1,0 +1,5 @@
+[case]
+name = "三包依赖链"
+category = "package"
+kind = "pass"
+spec = "计划件 包归属与依赖对账：依赖按拓扑序入计划"

@@ -1,0 +1,6 @@
+[case]
+name = "清单成员缺失"
+category = "diagnostics"
+kind = "reject"
+host = "build"
+spec = "诊断表 E3-011 模块根缺 pini.toml 或源文件"

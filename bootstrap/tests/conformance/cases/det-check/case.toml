@@ -1,0 +1,6 @@
+[case]
+name = "检查确定性"
+category = "determinism"
+kind = "stable"
+probe = "check"
+spec = "计划件 自洽验收：同一输入两次检查，输出逐字节相同"

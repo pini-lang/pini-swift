@@ -1,0 +1,3 @@
+; 正例：测试体里的 moduleRoot 指向所属包根。
+包根|func() -> (String,):
+    return moduleRoot()

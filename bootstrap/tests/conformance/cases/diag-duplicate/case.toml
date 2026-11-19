@@ -1,0 +1,8 @@
+[case]
+name = "顶层重名"
+category = "diagnostics"
+kind = "error"
+code = "E3-004"
+line = 5
+col = 1
+spec = "诊断表 E3-004 符号重复声明；报在第二处"

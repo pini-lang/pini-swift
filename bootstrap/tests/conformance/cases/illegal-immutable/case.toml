@@ -1,0 +1,8 @@
+[case]
+name = "改只读名"
+category = "illegal"
+kind = "error"
+code = "E4-010"
+line = 4
+col = 5
+spec = "诊断表 E4-010 不能对 let 变量重新赋值"
