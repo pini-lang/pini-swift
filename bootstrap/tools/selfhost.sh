@@ -47,11 +47,7 @@ if ! "$clang_bin" "${link_args[@]}"; then
     exit 1
 fi
 
-# 次代要能自己动起来：无参数只装配清单并打印一行。
-if ! ( cd "$root/bootstrap" && "$work/gen2" > "$work/gen2-smoke.txt" ); then
-    echo " 行不通  [自洽] 次代无法启动" >&2
-    exit 1
-fi
+# 次代能否启动不单跑冒烟：下面两段都用它执行，启动失败即在那两步报错。
 
 # 两代各跑同一份语料，报告逐字节比对。
 if ! PINI_BOOTSTRAP_BIN="$gen1" python3 bootstrap/tools/conformance.py > "$work/report1.txt" 2>&1; then
