@@ -1,0 +1,8 @@
+[case]
+name = "未定义名字"
+category = "illegal"
+kind = "error"
+code = "E3-001"
+line = 3
+col = 12
+spec = "诊断表 E3-001 未定义变量；名字解析只在文件内查找"

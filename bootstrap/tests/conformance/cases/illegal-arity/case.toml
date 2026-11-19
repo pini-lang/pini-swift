@@ -1,0 +1,8 @@
+[case]
+name = "实参个数不符"
+category = "illegal"
+kind = "error"
+code = "E4-005"
+line = 6
+col = 12
+spec = "诊断表 E4-005 参数数量不匹配；主标签落在被调名字"

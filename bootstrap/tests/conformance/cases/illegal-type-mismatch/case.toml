@@ -1,0 +1,8 @@
+[case]
+name = "类型不符"
+category = "illegal"
+kind = "error"
+code = "E4-001"
+line = 3
+col = 18
+spec = "诊断表 E4-001 类型不匹配；主标签落在字面量"

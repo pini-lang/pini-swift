@@ -1,0 +1,6 @@
+[package]
+name = "case"
+
+[lib]
+name = "case"
+entry = "src/api.pini"

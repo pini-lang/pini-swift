@@ -76,6 +76,17 @@ severityName|func(_severity: Severity,) -> (String,):
             return "备注"
     return "错误"
 
+; 严重度标签：结构化输出用 ASCII，渲染文本仍走 `severityName`。
+severityTag|func(_severity: Severity,) -> (String,):
+    match _severity:
+        case severityError:
+            return "error"
+        case severityWarning:
+            return "warning"
+        case severityNote:
+            return "info"
+    return "error"
+
 ; 严重度次序：错误 0、警告 1、备注 2。
 severityRank|func(_severity: Severity,) -> (I32,):
     match _severity:
@@ -305,6 +316,34 @@ renderAll|func(items: Array<Diagnostic>, files: Array<String>, texts: Array<Sour
             out = out + renderHeadless(ordered[i])
         else:
             out = out + renderDiagnostic(d = ordered[i], text = texts[index])
+        i = i + 1
+    return out
+
+; 结构化诊断：一行一条，字段为文件、起止行列、严重级与码；次序与渲染文本一致。
+; 无源文本的诊断（清单与装载）行列记零，仍占一行，条数才与错误数对得上；末行不带换行。
+renderTSV|func(items: Array<Diagnostic>, files: Array<String>, texts: Array<SourceText>,) -> (String,):
+    let ordered = sortDiagnostics(items)
+    var out = ""
+    var i = 0
+    while i < len(ordered):
+        let d = ordered[i]
+        let index = indexOfFile(files = files, name = d.file)
+        var line = 0
+        var column = 0
+        var endLine = 0
+        var endColumn = 0
+        if index >= 0:
+            let start = locationOf(text = texts[index], offset = d.anchorStart())
+            let end = locationOf(text = texts[index], offset = d.anchorEnd())
+            line = start.line
+            column = start.column
+            endLine = end.line
+            endColumn = end.column
+        var row = d.file + "\t" + "\(line)" + "\t" + "\(column)" + "\t" + "\(endLine)" + "\t" + "\(endColumn)"
+        row = row + "\t" + severityTag(d.severity) + "\t" + d.code
+        if i > 0:
+            out = out + "\n"
+        out = out + row
         i = i + 1
     return out
 

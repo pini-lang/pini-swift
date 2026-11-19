@@ -16,3 +16,5 @@ Tests/PiniTests/GrammarAcceptanceTests/Fixtures/testParserAcceptsTrailingCommaIn
 Tests/PiniTests/GrammarAcceptanceTests/Fixtures/testParserAcceptsTrailingCommaInSetLiteral.pini	variant	语法标本：集合字面量尾逗号，规范形不带尾逗号
 Tests/PiniTests/GrammarAcceptanceTests/Fixtures/testParserAcceptsTrailingCommaInTypeAnnotationTuple.pini	variant	语法标本：类型注解元组尾逗号，规范形不带尾逗号
 examples/optional-sugar.pini	variant	语法标本：nil 与 ?T 糖，规范形归一为 Optional.none / Optional<T>
+bootstrap/tests/conformance/cases/diag-syntax/pkg/src/api.pini	unparseable	拒绝态：括号未闭合，语料的被测对象
+bootstrap/tests/conformance/cases/unicode-zero-width/pkg/src/api.pini	unparseable	拒绝态：标识符含零宽字符，语料的被测对象

@@ -1,0 +1,5 @@
+[case]
+name = "字符串拼接与查找"
+category = "legal"
+kind = "pass"
+spec = "语言参考 字符串成员与长度"

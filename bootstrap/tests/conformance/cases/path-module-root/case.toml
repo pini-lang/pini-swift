@@ -1,0 +1,5 @@
+[case]
+name = "模块根"
+category = "path"
+kind = "pass"
+spec = "运行时 ABI：moduleRoot 答当前包根"

@@ -1,0 +1,9 @@
+[package]
+name = "mid"
+
+[require]
+core = "*"
+
+[lib]
+name = "mid"
+entry = "src/api.pini"
