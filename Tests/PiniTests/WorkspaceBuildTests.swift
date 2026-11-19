@@ -189,7 +189,7 @@ struct WorkspaceBuildTests {
         #expect(FileManager.default.isExecutableFile(atPath: binary.path))
         let execution = try WorkspaceTestSupport.run(binary.path, [], cwd: root)
         #expect(execution.status == 0, "执行失败：\(execution.stderr)")
-        #expect(execution.stdout == "workspace-ok 13 true\n", "工作区读数不符：\(execution.stdout)")
+        #expect(execution.stdout == "workspace-ok 14 true\n", "工作区读数不符：\(execution.stdout)")
         let interface = root.appendingPathComponent(
             ".build/debug/packages/support/interface.txt")
         let text = try String(contentsOf: interface, encoding: .utf8)
