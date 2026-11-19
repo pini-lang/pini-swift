@@ -1,0 +1,5 @@
+[libc|foreign]
+中文名: (I32,) -> (I32,)
+
+原样|func(c: I32,) -> (I32,):
+    return c

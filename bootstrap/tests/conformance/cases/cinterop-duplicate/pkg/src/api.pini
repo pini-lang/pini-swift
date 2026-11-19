@@ -1,0 +1,5 @@
+[libc|foreign]
+toupper: (I32,) -> (I32,)
+
+[libc2|foreign]
+toupper: (I64,) -> (I64,)

@@ -1,0 +1,5 @@
+[api|import]
+_core = "../../core"
+
+四倍|func(x: I32,) -> (I32,):
+    return 加倍(x = 加倍(x = x))

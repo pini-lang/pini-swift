@@ -1,0 +1,5 @@
+[case]
+name = "算术与分支"
+category = "legal"
+kind = "pass"
+spec = "语言参考 表达式与语句；两条通道各跑一遍同一组测试"

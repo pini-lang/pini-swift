@@ -1,0 +1,6 @@
+; 正例：字符串拼接、长度与查找。
+拼接|func(a: String, b: String,) -> (String,):
+    return a + b
+
+位置|func(s: String, n: String,) -> (I32,):
+    return s.indexOf(n)

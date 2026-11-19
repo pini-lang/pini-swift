@@ -1,0 +1,5 @@
+[case]
+name = "中文标识符与标签"
+category = "unicode"
+kind = "pass"
+spec = "语言参考 标识符字符类别；中文按普通标识符"

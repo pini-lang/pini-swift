@@ -1,0 +1,8 @@
+[case]
+name = "零宽字符拒绝"
+category = "unicode"
+kind = "error"
+code = "E1-004"
+line = 1
+col = 3
+spec = "诊断表 E1-004 源码含不可见字符；标识符位拒绝"

@@ -1,0 +1,5 @@
+café|func() -> (I32,):
+    return 7
+
+用|func() -> (I32,):
+    return café()

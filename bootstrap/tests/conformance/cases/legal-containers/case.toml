@@ -1,0 +1,5 @@
+[case]
+name = "容器与下标"
+category = "legal"
+kind = "pass"
+spec = "语言参考 容器类型与下标；数组字面量与追加"

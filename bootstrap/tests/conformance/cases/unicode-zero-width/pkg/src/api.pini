@@ -1,0 +1,2 @@
+ab​c|func() -> (I32,):
+    return 1
