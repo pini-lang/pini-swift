@@ -210,6 +210,11 @@ checkCallNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, by
     ; `LazyRef` 是类型构造器，名字不在顶层符号表；形状由降载面判。
     if name == "LazyRef":
         return out
+    ; `ok` / `err` 是结果构造内建，名字不进符号表；只判恰好一个实参。
+    if name == "ok" || name == "err":
+        if len(unit.ast.exprAt(node).kids) != 2:
+            return appendExprError(out = out, unit = unit, offset = unit.ast.exprAt(node).start, kind = .exprCallFailed, name = name, detail = "结果构造需要恰好一个载荷", code = "E4-002")
+        return out
     if name == "load" || name == "store":
         var pointerSite = CallSite()
         pointerSite.name = name
@@ -248,6 +253,18 @@ checkCallNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, by
     if !result.failed:
         return out
     return appendExprError(out = out, unit = unit, offset = site.offset, kind = .exprCallFailed, name = name, detail = callErrorName(result.error.kind), code = callErrorCode(result.error.kind))
+
+; 等待：操作数类型已知时必须是任务句柄；类型未写放过，留给降载面判。
+checkJoinNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, types: ExprTypes, node: I32, out: ExprCheck,) -> (ExprCheck,):
+    let operand = unit.ast.childOf(id = node, index = 0)
+    if operand < 0:
+        return out
+    let operandType = exprTypeAt(table = types, unit = unitIndex, node = operand)
+    if operandType < 0:
+        return out
+    if isFutureType(pool = world.types.pool, id = operandType):
+        return out
+    return appendExprError(out = out, unit = unit, offset = unit.ast.exprAt(node).start, kind = .exprCallFailed, name = "等待", detail = "等待目标不是任务句柄", code = "E4-001")
 
 ; 不安全上下文区间：`|unsafe` 函数体与 `unsafe (...)` 表达式覆盖的偏移范围。
 ; 判据按区间归属，闭包体不继承外层这一点在本层无对应节点，故不涉及。
@@ -325,6 +342,8 @@ checkUnitExprs|func(world: MemberWorld, unitIndex: I32, types: ExprTypes,) -> (E
             out = checkMemberNode(world = world, unit = unit, bytes = bytes, shadow = shadow, node = i, out = out)
         elif unit.ast.isCallExpr(i):
             out = checkCallNode(world = world, unit = unit, unitIndex = unitIndex, bytes = bytes, shadow = shadow, types = types, ranges = ranges, node = i, out = out)
+        elif unit.ast.isJoinExpr(i):
+            out = checkJoinNode(world = world, unit = unit, unitIndex = unitIndex, types = types, node = i, out = out)
         i = i + 1
     out.failed = len(out.errors) > 0
     return out

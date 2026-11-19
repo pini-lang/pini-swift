@@ -314,6 +314,13 @@ irIsStmtTag|func(_tag: I32,) -> (Bool,):
     return _tag >= 101 && _tag <= 200
 
 ; 类型类别码：与枚举项序一致，从 1 起。
+; 结果与任务两种类型码：跨包比较用，下游不必硬记数字。
+irResultTypeTag|func() -> (I32,):
+    return irTypeTag(.irTypeResult)
+
+irFutureTypeTag|func() -> (I32,):
+    return irTypeTag(.irTypeFuture)
+
 irTypeTag|func(_kind: IrTypeClass,) -> (I32,):
     match _kind:
         case irTypeI32:

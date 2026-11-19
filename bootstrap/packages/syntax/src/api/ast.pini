@@ -508,6 +508,9 @@ isUnsafeExpr|self(_id: I32,) -> (Bool,):
 ; 等待前缀：`await` 与 `wait` 同形，`op` 记关键字类别码以区分让出与占用。
 isJoinExpr|self(_id: I32,) -> (Bool,):
     return self.exprs[_id].kind == exprKindTag(.exprJoin)
+; 等待形式：写 `await` 答真，写 `wait` 答假；非等待节点按 `wait` 处理，调用方先判类别。
+isAwaitJoin|self(_id: I32,) -> (Bool,):
+    return self.exprs[_id].op == kindTag(.kwAwait)
 ; 字典条目：`kids` 是键与值，`typeId` 是值类型标注，缺省答 -1。
 isDictEntryExpr|self(_id: I32,) -> (Bool,):
     return self.exprs[_id].kind == exprKindTag(.exprDictEntry)

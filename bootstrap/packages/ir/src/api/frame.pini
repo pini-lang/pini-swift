@@ -22,6 +22,8 @@ externData: Array<IrExternData> = []
 outerLocals: Array<IrLocal> = []
 captures: Array<IrCaptureSlot> = []
 closures: Array<IrFunction> = []
+; 异步体标记：`await` 与 `wait` 的上下文判据按它分，闭包帧不继承外层。
+isAsync: Bool = false
 
 ; 声明局部：槽位取当前水位，随后水位加一。
 declareIrLocal|func(frame: LowerFrame, name: String, typeId: I32, mutable: Bool,) -> (LowerFrame,):

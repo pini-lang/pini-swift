@@ -225,13 +225,21 @@ mapSemanticType|func(map: TypeMap, pool: TypePool, id: I32,) -> (TypeMap,):
     if isResultClass(entry.kind):
         return mapResult(map = out, pool = pool, kids = entry.kids, semanticId = id)
     if isGenericClass(entry.kind):
-        ; 泛型实例只认 LazyRef：元素类型先映射，句柄类型再驻留。
+        ; 泛型实例认 LazyRef 与 Future：元素或载荷先映射，句柄类型再驻留。
         if entry.name == "LazyRef" && len(entry.kids) == 1:
             out = mapSemanticType(map = out, pool = pool, id = entry.kids[0])
             let element = irIdOf(map = out, semanticId = entry.kids[0])
             if element < 0:
                 return out
             let inserted = irWrapType(pool = out.pool, kind = .irTypeLazyRef, name = "", inner = element)
+            out.pool = inserted.pool
+            return setMapped(map = out, semanticId = id, irId = inserted.id)
+        if entry.name == "Future" && len(entry.kids) == 1:
+            out = mapSemanticType(map = out, pool = pool, id = entry.kids[0])
+            let payload = irIdOf(map = out, semanticId = entry.kids[0])
+            if payload < 0:
+                return out
+            let inserted = irWrapType(pool = out.pool, kind = .irTypeFuture, name = "", inner = payload)
             out.pool = inserted.pool
             return setMapped(map = out, semanticId = id, irId = inserted.id)
         return addMapError(map = out, kind = .lowerUnsupportedType, detail = entry.name)

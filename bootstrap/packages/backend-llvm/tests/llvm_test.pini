@@ -59,19 +59,21 @@ _backend_kit = "../../backend-kit"
     return
 
 ; 缺口：族未声明时按族报，且整份文本不出；失败不静默。
-; 锚在并发族：它是当前仍未声明的一族，不会随已接族增加而失效。
+; 声明表由入口给，故这里交一份空表来覆盖这条缺口；后端自己的族表已全声明。
 族未声明|test() -> ():
     var module = 发射造模块()
     var pool = module.nodes
-    var pending = irMakeNode(kind = tagOfName(name = "join"), typeId = 0)
+    var pending = irMakeNode(kind = tagOfName(name = "functionValue"), typeId = 0)
     let placed = irAppendNode(pool = pool, node = pending)
     module.nodes = placed.pool
     module.functions[0].body = [placed.id]
-    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    var entry = 发射造记录(outputCode = 1)
+    entry.families = [0]
+    let result = emitModule(entry = entry, target = defaultTarget(), module = module)
     assert(result.failed, "未声明族的节点应失败")
     assert(len(result.text) == 0, "失败时不应出半份文本")
     assert(emitGapCount(result = result) > 0, "失败应带缺口")
-    assert(发射含子串(text = result.gaps[0], needle = "族未声明 concurrency"), "缺口应点名族")
+    assert(发射含子串(text = result.gaps[0], needle = "族未声明 calls"), "缺口应点名族")
     return
 
 ; 缺口：族已声明而节点没接时按类别码报，不与「族未声明」混成一句。
@@ -1096,4 +1098,44 @@ _backend_kit = "../../backend-kit"
     assert(发射含子串(text = result.text, needle = "define ptr @__lazyref_wrapper_i32"), "应出 i32 装箱包装")
     assert(发射含子串(text = result.text, needle = "call ptr @bk_lazyref_create(ptr @__lazyref_wrapper_i32, ptr "), "构造应走运行时入口")
     assert(发射含子串(text = result.text, needle = "call ptr @bk_lazyref_value(ptr "), "取值应走运行时入口")
+    return
+
+; 等待：句柄读出来交给运行时段，三槽归一化后按 Result 拼回。
+等待发射|test() -> ():
+    var module = IrModule()
+    var pool = IrTypePool()
+    let intType = irScalarTypeOfCode(pool = pool, code = 1, name = "i32")
+    pool = intType.pool
+    let settled = irInternType(pool = pool, kind = irTypeClassOf(code = 10), name = "", kids = [0], ret = -1, uses = [], flags = 0)
+    pool = settled.pool
+    let handle = irInternType(pool = pool, kind = irTypeClassOf(code = 11), name = "", kids = [0], ret = -1, uses = [], flags = 0)
+    module.types = handle.pool
+    var nodes = IrNodePool()
+    var alloc = irMakeNode(kind = tagOfName(name = "allocVar"), typeId = handle.id)
+    alloc.intValue = 0
+    let placedAlloc = irAppendNode(pool = nodes, node = alloc)
+    nodes = placedAlloc.pool
+    var load = irMakeNode(kind = tagOfName(name = "load"), typeId = handle.id)
+    load.intValue = 0
+    let placedLoad = irAppendNode(pool = nodes, node = load)
+    nodes = placedLoad.pool
+    var join = irMakeNode(kind = tagOfName(name = "join"), typeId = settled.id)
+    join.op = 1
+    join.kids = [placedLoad.id]
+    let placedJoin = irAppendNode(pool = nodes, node = join)
+    nodes = placedJoin.pool
+    var ret = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    ret.kids = [placedJoin.id]
+    let placedRet = irAppendNode(pool = nodes, node = ret)
+    nodes = placedRet.pool
+    module.nodes = nodes
+    var fn = IrFunction()
+    fn.name = "main"
+    fn.returnType = settled.id
+    fn.body = [placedAlloc.id, placedRet.id]
+    module.functions = module.functions.append(fn)
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    assert(!result.failed, "等待模块应发得出来")
+    assert(发射含子串(text = result.text, needle = "call i32 @bk_task_join(ptr "), "等待应走运行时段入口")
+    assert(发射含子串(text = result.text, needle = "insertvalue { i64, i32, i64 }"), "结算值按三槽拼回")
     return

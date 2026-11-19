@@ -155,6 +155,22 @@ optionalInner|func(pool: TypePool, id: I32,) -> (I32,):
         return -1
     return entry.kids[0]
 
+; 用例载荷类型表：枚举按声明，`Optional` 的 some 与 `Result` 的 ok 各一格；其余答空表。
+; 匹配臂里绑定的名字按这张表定型，`err` 的载荷是被擦除的错误字，故不进表。
+patternPayloadTypes|func(world: MemberWorld, pool: TypePool, subjectType: I32, caseName: String,) -> (Array<I32>,):
+    var out: Array<I32> = []
+    let enumName = enumNameOf(pool = pool, id = subjectType)
+    if len(enumName) > 0:
+        return variantParamTypes(world = world, enumName = enumName, caseName = caseName)
+    if isOptionalType(pool = pool, id = subjectType) && caseName == "some":
+        return out.append(optionalInner(pool = pool, id = subjectType))
+    if subjectType < 0 || subjectType >= len(pool.entries):
+        return out
+    let entry = pool.entries[subjectType]
+    if isTypeClass(kind = entry.kind, expected = .typeClassResult) && caseName == "ok" && len(entry.kids) > 0:
+        return out.append(entry.kids[0])
+    return out
+
 ; 枚举声明：按名字在全部单元里找顶层枚举；未命中答空引用。
 findEnumDecl|func(world: MemberWorld, name: String,) -> (DeclRef,):
     var out = DeclRef()
@@ -432,11 +448,7 @@ bindArm|func(world: MemberWorld, unit: CompilationUnit, subjectType: I32, patter
     if !isPatternForm(form = info.form, expected = .patternEnumCase):
         return out
     var paramTypes: Array<I32> = []
-    let enumName = enumNameOf(pool = world.types.pool, id = subjectType)
-    if len(enumName) > 0:
-        paramTypes = variantParamTypes(world = world, enumName = enumName, caseName = info.name)
-    elif isOptionalType(pool = world.types.pool, id = subjectType) && info.name == "some":
-        paramTypes = paramTypes.append(optionalInner(pool = world.types.pool, id = subjectType))
+    paramTypes = patternPayloadTypes(world = world, pool = world.types.pool, subjectType = subjectType, caseName = info.name)
     var slot = 0
     while slot < len(info.bindings):
         let name = info.bindings[slot]

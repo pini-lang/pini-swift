@@ -370,6 +370,14 @@ seedFunctionScope|func(world: MemberWorld, unitIndex: I32, declId: I32, bytes: A
         let empty = intern(pool = out.pool, kind = .typeClassTuple, name = "", kids = [], ret = -1)
         out.pool = empty.pool
         out.returnType = empty.id
+    if decl.isAsync:
+        ; 异步体交的是结算值 `Result<T>`；无载荷的异步体本引擎不接，返回检查整体放过。
+        if isVoidReturn(pool = out.pool, id = out.returnType):
+            out.known = false
+        else:
+            let settled = resultType(pool = out.pool, elem = out.returnType)
+            out.pool = settled.pool
+            out.returnType = settled.id
     return out
 
 ; 检查入口（带帧）：按传入的函数帧走一遍体，最后按返回路径补缺失返回。
