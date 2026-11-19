@@ -304,6 +304,11 @@ typeTagAt|func(module: IrModule, typeId: I32,) -> (I32,):
         return -1
     return irTypeTag(irTypeAt(pool = module.types, id = typeId).kind)
 
+; 串族判据：只有串能在拼接里把旧份交出去（ownsLhs），其余自赋值一律还旧箱。
+isStringShare|func(module: IrModule, typeId: I32,) -> (Bool,):
+    let tag = typeTagAt(module = module, typeId = typeId)
+    return tag == 8 || tag == 23
+
 ; 整数宽度：只认整数与布尔六类，其余答零；转换方向按它判。
 intWidthOf|func(tag: I32,) -> (I32,):
     if tag == 7:
@@ -1242,8 +1247,9 @@ emitFieldStore|func(ctx: BodyCtx, module: IrModule, node: IrNode,) -> (BodyCtx,)
     let shaped = storeValue(ctx = out, module = module, text = value.text, fromType = irNodeAt(pool = module.nodes, id = node.kids[1]).typeId, toType = node.typeId)
     out = shaped.ctx
     out = adoptValue(ctx = out, module = module, name = shaped.text, typeId = node.typeId, adopt = node.adopt)
-    ; 自追加：右侧从同一个字段起步，旧份额已经随值进了追加，这里不能再还。
-    if node.releaseOld && leftLeafFieldOp(module = module, nodeId = node.kids[1], depth = 0) != node.op:
+    ; 自追加：右侧从同一个字段起步。串的旧份已随拼接交出；容器则须还旧箱，理由同槽赋值。
+    let selfGrow = leftLeafFieldOp(module = module, nodeId = node.kids[1], depth = 0) == node.op
+    if node.releaseOld && (!selfGrow || !isStringShare(module = module, typeId = node.typeId)):
         out = releaseOldValue(ctx = out, module = module, at = at.text, typeId = node.typeId)
     appendLine(sink = out.lines, text = "  store " + typeName + " " + shaped.text + ", ptr " + at.text)
     return out
@@ -1943,8 +1949,8 @@ emitStmtCore|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (BodyCtx,):
         let slot = node.intValue as I32
         let typeName = llvmTypeName(pool = module.types, typeId = node.typeId)
         let at = slotNameOf(ctx = out, slot = slot)
-        ; 自赋值：右侧最左叶子就是本槽。拼接据此把旧份额直接取走，追加则原样返回同一个箱，
-        ; 两条路都不该再还旧值 —— 再还一次就是把槽里的值还成悬垂。
+        ; 自赋值：右侧最左叶子就是本槽。串的旧份已随拼接交出去，不能再还；
+        ; 容器追加恒出新箱，旧箱必须还 —— 不还则存储 refs 只增不减，此后每次追加都深拷整段。
         let selfAppend = leftLeafSlot(module = module, nodeId = node.kids[0], depth = 0) == slot
         if selfAppend:
             out.pendingSlot = slot
@@ -1954,7 +1960,7 @@ emitStmtCore|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (BodyCtx,):
         let shaped = storeValue(ctx = out, module = module, text = one.text, fromType = irNodeAt(pool = module.nodes, id = node.kids[0]).typeId, toType = node.typeId)
         out = shaped.ctx
         out = adoptValue(ctx = out, module = module, name = shaped.text, typeId = node.typeId, adopt = node.adopt)
-        if node.releaseOld && !selfAppend:
+        if node.releaseOld && (!selfAppend || !isStringShare(module = module, typeId = node.typeId)):
             out = releaseOldValue(ctx = out, module = module, at = at, typeId = node.typeId)
         appendLine(sink = out.lines, text = "  store " + typeName + " " + shaped.text + ", ptr " + at)
         return out
