@@ -184,13 +184,9 @@ def compare_pass(case, root, host, boot):
     return deviations, "两条通道测试全过"
 
 
-TIMING = re.compile(r"（[0-9.]+ 秒）")
-
-
-def mask_timing(result):
-    """报告末尾的耗时是读数，不是内容；比对前抹掉，否则同一输入必然不同。"""
-    code, out, err = result
-    return code, TIMING.sub("（用时）", out), TIMING.sub("（用时）", err)
+def normalize_timing(text):
+    """报告末尾的耗时是读数不是判据：两次运行本来就不同，比对前统一抹掉。"""
+    return re.sub(r"（[0-9.]+ 秒）", "（用时）", text)
 
 
 def compare_stable(case, root, host, boot):
@@ -203,9 +199,11 @@ def compare_stable(case, root, host, boot):
         commands = {"host": [str(host), "test", str(root)], "bootstrap": ["bash", str(ROOT / "bootstrap" / "tools" / "test.sh"), str(root)]}
     for channel, command in commands.items():
         env = {"PINI_BOOTSTRAP_BIN": str(boot)} if channel == "bootstrap" else None
-        one = mask_timing(run(command, root, env))
-        two = mask_timing(run(command, root, env))
-        if one != two:
+        one = run(command, root, env)
+        two = run(command, root, env)
+        if (one[0], normalize_timing(one[1]), normalize_timing(one[2])) != (
+            two[0], normalize_timing(two[1]), normalize_timing(two[2])
+        ):
             deviations[channel] = "两次输出不同"
     return deviations, "同一输入两次输出相同"
 
