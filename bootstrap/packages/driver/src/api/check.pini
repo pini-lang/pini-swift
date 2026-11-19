@@ -68,15 +68,17 @@ lexicalDiagnostics|func(_units: Array<CompilationUnit>,) -> (Array<Diagnostic>,)
     return out
 
 ; 语法诊断：解析器已给完整标签，原样并入序列，不再重写位置。
+; 词法有问题的单元只留词法诊断：记号流已不可信，后面每条语法错都是连带，噪声压过首因。
 syntaxDiagnostics|func(_units: Array<CompilationUnit>,) -> (Array<Diagnostic>,):
     var out: Array<Diagnostic> = []
     var u = 0
     while u < len(_units):
         let unit = _units[u]
         var i = 0
-        while i < len(unit.diagnostics):
-            out = out.append(unit.diagnostics[i])
-            i = i + 1
+        if len(unit.issues) == 0:
+            while i < len(unit.diagnostics):
+                out = out.append(unit.diagnostics[i])
+                i = i + 1
         u = u + 1
     return out
 

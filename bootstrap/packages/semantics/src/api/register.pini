@@ -170,15 +170,18 @@ registerTypeMembers|func(table: SymbolTable, unit: CompilationUnit, bytes: Array
     return out
 
 ; 参数注册：所有者取函数限定名，参数名只在该函数内解析。
+; 无名载荷（位置字段）不登记：名字为空，登记只会让同型多字段互撞成重名。
 registerParams|func(table: SymbolTable, unit: CompilationUnit, bytes: Array<U8>, decl: DeclNode, owner: String,) -> (SymbolTable,):
     var out = table
     var i = 0
     while i < len(decl.kids):
         let param = unit.ast.decls[decl.kids[i]]
         if isParamDeclCode(param.kind):
-            var symbol = makeSymbol(unit = unit, bytes = bytes, decl = param, kind = .symbolParam)
-            symbol.owner = owner
-            out = defineMember(table = out, symbol = symbol)
+            let spelling = decodeRange(bytes = bytes, start = param.nameStart, end = param.nameEnd)
+            if len(spelling) > 0:
+                var symbol = makeSymbol(unit = unit, bytes = bytes, decl = param, kind = .symbolParam)
+                symbol.owner = owner
+                out = defineMember(table = out, symbol = symbol)
         i = i + 1
     return out
 

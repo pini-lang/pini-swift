@@ -4,5 +4,5 @@ category = "cinterop"
 kind = "error"
 code = "E4-001"
 line = 5
-col = 19
-spec = "语言参考 unsafe：外部调用只在 |unsafe 或 unsafe 消耗点成立"
+col = 12
+spec = "语言参考 unsafe：外部调用只在 |unsafe 或 unsafe 消耗点成立；主标签落在被调名字"

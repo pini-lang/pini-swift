@@ -55,6 +55,7 @@ body: I32 = -1
 mutable: Bool = false
 isTest: Bool = false
 isForeign: Bool = false
+isUnsafe: Bool = false
 isOwn: Bool = false
 isUsing: Bool = false
 isSelf: Bool = false

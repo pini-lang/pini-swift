@@ -463,6 +463,8 @@ inferCall|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
         let ref = symbolDecl(world = world, symbol = symbol)
         if ref.unit >= 0:
             let decl = world.units[ref.unit].ast.decls[ref.decl]
+            if isForeignSymbolCode(decl.kind):
+                return inferForeignCall(world = world, unit = unit, unitIndex = unitIndex, node = node, ref = ref, names = names, out = done, bytes = bytes)
             if (isStructDeclCode(decl.kind) || isObjectDeclCode(decl.kind)) && len(expr.kids) == 1:
                 let planted = nominalTypeId(world = world, name = name)
                 if planted >= 0:
@@ -476,6 +478,18 @@ inferCall|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
             done.typeId = ret.id
             done.types = writeExprType(table = done.types, unit = unitIndex, node = node, typeId = done.typeId)
         return done
+    ; 枚举项构造：裸名用例不是顶层符号，按用例归属取类型；实参按变体字段的类型推。
+    let owner = uniqueCaseOwner(index = world.symbols, name = name)
+    if len(owner) > 0:
+        let caseSymbol = lookupMemberByName(index = world.symbols, owner = owner, name = name)
+        let ref = symbolDecl(world = world, symbol = caseSymbol)
+        if ref.unit >= 0:
+            done = inferActuals(world = world, unit = unit, unitIndex = unitIndex, node = node, params = declParams(world = world, ref = ref), names = names, out = done, bytes = bytes)
+            let planted = nominalTypeId(world = world, name = owner)
+            if planted >= 0:
+                done.typeId = planted
+                done.types = writeExprType(table = done.types, unit = unitIndex, node = node, typeId = done.typeId)
+            return done
     done = inferActuals(world = world, unit = unit, unitIndex = unitIndex, node = node, params = [], names = names, out = done, bytes = bytes)
     let builtin = findBuiltinFunction(functions = world.functions, name = name)
     if builtin < 0:
@@ -493,6 +507,28 @@ inferCall|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
         return done
     done.typeId = result.typeId
     done.types = writeExprType(table = done.types, unit = unitIndex, node = node, typeId = done.typeId)
+    return done
+
+; 外部调用：签名取自符号的类型位（函数类型），形参不接标签，返回类型取签名尾。
+inferForeignCall|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, ref: DeclRef, names: NameTable, out: InferResult, bytes: Array<U8>,) -> (InferResult,):
+    var done = out
+    let sigId = world.types.typeOf(unit = ref.unit, decl = ref.decl)
+    if sigId < 0 || sigId >= len(world.types.pool.entries):
+        return done
+    let sig = world.types.pool.entries[sigId]
+    var params: Array<CallParam> = []
+    var i = 0
+    while i < len(sig.kids):
+        var param = CallParam()
+        param.name = "第 " + countText(i + 1) + " 个"
+        param.typeId = sig.kids[i]
+        param.takesLabel = false
+        params = params.append(param)
+        i = i + 1
+    done = inferActuals(world = world, unit = unit, unitIndex = unitIndex, node = node, params = params, names = names, out = done, bytes = bytes)
+    if sig.ret >= 0:
+        done.typeId = sig.ret
+        done.types = writeExprType(table = done.types, unit = unitIndex, node = node, typeId = done.typeId)
     return done
 
 ; 成员被调：接收者先定型，再按成员面分方法、内建与函数值三路；方法带标签期望。

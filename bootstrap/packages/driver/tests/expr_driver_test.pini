@@ -28,11 +28,11 @@ _semantics = "../../semantics"
     let units = sortedUnits(all)
     let 诊断 = exprPackageDiagnostics(world = 建世界(units = units), units = units)
     assert(len(诊断) == 1, "应有一条诊断，实得 " + "\(len(诊断))")
-    assert(诊断[0].code == "E3-003", "实得 " + 诊断[0].code)
+    assert(诊断[0].code == "E3-002", "实得 " + 诊断[0].code)
     var files: Array<String> = ["packages/p/src/api/p.pini"]
     var texts: Array<SourceText> = [makeSourceText(unit.text)]
     let text = renderAll(items = 诊断, files = files, texts = texts)
-    assert(text.contains("E3-003"), "渲染应带码，实得：" + text)
+    assert(text.contains("E3-002"), "渲染应带码，实得：" + text)
     return
 
 ; 合法单元：顶层函数与内建各调一次，诊断为空；这是防恒真的反向判据。

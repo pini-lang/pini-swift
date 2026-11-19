@@ -305,6 +305,7 @@ finishTraitSignature|self(start: I32, nameStart: I32, nameEnd: I32,) -> (I32,):
     var isSelf = false
     var isOwn = false
     var isForeign = false
+    var isUnsafe = false
     if self.at(.opBitOr):
         self.advance()
         if self.at(.kwSelf):
@@ -315,6 +316,9 @@ finishTraitSignature|self(start: I32, nameStart: I32, nameEnd: I32,) -> (I32,):
             self.advance()
         elif self.at(.kwForeign):
             isForeign = true
+            self.advance()
+        elif self.at(.kwUnsafe):
+            isUnsafe = true
             self.advance()
         elif self.at(.kwFunc):
             self.advance()
@@ -339,7 +343,7 @@ finishTraitSignature|self(start: I32, nameStart: I32, nameEnd: I32,) -> (I32,):
     self.setDeclKids(id = id, kids = params)
     self.setDeclType(id = id, typeId = returnType)
     self.setDeclBody(id = id, body = body)
-    self.setFunctionMarks(id = id, isTest = false, isSelf = isSelf, isOwn = isOwn, isForeign = isForeign)
+    self.setFunctionMarks(id = id, isTest = false, isSelf = isSelf, isOwn = isOwn, isForeign = isForeign, isUnsafe = isUnsafe)
     return id
 ; 块名：导入、导出、外部与给定块的头名取文件名，可与关键字同形（`foreign.pini` 即 `[foreign|import]`）。
 ; 只放行名字这一格，`|` 之后的修饰符仍按词判定；非标识符且非关键字照旧报错。
@@ -793,6 +797,7 @@ parseFunctionDecl|self() -> (I32,):
     var isSelf = false
     var isOwn = false
     var isForeign = false
+    var isUnsafe = false
     if self.at(.kwTest):
         isTest = true
         self.advance()
@@ -805,8 +810,11 @@ parseFunctionDecl|self() -> (I32,):
     elif self.at(.kwForeign):
         isForeign = true
         self.advance()
+    elif self.at(.kwUnsafe):
+        isUnsafe = true
+        self.advance()
     elif !self.at(.kwFunc):
-        self.report(code = "E2-001", message = "期望 `func`、`test`、`self` 或 `foreign`")
+        self.report(code = "E2-001", message = "期望 `func`、`test`、`self`、`own`、`foreign` 或 `unsafe`")
         self.recover()
         return -1
     else:
@@ -838,7 +846,7 @@ parseFunctionDecl|self() -> (I32,):
     self.setDeclKids(id = id, kids = params)
     self.setDeclType(id = id, typeId = returnType)
     self.setDeclBody(id = id, body = body)
-    self.setFunctionMarks(id = id, isTest = isTest, isSelf = isSelf, isOwn = isOwn, isForeign = isForeign)
+    self.setFunctionMarks(id = id, isTest = isTest, isSelf = isSelf, isOwn = isOwn, isForeign = isForeign, isUnsafe = isUnsafe)
     self.setDeclAsync(id = id, value = isAsync)
     return id
 ; 参数表：`(` 到 `)`，每项可带 own / using / self 前缀与默认值。
@@ -1974,12 +1982,13 @@ pushDeclKid|self(id: I32, kid: I32,) -> ():
     self.ast.decls[id] = node
     return
 ; 函数修饰写回：测试、自身、本型与外部声明各一位，自身与本型互斥。
-setFunctionMarks|self(id: I32, isTest: Bool, isSelf: Bool, isOwn: Bool, isForeign: Bool,) -> ():
+setFunctionMarks|self(id: I32, isTest: Bool, isSelf: Bool, isOwn: Bool, isForeign: Bool, isUnsafe: Bool,) -> ():
     var node = self.ast.decls[id]
     node.isTest = isTest
     node.isSelf = isSelf
     node.isOwn = isOwn
     node.isForeign = isForeign
+    node.isUnsafe = isUnsafe
     self.ast.decls[id] = node
     return
 ; 参数前缀写回：own / using / self 三者互斥。

@@ -190,7 +190,7 @@ def normalize_timing(text):
 
 
 def compare_stable(case, root, host, boot):
-    """确定性：同一通道连跑两次，输出逐字节相同。"""
+    """确定性：同一通道连跑两次，输出逐字节相同（耗时读数除外）。"""
     probe = case.get("probe", "check")
     deviations = {}
     if probe == "check":
