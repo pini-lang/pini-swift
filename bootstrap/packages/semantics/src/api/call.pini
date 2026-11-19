@@ -332,6 +332,36 @@ checkBuiltinCall|func(world: MemberWorld, out: CallResult, site: CallSite,) -> (
         return deferCall(ready)
     return matchCall(out = ready, site = site, params = typed.params, variadic = function.variadic, tailStart = -1, retId = ret.id)
 
+; 指针读写：结果类型由实参的指针元素决定，签名表给不了固定形状，故单独判定。
+; 两者都是内建，只认位置实参；`store` 无值，判定结果不带类型。
+checkPointerCall|func(out: CallResult, site: CallSite, name: String,) -> (CallResult,):
+    var i = 0
+    while i < len(site.args):
+        if len(site.args[i].label) > 0:
+            return failCall(out = out, site = site, offset = site.args[i].offset, kind = .callUnexpectedLabel, expected = "位置实参", got = "标签 " + site.args[i].label + " = 值")
+        i = i + 1
+    var wanted = 1
+    if name == "store":
+        wanted = 2
+    if len(site.args) != wanted:
+        return failCall(out = out, site = site, offset = site.offset, kind = .callArity, expected = countText(wanted) + " 个实参", got = countText(len(site.args)))
+    let pointer = site.args[0]
+    if pointer.typeId < 0 || pointer.typeId >= len(out.pool.entries):
+        return deferCall(out)
+    let entry = out.pool.entries[pointer.typeId]
+    if !isTypeClass(kind = entry.kind, expected = .typeClassPointer) || len(entry.kids) == 0:
+        return failCall(out = out, site = site, offset = pointer.offset, kind = .callArgType, expected = "指针", got = typeText(pool = out.pool, id = pointer.typeId))
+    if name == "load":
+        var loaded = out
+        loaded.typeId = entry.kids[0]
+        return loaded
+    let value = site.args[1]
+    if value.typeId >= 0 && !isAssignable(pool = out.pool, from = value.typeId, to = entry.kids[0]):
+        return failCall(out = out, site = site, offset = value.offset, kind = .callArgType, expected = typeText(pool = out.pool, id = entry.kids[0]), got = typeText(pool = out.pool, id = value.typeId))
+    var stored = out
+    stored.typeId = -1
+    return stored
+
 ; 函数值调用：形参只从函数类型读，没有名字与默认值，个数必须相等。
 checkValueCall|func(out: CallResult, site: CallSite,) -> (CallResult,):
     if site.calleeType < 0 || site.calleeType >= len(out.pool.entries):

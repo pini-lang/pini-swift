@@ -204,6 +204,19 @@ checkCallNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, by
     let name = decodeRange(bytes = bytes, start = calleeExpr.nameStart, end = calleeExpr.nameEnd)
     if hasName(items = shadow, value = name):
         return out
+    if name == "load" || name == "store":
+        var pointerSite = CallSite()
+        pointerSite.name = name
+        pointerSite.file = unit.path
+        pointerSite.offset = unit.ast.exprAt(node).start
+        pointerSite.unit = unitIndex
+        pointerSite.args = callArguments(unit = unit, unitIndex = unitIndex, node = node, types = types)
+        var base = CallResult()
+        base.pool = world.types.pool
+        let checked = checkPointerCall(out = base, site = pointerSite, name = name)
+        if !checked.failed:
+            return out
+        return appendExprError(out = out, unit = unit, offset = pointerSite.offset, kind = .exprCallFailed, name = name, detail = callErrorName(checked.error.kind), code = callErrorCode(checked.error.kind))
     var site = CallSite()
     site.name = name
     site.file = unit.path

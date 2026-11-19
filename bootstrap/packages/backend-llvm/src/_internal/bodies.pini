@@ -560,6 +560,28 @@ emitExprCore|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
         return emitEnumTagGet(out = out, module = module, node = node)
     if node.kind == 58:
         return emitEnumPayloadGet(out = out, module = module, node = node)
+    if node.kind == 29:
+        return emitPointerLoad(out = out, module = module, node = node)
+    if node.kind == 30:
+        return emitPointerStore(out = out, module = module, node = node)
+    if node.kind == 31:
+        return emitAddressOfVar(out = out, node = node)
+    if node.kind == 32:
+        return emitFileWrite(out = out, module = module, node = node, symbol = "bk_write_file")
+    if node.kind == 33:
+        return emitFileRead(out = out, module = module, node = node)
+    if node.kind == 34:
+        return emitReadLine(out = out, module = module)
+    if node.kind == 35:
+        return emitFileWrite(out = out, module = module, node = node, symbol = "bk_append_file")
+    if node.kind == 36:
+        return emitTryReadCall(ctx = out.ctx, module = module, node = node, symbol = "bk_try_read_file")
+    if node.kind == 37:
+        return emitTryUnitWrite(out = out, module = module, node = node, symbol = "bk_try_write_file")
+    if node.kind == 38:
+        return emitTryUnitWrite(out = out, module = module, node = node, symbol = "bk_try_append_file")
+    if node.kind == 54:
+        return emitForeignDataAddress(out = out, module = module, node = node)
     out.ctx = addGap(ctx = out.ctx, gap = nodeGap(ctx = out.ctx, kind = node.kind))
     return out
 
@@ -961,6 +983,160 @@ emitTryReadCall|func(ctx: BodyCtx, module: IrModule, node: IrNode, symbol: Strin
     appendLine(sink = out.ctx.lines, text = "  " + name + " = insertvalue " + agg + " " + filled + ", i64 " + word + ", 2")
     out.text = name
     return out
+
+; 指针读：指令直出，不经运行时段；节点类型即元素类型。
+emitPointerLoad|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut,):
+    var done = out
+    if len(node.kids) == 0:
+        done.ctx = addGap(ctx = done.ctx, gap = "指针读缺操作数")
+        return done
+    let pointer = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[0])
+    done.ctx = pointer.ctx
+    let element = llvmTypeName(pool = module.types, typeId = node.typeId)
+    let id = done.ctx.temp
+    done.ctx.temp = id + 1
+    let loaded = tempName(index = id)
+    appendLine(sink = done.ctx.lines, text = "  " + loaded + " = load " + element + ", ptr " + pointer.text)
+    done.text = loaded
+    return done
+
+; 指针写：值先降到元素类型（窄元素截断），再 store；写本身不产出值。
+; 元素类型取自指针操作数的类型，取值自身的类型会让 `store(&x, 1)` 把 i32 写进 i64 槽。
+emitPointerStore|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut,):
+    var done = out
+    if len(node.kids) < 2:
+        done.ctx = addGap(ctx = done.ctx, gap = "指针写缺操作数")
+        return done
+    var element = -1
+    let pointerType = irNodeAt(pool = module.nodes, id = node.kids[0]).typeId
+    if pointerType >= 0 && pointerType < irTypeCount(module.types):
+        let target = irTypeAt(pool = module.types, id = pointerType)
+        if irTypeTag(target.kind) == 21 && len(target.kids) > 0:
+            element = target.kids[0]
+    if element < 0:
+        done.ctx = addGap(ctx = done.ctx, gap = "指针写缺元素类型")
+        return done
+    let pointer = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[0])
+    done.ctx = pointer.ctx
+    let value = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[1])
+    done.ctx = value.ctx
+    let shaped = storeValue(ctx = done.ctx, module = module, text = value.text, fromType = irNodeAt(pool = module.nodes, id = node.kids[1]).typeId, toType = element)
+    done.ctx = shaped.ctx
+    appendLine(sink = done.ctx.lines, text = "  store " + llvmTypeName(pool = module.types, typeId = element) + " " + shaped.text + ", ptr " + pointer.text)
+    done.text = ""
+    return done
+
+; 取址：槽名与 alloca 同源，故取槽地址即地址；名字只作诊断。
+emitAddressOfVar|func(out: ExprOut, node: IrNode,) -> (ExprOut,):
+    var done = out
+    done.text = slotNameOf(ctx = done.ctx, slot = node.intValue as I32)
+    return done
+
+; 外部数据取址：符号名就是地址；声明由模块的外部数据表统一出。
+emitForeignDataAddress|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut,):
+    var done = out
+    done.text = "@" + mangleName(name = textAt(module = module, id = node.text))
+    return done
+
+; 整份写与追加：路径与内容都按 C 串借出，写失败由运行时段陷阱，无返回值。
+emitFileWrite|func(out: ExprOut, module: IrModule, node: IrNode, symbol: String,) -> (ExprOut,):
+    var done = out
+    if len(node.kids) < 2:
+        done.ctx = addGap(ctx = done.ctx, gap = "文件写缺操作数")
+        return done
+    let path = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[0])
+    done.ctx = path.ctx
+    let content = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[1])
+    done.ctx = content.ctx
+    useExtern(use = done.ctx.externs, name = symbol)
+    appendLine(sink = done.ctx.lines, text = "  call void @" + symbol + "(ptr " + path.text + ", ptr " + content.text + ")")
+    done.text = ""
+    return done
+
+; 整份读：结果按 C 串交回；与宿主的 `readFile` 同形，长度不在这里重算。
+emitFileRead|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut,):
+    var done = out
+    if len(node.kids) == 0:
+        done.ctx = addGap(ctx = done.ctx, gap = "文件读缺路径")
+        return done
+    let path = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[0])
+    done.ctx = path.ctx
+    useExtern(use = done.ctx.externs, name = "bk_read_file")
+    let id = done.ctx.temp
+    done.ctx.temp = id + 1
+    let text = tempName(index = id)
+    appendLine(sink = done.ctx.lines, text = "  " + text + " = call ptr @bk_read_file(ptr " + path.text + ")")
+    done.text = text
+    return done
+
+; 读行：固定栈缓冲加 `fgets`；EOF 折成空串，避免 `%s` 读到空指针。
+; 行终止符保留，上限与宿主同一口径（255 字节可见）。
+emitReadLine|func(out: ExprOut, module: IrModule,) -> (ExprOut,):
+    var done = out
+    let slot = allocSlot(ctx = done.ctx, typeName = "[256 x i8]")
+    done.ctx = slot.ctx
+    let baseId = done.ctx.temp
+    done.ctx.temp = baseId + 1
+    let base = tempName(index = baseId)
+    appendLine(sink = done.ctx.lines, text = "  " + base + " = getelementptr [256 x i8], ptr " + slot.text + ", i32 0, i32 0")
+    let streamId = done.ctx.temp
+    done.ctx.temp = streamId + 1
+    let stream = tempName(index = streamId)
+    appendLine(sink = done.ctx.lines, text = "  " + stream + " = load ptr, ptr @__stdinp")
+    useExtern(use = done.ctx.externs, name = "fgets")
+    let lineId = done.ctx.temp
+    done.ctx.temp = lineId + 1
+    let line = tempName(index = lineId)
+    appendLine(sink = done.ctx.lines, text = "  " + line + " = call ptr @fgets(ptr " + base + ", i32 256, ptr " + stream + ")")
+    let emptyId = done.ctx.temp
+    done.ctx.temp = emptyId + 1
+    let empty = internString(pool = done.ctx.strings, value = "")
+    let emptyName = stringValue(lines = done.ctx.lines, pool = done.ctx.strings, index = empty, temp = emptyId)
+    let goneId = done.ctx.temp
+    done.ctx.temp = goneId + 1
+    let gone = tempName(index = goneId)
+    appendLine(sink = done.ctx.lines, text = "  " + gone + " = icmp eq ptr " + line + ", null")
+    let pickId = done.ctx.temp
+    done.ctx.temp = pickId + 1
+    let picked = tempName(index = pickId)
+    appendLine(sink = done.ctx.lines, text = "  " + picked + " = select i1 " + gone + ", ptr " + emptyName + ", ptr " + line)
+    done.text = picked
+    return done
+
+; 可接住的写：错误字即返回值，0 为成功；成功侧载荷是空元组，槽里留零值。
+emitTryUnitWrite|func(out: ExprOut, module: IrModule, node: IrNode, symbol: String,) -> (ExprOut,):
+    var done = out
+    if len(node.kids) < 2:
+        done.ctx = addGap(ctx = done.ctx, gap = "可接住写缺操作数")
+        return done
+    let path = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[0])
+    done.ctx = path.ctx
+    let content = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[1])
+    done.ctx = content.ctx
+    useExtern(use = done.ctx.externs, name = symbol)
+    let wordId = done.ctx.temp
+    done.ctx.temp = wordId + 1
+    let word = tempName(index = wordId)
+    appendLine(sink = done.ctx.lines, text = "  " + word + " = call i64 @" + symbol + "(ptr " + path.text + ", ptr " + content.text + ")")
+    let agg = llvmTypeName(pool = module.types, typeId = node.typeId)
+    let failedId = done.ctx.temp
+    done.ctx.temp = failedId + 1
+    let failed = tempName(index = failedId)
+    appendLine(sink = done.ctx.lines, text = "  " + failed + " = icmp ne i64 " + word + ", 0")
+    let tagId = done.ctx.temp
+    done.ctx.temp = tagId + 1
+    let tag = tempName(index = tagId)
+    appendLine(sink = done.ctx.lines, text = "  " + tag + " = select i1 " + failed + ", i64 1, i64 0")
+    let taggedId = done.ctx.temp
+    done.ctx.temp = taggedId + 1
+    let tagged = tempName(index = taggedId)
+    appendLine(sink = done.ctx.lines, text = "  " + tagged + " = insertvalue " + agg + " zeroinitializer, i64 " + tag + ", 0")
+    let id = done.ctx.temp
+    done.ctx.temp = id + 1
+    let filled = tempName(index = id)
+    appendLine(sink = done.ctx.lines, text = "  " + filled + " = insertvalue " + agg + " " + tagged + ", i64 " + word + ", 2")
+    done.text = filled
+    return done
 
 ; 数组字面量：先建空句柄，再逐元素追加；元素类型取自数组类型的首分量。
 emitArrayLiteral|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut,):

@@ -28,7 +28,18 @@ fmtResult: String = ""
 ; 能力族：本后端声明为已接的族码，驱动按这份登记，测试也照抄，三处不再各写一串。
 ; 族码与 backend-kit 同序；未登记的族在缺口里写作「族未声明」，与「已声明但没接」分开。
 llvmFamilies|func() -> (Array<I32>,):
-    return [0, 1, 2, 3, 4, 5, 6, 10]
+    return [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+; 外部数据声明：取址与读写都指向符号本身，声明随模块走。
+; 字符串池与类型池同规：这里只出模块级声明，函数体内的用法由语句段登记。
+externDataDecls|func(module: IrModule,) -> (Array<String>,):
+    var out: Array<String> = []
+    var i = 0
+    while i < len(module.externData):
+        let row = module.externData[i]
+        out = out.append("@" + mangleName(name = row.name) + " = external global " + llvmTypeName(pool = module.types, typeId = row.typeId))
+        i = i + 1
+    return out
 
 ; 无体函数跳过：它是降载缺口，声明出来也只会在链接期报缺符号。
 needsBody|func(fn: IrFunction,) -> (Bool,):
@@ -196,6 +207,13 @@ emitModule|func(entry: BackendEntry, target: TargetProfile, module: IrModule,) -
     while i < len(类型行):
         appendLine(sink = sink, text = 类型行[i])
         i = i + 1
+    let 数据行 = externDataDecls(module = module)
+    i = 0
+    while i < len(数据行):
+        appendLine(sink = sink, text = 数据行[i])
+        i = i + 1
+    if countNodes(module = module, kind = tagOfName(name = "readLine")) > 0:
+        appendLine(sink = sink, text = "@__stdinp = external global ptr")
     var bundle = EmitPass()
     let 胶水 = llvmReleaseGlues(module = module)
     if len(胶水) > 0:
@@ -245,6 +263,13 @@ emitTestModule|func(entry: BackendEntry, target: TargetProfile, module: IrModule
     while i < len(类型行):
         appendLine(sink = sink, text = 类型行[i])
         i = i + 1
+    let 数据行 = externDataDecls(module = module)
+    i = 0
+    while i < len(数据行):
+        appendLine(sink = sink, text = 数据行[i])
+        i = i + 1
+    if countNodes(module = module, kind = tagOfName(name = "readLine")) > 0:
+        appendLine(sink = sink, text = "@__stdinp = external global ptr")
     var bundle = EmitPass()
     let 胶水 = llvmReleaseGlues(module = module)
     if len(胶水) > 0:

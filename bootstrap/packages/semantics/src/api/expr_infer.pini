@@ -315,6 +315,24 @@ returnTypeOf|func(world: MemberWorld, symbol: I32, pool: TypePool,) -> (TypeInse
         return hitType(pool = pool, id = -1)
     return annotationType(world = world, unit = world.units[ref.unit], node = decl.typeId, pool = pool)
 
+; 外部数据符号的类型：外部块里非函数类型的条目；其余答 -1。
+foreignDataSymbolType|func(world: MemberWorld, name: String,) -> (I32,):
+    let symbol = lookupTopByName(index = world.symbols, name = name)
+    if symbol < 0:
+        return -1
+    let ref = symbolDecl(world = world, symbol = symbol)
+    if ref.unit < 0:
+        return -1
+    let unit = world.units[ref.unit]
+    let decl = unit.ast.decls[ref.decl]
+    if !isForeignSymbolCode(decl.kind):
+        return -1
+    if decl.typeId < 0 || decl.typeId >= len(unit.ast.types):
+        return -1
+    if isFunctionTypeCode(unit.ast.types[decl.typeId].kind):
+        return -1
+    return world.types.typeOf(unit = ref.unit, decl = ref.decl)
+
 ; 实参预推：先把调用节点的全部子节点推一遍，实参类型因此在提取时可用。
 inferKids|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, pool: TypePool, types: ExprTypes, bytes: Array<U8>,) -> (InferResult,):
     var out = InferResult()
@@ -362,6 +380,8 @@ inferNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
         let expr = unit.ast.exprAt(node)
         let name = decodeRange(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
         out.typeId = lookupNameType(table = names, name = name)
+        if out.typeId < 0:
+            out.typeId = foreignDataSymbolType(world = world, name = name)
         if out.typeId >= 0:
             out.types = writeExprType(table = out.types, unit = unitIndex, node = node, typeId = out.typeId)
         return out
@@ -458,6 +478,8 @@ inferCall|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
         return inferActuals(world = world, unit = unit, unitIndex = unitIndex, node = node, params = [], names = names, out = done, bytes = bytes)
     let calleeExpr = unit.ast.exprAt(callee)
     let name = decodeRange(bytes = bytes, start = calleeExpr.nameStart, end = calleeExpr.nameEnd)
+    if name == "load" || name == "store":
+        return inferPointerCall(world = world, unit = unit, unitIndex = unitIndex, node = node, name = name, names = names, out = done, bytes = bytes)
     let symbol = lookupTopByName(index = world.symbols, name = name)
     if symbol >= 0:
         let ref = symbolDecl(world = world, symbol = symbol)
@@ -507,6 +529,26 @@ inferCall|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
         return done
     done.typeId = result.typeId
     done.types = writeExprType(table = done.types, unit = unitIndex, node = node, typeId = done.typeId)
+    return done
+
+; 指针读写：先按源序推实参，再交给指针判定取结果；`store` 无值，不写类型表。
+inferPointerCall|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, name: String, names: NameTable, out: InferResult, bytes: Array<U8>,) -> (InferResult,):
+    var done = inferActuals(world = world, unit = unit, unitIndex = unitIndex, node = node, params = [], names = names, out = out, bytes = bytes)
+    var site = CallSite()
+    site.name = name
+    site.file = unit.path
+    site.offset = unit.ast.exprAt(node).start
+    site.unit = unitIndex
+    site.args = callArguments(unit = unit, unitIndex = unitIndex, node = node, types = done.types)
+    var base = CallResult()
+    base.pool = done.pool
+    let checked = checkPointerCall(out = base, site = site, name = name)
+    done.pool = checked.pool
+    if checked.failed:
+        return done
+    if checked.typeId >= 0:
+        done.typeId = checked.typeId
+        done.types = writeExprType(table = done.types, unit = unitIndex, node = node, typeId = done.typeId)
     return done
 
 ; 外部调用：签名取自符号的类型位（函数类型），形参不接标签，返回类型取签名尾。
@@ -602,8 +644,16 @@ inferUnary|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node:
     if inner.typeId < 0:
         return done
     let expr = unit.ast.exprAt(node)
-    if opSymbol(expr.op) == "!":
+    let spelling = opSymbol(expr.op)
+    if spelling == "!":
         let made = boolType(done.pool)
+        done.pool = made.pool
+        done.typeId = made.id
+    elif spelling == "&":
+        ; 取址的结果是 `*T`：类型池里没有这一条，就地驻留一份；装配链把池写回。
+        var kids: Array<I32> = []
+        kids = kids.append(inner.typeId)
+        let made = intern(pool = done.pool, kind = .typeClassPointer, name = "", kids = kids, ret = -1)
         done.pool = made.pool
         done.typeId = made.id
     else:

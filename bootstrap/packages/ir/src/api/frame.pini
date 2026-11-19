@@ -16,6 +16,7 @@ locals: Array<IrLocal> = []
 nextSlot: I32 = 0
 world: MemberWorld = MemberWorld()
 decls: IrDeclTable = IrDeclTable()
+externData: Array<IrExternData> = []
 
 ; 声明局部：槽位取当前水位，随后水位加一。
 declareIrLocal|func(frame: LowerFrame, name: String, typeId: I32, mutable: Bool,) -> (LowerFrame,):
