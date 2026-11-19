@@ -2538,7 +2538,7 @@ public final class TypeChecker {
                             if !isAssignable(actual: actual, expected: annot) {
                                 try report(
                                     TypeError.mismatch(
-                                        expected: annot.describe(), got: actual.describe(), location: location
+                                        expected: annot.describe(), got: actual.describe(), location: initExpr.location
                                     ))
                             }
                         } else if let actual = functionValueType(of: initExpr, location: location) {
@@ -2547,7 +2547,7 @@ public final class TypeChecker {
                             if !isAssignable(actual: actual, expected: annot) {
                                 try report(
                                     TypeError.mismatch(
-                                        expected: annot.describe(), got: actual.describe(), location: location
+                                        expected: annot.describe(), got: actual.describe(), location: initExpr.location
                                     ))
                             }
                         }
@@ -2836,7 +2836,7 @@ public final class TypeChecker {
 
             // P2-1 / P2-1.4 调用点校验：按被调用者形态分派
             switch callee {
-            case .identifier(let calleeName, _):
+            case .identifier(let calleeName, let calleeLocation):
                 // MED-3：枚举用例构造 arity 始终校验（与期望类型无关），覆盖变量初始化/return/实参等
                 try checkEnumCaseConstruction(calleeName: calleeName, args: arguments, location: location)
                 // 指针读：返回类型由实参的 `*T` 元素给出（TypeInference 特判）。这里钉住实参形态，
@@ -2892,7 +2892,7 @@ public final class TypeChecker {
                             TypeError.mismatch(
                                 expected: "unsafe 上下文（`|unsafe` 函数体或 `unsafe (...)` 消耗点）",
                                 got: "foreign 调用 `\(calleeName)` 出现在非 unsafe 上下文",
-                                location: location
+                                location: calleeLocation
                             ))
                         return
                     }
@@ -2905,7 +2905,9 @@ public final class TypeChecker {
                         try checkForeignVariadicArguments(
                             callee: calleeName, arguments: arguments, signature: sig, location: location)
                     }
-                    try validateCallArguments(arguments: arguments, signature: sig, location: location, callee: calleeName)
+                    try validateCallArguments(
+                        arguments: arguments, signature: sig, location: location, callee: calleeName,
+                        arityLocation: calleeLocation)
                     // B3-1：并发进程调用点的任务隔离——引用类型不得越过 `=>` 边界（消解 R6）
                     if let paramNames = asyncFunctionParamNames[calleeName] {
                         try enforceTaskIsolation(
@@ -3317,11 +3319,13 @@ public final class TypeChecker {
 
     /// 校验一次调用的实参：标签按名对位、位置实参填剩余位；标签面未知时沿用按位置对位。
     /// 标签面来自签名（`paramCalls`）：空数组 = 内建、函数值或未登记声明，只做类型比对。
+    /// `arityLocation` 是实参个数错的主标签位：调用方给被调名字，缺省退回调用点。
     private func validateCallArguments(
         arguments: [CallArgument],
         signature sig: TypeEnvironment.FunctionSignature,
         location: SourceLocation,
-        callee: String = "函数"
+        callee: String = "函数",
+        arityLocation: SourceLocation? = nil
     ) throws {
         // 值位：无返回值调用不能做实参 —— 形参宽松（`_` / `Any`）不等于值位宽松。
         // 独立成一轮，不依赖形参位置映射：变参溢出位的实参不在下方下标循环里。
@@ -3336,7 +3340,7 @@ public final class TypeChecker {
                 TypeError.argumentCountMismatch(
                     expected: sig.params.count - sig.usingParamIndices.count,
                     got: arguments.count,
-                    location: location
+                    location: arityLocation ?? location
                 ))
         }
         let effectiveIndices = paramIndices ?? Array(sig.params.indices)
