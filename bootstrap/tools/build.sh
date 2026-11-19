@@ -7,9 +7,14 @@ set -uo pipefail
 root="$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")"
 cd "$root" || exit 1
 
-pini="$root/.build/debug/pini"
+# 宿主取 release：同一份源码下快数倍；缺失时回退 debug 并明示。
+pini="$root/.build/release/pini"
 if [ ! -x "$pini" ]; then
-    echo " 行不通  [构建] 缺 $pini；先 swift build --disable-sandbox" >&2
+    pini="$root/.build/debug/pini"
+    echo " 注意  [构建] 未找到 release 宿主，回退 $pini"
+fi
+if [ ! -x "$pini" ]; then
+    echo " 行不通  [构建] 缺宿主二进制；先 swift build -c release --disable-sandbox" >&2
     exit 1
 fi
 

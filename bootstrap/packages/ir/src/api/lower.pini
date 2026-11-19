@@ -34,6 +34,11 @@ isUnsafe: Bool = false
 isAsync: Bool = false
 sourceFile: String = ""
 
+; 外部数据符号：名字与 IR 类型；发射期按它出 `external global` 声明。
+(IrExternData)
+name: String = ""
+typeId: I32 = -1
+
 ; 模块：类型池、节点池、字符串池、函数表、声明面、槽位面与两张错误表。
 ; `errors` 只放函数级降载失败，`typeErrors` 放类型映射失败：前者与空体一一对应，后者没有函数。
 ; 后端只读这张模块：声明、槽位、位置与份额都在里面，不再回查语义层。
@@ -44,6 +49,7 @@ texts: Array<String> = []
 functions: Array<IrFunction> = []
 decls: IrDeclTable = IrDeclTable()
 slots: IrSlotTable = IrSlotTable()
+externData: Array<IrExternData> = []
 errors: Array<LowerError> = []
 typeErrors: Array<LowerError> = []
 
@@ -58,6 +64,7 @@ world: MemberWorld = MemberWorld()
 types: ExprTypes = ExprTypes()
 decls: IrDeclTable = IrDeclTable()
 slots: IrSlotTable = IrSlotTable()
+externData: Array<IrExternData> = []
 unitIndex: I32 = 0
 bytes: Array<U8> = []
 
@@ -156,6 +163,7 @@ lowerFunction|func(state: LowerState, unit: CompilationUnit, declId: I32, owner:
             return out
         fn.body = body.ids
         fn.positions = body.positions
+        out.externData = mergeExternData(table = out.externData, more = body.frame.externData)
     out.functions = out.functions.append(fn)
     return out
 
@@ -207,8 +215,25 @@ lowerWorkspace|func(input: LowerWorld,) -> (IrModule,):
     out.functions = state.functions
     out.decls = state.decls
     out.slots = state.slots
+    out.externData = state.externData
     out.errors = state.errors
     out.typeErrors = state.map.errors
+    return out
+
+; 外部数据符号合并：同名只留一条，类型取先登记的那条；顺序即首次使用序。
+mergeExternData|func(table: Array<IrExternData>, more: Array<IrExternData>,) -> (Array<IrExternData>,):
+    var out = table
+    var i = 0
+    while i < len(more):
+        var found = false
+        var j = 0
+        while j < len(out):
+            if out[j].name == more[i].name:
+                found = true
+            j = j + 1
+        if !found:
+            out = out.append(more[i])
+        i = i + 1
     return out
 
 ; 函数表按名字查：未命中答 -1；同名不应出现，出现即说明降载重复。

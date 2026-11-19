@@ -335,9 +335,25 @@ lowerIdentifier|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, ma
     let expr = unit.ast.exprAt(id)
     let name = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
     let placed = internText(texts = out.texts, value = name)
+    let at = findIrLocal(frame = out.frame, name = name)
+    if at < 0:
+        ; 外部数据符号：值位读的是符号存储的当前值，故取址后立即 pointerLoad。
+        let dataType = foreignDataType(frame = out.frame, map = map, name = name)
+        if dataType >= 0:
+            var address = irMakeNode(kind = irExprTag(.irForeignDataAddress), typeId = dataType)
+            address.text = placed.id
+            let placedAddress = irAppendNode(pool = out.pool, node = address)
+            var loaded = irMakeNode(kind = irExprTag(.irPointerLoad), typeId = typeId)
+            loaded.kids = [placedAddress.id]
+            let inserted = irAppendNode(pool = placedAddress.pool, node = loaded)
+            var done = out
+            done.texts = placed.texts
+            done.pool = inserted.pool
+            done.frame.externData = noteExternData(table = done.frame.externData, name = name, typeId = dataType)
+            done.id = inserted.id
+            return done
     var node = irMakeNode(kind = irExprTag(.irLoad), typeId = typeId)
     node.text = placed.id
-    let at = findIrLocal(frame = out.frame, name = name)
     if at >= 0:
         node.intValue = out.frame.locals[at].slot as I64
     let inserted = irAppendNode(pool = out.pool, node = node)
@@ -386,10 +402,13 @@ lowerBinary|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: T
     done.id = inserted.id
     return done
 
-; 一元：操作数是唯一子节点；符号未登记报缺口。
+; 一元：操作数是唯一子节点；符号未登记报缺口。取址先于值读，目标不是值。
 lowerUnary|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
     let expr = unit.ast.exprAt(id)
     var done = out
+    let spelling = opSymbol(expr.op)
+    if spelling == "&" && len(expr.kids) == 1:
+        return lowerAddressOf(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id, target = expr.kids[0])
     var kids: Array<I32> = []
     var i = 0
     while i < len(expr.kids):
@@ -401,7 +420,6 @@ lowerUnary|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: Ty
             return takeFailure(out = done, one = one)
         kids = kids.append(one.id)
         i = i + 1
-    let spelling = opSymbol(expr.op)
     let op = unaryTagOf(spelling = spelling)
     if op == 0:
         return missExpr(out = done, unit = unit, id = id, what = "一元运算符 " + spelling)
@@ -412,6 +430,72 @@ lowerUnary|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: Ty
     done.pool = inserted.pool
     done.id = inserted.id
     return done
+
+; 取址：局部取槽地址，外部数据符号取符号地址；两条路都不先读值。
+; 节点类型取指针类型：它是「地址」这个值的类型，读写面据此取元素。
+lowerAddressOf|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32, target: I32,) -> (LowerExpr,):
+    if !unit.ast.isIdentifierExpr(target):
+        return missExpr(out = out, unit = unit, id = id, what = "取址目标不是变量")
+    let pointerType = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = out.frame, bytes = bytes, id = id)
+    if pointerType < 0:
+        return missType(out = out, unit = unit, id = id, bytes = bytes)
+    let expr = unit.ast.exprAt(target)
+    let name = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
+    var done = out
+    let placed = internText(texts = done.texts, value = name)
+    done.texts = placed.texts
+    let at = findIrLocal(frame = done.frame, name = name)
+    if at < 0:
+        let dataType = foreignDataType(frame = done.frame, map = map, name = name)
+        if dataType < 0:
+            return missExpr(out = out, unit = unit, id = id, what = "取址目标 " + name)
+        var address = irMakeNode(kind = irExprTag(.irForeignDataAddress), typeId = pointerType)
+        address.text = placed.id
+        let inserted = irAppendNode(pool = done.pool, node = address)
+        done.pool = inserted.pool
+        done.frame.externData = noteExternData(table = done.frame.externData, name = name, typeId = dataType)
+        done.id = inserted.id
+        return done
+    var node = irMakeNode(kind = irExprTag(.irAddressOfVar), typeId = pointerType)
+    node.text = placed.id
+    node.intValue = done.frame.locals[at].slot as I64
+    let inserted = irAppendNode(pool = done.pool, node = node)
+    done.pool = inserted.pool
+    done.id = inserted.id
+    return done
+
+; 外部数据符号的 IR 类型：只认外部块里非函数类型的条目，其余答 -1。
+foreignDataType|func(frame: LowerFrame, map: TypeMap, name: String,) -> (I32,):
+    let symbol = lookupTopByName(index = frame.world.symbols, name = name)
+    if symbol < 0:
+        return -1
+    let ref = symbolDecl(world = frame.world, symbol = symbol)
+    if ref.unit < 0:
+        return -1
+    let unit = frame.world.units[ref.unit]
+    let decl = unit.ast.decls[ref.decl]
+    if !isForeignSymbolCode(decl.kind):
+        return -1
+    if decl.typeId < 0 || decl.typeId >= len(unit.ast.types):
+        return -1
+    if isFunctionTypeCode(unit.ast.types[decl.typeId].kind):
+        return -1
+    let semanticId = frame.world.types.typeOf(unit = ref.unit, decl = ref.decl)
+    if semanticId < 0:
+        return -1
+    return irIdOf(map = map, semanticId = semanticId)
+
+; 外部数据登记：同名只留一条，类型取首次登记；顺序即首次使用序。
+noteExternData|func(table: Array<IrExternData>, name: String, typeId: I32,) -> (Array<IrExternData>,):
+    var i = 0
+    while i < len(table):
+        if table[i].name == name:
+            return table
+        i = i + 1
+    var row = IrExternData()
+    row.name = name
+    row.typeId = typeId
+    return table.append(row)
 
 ; 实参：标签与降好的节点下标；标签为空即位置实参。
 (IrActual)
@@ -555,10 +639,16 @@ callResultType|func(map: TypeMap, types: ExprTypes, unit: CompilationUnit, unitI
     return -2
 
 ; 内建函数：包级符号表里没有的裸名在此查，形参一律位置传递，返回类型按形状入池。
-; `print`、`assert`、`len` 不在此列：三者各有专属节点，走通用调用会丢掉行终止、消息与容器分派。
+; 有专属节点的内建不在此列：`print`、`assert`、`len`、指针读写与整份读写各自走专路。
 calleeOfBuiltin|func(frame: LowerFrame, map: TypeMap, name: String,) -> (IrCallee,):
     var out = IrCallee()
     if name == "print" || name == "assert" || name == "len":
+        return out
+    if name == "load" || name == "store":
+        return out
+    if name == "writeFile" || name == "appendFile" || name == "readFile" || name == "readLine":
+        return out
+    if name == "tryReadFile" || name == "tryWriteFile" || name == "tryAppendFile":
         return out
     var i = 0
     while i < len(frame.world.functions):
@@ -756,6 +846,70 @@ lowerPlainCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map
         if map.i32Id < 0:
             return missType(out = done, unit = unit, id = id, bytes = bytes)
         let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irLenCall), typeId = map.i32Id, op = 0, kids = [actuals[0].id])
+        done.pool = inserted.pool
+        done.id = inserted.id
+        return done
+    if name == "load" && len(actuals) == 1 && leading < 0:
+        let typeId = callResultType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id, ret = -1)
+        if typeId == -2:
+            return missType(out = done, unit = unit, id = id, bytes = bytes)
+        let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irPointerLoad), typeId = typeId, op = 0, kids = [actuals[0].id])
+        done.pool = inserted.pool
+        done.id = inserted.id
+        return done
+    if name == "store" && len(actuals) == 2 && leading < 0:
+        ; 写无值：节点类型记 -1，槽里的旧值不归本节点归还。
+        let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irPointerStore), typeId = -1, op = 0, kids = [actuals[0].id, actuals[1].id])
+        done.pool = inserted.pool
+        done.id = inserted.id
+        return done
+    if name == "writeFile" && len(actuals) == 2 && leading < 0:
+        let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irFileWrite), typeId = -1, op = 0, kids = [actuals[0].id, actuals[1].id])
+        done.pool = inserted.pool
+        done.id = inserted.id
+        return done
+    if name == "appendFile" && len(actuals) == 2 && leading < 0:
+        let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irFileAppend), typeId = -1, op = 0, kids = [actuals[0].id, actuals[1].id])
+        done.pool = inserted.pool
+        done.id = inserted.id
+        return done
+    if name == "readFile" && len(actuals) == 1 && leading < 0:
+        let typeId = callResultType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id, ret = -1)
+        if typeId == -2:
+            return missType(out = done, unit = unit, id = id, bytes = bytes)
+        let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irFileRead), typeId = typeId, op = 0, kids = [actuals[0].id])
+        done.pool = inserted.pool
+        done.id = inserted.id
+        return done
+    if name == "readLine" && len(actuals) == 0 && leading < 0:
+        let typeId = callResultType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id, ret = -1)
+        if typeId == -2:
+            return missType(out = done, unit = unit, id = id, bytes = bytes)
+        let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irReadLine), typeId = typeId, op = 0, kids = [])
+        done.pool = inserted.pool
+        done.id = inserted.id
+        return done
+    if name == "tryReadFile" && len(actuals) == 1 && leading < 0:
+        let typeId = callResultType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id, ret = -1)
+        if typeId == -2:
+            return missType(out = done, unit = unit, id = id, bytes = bytes)
+        let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irFileTryRead), typeId = typeId, op = 0, kids = [actuals[0].id])
+        done.pool = inserted.pool
+        done.id = inserted.id
+        return done
+    if name == "tryWriteFile" && len(actuals) == 2 && leading < 0:
+        let typeId = callResultType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id, ret = -1)
+        if typeId == -2:
+            return missType(out = done, unit = unit, id = id, bytes = bytes)
+        let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irFileTryWrite), typeId = typeId, op = 0, kids = [actuals[0].id, actuals[1].id])
+        done.pool = inserted.pool
+        done.id = inserted.id
+        return done
+    if name == "tryAppendFile" && len(actuals) == 2 && leading < 0:
+        let typeId = callResultType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id, ret = -1)
+        if typeId == -2:
+            return missType(out = done, unit = unit, id = id, bytes = bytes)
+        let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irFileTryAppend), typeId = typeId, op = 0, kids = [actuals[0].id, actuals[1].id])
         done.pool = inserted.pool
         done.id = inserted.id
         return done

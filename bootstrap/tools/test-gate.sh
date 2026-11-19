@@ -10,6 +10,12 @@ cd "$root" || exit 1
 runtime="$(pini_runtime_lib "$root")" || exit 1
 runtime_dir="$(dirname "$runtime")"
 
+# 能力可达：接通即声明、声明即至少接一条；源扫描，不依赖二进制。
+if ! python3 "$root/bootstrap/tools/capability-reach.py" --check > /dev/null; then
+    echo " 行不通  [测试自检] 能力可达自检未通过" >&2
+    exit 1
+fi
+
 pini="$root/bootstrap/.build/debug/bin/pini-bootstrap"
 clang_bin="$(command -v clang || true)"
 if [ ! -x "$pini" ] || [ -z "$clang_bin" ]; then

@@ -62,15 +62,28 @@ _backend_kit = "../../backend-kit"
 族未声明|test() -> ():
     var module = 发射造模块()
     var pool = module.nodes
-    var load = irMakeNode(kind = tagOfName(name = "pointerLoad"), typeId = 0)
-    let placed = irAppendNode(pool = pool, node = load)
+    var lazy = irMakeNode(kind = tagOfName(name = "lazyRefConstruct"), typeId = 0)
+    let placed = irAppendNode(pool = pool, node = lazy)
     module.nodes = placed.pool
     module.functions[0].body = [placed.id]
     let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
     assert(result.failed, "未声明族的节点应失败")
     assert(len(result.text) == 0, "失败时不应出半份文本")
     assert(emitGapCount(result = result) > 0, "失败应带缺口")
-    assert(发射含子串(text = result.gaps[0], needle = "族未声明 pointers"), "缺口应点名族")
+    assert(发射含子串(text = result.gaps[0], needle = "族未声明 lazyRef"), "缺口应点名族")
+    return
+
+; 缺口：族已声明而节点没接时按类别码报，不与「族未声明」混成一句。
+族已声明未接|test() -> ():
+    var module = 发射造模块()
+    var pool = module.nodes
+    var literal = irMakeNode(kind = tagOfName(name = "floatConst"), typeId = 0)
+    let placed = irAppendNode(pool = pool, node = literal)
+    module.nodes = placed.pool
+    module.functions[0].body = [placed.id]
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    assert(result.failed, "未接节点应失败")
+    assert(发射含子串(text = result.gaps[0], needle = "未接"), "缺口应说未接")
     return
 
 ; 档次：转储档次不接受，直接拒发；记录与发射器判据同源。
@@ -756,4 +769,214 @@ _backend_kit = "../../backend-kit"
     let result = emitTestModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module, plan = plan)
     assert(result.failed, "缺测试应拒发")
     assert(发射含子串(text = result.detail, needle = "测试函数不在模块里"), "应指出缺哪条")
+    return
+
+; 指针池：i32 在前，`*i32` 在后；类别码 21 即指针。
+发射造指针池|func() -> (IrTypePool,):
+    var pool = IrTypePool()
+    let intType = irScalarTypeOfCode(pool = pool, code = 1, name = "i32")
+    pool = intType.pool
+    let pointer = irWrapTypeOfCode(pool = pool, code = 21, name = "", inner = 0)
+    return pointer.pool
+
+; 指针读写：取址、写、读都直出指令，不经运行时段。
+指针读写|test() -> ():
+    var module = IrModule()
+    module.types = 发射造指针池()
+    var nodes = IrNodePool()
+    var literal = irMakeNode(kind = tagOfName(name = "intConst"), typeId = 0)
+    literal.intValue = 7
+    let placedLiteral = irAppendNode(pool = nodes, node = literal)
+    nodes = placedLiteral.pool
+    var alloc = irMakeNode(kind = tagOfName(name = "allocVar"), typeId = 0)
+    alloc.intValue = 0
+    alloc.kids = [placedLiteral.id]
+    let placedAlloc = irAppendNode(pool = nodes, node = alloc)
+    nodes = placedAlloc.pool
+    var address = irMakeNode(kind = tagOfName(name = "addressOfVar"), typeId = 1)
+    address.intValue = 0
+    let placedAddress = irAppendNode(pool = nodes, node = address)
+    nodes = placedAddress.pool
+    var nine = irMakeNode(kind = tagOfName(name = "intConst"), typeId = 0)
+    nine.intValue = 9
+    let placedNine = irAppendNode(pool = nodes, node = nine)
+    nodes = placedNine.pool
+    var store = irMakeNode(kind = tagOfName(name = "pointerStore"), typeId = -1)
+    store.kids = [placedAddress.id, placedNine.id]
+    let placedStore = irAppendNode(pool = nodes, node = store)
+    nodes = placedStore.pool
+    var stmt = irMakeNode(kind = tagOfName(name = "exprStmt"), typeId = -1)
+    stmt.kids = [placedStore.id]
+    let placedStmt = irAppendNode(pool = nodes, node = stmt)
+    nodes = placedStmt.pool
+    var load = irMakeNode(kind = tagOfName(name = "pointerLoad"), typeId = 0)
+    load.kids = [placedAddress.id]
+    let placedLoad = irAppendNode(pool = nodes, node = load)
+    nodes = placedLoad.pool
+    var back = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    back.kids = [placedLoad.id]
+    let placedBack = irAppendNode(pool = nodes, node = back)
+    nodes = placedBack.pool
+    module.nodes = nodes
+    var fn = IrFunction()
+    fn.name = "main"
+    fn.returnType = 0
+    fn.body = [placedAlloc.id, placedStmt.id, placedBack.id]
+    module.functions = module.functions.append(fn)
+    assert(supportsFamily(entry = 发射造记录(outputCode = 1), family = 7), "指针族应已声明")
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    assert(!result.failed, "指针模块应发得出来")
+    assert(发射含子串(text = result.text, needle = "store i32 9, ptr %s0"), "写应落到槽地址")
+    assert(发射含子串(text = result.text, needle = "load i32, ptr %s0"), "读应从槽地址取")
+    return
+
+; 文件池：i32、字符串、空元组、结果四个类型。
+发射造文件池|func() -> (IrTypePool,):
+    var pool = IrTypePool()
+    let intType = irScalarTypeOfCode(pool = pool, code = 1, name = "i32")
+    pool = intType.pool
+    let text = irScalarTypeOfCode(pool = pool, code = 8, name = "string")
+    pool = text.pool
+    let unit = irTupleType(pool = pool, fields = [])
+    pool = unit.pool
+    let outcome = irWrapTypeOfCode(pool = pool, code = 10, name = "", inner = unit.id)
+    return outcome.pool
+
+; 文件写与读：路径与内容按 C 串借出，读写各走一条运行时段入口。
+文件读写|test() -> ():
+    var module = IrModule()
+    module.types = 发射造文件池()
+    module.texts = ["out.txt", "hi"]
+    var nodes = IrNodePool()
+    var path = irMakeNode(kind = tagOfName(name = "stringConst"), typeId = 1)
+    path.text = 0
+    let placedPath = irAppendNode(pool = nodes, node = path)
+    nodes = placedPath.pool
+    var content = irMakeNode(kind = tagOfName(name = "stringConst"), typeId = 1)
+    content.text = 1
+    let placedContent = irAppendNode(pool = nodes, node = content)
+    nodes = placedContent.pool
+    var write = irMakeNode(kind = tagOfName(name = "fileWrite"), typeId = -1)
+    write.kids = [placedPath.id, placedContent.id]
+    let placedWrite = irAppendNode(pool = nodes, node = write)
+    nodes = placedWrite.pool
+    var stmt = irMakeNode(kind = tagOfName(name = "exprStmt"), typeId = -1)
+    stmt.kids = [placedWrite.id]
+    let placedStmt = irAppendNode(pool = nodes, node = stmt)
+    nodes = placedStmt.pool
+    var read = irMakeNode(kind = tagOfName(name = "fileRead"), typeId = 1)
+    read.kids = [placedPath.id]
+    let placedRead = irAppendNode(pool = nodes, node = read)
+    nodes = placedRead.pool
+    var back = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    back.kids = [placedRead.id]
+    let placedBack = irAppendNode(pool = nodes, node = back)
+    nodes = placedBack.pool
+    module.nodes = nodes
+    var fn = IrFunction()
+    fn.name = "main"
+    fn.returnType = 1
+    fn.body = [placedStmt.id, placedBack.id]
+    module.functions = module.functions.append(fn)
+    assert(supportsFamily(entry = 发射造记录(outputCode = 1), family = 8), "整份读写族应已声明")
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    assert(!result.failed, "文件模块应发得出来")
+    assert(发射含子串(text = result.text, needle = "call void @bk_write_file(ptr "), "写应走整份写入口")
+    assert(发射含子串(text = result.text, needle = "call ptr @bk_read_file(ptr "), "读应走整份读入口")
+    return
+
+; 可接住写：错误字即返回值，聚合标签按是否有错置位。
+可接住写|test() -> ():
+    var module = IrModule()
+    module.types = 发射造文件池()
+    module.texts = ["out.txt", "hi"]
+    var nodes = IrNodePool()
+    var path = irMakeNode(kind = tagOfName(name = "stringConst"), typeId = 1)
+    path.text = 0
+    let placedPath = irAppendNode(pool = nodes, node = path)
+    nodes = placedPath.pool
+    var content = irMakeNode(kind = tagOfName(name = "stringConst"), typeId = 1)
+    content.text = 1
+    let placedContent = irAppendNode(pool = nodes, node = content)
+    nodes = placedContent.pool
+    var write = irMakeNode(kind = tagOfName(name = "fileTryWrite"), typeId = 3)
+    write.kids = [placedPath.id, placedContent.id]
+    let placedWrite = irAppendNode(pool = nodes, node = write)
+    nodes = placedWrite.pool
+    var stmt = irMakeNode(kind = tagOfName(name = "exprStmt"), typeId = -1)
+    stmt.kids = [placedWrite.id]
+    let placedStmt = irAppendNode(pool = nodes, node = stmt)
+    nodes = placedStmt.pool
+    var back = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    let placedBack = irAppendNode(pool = nodes, node = back)
+    nodes = placedBack.pool
+    module.nodes = nodes
+    var fn = IrFunction()
+    fn.name = "main"
+    fn.returnType = -1
+    fn.body = [placedStmt.id, placedBack.id]
+    module.functions = module.functions.append(fn)
+    assert(supportsFamily(entry = 发射造记录(outputCode = 1), family = 9), "可接住读写族应已声明")
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    assert(!result.failed, "可接住写应发得出来")
+    assert(发射含子串(text = result.text, needle = "call i64 @bk_try_write_file(ptr "), "应走可接住写入口")
+    assert(发射含子串(text = result.text, needle = "insertvalue { i64, ptr, i64 }"), "结果按三槽聚合拼回")
+    return
+
+; 读行：栈缓冲加 fgets，标准输入流与空串兜底一并出。
+读行|test() -> ():
+    var module = IrModule()
+    module.types = 发射造文件池()
+    var nodes = IrNodePool()
+    var line = irMakeNode(kind = tagOfName(name = "readLine"), typeId = 1)
+    let placedLine = irAppendNode(pool = nodes, node = line)
+    nodes = placedLine.pool
+    var back = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    back.kids = [placedLine.id]
+    let placedBack = irAppendNode(pool = nodes, node = back)
+    nodes = placedBack.pool
+    module.nodes = nodes
+    var fn = IrFunction()
+    fn.name = "main"
+    fn.returnType = 1
+    fn.body = [placedBack.id]
+    module.functions = module.functions.append(fn)
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    assert(!result.failed, "读行应发得出来")
+    assert(发射含子串(text = result.text, needle = "call ptr @fgets(ptr "), "应走 libc 行读取")
+    assert(发射含子串(text = result.text, needle = "@__stdinp = external global ptr"), "应声明标准输入流")
+    return
+
+; 外部数据：符号声明随模块走，取址即符号名。
+外部数据取址|test() -> ():
+    var module = IrModule()
+    module.types = 发射造指针池()
+    module.texts = ["counter"]
+    var row = IrExternData()
+    row.name = "counter"
+    row.typeId = 0
+    module.externData = module.externData.append(row)
+    var nodes = IrNodePool()
+    var address = irMakeNode(kind = tagOfName(name = "foreignDataAddress"), typeId = 1)
+    address.text = 0
+    let placedAddress = irAppendNode(pool = nodes, node = address)
+    nodes = placedAddress.pool
+    var load = irMakeNode(kind = tagOfName(name = "pointerLoad"), typeId = 0)
+    load.kids = [placedAddress.id]
+    let placedLoad = irAppendNode(pool = nodes, node = load)
+    nodes = placedLoad.pool
+    var back = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    back.kids = [placedLoad.id]
+    let placedBack = irAppendNode(pool = nodes, node = back)
+    nodes = placedBack.pool
+    module.nodes = nodes
+    var fn = IrFunction()
+    fn.name = "main"
+    fn.returnType = 0
+    fn.body = [placedBack.id]
+    module.functions = module.functions.append(fn)
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    assert(!result.failed, "外部数据模块应发得出来")
+    assert(发射含子串(text = result.text, needle = "@counter = external global i32"), "数据声明应随模块出")
+    assert(发射含子串(text = result.text, needle = "ptr @counter"), "取址应指向符号本身")
     return

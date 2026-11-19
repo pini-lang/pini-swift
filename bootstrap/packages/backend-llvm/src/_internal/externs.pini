@@ -107,6 +107,16 @@ externSignature|func(name: String,) -> (String,):
     ; IO 与宿主查询族：路径按 C 串借出，读出内容按带头串交回。
     if name == "bk_read_file":
         return "declare ptr @bk_read_file(ptr)"
+    if name == "bk_write_file":
+        return "declare void @bk_write_file(ptr, ptr)"
+    if name == "bk_append_file":
+        return "declare void @bk_append_file(ptr, ptr)"
+    if name == "bk_try_write_file":
+        return "declare i64 @bk_try_write_file(ptr, ptr)"
+    if name == "bk_try_append_file":
+        return "declare i64 @bk_try_append_file(ptr, ptr)"
+    if name == "fgets":
+        return "declare ptr @fgets(ptr, i32, ptr)"
     if name == "bk_list_dir":
         return "declare ptr @bk_list_dir(ptr)"
     if name == "bk_exists":
