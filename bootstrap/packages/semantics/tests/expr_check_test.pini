@@ -34,7 +34,7 @@ types: ExprTypes = ExprTypes()
     assert(len(check.errors) == 1, "应报一条，实得 " + "\(len(check.errors))")
     assert(isExprError(error = check.errors[0], kind = .exprUndefined), "实得 " + exprErrorName(check.errors[0].kind))
     assert(check.errors[0].name == "没有这个", "实得 " + check.errors[0].name)
-    assert(check.errors[0].code == "E3-003", "实得 " + check.errors[0].code)
+    assert(check.errors[0].code == "E3-002", "实得 " + check.errors[0].code)
     return
 
 ; 已知名字放行：顶层函数、内建、局部与参数都不报。

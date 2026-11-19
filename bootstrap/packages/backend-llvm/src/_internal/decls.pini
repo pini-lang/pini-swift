@@ -2,6 +2,7 @@
 _semantics = "../../../semantics"
 _ir = "../../../ir"
 _backend_kit = "../../../backend-kit"
+_unicode = "../../../unicode"
 
 ; 声明面：函数头、形参表与符号拼写；有体出定义，无体出声明。
 ; 符号只按 IR 名编码一次；目标前缀留给外部符号，内部函数不带，两代之间符号不漂。
@@ -31,11 +32,41 @@ llvmSignature|func(pool: IrTypePool, fn: IrFunction, isDefine: Bool,) -> (String
         head = "define"
     return head + " " + llvmReturnType(pool = pool, fn = fn) + " @" + mangleName(name = fn.name) + "(" + llvmParams(pool = pool, fn = fn) + ")"
 
-; 函数表位置：按名查，未命中答 -1；发射器据此判调用点是内部还是外部。
+; 名字键：按 NFC 归一，等价拼写（如分解形式）落到同一个键上。
+nameKey|func(name: String,) -> (String,):
+    let bytes = tempUtf8Bytes(name)
+    let decoded = decodeUtf8(identifierKeyBytes(bytes = bytes, start = 0, end = len(bytes)))
+    var out = ""
+    var i = 0
+    while i < len(decoded.scalars):
+        out = out + "\(chr(decoded.scalars[i].code))"
+        i = i + 1
+    return out
+
+; 非 ASCII：等价拼写只可能出现在这类名字上；纯 ASCII 名跳过归一扫描。
+hasNonAscii|func(name: String,) -> (Bool,):
+    let bytes = tempUtf8Bytes(name)
+    var i = 0
+    while i < len(bytes):
+        if tempByteToInt(bytes[i]) >= 128:
+            return true
+        i = i + 1
+    return false
+
+; 函数表位置：先按原拼写查，未命中再按 NFC 键查等价拼写；都未命中答 -1。
+; 发射器据此判调用点是内部还是外部，符号拼写取命中的声明名。
 findIrFunctionIndex|func(module: IrModule, name: String,) -> (I32,):
     var i = 0
     while i < len(module.functions):
         if module.functions[i].name == name:
+            return i
+        i = i + 1
+    if !hasNonAscii(name = name):
+        return -1
+    let key = nameKey(name = name)
+    i = 0
+    while i < len(module.functions):
+        if nameKey(name = module.functions[i].name) == key:
             return i
         i = i + 1
     return -1

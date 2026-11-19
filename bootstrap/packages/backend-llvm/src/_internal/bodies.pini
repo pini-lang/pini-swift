@@ -472,6 +472,8 @@ emitExprCore|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
             return emitBuiltinCall(out = out, module = module, node = node, row = row)
         var symbol = mangleName(name = callee)
         let target = findIrFunctionIndex(module = module, name = callee)
+        if target >= 0:
+            symbol = mangleName(name = module.functions[target].name)
         if target < 0:
             if len(externSignature(name = callee)) == 0:
                 out.ctx = addGap(ctx = out.ctx, gap = "外部调用 " + callee)
