@@ -12,7 +12,7 @@ if [ "$#" -gt 0 ]; then
     shift
 fi
 
-pini="$root/bootstrap/.build/debug/bin/pini-bootstrap"
+pini="${PINI_BOOTSTRAP_BIN:-$root/bootstrap/.build/debug/bin/pini-bootstrap}"
 if [ ! -x "$pini" ]; then
     echo " 行不通  [测试] 缺 $pini；先 bash bootstrap/tools/build.sh" >&2
     exit 1
