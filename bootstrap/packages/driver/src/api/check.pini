@@ -10,12 +10,13 @@ _semantics = "../../../semantics"
 ; 诊断统一排序后渲染成文本；退出码只表达有无错误，进程落地归宿主。
 ; 语法阶段有错就短路：后续阶段会拿半棵树复述同一问题，噪声大于信息。
 
-; 检查报告：根、包数、已排序的诊断、渲染文本、错误数与退出码。
+; 检查报告：根、包数、已排序的诊断、渲染文本、结构化行、错误数与退出码。
 (WorkspaceReport)
 root: String = ""
 packages: I32 = 0
 diagnostics: Array<Diagnostic> = []
 text: String = ""
+tsv: String = ""
 errorCount: I32 = 0
 exitCode: I32 = 0
 
@@ -317,6 +318,7 @@ finishReport|func(root: String, packages: I32, diagnostics: Array<Diagnostic>, u
         texts = texts.append(makeSourceText(units[i].text))
         i = i + 1
     out.text = renderAll(items = out.diagnostics, files = files, texts = texts)
+    out.tsv = renderTSV(items = out.diagnostics, files = files, texts = texts)
     out.errorCount = len(out.diagnostics)
     if out.errorCount > 0:
         out.exitCode = 1

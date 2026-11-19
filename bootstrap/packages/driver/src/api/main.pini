@@ -15,13 +15,20 @@ main|func() -> ():
     let args = argv()
     var root = workspaceRootOf(start = moduleRoot())
     var 全量 = false
+    var 结构化 = false
     var 降载 = false
     var 转储 = false
     var 发射 = false
     if len(args) > 0 && args[0] == "check":
         全量 = true
-        if len(args) > 1:
-            root = args[1]
+        var c = 1
+        while c < len(args):
+            let a: String = args[c]
+            if a == "--diagnostics-tsv":
+                结构化 = true
+            else:
+                root = a
+            c = c + 1
     if len(args) > 0 && args[0] == "lower":
         降载 = true
         if len(args) > 1:
@@ -76,7 +83,10 @@ main|func() -> ():
         return
     if 全量:
         let report = checkWorkspace(root = root)
-        if len(report.text) > 0:
+        if 结构化:
+            if len(report.tsv) > 0:
+                print(report.tsv)
+        elif len(report.text) > 0:
             print(report.text)
         if report.errorCount > 0 || report.exitCode != 0:
             print("workspace-check-failed", report.errorCount)
