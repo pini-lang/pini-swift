@@ -117,11 +117,13 @@ registerFile|func(table: SymbolTable, unit: CompilationUnit,) -> (SymbolTable,):
         j = j + 1
     return out
 
-; 类型声明：结构、对象与枚举同属「带成员的顶层声明」。
+; 类型声明：结构、对象、枚举与给定块同属「带成员的顶层声明」；给定块按值语义的结构发。
 isTypeDecl|func(_decl: DeclNode,) -> (Bool,):
     if isStructDeclCode(_decl.kind):
         return true
     if isObjectDeclCode(_decl.kind):
+        return true
+    if isGivenDeclCode(_decl.kind):
         return true
     return isEnumDeclCode(_decl.kind)
 

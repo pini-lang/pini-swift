@@ -1,0 +1,127 @@
+[given|import]
+_semantics = "../../../semantics"
+_ir = "../../../ir"
+_backend_kit = "../../../backend-kit"
+
+; 默认实例发射：程序级槽、初始化适配函数与取用点的三处文本。
+; 槽与适配函数按类型去重；构造本体由模块里的 `__given_make_<T>` 承担，这里只做搬运。
+{GivenDefs}
+slots: Array<String> = []
+bodies: Array<String> = []
+
+; 槽名与适配名：按类型名编码，跨函数与跨单元都认同一份。
+givenSlotName|func(typeName: String,) -> (String,):
+    return "__given_slot_" + mangleName(name = typeName)
+
+givenInitName|func(typeName: String,) -> (String,):
+    return "__given_init_" + mangleName(name = typeName)
+
+; 已登记判定：同名只发一份。
+hasGivenBody|func(defs: GivenDefs, name: String,) -> (Bool,):
+    var i = 0
+    while i < len(defs.slots):
+        if defs.slots[i] == name:
+            return true
+        i = i + 1
+    return false
+
+; 适配函数文本：运行时段给一块缓冲 `%out`，这里先取构造值，再把载荷搬进缓冲。
+; 头四格归运行时段：只搬载荷，连头搬会把未初始化的头带进来。
+givenAdapterText|func(typeName: String, agg: String, headerCount: I32,) -> (String,):
+    let init = givenInitName(typeName = typeName)
+    var body = "define ptr @" + init + "(ptr %out) {\n"
+    body = body + "  %box = call ptr @" + mangleName(name = "__given_make_" + typeName) + "()\n"
+    body = body + "  %sizeEnd = getelementptr " + agg + ", ptr null, i32 1\n"
+    body = body + "  %size = ptrtoint ptr %sizeEnd to i64\n"
+    body = body + "  %hdrEnd = getelementptr " + agg + ", ptr null, i32 0, i32 " + countText(headerCount) + "\n"
+    body = body + "  %hdr = ptrtoint ptr %hdrEnd to i64\n"
+    body = body + "  %payload = sub i64 %size, %hdr\n"
+    body = body + "  %dst = getelementptr " + agg + ", ptr %out, i32 0, i32 " + countText(headerCount) + "\n"
+    body = body + "  %src = getelementptr " + agg + ", ptr %box, i32 0, i32 " + countText(headerCount) + "\n"
+    body = body + "  call void @memcpy(ptr %dst, ptr %src, i64 %payload)\n"
+    body = body + "  ret ptr %out\n"
+    return body + "}\n\n"
+
+; 登记：槽声明一条、适配定义一段；`memcpy` 与取用入口一并登记成外部符号。
+ensureGivenDefs|func(defs: GivenDefs, module: IrModule, typeId: I32, use: ExternUse,) -> (GivenDefs,):
+    var out = defs
+    if typeId < 0 || typeId >= irTypeCount(module.types):
+        return out
+    let entry = irTypeAt(pool = module.types, id = typeId)
+    if len(entry.name) == 0:
+        return out
+    let agg = llvmAggregateName(pool = module.types, typeId = typeId)
+    if len(agg) == 0:
+        return out
+    let slot = givenSlotName(typeName = entry.name)
+    if hasGivenBody(defs = out, name = slot):
+        return out
+    useExtern(use = use, name = "memcpy")
+    out.slots = out.slots.append(slot)
+    out.bodies = out.bodies.append(givenAdapterText(typeName = entry.name, agg = agg, headerCount = module.slots.headSlots))
+    return out
+
+; 尺寸：聚合的过尾指针转整数，取用点与箱分配共用一份。
+aggregateSizeName|func(ctx: BodyCtx, agg: String,) -> (ExprOut,):
+    var out = ExprOut()
+    out.ctx = ctx
+    let id = out.ctx.temp
+    out.ctx.temp = id + 1
+    let endName = tempName(index = id)
+    appendLine(sink = out.ctx.lines, text = "  " + endName + " = getelementptr " + agg + ", ptr null, i32 1")
+    let sizeId = out.ctx.temp
+    out.ctx.temp = sizeId + 1
+    let sizeName = tempName(index = sizeId)
+    appendLine(sink = out.ctx.lines, text = "  " + sizeName + " = ptrtoint ptr " + endName + " to i64")
+    out.text = sizeName
+    return out
+
+; 载荷搬运：从头四格之后起，字节数 = 总尺寸 − 头尺寸；源与目标各是一块箱。
+copyGivenPayload|func(ctx: BodyCtx, agg: String, dst: String, src: String, size: String, headerCount: I32,) -> (BodyCtx,):
+    var out = ctx
+    let hdrId = out.temp
+    out.temp = hdrId + 1
+    let hdrAt = tempName(index = hdrId)
+    appendLine(sink = out.lines, text = "  " + hdrAt + " = getelementptr " + agg + ", ptr null, i32 0, i32 " + countText(headerCount))
+    let hdrBytes = tempName(index = out.temp)
+    out.temp = out.temp + 1
+    appendLine(sink = out.lines, text = "  " + hdrBytes + " = ptrtoint ptr " + hdrAt + " to i64")
+    let payload = tempName(index = out.temp)
+    out.temp = out.temp + 1
+    appendLine(sink = out.lines, text = "  " + payload + " = sub i64 " + size + ", " + hdrBytes)
+    let dstAt = tempName(index = out.temp)
+    out.temp = out.temp + 1
+    appendLine(sink = out.lines, text = "  " + dstAt + " = getelementptr " + agg + ", ptr " + dst + ", i32 0, i32 " + countText(headerCount))
+    let srcAt = tempName(index = out.temp)
+    out.temp = out.temp + 1
+    appendLine(sink = out.lines, text = "  " + srcAt + " = getelementptr " + agg + ", ptr " + src + ", i32 0, i32 " + countText(headerCount))
+    useExtern(use = out.externs, name = "memcpy")
+    appendLine(sink = out.lines, text = "  call void @memcpy(ptr " + dstAt + ", ptr " + srcAt + ", i64 " + payload + ")")
+    return out
+
+; 取用点：槽里拿程序级那一份，再复制成取用方自己的一份 —— 与 `using` 的传参值语义一致。
+; 只搬载荷：槽里那份的头由运行时段按本类型写好，连头搬会把未初始化的头带进副本。
+emitGivenInstance|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut,):
+    var done = out
+    let entry = irTypeAt(pool = module.types, id = node.typeId)
+    let agg = llvmAggregateName(pool = module.types, typeId = node.typeId)
+    if len(agg) == 0 || len(entry.name) == 0:
+        done.ctx = addGap(ctx = done.ctx, gap = "默认实例的类型不是名义类型")
+        return done
+    done.ctx.givenDefs = ensureGivenDefs(defs = done.ctx.givenDefs, module = module, typeId = node.typeId, use = done.ctx.externs)
+    useExtern(use = done.ctx.externs, name = "bk_given_get")
+    useExtern(use = done.ctx.externs, name = "bk_nominal_alloc")
+    let sized = aggregateSizeName(ctx = done.ctx, agg = agg)
+    done.ctx = sized.ctx
+    let size = sized.text
+    let boxedId = done.ctx.temp
+    done.ctx.temp = boxedId + 1
+    let boxed = tempName(index = boxedId)
+    appendLine(sink = done.ctx.lines, text = "  " + boxed + " = call ptr @bk_given_get(ptr @" + givenSlotName(typeName = entry.name) + ", ptr @" + givenInitName(typeName = entry.name) + ", i64 " + size + ")")
+    let localId = done.ctx.temp
+    done.ctx.temp = localId + 1
+    let local = tempName(index = localId)
+    appendLine(sink = done.ctx.lines, text = "  " + local + " = call ptr @bk_nominal_alloc(i64 " + size + ", i32 " + countText(node.typeId) + ")")
+    done.ctx = copyGivenPayload(ctx = done.ctx, agg = agg, dst = local, src = boxed, size = size, headerCount = module.slots.headSlots)
+    done.text = local
+    return done

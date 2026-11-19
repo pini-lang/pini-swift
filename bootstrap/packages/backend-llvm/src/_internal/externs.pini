@@ -108,6 +108,20 @@ externSignature|func(name: String,) -> (String,):
         return "declare ptr @bk_dict_get(ptr, ptr, i32, i32)"
     if name == "bk_dict_set":
         return "declare ptr @bk_dict_set(ptr, ptr, i32, i32, ptr, i32, i32)"
+    ; 任务族：帧按字节数分配，句柄由运行时段持有；等待的三槽由调用方给。
+    if name == "bk_task_frame":
+        return "declare ptr @bk_task_frame(i64)"
+    if name == "bk_task_spawn":
+        return "declare ptr @bk_task_spawn(ptr, ptr, ptr, i32, i32)"
+    if name == "bk_task_join":
+        return "declare i32 @bk_task_join(ptr, ptr)"
+    if name == "bk_task_detach":
+        return "declare i32 @bk_task_detach(ptr)"
+    ; 默认实例族：槽、初始化函数与字节数三件交给运行时段，返回程序级那一个盒。
+    if name == "bk_given_get":
+        return "declare ptr @bk_given_get(ptr, ptr, i64)"
+    if name == "memcpy":
+        return "declare void @memcpy(ptr, ptr, i64)"
     ; 名义箱族：头四格由运行时段写，尺寸与类型标识由发射层给。
     if name == "bk_nominal_alloc":
         return "declare ptr @bk_nominal_alloc(i64, i32)"

@@ -77,7 +77,7 @@ shapeKindCode|func(kind: ShapeKind,) -> (I32,):
 
 ; 名义声明：结构、对象与枚举三类，其余不算。
 isNominalDeclCode|func(_code: I32,) -> (Bool,):
-    if isStructDeclCode(_code) || isObjectDeclCode(_code):
+    if isStructDeclCode(_code) || isObjectDeclCode(_code) || isGivenDeclCode(_code):
         return true
     return isEnumDeclCode(_code)
 
@@ -118,7 +118,7 @@ shapeOfDecl|func(world: MemberWorld, ref: DeclRef, typeId: I32,) -> (ShapeEntry,
     let unit = world.units[ref.unit]
     let decl = unit.ast.decls[ref.decl]
     let bytes = unitBytes(unit)
-    if isStructDeclCode(decl.kind):
+    if isStructDeclCode(decl.kind) || isGivenDeclCode(decl.kind):
         out.kind = .shapeStruct
     elif isObjectDeclCode(decl.kind):
         out.kind = .shapeObject

@@ -404,6 +404,25 @@ lowerExprStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map:
     node.kids = [one.id]
     return appendStmtNode(out = done, node = node, offset = stmt.start)
 
+; 分离：操作数一个任务句柄，产一条剪枝语句；表达式结果本就不产出值。
+lowerDetachStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32,) -> (LowerStmt,):
+    let stmt = unit.ast.stmtAt(stmtId)
+    if len(stmt.kids) < 1:
+        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "分离缺操作数")
+    var done = out
+    let one = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = stmt.kids[0])
+    done.pool = one.pool
+    done.texts = one.texts
+    done.frame = one.frame
+    if one.failed:
+        return takeStmtFailure(out = done, detail = one.detail, offset = one.offset)
+    let handleType = irNodeAt(pool = done.pool, id = one.id).typeId
+    if irTypeTag(irTypeAt(pool = map.pool, id = handleType).kind) != irTypeTag(.irTypeFuture):
+        return missStmt(out = done, unit = unit, stmtId = stmtId, what = "分离目标不是任务句柄")
+    var node = irMakeNode(kind = irStmtTag(.irDetachStmt), typeId = -1)
+    node.kids = [one.id]
+    return appendStmtNode(out = done, node = node, offset = stmt.start)
+
 ; 返回：有值降值，无值留空子表。
 lowerReturnStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32,) -> (LowerStmt,):
     let stmt = unit.ast.stmtAt(stmtId)
@@ -825,6 +844,8 @@ lowerStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: Typ
         return lowerJumpStmt(out = out, unit = unit, stmtId = stmtId, kind = .irBreakStmt)
     if unit.ast.isContinueStmt(stmtId):
         return lowerJumpStmt(out = out, unit = unit, stmtId = stmtId, kind = .irContinueStmt)
+    if unit.ast.isDetachStmt(stmtId):
+        return lowerDetachStmt(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId)
     if unit.ast.isPassStmt(stmtId):
         return out
     ; 捕获声明只在语义层生效：降载按首次使用登记捕获，声明行不产节点。

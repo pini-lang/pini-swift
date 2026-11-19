@@ -159,12 +159,18 @@ lowerFunction|func(state: LowerState, unit: CompilationUnit, declId: I32, owner:
     fn.sourceFile = unit.path
     if !isVoidReturn(pool = out.world.types.pool, id = seed.returnType):
         fn.returnType = irIdOf(map = out.map, semanticId = seed.returnType)
+    if decl.isAsync && fn.returnType < 0:
+        ; 无载荷的异步体在自举侧没有结算值可交，交缺口而不是发一个签名对不上的任务体。
+        out.errors = appendLowerError(errors = out.errors, error = makeLowerError(kind = .lowerMissingCapability, file = unit.path, offset = decl.start, detail = fn.name + "：异步函数需带载荷返回"))
+        out.functions = out.functions.append(fn)
+        return out
     fn.params = lowerParams(state = out, unit = unit, decl = decl, scope = seed.scope)
     if decl.body >= 0:
         var start = LowerStmt()
         start.pool = out.nodes
         start.texts = out.texts
         start.frame = seedLowerFrame(scope = seed.scope, map = out.map, world = out.world, decls = out.decls)
+        start.frame.isAsync = decl.isAsync
         let body = lowerBlockOf(out = start, unit = unit, bytes = out.bytes, map = out.map, types = out.types, unitIndex = out.unitIndex, blockId = decl.body)
         out.nodes = body.pool
         out.texts = body.texts
@@ -182,12 +188,55 @@ lowerFunction|func(state: LowerState, unit: CompilationUnit, declId: I32, owner:
     out.functions = out.functions.append(fn)
     return out
 
+; 给定块的初始化函数：零参、返回该类型，体是「字段初值展开」的构造。
+; 取用点按约定名引用它，故名字进模块时不动；字段缺初值即缺口，不按零值编造实例。
+lowerGivenMaker|func(state: LowerState, unit: CompilationUnit, declId: I32,) -> (LowerState,):
+    var out = state
+    let decl: DeclNode = unit.ast.decls[declId]
+    let name = declName(unit = unit, bytes = out.bytes, decl = decl)
+    var missing = 0
+    var d = 0
+    while d < len(decl.kids):
+        let child = unit.ast.decls[decl.kids[d]]
+        if isFieldDeclCode(child.kind) && len(child.kids) == 0:
+            missing = missing + 1
+        d = d + 1
+    if missing > 0:
+        out.errors = appendLowerError(errors = out.errors, error = makeLowerError(kind = .lowerMissingCapability, file = unit.path, offset = decl.start, detail = name + "：给定块有字段缺初值"))
+        return out
+    let typeId = zeroConstructType(map = out.map, name = name, isObject = false)
+    if typeId < 0:
+        out.errors = appendLowerError(errors = out.errors, error = makeLowerError(kind = .lowerMissingCapability, file = unit.path, offset = decl.start, detail = name + "：给定块类型未进池"))
+        return out
+    var ref = DeclRef()
+    ref.unit = out.unitIndex
+    ref.decl = declId
+    var one = LowerExpr()
+    one.pool = out.nodes
+    one.texts = out.texts
+    one.frame = seedLowerFrame(scope = ScopeStack(), map = out.map, world = out.world, decls = out.decls)
+    let built = lowerConstructDefaults(out = one, map = out.map, types = out.types, ref = ref, typeId = typeId)
+    var fn = IrFunction()
+    fn.name = "__given_make_" + name
+    fn.returnType = typeId
+    fn.sourceFile = unit.path
+    var back = irMakeNode(kind = irStmtTag(.irReturnStmt), typeId = -1)
+    back.kids = [built.id]
+    let placed = irAppendNode(pool = built.pool, node = back)
+    fn.body = [placed.id]
+    out.nodes = placed.pool
+    out.texts = built.texts
+    out.functions = out.functions.append(fn)
+    return out
+
 ; 单声明：函数直接降；类型与扩展块下钻到成员函数，owner 取块名，顺序即声明序。
 lowerDeclBody|func(state: LowerState, unit: CompilationUnit, declId: I32,) -> (LowerState,):
     var out = state
     let decl: DeclNode = unit.ast.decls[declId]
     if isFunctionDeclCode(decl.kind):
         return lowerFunction(state = out, unit = unit, declId = declId, owner = "")
+    if isGivenDeclCode(decl.kind):
+        return lowerGivenMaker(state = out, unit = unit, declId = declId)
     if isTypeDecl(decl) || isExtensionDeclCode(decl.kind):
         let owner = declName(unit = unit, bytes = out.bytes, decl = decl)
         var i = 0
