@@ -34,6 +34,7 @@ ownedSlots: Array<String> = []
 ownedTypes: Array<I32> = []
 pendingSlot: I32 = -1
 testExit: Bool = false
+lazyDefs: LazyRefDefs = LazyRefDefs()
 
 ; 表达式结果：上下文与值串；值串只给操作数，类型由所在指令给。
 (ExprOut)
@@ -54,6 +55,21 @@ slotNameOf|func(ctx: BodyCtx, slot: I32,) -> (String,):
         if len(ctx.slotNames[slot]) > 0:
             return ctx.slotNames[slot]
     return slotName(slot = slot)
+
+; 槽名登记：两张并排数组一起补到目标位，后到的 defineSlot 才不会越界读用量表。
+setSlotName|func(ctx: BodyCtx, slot: I32, name: String,) -> (BodyCtx,):
+    var out = ctx
+    if slot < 0:
+        return out
+    var names = out.slotNames
+    var uses = out.slotUses
+    while len(names) <= slot:
+        names = names.append("")
+        uses = uses.append(0)
+    names[slot] = name
+    out.slotNames = names
+    out.slotUses = uses
+    return out
 
 ; 槽声明：同号槽第几次声明就带第几号后缀，同名不同块的两条 alloca 才不撞。
 defineSlot|func(ctx: BodyCtx, slot: I32,) -> (ExprOut,):
@@ -564,6 +580,14 @@ emitExprCore|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
         return emitPointerLoad(out = out, module = module, node = node)
     if node.kind == 30:
         return emitPointerStore(out = out, module = module, node = node)
+    if node.kind == 11:
+        return emitIndirectCall(out = out, module = module, node = node)
+    if node.kind == 13:
+        return emitClosureLiteral(out = out, module = module, node = node)
+    if node.kind == 50:
+        return emitLazyRefConstruct(out = out, module = module, node = node)
+    if node.kind == 51:
+        return emitLazyRefValue(out = out, module = module, node = node)
     if node.kind == 31:
         return emitAddressOfVar(out = out, node = node)
     if node.kind == 32:
@@ -1025,6 +1049,197 @@ emitPointerStore|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut
     appendLine(sink = done.ctx.lines, text = "  store " + llvmTypeName(pool = module.types, typeId = element) + " " + shaped.text + ", ptr " + pointer.text)
     done.text = ""
     return done
+
+; 间接调用：取函数值的 code 与 env，按统一协议 `code(ptr env, 实参…)` 调用。
+; 形参按签名定型并把份额交给被调方，与具名调用的归属规则一致。
+emitIndirectCall|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut,):
+    var done = out
+    let calleeValue = irNodeAt(pool = module.nodes, id = node.kids[0])
+    let signature = irTypeAt(pool = module.types, id = calleeValue.typeId)
+    let closure = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[0])
+    done.ctx = closure.ctx
+    let codeAt = done.ctx.temp
+    done.ctx.temp = codeAt + 1
+    let code = tempName(index = codeAt)
+    appendLine(sink = done.ctx.lines, text = "  " + code + " = extractvalue { ptr, ptr } " + closure.text + ", 0")
+    let envAt = done.ctx.temp
+    done.ctx.temp = envAt + 1
+    let env = tempName(index = envAt)
+    appendLine(sink = done.ctx.lines, text = "  " + env + " = extractvalue { ptr, ptr } " + closure.text + ", 1")
+    var args = "ptr " + env
+    var i = 1
+    while i < len(node.kids):
+        let one = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[i])
+        done.ctx = one.ctx
+        var argType = irNodeAt(pool = module.nodes, id = node.kids[i]).typeId
+        if i - 1 < len(signature.kids):
+            argType = signature.kids[i - 1]
+        let shaped = storeValue(ctx = done.ctx, module = module, text = one.text, fromType = irNodeAt(pool = module.nodes, id = node.kids[i]).typeId, toType = argType)
+        done.ctx = shaped.ctx
+        done.ctx = adoptValue(ctx = done.ctx, module = module, name = shaped.text, typeId = argType, adopt = 1)
+        args = args + ", " + llvmTypeName(pool = module.types, typeId = argType) + " " + shaped.text
+        i = i + 1
+    let retType = llvmTypeName(pool = module.types, typeId = node.typeId)
+    if retType == "void":
+        appendLine(sink = done.ctx.lines, text = "  call void " + code + "(" + args + ")")
+        done.text = ""
+        return done
+    let at = done.ctx.temp
+    done.ctx.temp = at + 1
+    let value = tempName(index = at)
+    appendLine(sink = done.ctx.lines, text = "  " + value + " = call " + retType + " " + code + "(" + args + ")")
+    done.text = value
+    return done
+
+; 闭包值：`{ ptr code, ptr env }`；有捕获才分配 env，字段按捕获序存外层槽地址。
+; 定义由同名函数条目发射，这里只造值，不重复出体。
+emitClosureLiteral|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut,):
+    var done = out
+    let name = textAt(module = module, id = node.text)
+    var env = "null"
+    if len(node.captureSlots) > 0:
+        useExtern(use = done.ctx.externs, name = "malloc")
+        let bufAt = done.ctx.temp
+        done.ctx.temp = bufAt + 1
+        let buf = tempName(index = bufAt)
+        appendLine(sink = done.ctx.lines, text = "  " + buf + " = call ptr @malloc(i64 " + countText(len(node.captureSlots) * 8) + ")")
+        let envType = "%__closure_env_" + countText(node.intValue as I32)
+        var i = 0
+        while i < len(node.captureSlots):
+            let at = done.ctx.temp
+            done.ctx.temp = at + 1
+            let field = tempName(index = at)
+            appendLine(sink = done.ctx.lines, text = "  " + field + " = getelementptr " + envType + ", ptr " + buf + ", i32 0, i32 " + countText(i))
+            appendLine(sink = done.ctx.lines, text = "  store ptr " + slotNameOf(ctx = done.ctx, slot = node.captureSlots[i]) + ", ptr " + field)
+            i = i + 1
+        env = buf
+    let codeAt = done.ctx.temp
+    done.ctx.temp = codeAt + 1
+    let code = tempName(index = codeAt)
+    let symbol = mangleName(name = name)
+    appendLine(sink = done.ctx.lines, text = "  " + code + " = insertvalue { ptr, ptr } { ptr @" + symbol + ", ptr null }, ptr @" + symbol + ", 0")
+    let closureAt = done.ctx.temp
+    done.ctx.temp = closureAt + 1
+    let closure = tempName(index = closureAt)
+    appendLine(sink = done.ctx.lines, text = "  " + closure + " = insertvalue { ptr, ptr } " + code + ", ptr " + env + ", 1")
+    done.text = closure
+    return done
+
+; 惰性引用构造：取闭包的 code/env，按元素 ABI 交给运行时段；句柄按 ptr 交回。
+emitLazyRefConstruct|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut,):
+    var done = out
+    let closure = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[0])
+    done.ctx = closure.ctx
+    let entry = irTypeAt(pool = module.types, id = node.typeId)
+    if len(entry.kids) != 1:
+        done.ctx = addGap(ctx = done.ctx, gap = "惰性引用缺元素类型")
+        return done
+    let element = entry.kids[0]
+    let bytes = lazyRefBytes(pool = module.types, id = element)
+    if bytes < 0:
+        done.ctx = addGap(ctx = done.ctx, gap = "惰性引用元素不支持装箱")
+        return done
+    let wrapper = ensureLazyRefWrapper(defs = done.ctx.lazyDefs, pool = module.types, element = element)
+    let codeAt = done.ctx.temp
+    done.ctx.temp = codeAt + 1
+    let code = tempName(index = codeAt)
+    appendLine(sink = done.ctx.lines, text = "  " + code + " = extractvalue { ptr, ptr } " + closure.text + ", 0")
+    let envAt = done.ctx.temp
+    done.ctx.temp = envAt + 1
+    let env = tempName(index = envAt)
+    appendLine(sink = done.ctx.lines, text = "  " + env + " = extractvalue { ptr, ptr } " + closure.text + ", 1")
+    useExtern(use = done.ctx.externs, name = "bk_lazyref_create")
+    let handleAt = done.ctx.temp
+    done.ctx.temp = handleAt + 1
+    let handle = tempName(index = handleAt)
+    appendLine(sink = done.ctx.lines, text = "  " + handle + " = call ptr @bk_lazyref_create(ptr @" + wrapper + ", ptr " + code + ", ptr " + env + ", i32 " + countText(bytes) + ", i32 " + countText(lazyRefTag(pool = module.types, id = element)) + ")")
+    done.text = handle
+    return done
+
+; 惰性引用取值：运行时回元素盒，按元素拼写读一格；首次读取的求值由运行时承担。
+emitLazyRefValue|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut,):
+    var done = out
+    let handle = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[0])
+    done.ctx = handle.ctx
+    useExtern(use = done.ctx.externs, name = "bk_lazyref_value")
+    let boxAt = done.ctx.temp
+    done.ctx.temp = boxAt + 1
+    let box = tempName(index = boxAt)
+    appendLine(sink = done.ctx.lines, text = "  " + box + " = call ptr @bk_lazyref_value(ptr " + handle.text + ")")
+    let valueAt = done.ctx.temp
+    done.ctx.temp = valueAt + 1
+    let value = tempName(index = valueAt)
+    let spelling = llvmTypeName(pool = module.types, typeId = node.typeId)
+    appendLine(sink = done.ctx.lines, text = "  " + value + " = load " + spelling + ", ptr " + box)
+    done.text = value
+    return done
+
+; 元素字节数：按 IR 类别给装箱宽度；未登记答 -1，调用点据此报缺口。
+lazyRefBytes|func(pool: IrTypePool, id: I32,) -> (I32,):
+    if id < 0 || id >= irTypeCount(pool):
+        return -1
+    let tag = irTypeTag(irTypeAt(pool = pool, id = id).kind)
+    if tag == 1 || tag == 4:
+        return 4
+    if tag == 5 || tag == 7:
+        return 1
+    if tag == 2 || tag == 3 || tag == 6 || tag == 9:
+        return 8
+    if tag == 8:
+        return 8
+    return -1
+
+; 元素装箱标签：0 按值、1 浮点、2 布尔、4 字符串裸指针；与运行时段同号。
+lazyRefTag|func(pool: IrTypePool, id: I32,) -> (I32,):
+    if id < 0 || id >= irTypeCount(pool):
+        return 0
+    let tag = irTypeTag(irTypeAt(pool = pool, id = id).kind)
+    if tag == 6:
+        return 1
+    if tag == 7:
+        return 2
+    if tag == 8:
+        return 4
+    return 0
+
+; 包装后缀：同元素拼写共用一个装箱函数；未登记类别按 IR 类别码兜底，避免两类型撞名。
+lazyRefSuffix|func(pool: IrTypePool, id: I32,) -> (String,):
+    let tag = irTypeTag(irTypeAt(pool = pool, id = id).kind)
+    if tag == 1:
+        return "i32"
+    if tag == 2:
+        return "i64"
+    if tag == 4:
+        return "u8"
+    if tag == 5:
+        return "i8"
+    if tag == 6:
+        return "f64"
+    if tag == 7:
+        return "i1"
+    if tag == 8:
+        return "ptr"
+    if tag == 9:
+        return "i64c"
+    return "t" + countText(tag)
+
+; 装箱包装：`ptr (code, env, out)` 一个 ABI 通吃元素类型，堆盒由运行时段分配。
+ensureLazyRefWrapper|func(defs: LazyRefDefs, pool: IrTypePool, element: I32,) -> (String,):
+    let suffix = lazyRefSuffix(pool = pool, id = element)
+    let name = "__lazyref_wrapper_" + suffix
+    var i = 0
+    while i < len(defs.names):
+        if defs.names[i] == name:
+            return name
+        i = i + 1
+    defs.names = defs.names.append(name)
+    let spelling = llvmTypeName(pool = pool, typeId = element)
+    defs.lines = defs.lines.append("define ptr @" + name + "(ptr %code, ptr %env, ptr %out) {")
+    defs.lines = defs.lines.append("  %v = call " + spelling + " %code(ptr %env)")
+    defs.lines = defs.lines.append("  store " + spelling + " %v, ptr %out")
+    defs.lines = defs.lines.append("  ret ptr %out")
+    defs.lines = defs.lines.append("}")
+    return name
 
 ; 取址：槽名与 alloca 同源，故取槽地址即地址；名字只作诊断。
 emitAddressOfVar|func(out: ExprOut, node: IrNode,) -> (ExprOut,):

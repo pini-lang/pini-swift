@@ -59,18 +59,19 @@ _backend_kit = "../../backend-kit"
     return
 
 ; 缺口：族未声明时按族报，且整份文本不出；失败不静默。
+; 锚在并发族：它是当前仍未声明的一族，不会随已接族增加而失效。
 族未声明|test() -> ():
     var module = 发射造模块()
     var pool = module.nodes
-    var lazy = irMakeNode(kind = tagOfName(name = "lazyRefConstruct"), typeId = 0)
-    let placed = irAppendNode(pool = pool, node = lazy)
+    var pending = irMakeNode(kind = tagOfName(name = "join"), typeId = 0)
+    let placed = irAppendNode(pool = pool, node = pending)
     module.nodes = placed.pool
     module.functions[0].body = [placed.id]
     let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
     assert(result.failed, "未声明族的节点应失败")
     assert(len(result.text) == 0, "失败时不应出半份文本")
     assert(emitGapCount(result = result) > 0, "失败应带缺口")
-    assert(发射含子串(text = result.gaps[0], needle = "族未声明 lazyRef"), "缺口应点名族")
+    assert(发射含子串(text = result.gaps[0], needle = "族未声明 concurrency"), "缺口应点名族")
     return
 
 ; 缺口：族已声明而节点没接时按类别码报，不与「族未声明」混成一句。
@@ -979,4 +980,120 @@ _backend_kit = "../../backend-kit"
     assert(!result.failed, "外部数据模块应发得出来")
     assert(发射含子串(text = result.text, needle = "@counter = external global i32"), "数据声明应随模块出")
     assert(发射含子串(text = result.text, needle = "ptr @counter"), "取址应指向符号本身")
+    return
+
+; 闭包间接调用：体挂在节点上，函数条目出定义，调用走 `{ ptr, ptr }` 协议。
+闭包间接调用|test() -> ():
+    var module = IrModule()
+    module.types = 发射造指针池()
+    let fnType = irFunctionType(pool = module.types, params = [0], ret = 0, uses = [])
+    module.types = fnType.pool
+    module.texts = ["__closure_0"]
+    var nodes = IrNodePool()
+    var loadNode = irMakeNode(kind = tagOfName(name = "load"), typeId = 0)
+    loadNode.intValue = 0
+    let placedLoad = irAppendNode(pool = nodes, node = loadNode)
+    nodes = placedLoad.pool
+    var back = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    back.kids = [placedLoad.id]
+    let placedBack = irAppendNode(pool = nodes, node = back)
+    nodes = placedBack.pool
+    var literal = irMakeNode(kind = tagOfName(name = "closureLiteral"), typeId = fnType.id)
+    literal.text = 0
+    literal.intValue = 0
+    literal.kids = [placedBack.id]
+    let placedLiteral = irAppendNode(pool = nodes, node = literal)
+    nodes = placedLiteral.pool
+    var arg = irMakeNode(kind = tagOfName(name = "intConst"), typeId = 0)
+    arg.intValue = 4
+    let placedArg = irAppendNode(pool = nodes, node = arg)
+    nodes = placedArg.pool
+    var call = irMakeNode(kind = tagOfName(name = "indirectCall"), typeId = 0)
+    call.kids = [placedLiteral.id, placedArg.id]
+    let placedCall = irAppendNode(pool = nodes, node = call)
+    nodes = placedCall.pool
+    var ret = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    ret.kids = [placedCall.id]
+    let placedRet = irAppendNode(pool = nodes, node = ret)
+    nodes = placedRet.pool
+    var fn = IrFunction()
+    fn.name = "__closure_0"
+    fn.returnType = 0
+    fn.isClosure = true
+    fn.closureId = 0
+    var param = IrParam()
+    param.name = "a"
+    param.typeId = 0
+    param.slot = 0
+    fn.params = [param]
+    fn.body = [placedBack.id]
+    module.functions = module.functions.append(fn)
+    var mainFn = IrFunction()
+    mainFn.name = "main"
+    mainFn.returnType = 0
+    mainFn.body = [placedRet.id]
+    module.functions = module.functions.append(mainFn)
+    module.nodes = nodes
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    assert(!result.failed, "闭包模块应发得出来")
+    assert(发射含子串(text = result.text, needle = "define i32 @__closure_0(ptr %env, i32 %p0)"), "闭包定义应带 env")
+    assert(发射含子串(text = result.text, needle = "call i32 %"), "间接调用应按函数指针发")
+    return
+
+; 惰性引用：构造收 wrapper / code / env，取值按元素拼写读盒。
+惰性引用发射|test() -> ():
+    var module = IrModule()
+    var pool = IrTypePool()
+    let intType = irScalarTypeOfCode(pool = pool, code = 1, name = "i32")
+    pool = intType.pool
+    let lazy = irInternType(pool = pool, kind = irTypeClassOf(code = 18), name = "", kids = [0], ret = -1, uses = [], flags = 0)
+    pool = lazy.pool
+    let fnType = irFunctionType(pool = pool, params = [], ret = 0, uses = [])
+    module.types = fnType.pool
+    module.texts = ["__closure_1"]
+    var nodes = IrNodePool()
+    var seven = irMakeNode(kind = tagOfName(name = "intConst"), typeId = 0)
+    seven.intValue = 7
+    let placedSeven = irAppendNode(pool = nodes, node = seven)
+    nodes = placedSeven.pool
+    var back = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    back.kids = [placedSeven.id]
+    let placedBack = irAppendNode(pool = nodes, node = back)
+    nodes = placedBack.pool
+    var literal = irMakeNode(kind = tagOfName(name = "closureLiteral"), typeId = fnType.id)
+    literal.text = 0
+    literal.intValue = 1
+    literal.kids = [placedBack.id]
+    let placedLiteral = irAppendNode(pool = nodes, node = literal)
+    nodes = placedLiteral.pool
+    var construct = irMakeNode(kind = tagOfName(name = "lazyRefConstruct"), typeId = lazy.id)
+    construct.kids = [placedLiteral.id]
+    let placedConstruct = irAppendNode(pool = nodes, node = construct)
+    nodes = placedConstruct.pool
+    var read = irMakeNode(kind = tagOfName(name = "lazyRefValue"), typeId = 0)
+    read.kids = [placedConstruct.id]
+    let placedRead = irAppendNode(pool = nodes, node = read)
+    nodes = placedRead.pool
+    var ret = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    ret.kids = [placedRead.id]
+    let placedRet = irAppendNode(pool = nodes, node = ret)
+    nodes = placedRet.pool
+    var fn = IrFunction()
+    fn.name = "__closure_1"
+    fn.returnType = 0
+    fn.isClosure = true
+    fn.closureId = 1
+    fn.body = [placedBack.id]
+    module.functions = module.functions.append(fn)
+    var mainFn = IrFunction()
+    mainFn.name = "main"
+    mainFn.returnType = 0
+    mainFn.body = [placedRet.id]
+    module.functions = module.functions.append(mainFn)
+    module.nodes = nodes
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    assert(!result.failed, "惰性引用模块应发得出来")
+    assert(发射含子串(text = result.text, needle = "define ptr @__lazyref_wrapper_i32"), "应出 i32 装箱包装")
+    assert(发射含子串(text = result.text, needle = "call ptr @bk_lazyref_create(ptr @__lazyref_wrapper_i32, ptr "), "构造应走运行时入口")
+    assert(发射含子串(text = result.text, needle = "call ptr @bk_lazyref_value(ptr "), "取值应走运行时入口")
     return

@@ -78,6 +78,13 @@ externSignature|func(name: String,) -> (String,):
         return "declare i32 @bk_char_equal_string(i64, ptr)"
     if name == "strcmp":
         return "declare i32 @strcmp(ptr, ptr)"
+    ; 惰性引用族：创建收 wrapper / code / env 与元素 ABI，取值回元素盒。
+    if name == "bk_lazyref_create":
+        return "declare ptr @bk_lazyref_create(ptr, ptr, ptr, i32, i32)"
+    if name == "bk_lazyref_value":
+        return "declare ptr @bk_lazyref_value(ptr)"
+    if name == "malloc":
+        return "declare ptr @malloc(i64)"
     if name == "bk_string_contains":
         return "declare i32 @bk_string_contains(ptr, ptr)"
     if name == "bk_string_index_of":

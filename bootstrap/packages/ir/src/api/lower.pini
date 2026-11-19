@@ -22,7 +22,15 @@ typeId: I32 = -1
 slot: I32 = -1
 isUsing: Bool = false
 
+; 捕获槽：外层帧的槽位、闭包体内自己的槽位与元素类型。
+; 前者用于创建点往 env 里存地址，后者用于体内读写的槽名。
+(IrCaptureSlot)
+slot: I32 = -1
+localSlot: I32 = -1
+typeId: I32 = -1
+
 ; 函数：名字、形参、返回类型、语句节点下标与逐语句源位置；返回 -1 表示空返回。
+; 闭包另记自身编号与捕获表：编号用于 `@__closure_<编号>` 与 env 类型名，两者必须同源。
 (IrFunction)
 name: String = ""
 params: Array<IrParam> = []
@@ -33,6 +41,9 @@ isTest: Bool = false
 isUnsafe: Bool = false
 isAsync: Bool = false
 sourceFile: String = ""
+isClosure: Bool = false
+closureId: I32 = -1
+captures: Array<IrCaptureSlot> = []
 
 ; 外部数据符号：名字与 IR 类型；发射期按它出 `external global` 声明。
 (IrExternData)
@@ -164,6 +175,10 @@ lowerFunction|func(state: LowerState, unit: CompilationUnit, declId: I32, owner:
         fn.body = body.ids
         fn.positions = body.positions
         out.externData = mergeExternData(table = out.externData, more = body.frame.externData)
+        var c = 0
+        while c < len(body.frame.closures):
+            out.functions = out.functions.append(body.frame.closures[c])
+            c = c + 1
     out.functions = out.functions.append(fn)
     return out
 

@@ -142,6 +142,8 @@ tail: I32 = -1
 adopt: I32 = 0
 releaseOld: Bool = false
 kids: Array<I32> = []
+; 闭包节点专用：捕获槽按创建点外层帧的槽位记，env 按同序存槽地址。
+captureSlots: Array<I32> = []
 
 ; 表达式类别码：与枚举项序一致，从 1 起。
 irExprTag|func(_kind: IrExprKind,) -> (I32,):

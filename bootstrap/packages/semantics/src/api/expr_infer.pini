@@ -376,6 +376,16 @@ inferNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
             if out.typeId >= 0:
                 out.types = writeExprType(table = out.types, unit = unitIndex, node = node, typeId = out.typeId)
         return out
+    if unit.ast.isFunctionExpr(node):
+        return inferFunction(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out, bytes = bytes)
+    if unit.ast.isGenericExpr(node):
+        let expr = unit.ast.exprAt(node)
+        let resolved = annotationType(world = world, unit = unit, node = expr.typeId, pool = out.pool)
+        out.pool = resolved.pool
+        if resolved.id >= 0:
+            out.typeId = resolved.id
+            out.types = writeExprType(table = out.types, unit = unitIndex, node = node, typeId = out.typeId)
+        return out
     if unit.ast.isIdentifierExpr(node):
         let expr = unit.ast.exprAt(node)
         let name = decodeRange(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
@@ -407,6 +417,55 @@ inferNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
         return out
     return out
 
+; 函数字面量：形参类型取声明标注，返回取 `op`；体在形参入表后走一遍。
+; 无标注形参答 -1，函数类型因此缺分量，降载期按能力缺口报，不猜类型。
+inferFunction|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, out: InferResult, bytes: Array<U8>,) -> (InferResult,):
+    var done = out
+    let expr = unit.ast.exprAt(node)
+    var table = names
+    var ids: Array<I32> = []
+    var body = -1
+    var i = 0
+    while i < len(expr.kids):
+        let kid = expr.kids[i]
+        ; 形参在前、体块在末位；体的下标落在语句池，不能拿去查声明池。
+        if i == len(expr.kids) - 1 && unit.ast.isBlockStmt(kid):
+            body = kid
+        else:
+            let decl = unit.ast.decls[kid]
+            var typeId = -1
+            if decl.typeId >= 0:
+                let resolved = annotationType(world = world, unit = unit, node = decl.typeId, pool = done.pool)
+                done.pool = resolved.pool
+                typeId = resolved.id
+            ids = ids.append(typeId)
+            let name = decodeRange(bytes = bytes, start = decl.nameStart, end = decl.nameEnd)
+            if typeId >= 0:
+                table = noteName(table = table, name = name, typeId = typeId)
+        i = i + 1
+    var ret = -1
+    if expr.op >= 0:
+        let resolved = annotationType(world = world, unit = unit, node = expr.op, pool = done.pool)
+        done.pool = resolved.pool
+        ret = resolved.id
+        if isEmptyTupleType(pool = done.pool, id = ret):
+            ret = -1
+    if body >= 0:
+        var state = WalkState()
+        state.pool = done.pool
+        state.types = done.types
+        state.table = table
+        state.bytes = bytes
+        state.returnType = ret
+        let walked = walkInferStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = body, state = state)
+        done.pool = walked.pool
+        done.types = walked.types
+    let inserted = intern(pool = done.pool, kind = .typeClassFunction, name = "", kids = ids, ret = ret)
+    done.pool = inserted.pool
+    done.typeId = inserted.id
+    done.types = writeExprType(table = done.types, unit = unitIndex, node = node, typeId = done.typeId)
+    return done
+
 ; 成员：接收者先推；类型已知才问成员面，成员不存在答未写。
 inferMember|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, out: InferResult, bytes: Array<U8>,) -> (InferResult,):
     let receiver = unit.ast.childOf(id = node, index = 0)
@@ -418,6 +477,13 @@ inferMember|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node
         return done
     let member = unit.ast.exprAt(node)
     let memberName = decodeRange(bytes = bytes, start = member.nameStart, end = member.nameEnd)
+    ; 惰性引用的值读：元素类型就是类型实参，不经名义成员表。
+    if memberName == "value" && isLazyRefType(pool = done.pool, id = inner.typeId):
+        let element = lazyRefElement(pool = done.pool, id = inner.typeId)
+        if element >= 0:
+            done.typeId = element
+            done.types = writeExprType(table = done.types, unit = unitIndex, node = node, typeId = done.typeId)
+        return done
     let access = memberAccess(receiver = inner.typeId, name = memberName, isTypeName = false, owner = names.owner, file = unit.path, offset = member.start)
     let result = checkMember(world = probeWorld(world = world, pool = done.pool), access = access)
     done.pool = result.pool
@@ -472,14 +538,55 @@ inferCall|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
     let head = inferNode(world = world, unit = unit, unitIndex = unitIndex, node = callee, names = names, pool = done.pool, types = done.types, bytes = bytes, expected = noExpectation())
     done.pool = head.pool
     done.types = head.types
+    if unit.ast.isGenericExpr(callee):
+        ; 泛型构造：实参照推，结果类型取构造节点的类型位。
+        done = inferActuals(world = world, unit = unit, unitIndex = unitIndex, node = node, params = [], names = names, out = done, bytes = bytes)
+        done.typeId = exprTypeAt(table = done.types, unit = unitIndex, node = callee)
+        if done.typeId >= 0:
+            done.types = writeExprType(table = done.types, unit = unitIndex, node = node, typeId = done.typeId)
+        return done
     if unit.ast.isMemberExpr(callee):
         return inferMemberCall(world = world, unit = unit, unitIndex = unitIndex, node = node, callee = callee, names = names, out = done, bytes = bytes)
     if !unit.ast.isIdentifierExpr(callee):
         return inferActuals(world = world, unit = unit, unitIndex = unitIndex, node = node, params = [], names = names, out = done, bytes = bytes)
     let calleeExpr = unit.ast.exprAt(callee)
     let name = decodeRange(bytes = bytes, start = calleeExpr.nameStart, end = calleeExpr.nameEnd)
+    if name == "LazyRef":
+        ; 省略类型实参的写法：元素类型取初值闭包的返回。
+        done = inferActuals(world = world, unit = unit, unitIndex = unitIndex, node = node, params = [], names = names, out = done, bytes = bytes)
+        if len(expr.kids) != 2:
+            return done
+        let argType = exprTypeAt(table = done.types, unit = unitIndex, node = expr.kids[1])
+        if argType < 0 || argType >= len(done.pool.entries):
+            return done
+        let argEntry = done.pool.entries[argType]
+        if !isTypeClass(kind = argEntry.kind, expected = .typeClassFunction) || argEntry.ret < 0:
+            return done
+        let inserted = intern(pool = done.pool, kind = .typeClassGeneric, name = "LazyRef", kids = [argEntry.ret], ret = -1)
+        done.pool = inserted.pool
+        done.typeId = inserted.id
+        done.types = writeExprType(table = done.types, unit = unitIndex, node = node, typeId = done.typeId)
+        return done
     if name == "load" || name == "store":
         return inferPointerCall(world = world, unit = unit, unitIndex = unitIndex, node = node, name = name, names = names, out = done, bytes = bytes)
+    ; 函数值调用：局部绑定是函数类型就按它的形参与返回推，不走顶层符号表。
+    let localType = lookupNameType(table = names, name = name)
+    if localType >= 0 && localType < len(done.pool.entries):
+        let localEntry = done.pool.entries[localType]
+        if isTypeClass(kind = localEntry.kind, expected = .typeClassFunction):
+            var localParams: Array<CallParam> = []
+            var p = 0
+            while p < len(localEntry.kids):
+                var param = CallParam()
+                param.typeId = localEntry.kids[p]
+                param.takesLabel = false
+                localParams = localParams.append(param)
+                p = p + 1
+            done = inferActuals(world = world, unit = unit, unitIndex = unitIndex, node = node, params = localParams, names = names, out = done, bytes = bytes)
+            if localEntry.ret >= 0:
+                done.typeId = localEntry.ret
+                done.types = writeExprType(table = done.types, unit = unitIndex, node = node, typeId = done.typeId)
+            return done
     let symbol = lookupTopByName(index = world.symbols, name = name)
     if symbol >= 0:
         let ref = symbolDecl(world = world, symbol = symbol)
@@ -599,6 +706,13 @@ inferMemberCall|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, 
     if receiverType < 0:
         return inferActuals(world = world, unit = unit, unitIndex = unitIndex, node = node, params = [], names = names, out = done, bytes = bytes)
     let memberName = decodeRange(bytes = bytes, start = member.nameStart, end = member.nameEnd)
+    ; `r.value()`：与读形态同一元素类型，实参不接。
+    if memberName == "value" && isLazyRefType(pool = done.pool, id = receiverType):
+        let element = lazyRefElement(pool = done.pool, id = receiverType)
+        if element >= 0:
+            done.typeId = element
+            done.types = writeExprType(table = done.types, unit = unitIndex, node = node, typeId = done.typeId)
+            return done
     let access = memberAccess(receiver = receiverType, name = memberName, isTypeName = isTypeName, owner = names.owner, file = unit.path, offset = member.start)
     let result = checkMember(world = probeWorld(world = world, pool = done.pool), access = access)
     done.pool = result.pool

@@ -1188,6 +1188,13 @@ finishCall|self(_callee: I32,) -> (I32,):
     self.advance()
     let id: I32 = self.newExpr(kind = .exprCall, start = start, end = self.previousEnd())
     self.pushExprKid(id = id, kid = _callee)
+    self.parseCallArguments(id = id)
+    self.expect(kind = .rightParen, what = "`)`")
+    self.setExprEnd(id = id, end = self.previousEnd())
+    return id
+; 实参表：游标在 `(` 之后，逐条收位置实参与 `名字 = 值` 标签实参，尾随逗号合法。
+; 调用与泛型构造共用这一份排布，标签的节点形状因此只有一处定义。
+parseCallArguments|self(id: I32,) -> ():
     self.skipNewlines()
     while !self.at(.rightParen) && !self.atEnd():
         let before = self.pos
@@ -1211,7 +1218,36 @@ finishCall|self(_callee: I32,) -> (I32,):
         if self.pos == before:
             self.advance()
         self.skipNewlines()
-    self.expect(kind = .rightParen, what = "`)`")
+    return
+; 泛型构造前瞻：`名<类型实参>(...)`。只扫记号形状，不建节点 ——
+; 判定失手时仍按标识符解析，`a < b` 这类比较因此不受影响。
+looksLikeGenericConstruct|self() -> (Bool,):
+    var i: I32 = self.pos + 1
+    if i >= self.total || !isKind(token = self.tokens[i], kind = .opLt):
+        return false
+    i = i + 1
+    var depth: I32 = 1
+    while i < self.total && depth > 0:
+        if isKind(token = self.tokens[i], kind = .opLt):
+            depth = depth + 1
+        elif isKind(token = self.tokens[i], kind = .opGt):
+            depth = depth - 1
+        elif isKind(token = self.tokens[i], kind = .newline):
+            return false
+        i = i + 1
+    if depth != 0:
+        return false
+    return i < self.total && isKind(token = self.tokens[i], kind = .leftParen)
+; 泛型构造：类型位收泛型类型节点，实参按调用表排布；类型名与实参个数由语义面判。
+parseGenericConstruct|self() -> (I32,):
+    let start: I32 = self.current().start
+    let typeId: I32 = self.parseType()
+    let id: I32 = self.newExpr(kind = .exprGeneric, start = start, end = self.previousEnd())
+    self.setExprType(id = id, typeId = typeId)
+    if self.at(.leftParen):
+        self.advance()
+        self.parseCallArguments(id = id)
+        self.expect(kind = .rightParen, what = "`)`")
     self.setExprEnd(id = id, end = self.previousEnd())
     return id
 ; 下标或切片：`a[i]` 与 `a[i:j]`，两端都可省略。
@@ -1271,6 +1307,8 @@ parsePrimary|self() -> (I32,):
         let id: I32 = self.newExpr(kind = .exprCase, start = start, end = self.previousEnd())
         self.setExprName(id = id, start = nameStart, end = nameEnd)
         return id
+    if isKind(token = token, kind = .identifier) && self.looksLikeGenericConstruct():
+        return self.parseGenericConstruct()
     if isKind(token = token, kind = .identifier) || isKind(token = token, kind = .kwSelf):
         self.advance()
         let id: I32 = self.newExpr(kind = .exprIdentifier, start = start, end = token.end)

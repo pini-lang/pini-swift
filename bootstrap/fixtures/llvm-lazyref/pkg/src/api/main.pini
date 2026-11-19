@@ -1,0 +1,16 @@
+; 闭包与惰性引用：体挂节点、捕获按引用、首次求值后缓存；三条都要能链接执行。
+; 可接住写那类失败路径不在本夹具：它只验闭包面与 LazyRef 的两条运行时段入口。
+main|func() -> ():
+    var base: I32 = 40
+    let lazy = LazyRef(func () -> (I32,):
+        capture base
+        return base + 2
+    )
+    base = 100
+    print(lazy.value)
+    print(lazy.value())
+    let greet = LazyRef<String>(func () -> (String,): return "hi")
+    print(greet.value)
+    let add = func (a: I32, b: I32,) -> (I32,): return a + b
+    print(add(2, 3))
+    return

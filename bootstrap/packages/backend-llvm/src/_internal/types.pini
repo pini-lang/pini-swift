@@ -34,6 +34,12 @@ llvmTypeName|func(pool: IrTypePool, typeId: I32,) -> (String,):
         return resultSpelling(pool = pool, kids = entry.kids)
     if tag == 13:
         return optionalSpelling(pool = pool, kids = entry.kids)
+    if tag == 18:
+        ; 惰性引用是不透明句柄：运行时段按 ptr 收发，元素类型只用于装箱 ABI。
+        return "ptr"
+    if tag == 20:
+        ; 函数值：代码指针加捕获环境，调用协议固定为 `{ ptr, ptr }`。
+        return "{ ptr, ptr }"
     return "ptr"
 
 ; 结果拼写：三槽，标签 · ok 载荷 · 错误字；载荷缺席时按 i64 兜底，错误字恒为 i64。

@@ -348,7 +348,8 @@ public final class SemanticAnalyzer {
     private func requireDefined(_ name: String, _ location: SourceLocation, isFunction: Bool) throws {
         // 内建 Optional 枚举类型标识符（裸 Optional / Optional.none 引用），静态层无需注册即可解析，
         // 与解释器对 Optional.some/Optional.none 的特判对齐（闭合 B2 静态缺口）。
-        if name == "Optional" { return }
+        // `LazyRef` 同理：它是类型构造器而不是用户函数，省略类型实参的写法没有声明可查。
+        if name == "Optional" || name == "LazyRef" { return }
         if let hit = symbolTable.resolveWithScope(name) {
             // H-1①：匿名函数体内引用外层局部变量，其 capture 声明须先于本使用出现
             if let ctx = captureContexts.last,

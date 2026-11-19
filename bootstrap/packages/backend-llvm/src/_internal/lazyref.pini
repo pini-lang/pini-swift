@@ -1,0 +1,4 @@
+; 惰性引用包装：类型特化装箱函数只发一份，名字与定义同在；跨函数共用一份登记。
+{LazyRefDefs}
+names: Array<String> = []
+lines: Array<String> = []

@@ -98,6 +98,33 @@ typeClassTag|func(_kind: TypeClass,) -> (I32,):
 isTypeClass|func(kind: TypeClass, expected: TypeClass,) -> (Bool,):
     return typeClassTag(kind) == typeClassTag(expected)
 
+; 空元组判定：无分量的元组即 `()`，函数返回位用它表示无返回值。
+isEmptyTupleType|func(pool: TypePool, id: I32,) -> (Bool,):
+    if id < 0 || id >= len(pool.entries):
+        return false
+    let entry = pool.entries[id]
+    if !isTypeClass(kind = entry.kind, expected = .typeClassTuple):
+        return false
+    return len(entry.kids) == 0
+
+; 惰性引用判定：名字为 LazyRef 的泛型实例；元素类型即唯一实参。
+isLazyRefType|func(pool: TypePool, id: I32,) -> (Bool,):
+    if id < 0 || id >= len(pool.entries):
+        return false
+    let entry = pool.entries[id]
+    if !isTypeClass(kind = entry.kind, expected = .typeClassGeneric):
+        return false
+    return entry.name == "LazyRef"
+
+; 惰性引用元素：非 LazyRef 或实参缺席答 -1。
+lazyRefElement|func(pool: TypePool, id: I32,) -> (I32,):
+    if !isLazyRefType(pool = pool, id = id):
+        return -1
+    let entry = pool.entries[id]
+    if len(entry.kids) != 1:
+        return -1
+    return entry.kids[0]
+
 ; 跨包判定：枚举项不能跨包引用，下游按类别逐个问；每条走一次类别判定。
 isScalarClass|func(_kind: TypeClass,) -> (Bool,):
     return isTypeClass(kind = _kind, expected = .typeClassScalar)

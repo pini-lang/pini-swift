@@ -42,7 +42,7 @@ echo "运行时段 $runtime"
 TMPDIR="$tmp" "$pini" build "$root/bootstrap"
 code=$?
 if [ "$code" -ne 0 ]; then
-    echo " 行不通  [构建] 退出码 $code；产物未验证" >&2
+    echo " 行不通  [构建] 退出码 ${code}；产物未验证" >&2
     exit "$code"
 fi
 
