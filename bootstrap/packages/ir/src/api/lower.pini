@@ -30,6 +30,7 @@ returnType: I32 = -1
 body: Array<I32> = []
 positions: Array<IrPosition> = []
 isTest: Bool = false
+isUnsafe: Bool = false
 isAsync: Bool = false
 sourceFile: String = ""
 
@@ -135,6 +136,7 @@ lowerFunction|func(state: LowerState, unit: CompilationUnit, declId: I32, owner:
     var fn = IrFunction()
     fn.name = irFunctionName(unit = unit, bytes = out.bytes, decl = decl, owner = owner)
     fn.isTest = decl.isTest
+    fn.isUnsafe = decl.isUnsafe
     fn.isAsync = decl.isAsync
     fn.sourceFile = unit.path
     if !isVoidReturn(pool = out.world.types.pool, id = seed.returnType):

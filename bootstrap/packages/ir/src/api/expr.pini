@@ -792,6 +792,7 @@ lowerCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: Typ
     var receiver = -1
     var builtinMember = ""
     var builtinType = -1
+    var maybeCase = ""
     if unit.ast.isMemberExpr(callee):
         let member = unit.ast.exprAt(callee)
         if len(member.kids) < 1:
@@ -847,6 +848,7 @@ lowerCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: Typ
                         return done
         if !resolved.found:
             resolved.name = name
+            maybeCase = name
     else:
         return missExpr(out = done, unit = unit, id = id, what = "被调表达式")
     var actuals: Array<IrActual> = []
@@ -870,6 +872,10 @@ lowerCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: Typ
         actual.id = one.id
         actuals = actuals.append(actual)
         i = i + 1
+    if len(maybeCase) > 0:
+        let constructed = lowerCaseConstruct(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id, name = maybeCase, actuals = actuals)
+        if constructed.id >= 0:
+            return constructed
     if len(builtinMember) > 0:
         if builtinType >= 0 && builtinType < irTypeCount(map.pool) && irTypeTag(irTypeAt(pool = map.pool, id = builtinType).kind) == irTypeTag(.irTypeString):
             return lowerStringMember(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id, member = builtinMember, receiver = receiver, actuals = actuals)
@@ -1057,6 +1063,37 @@ lowerCaseValue|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map
     var node = irMakeNode(kind = irExprTag(.irEnumConstruct), typeId = typeId)
     node.op = tag
     node.text = placed.id
+    let inserted = irAppendNode(pool = out.pool, node = node)
+    var done = out
+    done.texts = placed.texts
+    done.pool = inserted.pool
+    done.id = inserted.id
+    return done
+
+; 带载荷的用例构造：与 `.圆` 同一节点类别，载荷按声明序作子节点。
+; 名字不是该枚举的用例时答 id = -1，交回调用路径当普通调用（可能是外部函数）。
+lowerCaseConstruct|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32, name: String, actuals: Array<IrActual>,) -> (LowerExpr,):
+    var miss = out
+    miss.id = -1
+    let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = out.frame, bytes = bytes, id = id)
+    if typeId < 0 || typeId >= irTypeCount(map.pool):
+        return miss
+    let entry = irTypeAt(pool = map.pool, id = typeId)
+    if irTypeTag(entry.kind) != irTypeTag(.irTypeEnumeration):
+        return miss
+    let tag = enumCaseTag(frame = out.frame, owner = entry.name, caseName = name)
+    if tag < 0:
+        return miss
+    var kids: Array<I32> = []
+    var i = 0
+    while i < len(actuals):
+        kids = kids.append(actuals[i].id)
+        i = i + 1
+    let placed = internText(texts = out.texts, value = name)
+    var node = irMakeNode(kind = irExprTag(.irEnumConstruct), typeId = typeId)
+    node.op = tag
+    node.text = placed.id
+    node.kids = kids
     let inserted = irAppendNode(pool = out.pool, node = node)
     var done = out
     done.texts = placed.texts
