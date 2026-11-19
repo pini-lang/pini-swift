@@ -28,6 +28,10 @@ loopHeads: Array<String> = []
 slotNames: Array<String> = []
 slotUses: Array<I32> = []
 head: Array<String> = []
+held: Array<String> = []
+heldTypes: Array<I32> = []
+ownedSlots: Array<String> = []
+ownedTypes: Array<I32> = []
 
 ; 表达式结果：上下文与值串；值串只给操作数，类型由所在指令给。
 (ExprOut)
@@ -66,6 +70,154 @@ defineSlot|func(ctx: BodyCtx, slot: I32,) -> (ExprOut,):
     out.ctx.slotNames = names
     out.ctx.slotUses = uses
     out.text = name
+    return out
+
+; 份额账：本次求值造出、尚无接收方的新份额，语句收尾时统一归还。
+; 只记类型不记类码：归还入口与释放胶水都按类型查表，多记一份类码就有两处会走偏。
+holdShare|func(ctx: BodyCtx, name: String, typeId: I32,) -> (BodyCtx,):
+    var out = ctx
+    out.held = out.held.append(name)
+    out.heldTypes = out.heldTypes.append(typeId)
+    return out
+
+; 在账判定：同名仍在账上，说明这一份还没交出去，接收方可以直接取走。
+isHeld|func(ctx: BodyCtx, name: String,) -> (Bool,):
+    var i = 0
+    while i < len(ctx.held):
+        if ctx.held[i] == name:
+            return true
+        i = i + 1
+    return false
+
+; 销账：份额随值交给接收方，语句收尾不再归还。
+forgetShare|func(ctx: BodyCtx, name: String,) -> (BodyCtx,):
+    var out = ctx
+    var names: Array<String> = []
+    var types: Array<I32> = []
+    var i = 0
+    while i < len(out.held):
+        if out.held[i] != name:
+            names = names.append(out.held[i])
+            types = types.append(out.heldTypes[i])
+        i = i + 1
+    out.held = names
+    out.heldTypes = types
+    return out
+
+; 还入口名：按细分码选，只有计数族有入口。
+; 字符是内联值，运行时不按计数持有，故不给归还入口，与宿主一致。
+releaseSymbolOf|func(kind: I32,) -> (String,):
+    if kind == 1:
+        return "bk_str_release"
+    if kind == 3 || kind == 4 || kind == 5 || kind == 8:
+        return "bk_handle_release"
+    if kind == 6 || kind == 7:
+        return "bk_nominal_release"
+    return ""
+
+; 留入口名：与还入口同族配对；名义箱的保留不带返回值。
+retainSymbolOf|func(kind: I32,) -> (String,):
+    if kind == 1:
+        return "bk_str_retain"
+    if kind == 3 || kind == 4 || kind == 5 || kind == 8:
+        return "bk_handle_retain"
+    if kind == 6 || kind == 7:
+        return "bk_nominal_retain"
+    return ""
+
+; 归还一个已具名的值：名义箱先走逐类型胶水，归还其字段后再还箱本身。
+releaseValue|func(ctx: BodyCtx, module: IrModule, name: String, typeId: I32,) -> (BodyCtx,):
+    var out = ctx
+    if len(name) == 0:
+        return out
+    let kind = irShareKindOf(pool = module.types, typeId = typeId)
+    if kind == 6 || kind == 7:
+        ; 没有声明条目的名义类型发不出胶水，退回只还箱体：漏字段，但不会引用未定义符号。
+        if releaseGlueExists(module = module, typeId = typeId):
+            let glue = releaseGlueName(typeId = typeId)
+            useExtern(use = out.externs, name = glue)
+            appendLine(sink = out.lines, text = "  call void @" + glue + "(ptr " + name + ")")
+            return out
+        useExtern(use = out.externs, name = "bk_nominal_release")
+        appendLine(sink = out.lines, text = "  call i32 @bk_nominal_release(ptr " + name + ")")
+        return out
+    let symbol = releaseSymbolOf(kind = kind)
+    if len(symbol) == 0:
+        return out
+    useExtern(use = out.externs, name = symbol)
+    appendLine(sink = out.lines, text = "  call void @" + symbol + "(ptr " + name + ")")
+    return out
+
+; 语句收尾：把没交出去的份额逐条归还并清账。
+;  行不通  在已收口的块上补指令：终结指令之后不得再有指令，那几条留给进程退出。
+flushHeld|func(ctx: BodyCtx, module: IrModule,) -> (BodyCtx,):
+    var out = ctx
+    var emptied: Array<String> = []
+    var emptiedTypes: Array<I32> = []
+    var i = 0
+    while !out.closed && i < len(out.held):
+        out = releaseValue(ctx = out, module = module, name = out.held[i], typeId = out.heldTypes[i])
+        i = i + 1
+    out.held = emptied
+    out.heldTypes = emptiedTypes
+    return out
+
+; 段内归还：只还第 keep 条之后记的账，之前那几条属于外层块，留到外层收尾。
+; 用在右支这类自带块的子求值上：那里造的值出了本块就没有支配关系，不能再带出去。
+flushHeldFrom|func(ctx: BodyCtx, module: IrModule, keep: I32,) -> (BodyCtx,):
+    var out = ctx
+    var i = keep
+    while i < len(out.held):
+        out = releaseValue(ctx = out, module = module, name = out.held[i], typeId = out.heldTypes[i])
+        i = i + 1
+    var names: Array<String> = []
+    var types: Array<I32> = []
+    var k = 0
+    while k < keep && k < len(out.held):
+        names = names.append(out.held[k])
+        types = types.append(out.heldTypes[k])
+        k = k + 1
+    out.held = names
+    out.heldTypes = types
+    return out
+
+; 接收动作：移交取走账上那一份，保留则另加一份给接收方。
+; 新份额已被前一个接收点取走时按保留处理，同名两处存不会共用一份。
+adoptValue|func(ctx: BodyCtx, module: IrModule, name: String, typeId: I32, adopt: I32,) -> (BodyCtx,):
+    var out = ctx
+    if adopt == 0 || len(name) == 0:
+        return out
+    let kind = irShareKindOf(pool = module.types, typeId = typeId)
+    if kind == 2:
+        return out
+    if adopt == 1 && isHeld(ctx = out, name = name):
+        return forgetShare(ctx = out, name = name)
+    let symbol = retainSymbolOf(kind = kind)
+    if len(symbol) == 0:
+        return out
+    useExtern(use = out.externs, name = symbol)
+    appendLine(sink = out.lines, text = "  call void @" + symbol + "(ptr " + name + ")")
+    return out
+
+; 旧值归还：覆盖槽或字段之前先还旧份额；容器元素由运行时在写入口归还，不走这条。
+releaseOldValue|func(ctx: BodyCtx, module: IrModule, at: String, typeId: I32,) -> (BodyCtx,):
+    var out = ctx
+    if !irHoldsShare(pool = module.types, typeId = typeId):
+        return out
+    let typeName = llvmTypeName(pool = module.types, typeId = typeId)
+    let id = out.temp
+    out.temp = id + 1
+    let name = tempName(index = id)
+    appendLine(sink = out.lines, text = "  " + name + " = load " + typeName + ", ptr " + at)
+    return releaseValue(ctx = out, module = module, name = name, typeId = typeId)
+
+; 函数出口：本函数的槽与形参逐格归还；格子已在首块清零，未赋值的格是空指针。
+releaseOwned|func(ctx: BodyCtx, module: IrModule,) -> (BodyCtx,):
+    var out = ctx
+    var i = 0
+    while i < len(out.ownedSlots):
+        out = releaseOldValue(ctx = out, module = module, at = out.ownedSlots[i], typeId = out.ownedTypes[i])
+        i = i + 1
     return out
 
 ; 标签名：前缀加编号，前缀只作可读性，不参与判等。
@@ -225,8 +377,24 @@ unaryOpText|func(op: I32,) -> (String,):
         return "xor"
     return ""
 
-; 表达式：先发子节点，再发本节点；值串交给上层拼指令。
+; 表达式：先按份额判据记账，再发本节点；新份额留给语句收尾归还。
+; 判据来自中端：节点求值造出份额即入账，借用与不参与不入账，本层不按拼写反推。
 emitExpr|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
+    var out = emitExprCore(ctx = ctx, module = module, nodeId = nodeId)
+    if nodeId < 0 || nodeId >= irNodeCount(module.nodes):
+        return out
+    if len(out.text) == 0:
+        return out
+    if irShareEffectOf(pool = module.types, nodes = module.nodes, nodeId = nodeId) != 1:
+        return out
+    let heldType = irNodeAt(pool = module.nodes, id = nodeId).typeId
+    if irShareKindOf(pool = module.types, typeId = heldType) <= 0:
+        return out
+    out.ctx = holdShare(ctx = out.ctx, name = out.text, typeId = heldType)
+    return out
+
+; 表达式内核：先发子节点，再发本节点；值串交给上层拼指令。
+emitExprCore|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
     var out = ExprOut()
     out.ctx = ctx
     out.text = "0"
@@ -287,6 +455,9 @@ emitExpr|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
                 argType = module.functions[target].params[i].typeId
             let shaped = storeValue(ctx = out.ctx, module = module, text = one.text, fromType = irNodeAt(pool = module.nodes, id = node.kids[i]).typeId, toType = argType)
             out.ctx = shaped.ctx
+            if target >= 0:
+                ; 形参归被调方所有：账上有就交出去，没有就另留一份，否则返回后被调方读到的是空壳。
+                out.ctx = adoptValue(ctx = out.ctx, module = module, name = shaped.text, typeId = argType, adopt = 1)
             if i > 0:
                 args = args + ", "
             args = args + llvmTypeName(pool = module.types, typeId = argType) + " " + shaped.text
@@ -652,6 +823,8 @@ emitElementAppend|func(ctx: BodyCtx, module: IrModule, receiverText: String, val
     out.ctx = value.ctx
     let valueTypeName = llvmTypeName(pool = module.types, typeId = valueType)
     appendLine(sink = out.ctx.lines, text = "  store " + valueTypeName + " " + value.text + ", ptr " + boxName() + ", align " + countText(width))
+    ; 追加入口消费元素那一份，故账上那一份随之交出。
+    out.ctx = adoptValue(ctx = out.ctx, module = module, name = value.text, typeId = valueType, adopt = 1)
     useExtern(use = out.ctx.externs, name = symbol)
     let id = out.ctx.temp
     out.ctx.temp = id + 1
@@ -949,6 +1122,8 @@ emitConstruct|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut,):
                 let fromType = irNodeAt(pool = module.nodes, id = node.kids[k + 1]).typeId
                 let shaped = storeValue(ctx = done.ctx, module = module, text = value.text, fromType = fromType, toType = fieldType)
                 done.ctx = shaped.ctx
+                ; 字段归新箱所有：账上那一份交出去，语句收尾不再归还。
+                done.ctx = adoptValue(ctx = done.ctx, module = module, name = shaped.text, typeId = fieldType, adopt = 1)
                 appendLine(sink = done.ctx.lines, text = "  store " + typeName + " " + shaped.text + ", ptr " + at.text)
         k = k + 2
     return done
@@ -986,6 +1161,8 @@ emitEnumConstruct|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOu
         done.ctx = at.ctx
         let shaped = storeValue(ctx = done.ctx, module = module, text = value.text, fromType = irNodeAt(pool = module.nodes, id = node.kids[i]).typeId, toType = fieldType)
         done.ctx = shaped.ctx
+        ; 载荷格归新箱所有：账上那一份交出去，语句收尾不再归还。
+        done.ctx = adoptValue(ctx = done.ctx, module = module, name = shaped.text, typeId = fieldType, adopt = 1)
         appendLine(sink = done.ctx.lines, text = "  store " + typeName + " " + shaped.text + ", ptr " + at.text)
         i = i + 1
     return done
@@ -1031,6 +1208,9 @@ emitFieldStore|func(ctx: BodyCtx, module: IrModule, node: IrNode,) -> (BodyCtx,)
     let typeName = llvmTypeName(pool = module.types, typeId = node.typeId)
     let shaped = storeValue(ctx = out, module = module, text = value.text, fromType = irNodeAt(pool = module.nodes, id = node.kids[1]).typeId, toType = node.typeId)
     out = shaped.ctx
+    out = adoptValue(ctx = out, module = module, name = shaped.text, typeId = node.typeId, adopt = node.adopt)
+    if node.releaseOld:
+        out = releaseOldValue(ctx = out, module = module, at = at.text, typeId = node.typeId)
     appendLine(sink = out.lines, text = "  store " + typeName + " " + shaped.text + ", ptr " + at.text)
     return out
 
@@ -1221,6 +1401,8 @@ emitSubscriptStore|func(ctx: BodyCtx, module: IrModule, node: IrNode,) -> (BodyC
     out = box.ctx
     let shaped = storeValue(ctx = out, module = module, text = value.text, fromType = irNodeAt(pool = module.nodes, id = node.kids[2]).typeId, toType = node.typeId)
     out = shaped.ctx
+    ; 元素份额由写入口消费，故这里把账上那一份交出去，语句收尾不再归还。
+    out = adoptValue(ctx = out, module = module, name = shaped.text, typeId = node.typeId, adopt = 1)
     appendLine(sink = out.lines, text = "  store " + typeName + " " + shaped.text + ", ptr " + box.text)
     let containerTag = typeTagOf(module = module, nodeId = node.kids[0])
     if containerTag == 16:
@@ -1453,9 +1635,11 @@ emitShortCircuit|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut
     else:
         appendLine(sink = done.ctx.lines, text = "  br i1 " + lhs.text + ", label %" + rhsLabel + ", label %" + endLabel)
     appendLine(sink = done.ctx.lines, text = rhsLabel + ":")
+    let keep = len(done.ctx.held)
     let rhs = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[1])
     done.ctx = rhs.ctx
     appendLine(sink = done.ctx.lines, text = "  store i1 " + rhs.text + ", ptr " + slot.text)
+    done.ctx = flushHeldFrom(ctx = done.ctx, module = module, keep = keep)
     appendLine(sink = done.ctx.lines, text = "  br label %" + endLabel)
     appendLine(sink = done.ctx.lines, text = endLabel + ":")
     let id = done.ctx.temp
@@ -1691,8 +1875,13 @@ emitStmts|func(ctx: BodyCtx, module: IrModule, ids: Array<I32>,) -> (BodyCtx,):
         i = i + 1
     return out
 
-; 单条语句：按类别码分派；未接的类别记缺口，不产占位指令。
+; 单条语句：发完本句后清账，没被接收点取走的份额在这里归还。
+; 账按句清算，是因为临时值的寿命止于本句：跨句只经槽与字段，那两处已经留了一份。
 emitStmt|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (BodyCtx,):
+    return flushHeld(ctx = emitStmtCore(ctx = ctx, module = module, nodeId = nodeId), module = module)
+
+; 语句内核：按类别码分派；未接的类别记缺口，不产占位指令。
+emitStmtCore|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (BodyCtx,):
     var out = ctx
     if nodeId < 0 || nodeId >= irNodeCount(module.nodes):
         return addGap(ctx = out, gap = "悬空语句")
@@ -1703,21 +1892,31 @@ emitStmt|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (BodyCtx,):
         let defined = defineSlot(ctx = out, slot = slot)
         out = defined.ctx
         out.head = out.head.append("  " + defined.text + " = alloca " + typeName)
+        if irHoldsShare(pool = module.types, typeId = node.typeId):
+            ; 握份额的格子先在首块清零：提前返回时它可能还没赋值，归还空值才是安全的。
+            out.head = out.head.append("  store " + typeName + " " + zeroTextOf(typeName = typeName) + ", ptr " + defined.text)
+            out.ownedSlots = out.ownedSlots.append(defined.text)
+            out.ownedTypes = out.ownedTypes.append(node.typeId)
         if len(node.kids) > 0:
             let one = emitExpr(ctx = out, module = module, nodeId = node.kids[0])
             out = one.ctx
             let shaped = storeValue(ctx = out, module = module, text = one.text, fromType = irNodeAt(pool = module.nodes, id = node.kids[0]).typeId, toType = node.typeId)
             out = shaped.ctx
+            out = adoptValue(ctx = out, module = module, name = shaped.text, typeId = node.typeId, adopt = node.adopt)
             appendLine(sink = out.lines, text = "  store " + typeName + " " + shaped.text + ", ptr " + defined.text)
         return out
     if node.kind == 102:
         let slot = node.intValue as I32
         let typeName = llvmTypeName(pool = module.types, typeId = node.typeId)
+        let at = slotNameOf(ctx = out, slot = slot)
         let one = emitExpr(ctx = out, module = module, nodeId = node.kids[0])
         out = one.ctx
         let shaped = storeValue(ctx = out, module = module, text = one.text, fromType = irNodeAt(pool = module.nodes, id = node.kids[0]).typeId, toType = node.typeId)
         out = shaped.ctx
-        appendLine(sink = out.lines, text = "  store " + typeName + " " + shaped.text + ", ptr " + slotNameOf(ctx = out, slot = slot))
+        out = adoptValue(ctx = out, module = module, name = shaped.text, typeId = node.typeId, adopt = node.adopt)
+        if node.releaseOld:
+            out = releaseOldValue(ctx = out, module = module, at = at, typeId = node.typeId)
+        appendLine(sink = out.lines, text = "  store " + typeName + " " + shaped.text + ", ptr " + at)
         return out
     if node.kind == 103:
         return emitIf(ctx = out, module = module, node = node)
@@ -1850,10 +2049,12 @@ emitReturn|func(ctx: BodyCtx, module: IrModule, node: IrNode,) -> (BodyCtx,):
     var out = ctx
     let fn = module.functions[out.fnIndex]
     if fn.name == "main" && fn.returnType < 0:
+        out = releaseOwned(ctx = out, module = module)
         appendLine(sink = out.lines, text = "  ret i32 0")
         out.closed = true
         return out
     if len(node.kids) == 0:
+        out = releaseOwned(ctx = out, module = module)
         appendLine(sink = out.lines, text = "  ret void")
         out.closed = true
         return out
@@ -1862,6 +2063,140 @@ emitReturn|func(ctx: BodyCtx, module: IrModule, node: IrNode,) -> (BodyCtx,):
     let typeName = llvmTypeName(pool = module.types, typeId = fn.returnType)
     let shaped = storeValue(ctx = out, module = module, text = one.text, fromType = irNodeAt(pool = module.nodes, id = node.kids[0]).typeId, toType = fn.returnType)
     out = shaped.ctx
+    ; 返回值交给调用方：账上有就整份交出，没有就另留一份给调用方。
+    out = adoptValue(ctx = out, module = module, name = shaped.text, typeId = fn.returnType, adopt = 1)
+    out = releaseOwned(ctx = out, module = module)
     appendLine(sink = out.lines, text = "  ret " + typeName + " " + shaped.text)
     out.closed = true
     return out
+
+; 胶水是否存在：与生成侧同一判据，缺一格的类型既不出定义也不出调用。
+releaseGlueExists|func(module: IrModule, typeId: I32,) -> (Bool,):
+    if len(llvmAggregateName(pool = module.types, typeId = typeId)) == 0:
+        return false
+    let tag = irTypeTag(irTypeAt(pool = module.types, id = typeId).kind)
+    let decl = declAt(table = module.decls, typeId = typeId)
+    if tag == 14:
+        return len(decl.fields) > 0
+    if tag == 15:
+        return widestCaseIndex(cases = decl.cases) >= 0
+    return false
+
+; 释放胶水名：按类型下标唯一；名义箱与枚举箱共用一套名字。
+releaseGlueName|func(typeId: I32,) -> (String,):
+    return "__release_box_" + countText(typeId)
+
+; 字段归还：按字段类型选入口，名义与枚举字段递归走它自己的胶水。
+appendReleaseCall|func(lines: Array<String>, module: IrModule, name: String, typeId: I32,) -> (Array<String>,):
+    var out = lines
+    let kind = irShareKindOf(pool = module.types, typeId = typeId)
+    if kind == 6 || kind == 7:
+        if releaseGlueExists(module = module, typeId = typeId):
+            return out.append("  call void @" + releaseGlueName(typeId = typeId) + "(ptr " + name + ")")
+        return out.append("  call i32 @bk_nominal_release(ptr " + name + ")")
+    if kind == 1:
+        return out.append("  call void @bk_str_release(ptr " + name + ")")
+    if kind == 3 || kind == 4 || kind == 5 || kind == 8:
+        return out.append("  call void @bk_handle_release(ptr " + name + ")")
+    return out
+
+; 结构体胶水：逐字段归还后还箱本身。
+;  行不通  只调 bk_nominal_release：它只回收箱体，字段里的串与容器会随箱一起变成孤儿。
+appendFieldGlue|func(lines: Array<String>, module: IrModule, typeId: I32,) -> (Array<String>,):
+    var out = lines
+    let decl = declAt(table = module.decls, typeId = typeId)
+    let agg = llvmAggregateName(pool = module.types, typeId = typeId)
+    if len(agg) == 0 || len(decl.fields) == 0:
+        return out
+    out = out.append("define void @" + releaseGlueName(typeId = typeId) + "(ptr %box) {")
+    out = out.append("entry:")
+    var i = 0
+    while i < len(decl.fields):
+        let fieldType = decl.fields[i].typeId
+        if fieldType >= 0 && irHoldsShare(pool = module.types, typeId = fieldType):
+            let at = fieldSlotIndex(table = module.slots, fieldIndex = i)
+            let typeName = llvmTypeName(pool = module.types, typeId = fieldType)
+            out = out.append("  %f" + countText(i) + " = getelementptr " + agg + ", ptr %box, i32 0, i32 " + countText(at))
+            out = out.append("  %v" + countText(i) + " = load " + typeName + ", ptr %f" + countText(i))
+            out = appendReleaseCall(lines = out, module = module, name = "%v" + countText(i), typeId = fieldType)
+        i = i + 1
+    out = out.append("  %rc = call i32 @bk_nominal_release(ptr %box)")
+    out = out.append("  ret void")
+    out = out.append("}")
+    return out
+
+; 枚举胶水：按标签分派，只还当前用例的载荷。
+; 载荷格按最宽用例定型，故只归还类型与之逐格相同的用例；类型不同的用例宁可不还，不按别的形状读同一格。
+appendEnumGlue|func(lines: Array<String>, module: IrModule, typeId: I32,) -> (Array<String>,):
+    var out = lines
+    let decl = declAt(table = module.decls, typeId = typeId)
+    let agg = llvmAggregateName(pool = module.types, typeId = typeId)
+    let widest = widestCaseIndex(cases = decl.cases)
+    if len(agg) == 0 || widest < 0:
+        return out
+    let 最宽载荷 = decl.cases[widest].payload
+    var 可还用例: Array<I32> = []
+    var 可还载荷: Array<I32> = []
+    var c = 0
+    while c < len(decl.cases):
+        if 载荷同形(a = decl.cases[c].payload, b = 最宽载荷):
+            可还用例 = 可还用例.append(c)
+            可还载荷 = 可还载荷.append(1)
+        c = c + 1
+    out = out.append("define void @" + releaseGlueName(typeId = typeId) + "(ptr %box) {")
+    out = out.append("entry:")
+    out = out.append("  %tagp = getelementptr " + agg + ", ptr %box, i32 0, i32 " + countText(module.slots.headSlots))
+    out = out.append("  %tag = load i32, ptr %tagp")
+    if len(可还用例) > 0:
+        out = out.append("  switch i32 %tag, label %done [")
+        var s = 0
+        while s < len(可还用例):
+            out = out.append("    i32 " + countText(可还用例[s]) + ", label %case" + countText(可还用例[s]))
+            s = s + 1
+        out = out.append("  ]")
+        s = 0
+        while s < len(可还用例):
+            let caseIndex = 可还用例[s]
+            let payload = decl.cases[caseIndex].payload
+            out = out.append("case" + countText(caseIndex) + ":")
+            var j = 0
+            while j < len(payload):
+                let fieldType = payload[j]
+                if fieldType >= 0 && irHoldsShare(pool = module.types, typeId = fieldType):
+                    let slot = module.slots.payloadBase + j
+                    let typeName = llvmTypeName(pool = module.types, typeId = fieldType)
+                    out = out.append("  %c" + countText(caseIndex) + "v" + countText(j) + " = getelementptr " + agg + ", ptr %box, i32 0, i32 " + countText(slot))
+                    out = out.append("  %c" + countText(caseIndex) + "l" + countText(j) + " = load " + typeName + ", ptr %c" + countText(caseIndex) + "v" + countText(j))
+                    out = appendReleaseCall(lines = out, module = module, name = "%c" + countText(caseIndex) + "l" + countText(j), typeId = fieldType)
+                j = j + 1
+            out = out.append("  br label %done")
+            s = s + 1
+        out = out.append("done:")
+    out = out.append("  %rc = call i32 @bk_nominal_release(ptr %box)")
+    out = out.append("  ret void")
+    out = out.append("}")
+    return out
+
+; 载荷同形：逐格类型相同；长度不同即不同形。
+载荷同形|func(a: Array<I32>, b: Array<I32>,) -> (Bool,):
+    if len(a) != len(b):
+        return false
+    var i = 0
+    while i < len(a):
+        if a[i] != b[i]:
+            return false
+        i = i + 1
+    return true
+
+; 胶水总表：结构体与枚举各出一份，类型下标即胶水名的编号。
+llvmReleaseGlues|func(module: IrModule,) -> (Array<String>,):
+    var lines: Array<String> = []
+    var i = 0
+    while i < irTypeCount(module.types):
+        let tag = irTypeTag(irTypeAt(pool = module.types, id = i).kind)
+        if tag == 14:
+            lines = appendFieldGlue(lines = lines, module = module, typeId = i)
+        if tag == 15:
+            lines = appendEnumGlue(lines = lines, module = module, typeId = i)
+        i = i + 1
+    return lines

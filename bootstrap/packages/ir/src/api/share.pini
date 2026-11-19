@@ -185,7 +185,12 @@ irShareEffectOf|func(pool: IrTypePool, nodes: IrNodePool, nodeId: I32,) -> (I32,
     let kind = node.kind
     if kind == irExprTag(.irIntConst) || kind == irExprTag(.irFloatConst):
         return 3
-    if kind == irExprTag(.irBoolConst) || kind == irExprTag(.irBinary) || kind == irExprTag(.irShortCircuit):
+    if kind == irExprTag(.irBoolConst) || kind == irExprTag(.irShortCircuit):
+        return 3
+    ; 字符串面二元即拼接，求值当场造新串；比较与算术的结果不握份额。
+    if kind == irExprTag(.irBinary):
+        if irHoldsShare(pool = pool, typeId = node.typeId):
+            return 1
         return 3
     if kind == irExprTag(.irUnary) || kind == irExprTag(.irLenCall) || kind == irExprTag(.irIsAsciiDigit):
         return 3

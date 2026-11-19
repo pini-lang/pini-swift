@@ -33,6 +33,17 @@ externSignature|func(name: String,) -> (String,):
         return "declare ptr @bk_double_to_string(double)"
     if name == "bk_str_release":
         return "declare void @bk_str_release(ptr)"
+    ; 计数族：接收点留一份、语句收尾还一份；名义箱的归还答计数，调用点不回读。
+    if name == "bk_str_retain":
+        return "declare void @bk_str_retain(ptr)"
+    if name == "bk_handle_retain":
+        return "declare void @bk_handle_retain(ptr)"
+    if name == "bk_handle_release":
+        return "declare void @bk_handle_release(ptr)"
+    if name == "bk_nominal_retain":
+        return "declare void @bk_nominal_retain(ptr)"
+    if name == "bk_nominal_release":
+        return "declare i32 @bk_nominal_release(ptr)"
     if name == "bk_array_create":
         return "declare ptr @bk_array_create(i32)"
     if name == "bk_array_len":

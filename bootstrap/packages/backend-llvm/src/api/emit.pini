@@ -23,6 +23,7 @@ closeFunction|func(ctx: BodyCtx, module: IrModule,) -> (BodyCtx,):
     if out.closed:
         return out
     let fn = module.functions[out.fnIndex]
+    out = releaseOwned(ctx = out, module = module)
     if fn.name == "main" && fn.returnType < 0:
         appendLine(sink = out.lines, text = "  ret i32 0")
     elif fn.returnType < 0:
@@ -43,16 +44,20 @@ alreadyEmitted|func(names: Array<String>, name: String,) -> (Bool,):
     return false
 
 ; 参数落槽：形参按各自槽位出 alloca 与 store，值名按位置编号。
-; 不落槽的话，函数体里按槽位读会引用到未定义的槽名，LLVM 校验期才炸。
-seedParams|func(sink: LineSink, pool: IrTypePool, fn: IrFunction,) -> ():
+; 形参份额由调用方交出，故槽本身是这一份的持有者，函数出口要还。
+seedParams|func(ctx: BodyCtx, module: IrModule, fn: IrFunction,) -> (BodyCtx,):
+    var out = ctx
     var i = 0
     while i < len(fn.params):
         let slot = fn.params[i].slot
-        let ty = llvmTypeName(pool = pool, typeId = fn.params[i].typeId)
-        appendLine(sink = sink, text = "  " + slotName(slot = slot) + " = alloca " + ty)
-        appendLine(sink = sink, text = "  store " + ty + " %p" + countText(i) + ", ptr " + slotName(slot = slot))
+        let ty = llvmTypeName(pool = module.types, typeId = fn.params[i].typeId)
+        appendLine(sink = out.lines, text = "  " + slotName(slot = slot) + " = alloca " + ty)
+        appendLine(sink = out.lines, text = "  store " + ty + " %p" + countText(i) + ", ptr " + slotName(slot = slot))
+        if irHoldsShare(pool = module.types, typeId = fn.params[i].typeId):
+            out.ownedSlots = out.ownedSlots.append(slotName(slot = slot))
+            out.ownedTypes = out.ownedTypes.append(fn.params[i].typeId)
         i = i + 1
-    return
+    return out
 
 ; 转抄：把旁支容器的行按序补进主容器。
 ; 函数体先写旁支，首块栈槽才能排在它前面：栈槽落在 entry 里，循环体里不再按次长栈。
@@ -93,6 +98,16 @@ emitModule|func(entry: BackendEntry, target: TargetProfile, module: IrModule,) -
     var strings = StringPool()
     var externs = ExternUse()
     var emitted: Array<String> = []
+    let 胶水 = llvmReleaseGlues(module = module)
+    if len(胶水) > 0:
+        ; 胶水体自己要用三条归还入口，登记一次，免得只在胶水里出现的符号漏声明。
+        useExtern(use = externs, name = "bk_str_release")
+        useExtern(use = externs, name = "bk_handle_release")
+        useExtern(use = externs, name = "bk_nominal_release")
+    i = 0
+    while i < len(胶水):
+        appendLine(sink = sink, text = 胶水[i])
+        i = i + 1
     i = 0
     while i < len(module.functions):
         let fn = module.functions[i]
@@ -101,7 +116,6 @@ emitModule|func(entry: BackendEntry, target: TargetProfile, module: IrModule,) -
             appendLine(sink = sink, text = llvmSignature(pool = module.types, fn = fn, isDefine = true) + " {")
             appendLine(sink = sink, text = "entry:")
             appendLine(sink = sink, text = "  " + boxName() + " = alloca [8 x i8], align 8")
-            seedParams(sink = sink, pool = module.types, fn = fn)
             var body = LineSink()
             var ctx = BodyCtx()
             ctx.lines = body
@@ -112,6 +126,7 @@ emitModule|func(entry: BackendEntry, target: TargetProfile, module: IrModule,) -
             ctx.externs = externs
             ctx.builtins = builtins
             ctx.pointerBytes = target.pointerWidth
+            ctx = seedParams(ctx = ctx, module = module, fn = fn)
             ctx = emitStmts(ctx = ctx, module = module, ids = fn.body)
             ctx = closeFunction(ctx = ctx, module = module)
             copyLines(sink = sink, from = ctx.head)
