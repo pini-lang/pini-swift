@@ -1,0 +1,53 @@
+[assemble|import]
+_package = "../../../package"
+_module_loader = "../../../module-loader"
+_semantics = "../../../semantics"
+_ir = "../../../ir"
+
+; 装配链：规划、装载、世界、填表、形态与槽、降载、校验；检查、降载、转储、发射与测试共用。
+; 单独成文件：测试目标不带可执行入口，链放在入口文件里会让测试读不到它。
+; 规划失败时包数为零，调用方据此直接返回，不往下发半份产物。
+
+; 降载产物：模块、结构校验、包数与已定型表达式数。
+(降载产物)
+module: IrModule = IrModule()
+check: IrValidation = IrValidation()
+packages: I32 = 0
+typed: I32 = 0
+
+; 装配并降载：一条链走到底，诊断只打规划错误；结构违约由调用方读 check。
+降载工作区|func(root: String,) -> (降载产物,):
+    var out = 降载产物()
+    let plan = planWorkspace(root)
+    if !plan.isOK():
+        print("workspace-plan-failed", plan.errorCount())
+        return out
+    let ws = loadWorkspaceGrouped(plan)
+    let units = collectWorkspaceUnits(ws)
+    let build = buildWorld(units = units, packages = ws.packages)
+    let 填 = fillExprTypes(world = build.world, units = units)
+    var 世界 = build.world
+    var 类型面 = 世界.types
+    类型面.pool = 填.pool
+    世界.types = 类型面
+    var input = LowerWorld()
+    input.world = 世界
+    input.types = 填.types
+    let shapes = makeShapeTable(世界)
+    input.shapes = shapes
+    input.layouts = layoutAll(shapes = shapes, pool = 世界.types.pool)
+    out.module = lowerWorkspace(input = input)
+    out.check = validateModule(module = out.module)
+    out.packages = plan.packageCount()
+    out.typed = typedExprCount(table = 填.types)
+    return out
+
+; 定型读数：全工作区已定型的表达式槽数；分母是表达式池总长，两者相减即未定槽。
+; 这条读数只用于比对推理面改动前后的覆盖面，不参与任何判定。
+typedExprCount|func(table: ExprTypes,) -> (I32,):
+    var total = 0
+    var u = 0
+    while u < len(table.units):
+        total = total + validCount(table = table, unit = u)
+        u = u + 1
+    return total

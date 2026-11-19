@@ -1,0 +1,155 @@
+[select_test|import]
+_ir = "../../ir"
+
+; 清单与选择判据：归属按最长前缀，发现保模块序，分组按目标次序。
+; 零命中、空目标、全跳过与非零退出各自钉住，错误文本只认关键词，不逐字比措辞。
+
+; 造目标：包名、目标名、源码前缀与包根四件齐填。
+清单造目标|func(pkg: String, target: String, root: String,) -> (TestTarget,):
+    var out = TestTarget()
+    out.packageName = pkg
+    out.targetName = target
+    out.rootPath = root
+    out.basePath = "/w/" + root
+    return out
+
+; 造测试：名字、源文件与测试标记；非测试函数用同一条造，省一个入口。
+清单造测试|func(module: IrModule, name: String, path: String, isTest: Bool,) -> (IrModule,):
+    var out = module
+    var fn = IrFunction()
+    fn.name = name
+    fn.isTest = isTest
+    fn.sourceFile = path
+    out.functions = out.functions.append(fn)
+    return out
+
+; 归属：最长前缀命中；目录边界成立，`tests2` 不算落在 `tests` 里。
+归属按最长前缀|test() -> ():
+    var targets: Array<TestTarget> = []
+    targets = targets.append(清单造目标(pkg = "a", target = "a-tests", root = "packages/a/tests"))
+    targets = targets.append(清单造目标(pkg = "a", target = "a-deep", root = "packages/a/tests/deep"))
+    assert(testTargetOf(path = "packages/a/tests/deep/x.pini", targets = targets) == 1, "长前缀应胜出")
+    assert(testTargetOf(path = "packages/a/tests/y.pini", targets = targets) == 0, "短前缀应命中")
+    assert(testTargetOf(path = "packages/a/tests2/z.pini", targets = targets) < 0, "目录边界应拦住近名前缀")
+    assert(testTargetOf(path = "packages/a/src/x.pini", targets = targets) < 0, "源码目录不应命中测试目标")
+    return
+
+; 发现：只收测试标记，保持模块序，非测试函数不进清单。
+发现保模块序|test() -> ():
+    var targets: Array<TestTarget> = []
+    targets = targets.append(清单造目标(pkg = "a", target = "a-tests", root = "packages/a/tests"))
+    var module = IrModule()
+    module = 清单造测试(module = module, name = "甲", path = "packages/a/tests/x.pini", isTest = true)
+    module = 清单造测试(module = module, name = "丙", path = "packages/a/src/x.pini", isTest = false)
+    module = 清单造测试(module = module, name = "乙", path = "packages/a/tests/y.pini", isTest = true)
+    let refs = discoverTests(module = module, targets = targets)
+    assert(len(refs) == 2, "应只收两条测试")
+    assert(refs[0].name == "甲", "首条应保持模块序")
+    assert(refs[1].name == "乙", "次条应保持模块序")
+    assert(refs[0].target == 0, "两条都应归属同一目标")
+    assert(unattributedCount(refs = refs) == 0, "不应有未归属")
+    return
+
+; 筛选与跳过：先筛后跳，跳过可给多条；跳过后仍按原序。
+筛选与跳过|test() -> ():
+    var targets: Array<TestTarget> = []
+    targets = targets.append(清单造目标(pkg = "a", target = "a-tests", root = "packages/a/tests"))
+    var module = IrModule()
+    module = 清单造测试(module = module, name = "甲一", path = "packages/a/tests/x.pini", isTest = true)
+    module = 清单造测试(module = module, name = "甲二", path = "packages/a/tests/x.pini", isTest = true)
+    module = 清单造测试(module = module, name = "乙一", path = "packages/a/tests/y.pini", isTest = true)
+    let refs = discoverTests(module = module, targets = targets)
+    let byFilter = selectTests(refs = refs, targets = targets, filter = "甲", skips = [])
+    assert(!byFilter.failed, "筛选命中不应失败")
+    assert(len(byFilter.refs) == 2, "筛选甲应得两条")
+    let bySkip = selectTests(refs = refs, targets = targets, filter = "", skips = ["乙"])
+    assert(len(bySkip.refs) == 2, "跳过乙应剩两条")
+    let both = selectTests(refs = refs, targets = targets, filter = "甲", skips = ["二"])
+    assert(len(both.refs) == 1, "先筛后跳应剩一条")
+    assert(both.refs[0].name == "甲一", "应留下甲一")
+    return
+
+; 零命中：筛选无命中与全数跳过都失败，且各报专用错，不共用一句。
+零命中与全跳过|test() -> ():
+    var targets: Array<TestTarget> = []
+    targets = targets.append(清单造目标(pkg = "a", target = "a-tests", root = "packages/a/tests"))
+    var module = IrModule()
+    module = 清单造测试(module = module, name = "甲", path = "packages/a/tests/x.pini", isTest = true)
+    let refs = discoverTests(module = module, targets = targets)
+    let none = selectTests(refs = refs, targets = targets, filter = "不存在", skips = [])
+    assert(none.failed, "筛选零命中应失败")
+    assert(none.errorText.indexOf("没有测试名匹配筛选条件") >= 0, "应报筛选零命中")
+    let all = selectTests(refs = refs, targets = targets, filter = "甲", skips = ["甲"])
+    assert(all.failed, "全数跳过应失败")
+    assert(all.errorText.indexOf("没有测试可跑") >= 0, "应报全数跳过")
+    let badSkip = selectTests(refs = refs, targets = targets, filter = "", skips = ["丙"])
+    assert(badSkip.failed, "跳过不命中应失败")
+    assert(badSkip.errorText.indexOf("--skip '丙'") >= 0, "错误应带跳过原词")
+    return
+
+; 空目标：测试目标声明了却一条测试也没有，属仓库缺陷，不给筛选或跳过留借口。
+空目标报错|test() -> ():
+    var targets: Array<TestTarget> = []
+    targets = targets.append(清单造目标(pkg = "a", target = "a-tests", root = "packages/a/tests"))
+    targets = targets.append(清单造目标(pkg = "b", target = "b-tests", root = "packages/b/tests"))
+    var module = IrModule()
+    module = 清单造测试(module = module, name = "甲", path = "packages/a/tests/x.pini", isTest = true)
+    let refs = discoverTests(module = module, targets = targets)
+    let result = selectTests(refs = refs, targets = targets, filter = "", skips = [])
+    assert(result.failed, "空目标应失败")
+    assert(result.errorText.indexOf("b-tests") >= 0, "错误应带目标名")
+    return
+
+; 未归属：测试写在任何测试目标之外时失败，并指出首个文件。
+未归属报错|test() -> ():
+    var targets: Array<TestTarget> = []
+    targets = targets.append(清单造目标(pkg = "a", target = "a-tests", root = "packages/a/tests"))
+    var module = IrModule()
+    module = 清单造测试(module = module, name = "甲", path = "packages/a/other/x.pini", isTest = true)
+    let refs = discoverTests(module = module, targets = targets)
+    let result = selectTests(refs = refs, targets = targets, filter = "", skips = [])
+    assert(result.failed, "未归属应失败")
+    assert(result.errorText.indexOf("packages/a/other/x.pini") >= 0, "错误应带首个文件")
+    return
+
+; 目标次序：分组按目标声明序，不按模块里出现的先后；组内才保模块序。
+目标次序优先|test() -> ():
+    var targets: Array<TestTarget> = []
+    targets = targets.append(清单造目标(pkg = "a", target = "a-tests", root = "packages/a/tests"))
+    targets = targets.append(清单造目标(pkg = "b", target = "b-tests", root = "packages/b/tests"))
+    var module = IrModule()
+    module = 清单造测试(module = module, name = "乙", path = "packages/b/tests/x.pini", isTest = true)
+    module = 清单造测试(module = module, name = "甲", path = "packages/a/tests/x.pini", isTest = true)
+    let refs = discoverTests(module = module, targets = targets)
+    let result = selectTests(refs = refs, targets = targets, filter = "", skips = [])
+    assert(len(result.refs) == 2, "两条都应选中")
+    assert(result.refs[0].name == "甲", "目标序应压过模块序")
+    assert(result.groups[0].firstTest == 0 && result.groups[0].count == 1, "首组应一条")
+    assert(result.groups[1].firstTest == 1 && result.groups[1].count == 1, "次组应接在首组之后")
+    return
+
+; 全跳过组：选中为零但收集非零时记全跳过，报告据此单列一句，不冒充没有测试。
+全跳过组|test() -> ():
+    var targets: Array<TestTarget> = []
+    targets = targets.append(清单造目标(pkg = "a", target = "a-tests", root = "packages/a/tests"))
+    targets = targets.append(清单造目标(pkg = "b", target = "b-tests", root = "packages/b/tests"))
+    var module = IrModule()
+    module = 清单造测试(module = module, name = "甲", path = "packages/a/tests/x.pini", isTest = true)
+    module = 清单造测试(module = module, name = "乙", path = "packages/b/tests/x.pini", isTest = true)
+    let refs = discoverTests(module = module, targets = targets)
+    let result = selectTests(refs = refs, targets = targets, filter = "", skips = ["乙"])
+    assert(!result.failed, "全跳过一组仍有可跑测试，不整体失败")
+    assert(result.groups[1].skipped, "次组应记全跳过")
+    assert(result.groups[0].skipped == false, "首组不应记全跳过")
+    return
+
+; 报告措辞：组头、失败行与汇总逐字钉住；首行带工作区标签与目标数。
+报告措辞|test() -> ():
+    assert(testGroupFormat() == "包 %s（%d 个测试，%d 通过）\n", "组头格式应固定")
+    assert(testGroupSkippedFormat() == "包 %s（%d 个测试，--skip 全数排除）\n", "全跳过格式应固定")
+    assert(testFailFormat() == " ✗ %s: %s\n", "失败行格式应固定")
+    assert(testResultFormat() == "结果: %d 通过, %d 失败\n", "汇总格式应固定")
+    let header = testHeaderLine(rootLabel = "/w", targetCount = 13)
+    assert(header.indexOf("工作区 /w") >= 0, "首行应带工作区标签")
+    assert(header.indexOf("13 个测试 target") >= 0, "首行应带目标数")
+    return

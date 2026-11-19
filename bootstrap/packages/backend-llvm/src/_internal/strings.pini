@@ -73,6 +73,17 @@ stringValue|func(lines: LineSink, pool: StringPool, index: I32, temp: I32,) -> (
     appendLine(sink = lines, text = "  " + name + " = getelementptr [" + countText(pool.lengths[index]) + " x i8], ptr " + pool.names[index] + ", i32 0, i32 16")
     return name
 
+; C 串常量：不带十六字节头，`printf` 直接吃；报告格式只走这一条。
+cStringGlobal|func(name: String, value: String,) -> (String,):
+    let bytes = tempUtf8Bytes(value)
+    var hex = ""
+    var i = 0
+    while i < len(bytes):
+        hex = hex + hexByte(byte = bytes[i])
+        i = i + 1
+    hex = hex + "\\00"
+    return name + " = private constant [" + countText(len(bytes) + 1) + " x i8] c\"" + hex + "\""
+
 ; 格式常量：C 串形状，`printf` 直接吃；布尔两支与空格是展示语义的一部分。
 formatConstants|func() -> (Array<String>,):
     var out: Array<String> = []

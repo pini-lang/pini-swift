@@ -120,36 +120,36 @@ _backend_kit = "../../backend-kit"
     return total
 
 ; 含子串：成员被调走参数接收者，避免「字段读后直接成员被调」的定型盲区。
-含子串|func(text: String, needle: String,) -> (Bool,):
+转储含子串|func(text: String, needle: String,) -> (Bool,):
     return text.indexOf(needle) >= 0
 
 ; 结构转储：声明与字段各占一行，字段序即槽位；槽表头两个常量先出。
 结构转储|test() -> ():
     let module = 转储造模块()
     let result = dumpModule(entry = 转储造记录(), target = defaultTarget(), module = module)
-    assert(含子串(text = result.text, needle = "types\n"), "应有类型池一节")
-    assert(含子串(text = result.text, needle = "decl 0 struct 点 fields=1 cases=0"), "结构声明应带字段数")
-    assert(含子串(text = result.text, needle = "field 0 x type=i32"), "字段行应带序号与拼写")
-    assert(含子串(text = result.text, needle = "decl 1 enum 旗 fields=0 cases=2"), "枚举声明应带用例数")
-    assert(含子串(text = result.text, needle = "case 1 乙 tag=1 payload=(i32)"), "带载荷用例应印载荷类型")
-    assert(含子串(text = result.text, needle = "slots headSlots=4 payloadBase=5"), "槽表应带头常量")
-    assert(含子串(text = result.text, needle = "role=field name=x type=i32"), "字段槽应带角色与名字")
+    assert(转储含子串(text = result.text, needle = "types\n"), "应有类型池一节")
+    assert(转储含子串(text = result.text, needle = "decl 0 struct 点 fields=1 cases=0"), "结构声明应带字段数")
+    assert(转储含子串(text = result.text, needle = "field 0 x type=i32"), "字段行应带序号与拼写")
+    assert(转储含子串(text = result.text, needle = "decl 1 enum 旗 fields=0 cases=2"), "枚举声明应带用例数")
+    assert(转储含子串(text = result.text, needle = "case 1 乙 tag=1 payload=(i32)"), "带载荷用例应印载荷类型")
+    assert(转储含子串(text = result.text, needle = "slots headSlots=4 payloadBase=5"), "槽表应带头常量")
+    assert(转储含子串(text = result.text, needle = "role=field name=x type=i32"), "字段槽应带角色与名字")
     return
 
 ; 函数体：语句行带位置、类别名与份额动作；类别名按码印，不印数字。
 函数体|test() -> ():
     let module = 转储造模块()
     let result = dumpModule(entry = 转储造记录(), target = defaultTarget(), module = module)
-    assert(含子串(text = result.text, needle = "func 0 f params=0"), "函数行应带形参数")
-    assert(含子串(text = result.text, needle = "kind=allocVar"), "应有变量声明语句")
-    assert(含子串(text = result.text, needle = "adopt=retain"), "存储点应带接收动作")
-    assert(含子串(text = result.text, needle = "releaseOld=true"), "存储点应带旧份额标记")
-    assert(含子串(text = result.text, needle = "@7"), "语句应带源位置")
-    assert(含子串(text = result.text, needle = "kind=returnStmt"), "应有返回语句")
+    assert(转储含子串(text = result.text, needle = "func 0 f params=0"), "函数行应带形参数")
+    assert(转储含子串(text = result.text, needle = "kind=allocVar"), "应有变量声明语句")
+    assert(转储含子串(text = result.text, needle = "adopt=retain"), "存储点应带接收动作")
+    assert(转储含子串(text = result.text, needle = "releaseOld=true"), "存储点应带旧份额标记")
+    assert(转储含子串(text = result.text, needle = "@7"), "语句应带源位置")
+    assert(转储含子串(text = result.text, needle = "kind=returnStmt"), "应有返回语句")
     return
 
 ; 确定性：同一模块两遍转储逐字节相同，行读数与文本换行数相等。
-确定性|test() -> ():
+转储确定性|test() -> ():
     let module = 转储造模块()
     let once = dumpModule(entry = 转储造记录(), target = defaultTarget(), module = module)
     let twice = dumpModule(entry = 转储造记录(), target = defaultTarget(), module = module)
@@ -167,9 +167,9 @@ _backend_kit = "../../backend-kit"
     module.errors = appendLowerError(errors = module.errors, error = makeLowerErrorOfCode(code = 4, file = "样例.pini", offset = 7, detail = "空：缺能力"))
     module.typeErrors = appendLowerError(errors = module.typeErrors, error = makeLowerErrorOfCode(code = 1, file = "", offset = 0, detail = "未知类型"))
     let result = dumpModule(entry = 转储造记录(), target = defaultTarget(), module = module)
-    assert(含子串(text = result.text, needle = "empty=true"), "空体函数应标 empty")
-    assert(含子串(text = result.text, needle = "error E6-004 样例.pini:7 空：缺能力"), "函数缺口应带码与位置")
-    assert(含子串(text = result.text, needle = "typeError E6-001 未知类型"), "类型缺口应单独成行")
+    assert(转储含子串(text = result.text, needle = "empty=true"), "空体函数应标 empty")
+    assert(转储含子串(text = result.text, needle = "error E6-004 样例.pini:7 空：缺能力"), "函数缺口应带码与位置")
+    assert(转储含子串(text = result.text, needle = "typeError E6-001 未知类型"), "类型缺口应单独成行")
     return
 
 ; 全体类别：每个类别码各装一个节点，转储必须逐类印名，不漏也不重。
@@ -200,6 +200,6 @@ _backend_kit = "../../backend-kit"
     i = 1
     while i < 201:
         if irIsExprTag(i) || irIsStmtTag(i):
-            assert(含子串(text = result.text, needle = "kind=" + names[i]), "类别码应逐个印名")
+            assert(转储含子串(text = result.text, needle = "kind=" + names[i]), "类别码应逐个印名")
         i = i + 1
     return

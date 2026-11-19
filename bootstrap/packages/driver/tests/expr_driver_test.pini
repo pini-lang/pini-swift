@@ -45,7 +45,7 @@ _semantics = "../../semantics"
     return
 
 ; 实参类型：推导填表后，标签实参的类型不符被调用面拦下。
-实参类型不匹配|test() -> ():
+驱动实参类型不匹配|test() -> ():
     let unit = 造单元(path = "packages/p/src/api/p.pini", src = "甲|func(a: I32,) -> ():\n    pass\n\nf|func() -> ():\n    甲(a = \"x\")\n")
     var all: Array<CompilationUnit> = [unit]
     let units = sortedUnits(all)

@@ -17,11 +17,11 @@ package = "../../package"
     assert(report.text.contains("pini.toml"), "应提到清单文件，实得：" + report.text)
     return
 
-; 清单可用：根清单装配出十三个包，检查入口因此能往下走。
+; 清单可用：根清单装配出十四个包，检查入口因此能往下走。
 根清单可装配|test() -> ():
     let plan = package.planWorkspace(工作区根())
     assert(plan.isOK(), "根清单应可用：" + package.planText(plan))
-    assert(plan.packageCount() == 13, "十三个包，实得 " + "\(plan.packageCount())")
+    assert(plan.packageCount() == 14, "十四个包，实得 " + "\(plan.packageCount())")
     return
 
 ; 工作区根定位：从包根向上找到带 [workspace] 的根清单。

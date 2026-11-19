@@ -33,6 +33,7 @@ heldTypes: Array<I32> = []
 ownedSlots: Array<String> = []
 ownedTypes: Array<I32> = []
 pendingSlot: I32 = -1
+testExit: Bool = false
 
 ; 表达式结果：上下文与值串；值串只给操作数，类型由所在指令给。
 (ExprOut)
@@ -1052,11 +1053,12 @@ printValue|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (BodyCtx,):
     appendLine(sink = out.lines, text = "  call i32 (ptr, ...) @printf(ptr @fmt_int, " + ty + " " + one.text + ")")
     return out
 
-; 断言：条件为真直落，为假调陷阱并带消息；消息缺省给一句固定串，不空指针。
-; 陷阱声明为不返回，失败块仍补跳转，只为让块有终结指令。
+; 断言：条件为真直落；为假时测试函数置失败位并立刻返回，其余函数调陷阱。
+; 消息缺省一句固定串，不空指针；测试态的消息留给报告期打印，故不归还份额。
 emitAssert|func(ctx: BodyCtx, module: IrModule, node: IrNode,) -> (BodyCtx,):
     var out = ctx
-    useExtern(use = out.externs, name = "bk_panic")
+    if !out.testExit:
+        useExtern(use = out.externs, name = "bk_panic")
     let cond = emitExpr(ctx = out, module = module, nodeId = node.kids[0])
     out = cond.ctx
     var msgIndex = -1
@@ -1075,8 +1077,13 @@ emitAssert|func(ctx: BodyCtx, module: IrModule, node: IrNode,) -> (BodyCtx,):
     let endLabel = labelName(prefix = "assert.end.", index = at)
     appendLine(sink = out.lines, text = "  br i1 " + cond.text + ", label %" + passLabel + ", label %" + failLabel)
     appendLine(sink = out.lines, text = failLabel + ":")
-    appendLine(sink = out.lines, text = "  call void @bk_panic(ptr " + msgAt + ")")
-    appendLine(sink = out.lines, text = "  br label %" + endLabel)
+    if out.testExit:
+        appendLine(sink = out.lines, text = "  store ptr " + msgAt + ", ptr @__pini_test_msg")
+        appendLine(sink = out.lines, text = "  store i32 1, ptr @__pini_test_failed")
+        appendLine(sink = out.lines, text = "  ret void")
+    else:
+        appendLine(sink = out.lines, text = "  call void @bk_panic(ptr " + msgAt + ")")
+        appendLine(sink = out.lines, text = "  br label %" + endLabel)
     appendLine(sink = out.lines, text = passLabel + ":")
     appendLine(sink = out.lines, text = "  br label %" + endLabel)
     appendLine(sink = out.lines, text = endLabel + ":")
