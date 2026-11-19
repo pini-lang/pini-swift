@@ -92,6 +92,11 @@ python3 tools/capability-census.py --check
 
 step "构建"
 swift build --disable-sandbox
+# 运行时段单建 release：自举产物与宿主 LLVM 通道都链接它，debug 构建实测慢五倍。
+swift build -c release --product PiniRuntime --disable-sandbox
+. "$PWD/bootstrap/tools/runtime-lib.sh"
+runtime="$(pini_runtime_lib "$PWD")" || exit 1
+export PINI_RUNTIME_LIB="$runtime"
 
 step "工作区奠基门禁"
 .build/debug/pini build bootstrap

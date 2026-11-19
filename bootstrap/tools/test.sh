@@ -6,6 +6,7 @@ set -uo pipefail
 
 root="$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")"
 cd "$root" || exit 1
+. "$root/bootstrap/tools/runtime-lib.sh"
 
 workspace="${1:-$root/bootstrap}"
 if [ "$#" -gt 0 ]; then
@@ -39,11 +40,9 @@ if ! "$pini" test "$workspace" "$@" > "$ll"; then
     exit 1
 fi
 
-runtime_dir="$root/.build/debug"
-link_args=(-o "$bin" "$ll")
-if [ -f "$runtime_dir/libPiniRuntime.dylib" ] || [ -f "$runtime_dir/libPiniRuntime.so" ]; then
-    link_args=(-L"$runtime_dir" -lPiniRuntime -Wl,-rpath,"$runtime_dir" "${link_args[@]}")
-fi
+runtime="$(pini_runtime_lib "$root")" || exit 1
+runtime_dir="$(dirname "$runtime")"
+link_args=(-o "$bin" "$ll" -L"$runtime_dir" -lPiniRuntime -Wl,-rpath,"$runtime_dir")
 if ! "$clang_bin" "${link_args[@]}"; then
     echo " 行不通  [测试] 链接失败；LLVM 文本留在 $ll" >&2
     exit 1
