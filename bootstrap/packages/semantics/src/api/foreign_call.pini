@@ -44,7 +44,7 @@ callbackTarget|func(world: MemberWorld, site: CallSite, node: I32,) -> (Callback
     if name == "main":
         out.reason = "main 不作回调"
         return out
-    let symbol = world.table.topIndex(keyOfText(name))
+    let symbol = lookupTopByName(index = world.symbols, name = name)
     if symbol < 0:
         out.reason = "名字未解析到顶层函数"
         return out
@@ -114,7 +114,7 @@ checkCallbackArgs|func(world: MemberWorld, out: CallResult, site: CallSite, sig:
 ; 只读写入：名字命中外部数据符号且带 readonly（macro 已规范化并入）时答一句原因。
 ; 其余情况答空串，让赋值面继续按可变性与类型判。
 readonlyWriteReason|func(world: MemberWorld, name: String,) -> (String,):
-    let symbol = world.table.topIndex(keyOfText(name))
+    let symbol = lookupTopByName(index = world.symbols, name = name)
     if symbol < 0:
         return ""
     let entry = world.table.symbolAt(symbol)

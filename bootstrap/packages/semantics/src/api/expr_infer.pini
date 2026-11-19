@@ -458,7 +458,7 @@ inferCall|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
         return inferActuals(world = world, unit = unit, unitIndex = unitIndex, node = node, params = [], names = names, out = done, bytes = bytes)
     let calleeExpr = unit.ast.exprAt(callee)
     let name = decodeRange(bytes = bytes, start = calleeExpr.nameStart, end = calleeExpr.nameEnd)
-    let symbol = world.table.topIndex(keyOfText(name))
+    let symbol = lookupTopByName(index = world.symbols, name = name)
     if symbol >= 0:
         let ref = symbolDecl(world = world, symbol = symbol)
         if ref.unit >= 0:
