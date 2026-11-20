@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # bootstrap/tools/test-gate.sh — 自举测试入口的自检：失败夹具必须红，筛选与跳过必须绿。
 # 判据同时看退出码与报告行；只跑完不报错不算通过，红绿两侧都要有证据。
+# 入口默认首代产物；自洽链经 PINI_BOOTSTRAP_BIN 换成次代，同一套判据因此由自产产物执行。
 set -uo pipefail
 
 root="$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")"
@@ -16,10 +17,10 @@ if ! python3 "$root/bootstrap/tools/capability-reach.py" --check > /dev/null; th
     exit 1
 fi
 
-pini="$root/bootstrap/.build/debug/bin/pini-bootstrap"
+pini="${PINI_BOOTSTRAP_BIN:-$root/bootstrap/.build/debug/bin/pini-bootstrap}"
 clang_bin="$(command -v clang || true)"
 if [ ! -x "$pini" ] || [ -z "$clang_bin" ]; then
-    echo " 行不通  [测试自检] 缺 pini-bootstrap 或 clang" >&2
+    echo " 行不通  [测试自检] 缺 $pini 或 clang" >&2
     exit 1
 fi
 
