@@ -9,11 +9,13 @@ headerPath: String = ""
 includePaths: Array<String> = []
 defines: Array<String> = []
 outputPath: String = ""
+inputHash: String = ""
 
 ; 构建脚本：脚本路径、是否存在、解析出的步骤与错误；缺脚本时步骤为空且不报错。
 (BuildScript)
 path: String = ""
 present: Bool = false
+hash: String = ""
 steps: Array<BuildStep> = []
 errors: Array<ManifestError> = []
 
@@ -45,6 +47,7 @@ parseBuildScript|func(text: String, path: String,) -> (BuildScript,):
     out.path = path
     out.present = true
     let normalized = normalizeScriptText(text)
+    out.hash = sha256Hex(normalized)
     let parsed = parseFile(text = normalized, file = path)
     if len(parsed.diagnostics) > 0:
         let first = parsed.diagnostics[0]

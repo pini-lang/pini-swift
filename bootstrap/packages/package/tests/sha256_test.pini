@@ -1,0 +1,23 @@
+; 标准向量：空串、abc、常见句子三条，与 FIPS 180-4 附录一致。
+标准向量|test() -> ():
+    assert(sha256Hex("") == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "空串")
+    assert(sha256Hex("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "abc")
+    assert(sha256Hex("The quick brown fox jumps over the lazy dog") == "d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592", "长句")
+    return
+
+; 跨块：长度越过一个 512 位块后仍按补位与分块走，读数取 Python hashlib 对照。
+跨块与补位|test() -> ():
+    let 长串 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+    assert(sha256Hex(长串) == "47ee44fd6b948a3f1348a45da0274208917628b0487a32c42f2a0c5a02b26a6d", "跨块占位")
+    return
+
+; 转义：摘要是内容探针，能分清换行还原成真换行还是留着反斜线。
+转义还原|test() -> ():
+    assert(sha256Hex("a\nb") == "7e18f737311b2dc3b2f269dd78396b0351f14fb66efa879f768cb23181883c78", "换行按真换行")
+    return
+
+; 十六进制字解析：八位按 I64 累加，超界常量靠它绕开十进制字面量。
+十六进制字|test() -> ():
+    assert(hexWord(text = "FF") == 255 as I64, "两位")
+    assert(hexWord(text = "FFFFFFFF") == shaMask(), "上界")
+    return

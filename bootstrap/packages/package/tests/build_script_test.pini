@@ -55,10 +55,31 @@
     assert(计划.isOK(), "不应有错误：" + planText(计划))
     let 包 = 计划.packageAt(0)
     assert(len(包.steps) == 2, "计划带两条步骤")
-    assert(包.steps[0].outputPath == "./fixtures/build-script/.build/debug/packages/builddemo/generated/cstr.pini", "产物落在包内 generated")
+    assert(包.steps[0].outputPath == ".build/debug/packages/builddemo/generated/cstr.pini", "产物路径根相对且落在包内 generated")
     let 文本 = planText(计划)
     assert(文本.contains("step cstr header=include/cstr.h include=include defs=_GNU_SOURCE out="), "步骤行按字段序")
     assert(文本.contains("step mathf header=include/mathf.h out="), "空字段不占位")
+    return
+
+; 计划文件：形状与宿主一致，路径根相对；输入指纹按头文件内容算，缺头文件另行计数。
+计划文件形状|test() -> ():
+    let 计划 = planWorkspace("./fixtures/build-script")
+    assert(计划.isOK(), "不应有错误：" + planText(计划))
+    let 填好 = fillPlanHashes(plan = 计划, root = "./fixtures/build-script")
+    assert(填好.missing == 2, "两个头文件都不在，应计两条")
+    let 文本 = planFileText(填好.plan)
+    assert(文本.contains("[plan]"), "计划头")
+    assert(文本.contains("version = 1"), "版本行")
+    assert(文本.contains("pini-bind/1"), "翻译器标签")
+    assert(文本.contains("[[package]]"), "包条目")
+    assert(文本.contains("builddemo"), "包名")
+    assert(文本.contains("c868fe784b667276fac9a731e1300836dff434bce6f90ea0c9e9cc0178424b8c"), "脚本哈希与 shasum 一致")
+    assert(文本.contains("[[step]]"), "步骤条目")
+    assert(文本.contains("pkg/include/cstr.h"), "头文件按包根拼")
+    assert(文本.contains("include_paths"), "包含路径字段")
+    assert(文本.contains("_GNU_SOURCE"), "定义按源写")
+    assert(文本.contains(".build/debug/packages/builddemo/generated/cstr.pini"), "产物路径根相对")
+    assert(文本.contains("4fb4e551e0f7318c8f6a724118fca65d2f4362c461bdf1f0fa47ecf2dba6cb8c"), "缺头文件时指纹只含写法与定义")
     return
 
 ; 测试助手：错误表首条文本；空表答空串，用于断言里的失败信息。
