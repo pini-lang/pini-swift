@@ -354,12 +354,23 @@ collectWorkspaceUnits|func(_ws: WorkspaceUnits,) -> (Array<CompilationUnit>,):
     return sortedUnits(all)
 
 ; 包接口表：逐包生成接口文本，包序与工作区一致；每份只含该包自己的公开面。
+; 标准库单元排除在外：它是并入的声明，不是本包对外发布的符号，与宿主「装配前算接口」同效。
 packageInterfaces|func(_ws: WorkspaceUnits, world: MemberWorld,) -> (Array<InterfaceRecord>,):
     var out: Array<InterfaceRecord> = []
     var p = 0
     while p < len(_ws.packages):
-        out = out.append(interfaceRecord(name = _ws.packages[p].name, units = _ws.packages[p].units, world = world))
+        out = out.append(interfaceRecord(name = _ws.packages[p].name, units = withoutStdlib(units = _ws.packages[p].units), world = world))
         p = p + 1
+    return out
+
+; 去掉合成单元：接口与统计只看用户源码，标准库不计入包面。
+withoutStdlib|func(units: Array<CompilationUnit>,) -> (Array<CompilationUnit>,):
+    var out: Array<CompilationUnit> = []
+    var i = 0
+    while i < len(units):
+        if units[i].path != stdlibUnitPath():
+            out = out.append(units[i])
+        i = i + 1
     return out
 
 ; 装配后半段：注册、类型与成员世界。检查与降载共用一条链，免得两处各装一遍。
@@ -377,11 +388,11 @@ buildWorld|func(units: Array<CompilationUnit>, packages: Array<PackageUnits>,) -
     return out
 
 ; 检查入口：清单不可用时只报清单错；语法有错就短路，其余阶段按同一张包图接。
-checkWorkspace|func(root: String,) -> (WorkspaceReport,):
+checkWorkspace|func(root: String, stdlib: StdlibOption,) -> (WorkspaceReport,):
     let plan = planWorkspace(root)
     if !plan.isOK():
         return finishReport(root = root, packages = 0, diagnostics = planDiagnostics(plan), units = [])
-    let ws = loadWorkspaceGrouped(plan)
+    let ws = loadWorkspaceGrouped(plan, stdlib = stdlib)
     let units = collectWorkspaceUnits(ws)
     var diagnostics = loadDiagnostics(ws)
     var lexical = lexicalDiagnostics(units)

@@ -8,11 +8,30 @@ _backend_dump = "../../../backend-dump"
 _backend_llvm = "../../../backend-llvm"
 _testkit = "../../../testkit"
 
-; 驱动主程序：无参数只装配清单并打印产物行；各子命令的根取位置参数，缺省从模块根上溯。
+; 驱动主程序：无参数只装配清单并打印产物行；子命令的根取位置参数，缺省从模块根上溯。
 ; check 跑完整检查，build 落构建计划，plan 打印计划，lower 走降载，dump 出结构转储，emit 出 LLVM 文本。
-; cases 只列裸名用例位置；降载前先填表达式类型表并把池换成填表后的池。
+; cases 只列裸名用例位置；降载前先填表达式类型表并把池换成填表后的池；`--no-stdlib` 与 `--stdlib` 先摘出去。
 main|func() -> ():
-    let args = argv()
+    var args: Array<String> = []
+    var stdlib = StdlibOption()
+    let raw = argv()
+    var q = 0
+    while q < len(raw):
+        let one: String = raw[q]
+        if one == "--no-stdlib":
+            stdlib.enabled = false
+            q = q + 1
+        elif one == "--stdlib" && q + 1 < len(raw):
+            stdlib.path = raw[q + 1]
+            stdlib.enabled = true
+            q = q + 2
+        elif one.indexOf("--stdlib=") == 0:
+            stdlib.path = one.slice(9, len(one))
+            stdlib.enabled = true
+            q = q + 1
+        else:
+            args = args.append(one)
+            q = q + 1
     var root = workspaceRootOf(start = moduleRoot())
     var 全量 = false
     var 结构化 = false
@@ -72,7 +91,7 @@ main|func() -> ():
             else:
                 testRoot = arg
                 cursor = cursor + 1
-        runTest(root = testRoot, filter = testFilter, skips = testSkips, listOnly = testListOnly)
+        runTest(root = testRoot, filter = testFilter, skips = testSkips, listOnly = testListOnly, stdlib = stdlib)
         return
     if len(args) > 0 && args[0] == "cases":
         if len(args) > 1:
@@ -81,7 +100,7 @@ main|func() -> ():
         if !plan.isOK():
             print("workspace-plan-failed", plan.errorCount())
             return
-        let ws = loadWorkspaceGrouped(plan)
+        let ws = loadWorkspaceGrouped(plan, stdlib = stdlib)
         let units = collectWorkspaceUnits(ws)
         let build = buildWorld(units = units, packages = ws.packages)
         printBareCases(units = units, world = build.world)
@@ -97,7 +116,7 @@ main|func() -> ():
         print(planText(planWorkspace(root)))
         return
     if 全量:
-        let report = checkWorkspace(root = root)
+        let report = checkWorkspace(root = root, stdlib = stdlib)
         if 结构化:
             if len(report.tsv) > 0:
                 print(report.tsv)
@@ -112,12 +131,12 @@ main|func() -> ():
     if 降载:
         var 产物 = 降载产物()
         if 分段 > 0:
-            产物 = 降载工作区至(root = root, stage = 分段)
+            产物 = 降载工作区至(root = root, stage = 分段, stdlib = stdlib)
             ; 分段读数只出到所指阶段：未走完的链不给全量读数，免得被当成通过。
             if 分段 < 8:
                 return
         else:
-            产物 = 降载工作区(root = root)
+            产物 = 降载工作区(root = root, stdlib = stdlib)
         if 产物.packages == 0:
             return
         let module = 产物.module
@@ -134,7 +153,7 @@ main|func() -> ():
         printTypeErrors(module = module)
         return
     if 转储:
-        let 产物 = 降载工作区(root = root)
+        let 产物 = 降载工作区(root = root, stdlib = stdlib)
         if 产物.packages == 0:
             return
         if len(产物.check.errors) > 0:
@@ -150,7 +169,7 @@ main|func() -> ():
         print(emitted.text)
         return
     if 发射:
-        let 产物 = 降载工作区(root = root)
+        let 产物 = 降载工作区(root = root, stdlib = stdlib)
         if 产物.packages == 0:
             return
         if len(产物.check.errors) > 0:

@@ -69,13 +69,13 @@ printTestList|func(rootLabel: String, selection: TestSelection,) -> ():
     return
 
 ; 主流程：清单错与结构错都非零退出；发射成功后整份文本写标准输出，由脚本落盘。
-runTest|func(root: String, filter: String, skips: Array<String>, listOnly: Bool,) -> ():
+runTest|func(root: String, filter: String, skips: Array<String>, listOnly: Bool, stdlib: StdlibOption,) -> ():
     let plan = planWorkspace(root)
     if !plan.isOK():
         print("workspace-plan-failed", plan.errorCount())
         assert(false, "工作区清单未通过")
         return
-    let 产物 = 降载工作区(root = root)
+    let 产物 = 降载工作区(root = root, stdlib = stdlib)
     if 产物.packages == 0:
         assert(false, "工作区装配失败")
         return

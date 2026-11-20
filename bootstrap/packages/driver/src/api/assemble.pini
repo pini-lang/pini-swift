@@ -16,13 +16,13 @@ packages: I32 = 0
 typed: I32 = 0
 
 ; 装配并降载：一条链走到底，诊断只打规划错误；结构违约由调用方读 check。
-降载工作区|func(root: String,) -> (降载产物,):
+降载工作区|func(root: String, stdlib: StdlibOption,) -> (降载产物,):
     var out = 降载产物()
     let plan = planWorkspace(root)
     if !plan.isOK():
         print("workspace-plan-failed", plan.errorCount())
         return out
-    let ws = loadWorkspaceGrouped(plan)
+    let ws = loadWorkspaceGrouped(plan, stdlib = stdlib)
     let units = collectWorkspaceUnits(ws)
     let build = buildWorld(units = units, packages = ws.packages)
     let 填 = fillExprTypes(world = build.world, units = units)
@@ -44,14 +44,14 @@ typed: I32 = 0
 
 ; 分段降载：按 stage 逐段加深，只服务性能定位；读数进标准输出，产物不完整。
 ; 默认路径不走它：降载工作区 仍一次走完全链，两处共用同一批函数与同一次序。
-降载工作区至|func(root: String, stage: I32,) -> (降载产物,):
+降载工作区至|func(root: String, stage: I32, stdlib: StdlibOption,) -> (降载产物,):
     var out = 降载产物()
     let plan = planWorkspace(root)
     if !plan.isOK():
         print("workspace-plan-failed", plan.errorCount())
         return out
     out.packages = plan.packageCount()
-    let ws = loadWorkspaceGrouped(plan)
+    let ws = loadWorkspaceGrouped(plan, stdlib = stdlib)
     let units = collectWorkspaceUnits(ws)
     print("stage-load", len(units))
     if stage <= 1:

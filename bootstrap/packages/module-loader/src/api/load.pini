@@ -224,7 +224,8 @@ errors: Array<LoadError> = []
 
 ; 装载整个工作区并保留包分组：单元归属与声明依赖随分组一起交出去。
 ; 计划文件读一次，逐包按脚本步骤并入生成模块；未声明构建面的包不受影响。
-loadWorkspaceGrouped|func(_plan: BuildPlan,) -> (WorkspaceUnits,):
+; 装载完成后按选项装配标准库：逐包注入同一个合成单元，装不上记一条装载错误。
+loadWorkspaceGrouped|func(_plan: BuildPlan, stdlib: StdlibOption,) -> (WorkspaceUnits,):
     var out = WorkspaceUnits()
     if !_plan.isOK():
         return out
@@ -259,6 +260,9 @@ loadWorkspaceGrouped|func(_plan: BuildPlan,) -> (WorkspaceUnits,):
             a = a + 1
         out.packages = out.packages.append(group)
         i = i + 1
+    if stdlib.enabled:
+        let sourcePath = stdlibSourcePath(option = stdlib, workspaceRoot = _plan.rootPath)
+        out = assembleStdlib(ws = out, sourcePath = sourcePath)
     return out
 
 ((WorkspaceUnits))

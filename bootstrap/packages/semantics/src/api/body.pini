@@ -123,7 +123,7 @@ ownerTypeOf|func(world: MemberWorld, unitIndex: I32, declId: I32, bytes: Array<U
         let decl = unit.ast.decls[i]
         if isOwnerDeclCode(decl.kind) && containsDeclKid(kids = decl.kids, id = declId):
             let owner = decodeRange(bytes = view, start = decl.nameStart, end = decl.nameEnd)
-            return nominalTypeId(world = world, name = owner)
+            return ownerTypeId(world = world, name = owner)
         i = i + 1
     return -1
 

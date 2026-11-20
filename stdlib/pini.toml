@@ -1,0 +1,6 @@
+[package]
+name = "stdlib"
+
+[lib]
+name = "stdlib"
+entry = "src/api/core.pini"

@@ -1,0 +1,285 @@
+; 容器算法：泛型自由函数，首参是容器，调用点须写显式类型实参（`map<I32>(...)`）。
+; 注意  不提供同名成员：扩展块写不出泛型成员，两套入口会让调用点无从选择。
+; 映射：元素类型不变——空 `Array<U>` 在当前语言里构造不出，故不做跨类型映射。
+map|func<T>(arr: Array<T>, f: (T,) -> (T,),) -> (Array<T>,):
+    var out = arr.slice(0, 0)
+    var i = 0
+    while i < len(arr):
+        out = out.append(f(arr[i]))
+        i = i + 1
+    return out
+
+; 筛选：保持原序，谓词为真才保留；空数组得空数组。
+filter|func<T>(arr: Array<T>, keep: (T,) -> (Bool,),) -> (Array<T>,):
+    var out = arr.slice(0, 0)
+    var i = 0
+    while i < len(arr):
+        if keep(arr[i]):
+            out = out.append(arr[i])
+        i = i + 1
+    return out
+
+; 归约：初值类型即结果类型，逐元素折叠；空数组答初值。
+reduce|func<T, R>(arr: Array<T>, initial: R, combine: (R, T,) -> (R,),) -> (R,):
+    var acc = initial
+    var i = 0
+    while i < len(arr):
+        acc = combine(acc, arr[i])
+        i = i + 1
+    return acc
+
+; 遍历：只按序读一遍，返回值是空元组；副作用全在回调里。
+forEach|func<T>(arr: Array<T>, visit: (T,) -> (),) -> ():
+    var i = 0
+    while i < len(arr):
+        visit(arr[i])
+        i = i + 1
+    return
+
+; 逆序：产出副本，接收者不动；空数组得空数组。
+reverse|func<T>(arr: Array<T>,) -> (Array<T>,):
+    var out = arr.slice(0, 0)
+    var i = len(arr) - 1
+    while i >= 0:
+        out = out.append(arr[i])
+        i = i - 1
+    return out
+
+; 拼接：先左后右，两份都保留；副本语义与 `slice` 一致，接收者不动。
+concat|func<T>(a: Array<T>, b: Array<T>,) -> (Array<T>,):
+    var out = a
+    var i = 0
+    while i < len(b):
+        out = out.append(b[i])
+        i = i + 1
+    return out
+
+; 取前 n 个：边界语义与 `slice(0, n)` 相同，负索引从尾部计，越界夹紧。
+take|func<T>(arr: Array<T>, n: I32,) -> (Array<T>,):
+    return arr.slice(0, n)
+
+; 跳过前 n 个：边界语义与 `slice(n, len(arr))` 相同，负索引从尾部计。
+drop|func<T>(arr: Array<T>, n: I32,) -> (Array<T>,):
+    return arr.slice(n, len(arr))
+
+; 存在判定：谓词首次为真即真；空数组得假。
+any|func<T>(arr: Array<T>, pred: (T,) -> (Bool,),) -> (Bool,):
+    var i = 0
+    while i < len(arr):
+        if pred(arr[i]):
+            return true
+        i = i + 1
+    return false
+
+; 全称判定：谓词首次为假即假；空数组得真。
+all|func<T>(arr: Array<T>, pred: (T,) -> (Bool,),) -> (Bool,):
+    var i = 0
+    while i < len(arr):
+        if pred(arr[i]):
+            i = i + 1
+        else:
+            return false
+    return true
+
+; 条件计数：逐元素读谓词，只累加真值；空数组得零。
+countWhere|func<T>(arr: Array<T>, pred: (T,) -> (Bool,),) -> (I32,):
+    var total = 0
+    var i = 0
+    while i < len(arr):
+        if pred(arr[i]):
+            total = total + 1
+        i = i + 1
+    return total
+
+; 首命中下标：谓词为真即返数组下标；缺席答 -1，与 indexOf 同口径。
+findIndex|func<T>(arr: Array<T>, pred: (T,) -> (Bool,),) -> (I32,):
+    var i = 0
+    while i < len(arr):
+        if pred(arr[i]):
+            return i
+        i = i + 1
+    return -1
+
+; 取末 n 个：n 非正得空副本，越界夹紧为整份；接收者不动。
+takeLast|func<T>(arr: Array<T>, n: I32,) -> (Array<T>,):
+    if n <= 0:
+        return arr.slice(0, 0)
+    if n >= len(arr):
+        return arr
+    return arr.slice(len(arr) - n, len(arr))
+
+; 弃末 n 个：n 非正得整份，越界得空副本；接收者不动。
+dropLast|func<T>(arr: Array<T>, n: I32,) -> (Array<T>,):
+    if n <= 0:
+        return arr
+    if n >= len(arr):
+        return arr.slice(0, 0)
+    return arr.slice(0, len(arr) - n)
+
+; 整份重复：次数非正得空副本，逐次追加整份；接收者不动。
+repeatElements|func<T>(arr: Array<T>, times: I32,) -> (Array<T>,):
+    var out = arr.slice(0, 0)
+    var k = 0
+    var i = 0
+    while k < times:
+        i = 0
+        while i < len(arr):
+            out = out.append(arr[i])
+            i = i + 1
+        k = k + 1
+    return out
+
+; 轮转：把前 n 个移到末尾，n 按长度取模；空数组得空副本。
+rotate|func<T>(arr: Array<T>, n: I32,) -> (Array<T>,):
+    var count = len(arr)
+    if count == 0:
+        return arr.slice(0, 0)
+    var shift = n % count
+    if shift < 0:
+        shift = shift + count
+    var out = arr.slice(0, 0)
+    var i = shift
+    while i < count:
+        out = out.append(arr[i])
+        i = i + 1
+    i = 0
+    while i < shift:
+        out = out.append(arr[i])
+        i = i + 1
+    return out
+
+; 插位：下标夹紧到两端，在该位之前插入；接收者不动。
+insertAt|func<T>(arr: Array<T>, index: I32, value: T,) -> (Array<T>,):
+    var count = len(arr)
+    var at = index
+    if at < 0:
+        at = 0
+    if at > count:
+        at = count
+    var out = arr.slice(0, 0)
+    var i = 0
+    while i < at:
+        out = out.append(arr[i])
+        i = i + 1
+    out = out.append(value)
+    while i < count:
+        out = out.append(arr[i])
+        i = i + 1
+    return out
+
+; 删位：下标越界原样返回；否则跳过该位复制一份，接收者不动。
+removeAt|func<T>(arr: Array<T>, index: I32,) -> (Array<T>,):
+    var count = len(arr)
+    if index < 0:
+        return arr
+    if index >= count:
+        return arr
+    var out = arr.slice(0, 0)
+    var i = 0
+    while i < count:
+        if i != index:
+            out = out.append(arr[i])
+        i = i + 1
+    return out
+
+; 成员判定：按 T 的相等逐元素比对；空数组得假。
+contains|func<T>(arr: Array<T>, target: T,) -> (Bool,):
+    var i = 0
+    while i < len(arr):
+        if arr[i] == target:
+            return true
+        i = i + 1
+    return false
+
+; 成员下标：首次相等即返下标；缺席答 -1，与 indexOf 同口径。
+indexOfElement|func<T>(arr: Array<T>, target: T,) -> (I32,):
+    var i = 0
+    while i < len(arr):
+        if arr[i] == target:
+            return i
+        i = i + 1
+    return -1
+
+; 去重：只保留首次出现的元素，维持原序；接收者不动。
+unique|func<T>(arr: Array<T>,) -> (Array<T>,):
+    var out = arr.slice(0, 0)
+    var i = 0
+    while i < len(arr):
+        var seen = false
+        var j = 0
+        while j < len(out):
+            if out[j] == arr[i]:
+                seen = true
+            j = j + 1
+        if seen:
+            i = i + 1
+        else:
+            out = out.append(arr[i])
+            i = i + 1
+    return out
+
+; 最小元素：按 T 的小于比对；空数组取首元素，落到越界断言。
+minElement|func<T>(arr: Array<T>,) -> (T,):
+    var best = arr[0]
+    var i = 1
+    while i < len(arr):
+        if arr[i] < best:
+            best = arr[i]
+        i = i + 1
+    return best
+
+; 最大元素：按 T 的大于比对；空数组取首元素，落到越界断言。
+maxElement|func<T>(arr: Array<T>,) -> (T,):
+    var best = arr[0]
+    var i = 1
+    while i < len(arr):
+        if best < arr[i]:
+            best = arr[i]
+        i = i + 1
+    return best
+
+; 升序排序：稳定插入，相等元素保持原序；产出副本，接收者不动。
+sorted|func<T>(arr: Array<T>,) -> (Array<T>,):
+    var out = arr.slice(0, 0)
+    var i = 0
+    while i < len(arr):
+        var pos = len(out)
+        var j = 0
+        while j < len(out):
+            if arr[i] < out[j]:
+                if j < pos:
+                    pos = j
+            j = j + 1
+        var built = out.slice(0, 0)
+        var k = 0
+        while k < len(out):
+            if k == pos:
+                built = built.append(arr[i])
+            built = built.append(out[k])
+            k = k + 1
+        if pos == len(out):
+            built = built.append(arr[i])
+        out = built
+        i = i + 1
+    return out
+
+; 有序判定：相邻元素不降即有序；空数组与单元素得真。
+isSorted|func<T>(arr: Array<T>,) -> (Bool,):
+    var i = 1
+    while i < len(arr):
+        if arr[i] < arr[i - 1]:
+            return false
+        i = i + 1
+    return true
+
+; 逐位相等：长度不同即假；元素按 T 的相等比对。
+equalArrays|func<T>(a: Array<T>, b: Array<T>,) -> (Bool,):
+    if len(a) != len(b):
+        return false
+    var i = 0
+    while i < len(a):
+        if a[i] == b[i]:
+            i = i + 1
+        else:
+            return false
+    return true

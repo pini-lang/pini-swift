@@ -1,0 +1,80 @@
+[assemble_test|import]
+_module_loader = "../../module-loader"
+_syntax = "../../syntax"
+
+; 标准库装配：合成单元位置、让位、幂等与缺件四条；只走内存夹具，不读用户工作区。
+; 装配源路径取仓库根那份：模块根往上三级即仓库根，与运行目录无关。
+
+; 工作区夹具：一个包、一个用户单元；文本必须能过解析。
+造装配包|func(text: String,) -> (WorkspaceUnits,):
+    var ws = WorkspaceUnits()
+    var group = PackageUnits()
+    group.name = "demo"
+    group.rootPath = "demo"
+    let loaded = loadUnit(path = "demo/src/main.pini", text = text)
+    assert(!loaded.failed, "夹具单元应能解析")
+    group.units = group.units.append(loaded.unit)
+    ws.packages = ws.packages.append(group)
+    return ws
+
+; 装配源路径：仓库根的分段源；装配首批只装 core。
+装配源路径|func() -> (String,):
+    return moduleRoot() + "/../../../stdlib/src/api/core.pini"
+
+; 合成单元位：按虚拟路径找；未装答 -1。
+合成单元位|func(group: PackageUnits,) -> (I32,):
+    var i = 0
+    while i < len(group.units):
+        if group.units[i].path == "<stdlib>":
+            return i
+        i = i + 1
+    return -1
+
+; 扩展块方法数：取该单元唯一的扩展块；没有扩展块答 -1。
+扩展条数|func(unit: CompilationUnit,) -> (I32,):
+    var i = 0
+    while i < len(unit.ast.items):
+        let decl = unit.ast.decls[unit.ast.items[i]]
+        if isExtensionDeclCode(decl.kind):
+            return len(decl.kids)
+        i = i + 1
+    return -1
+
+; 注入：合成单元排在首位，路径是虚拟名，装配本身不产生错误。
+装配注入|test() -> ():
+    let ws = 造装配包(text = "main|func() -> ():\n    return\n")
+    let 结果 = assembleStdlib(ws = ws, sourcePath = 装配源路径())
+    assert(len(结果.errors) == 0, "装配不应报错")
+    let at = 合成单元位(group = 结果.packages[0])
+    assert(at == 0, "合成单元应排在首位，实得 " + "\(at)")
+    assert(len(结果.packages[0].units) == 2, "一用户单元加一合成单元")
+    assert(扩展条数(unit = 结果.packages[0].units[0]) == 18, "core 有十八个扩展方法")
+    return
+
+; 让位：用户已声明同名方法，标准库那份摘掉一条，其余保留。
+让位|test() -> ():
+    let 文本 = "((String))\ntrim|self() -> (String,):\n    return self\n\nmain|func() -> ():\n    return\n"
+    let ws = 造装配包(text = 文本)
+    let 结果 = assembleStdlib(ws = ws, sourcePath = 装配源路径())
+    assert(len(结果.errors) == 0, "装配不应报错")
+    let at = 合成单元位(group = 结果.packages[0])
+    assert(扩展条数(unit = 结果.packages[0].units[at]) == 17, "trim 让位后应剩十七条")
+    return
+
+; 幂等：装过一次再装，单元数不变，也不会多出第二份合成单元。
+幂等|test() -> ():
+    let ws = 造装配包(text = "main|func() -> ():\n    return\n")
+    let 一次 = assembleStdlib(ws = ws, sourcePath = 装配源路径())
+    let 两次 = assembleStdlib(ws = 一次, sourcePath = 装配源路径())
+    assert(len(两次.packages[0].units) == 2, "重复装配不追加单元")
+    assert(合成单元位(group = 两次.packages[0]) == 0, "合成单元仍在首位")
+    return
+
+; 缺件：源不存在时记一条装载错误，单元表原样保留，错误类别可判。
+缺件|test() -> ():
+    let ws = 造装配包(text = "main|func() -> ():\n    return\n")
+    let 结果 = assembleStdlib(ws = ws, sourcePath = "/nonexistent/stdlib/core.pini")
+    assert(len(结果.errors) == 1, "应有一条装载错误")
+    assert(isLoadError(error = 结果.errors[0], kind = .errorStdlibMissing), "类别应为缺装配源路径")
+    assert(len(结果.packages[0].units) == 1, "缺件时不注入单元")
+    return

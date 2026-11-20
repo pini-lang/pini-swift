@@ -1,0 +1,215 @@
+[assemble|import]
+_unicode = "../../../unicode"
+_syntax = "../../../syntax"
+
+; 标准库装配：把一份标准库源并进每个包的单元表，路径用虚拟名 `<stdlib>`，与宿主同名。
+; 只在装载层做一次：检查、降载、转储、发射与测试都从同一份单元表出发，不各装一遍。
+; 让位规则与宿主同形：自由函数按顶层名让位，扩展方法按「目标#方法」让位，整块让尽则整块摘掉。
+
+; 装配选项：开关与显式源路径。默认关：方法调用尚未降载，开了会 check 过而 emit 缺口。
+; 显式给 `--stdlib <路径>` 即打开；编译器自身构建与不需要标准库的通道显式关掉。
+(StdlibOption)
+enabled: Bool = false
+path: String = ""
+
+; 关装配：编译器自身构建与只验装载逻辑的单元测试用它，避免标准库内容进入读数。
+stdlibOff|func() -> (StdlibOption,):
+    var out = StdlibOption()
+    out.enabled = false
+    return out
+
+; 单元路径：虚拟名，不指向真实文件；幂等与接口排除都按它判。
+stdlibUnitPath|func() -> (String,):
+    return "<stdlib>"
+
+; 父目录：最后一个斜杠之前的部分；无斜杠答空串。绝对路径的根斜杠要补回：
+; `split` 丢掉首个空段，不补就把 `/a/b` 削成 `a`，上溯会从绝对路径跌成相对路径。
+parentOf|func(path: String,) -> (String,):
+    let parts = path.split("/")
+    if len(parts) <= 1:
+        return ""
+    var out = parts[0]
+    var i = 1
+    while i < len(parts) - 1:
+        out = out + "/" + parts[i]
+        i = i + 1
+    if path.indexOf("/") == 0:
+        return "/" + out
+    return out
+
+; 上溯定位：从起点逐级往上找 `stdlib/pini.toml`，最多八层；找不到答空串。
+; 起点取模块根：宿主建的首代带编译期基准，自举建的次代退回进程工作目录。
+findStdlibRoot|func(start: String,) -> (String,):
+    var current = start
+    var depth = 0
+    while depth < 8 && len(current) > 0:
+        if exists(current + "/stdlib/pini.toml"):
+            return current
+        current = parentOf(path = current)
+        depth = depth + 1
+    return ""
+
+; 默认源：模块根先试，再试工作区根；都没有答空串，由装配处报硬错误。
+stdlibSourcePath|func(option: StdlibOption, workspaceRoot: String,) -> (String,):
+    if len(option.path) > 0:
+        return option.path
+    let fromModule = findStdlibRoot(start = moduleRoot())
+    if len(fromModule) > 0:
+        return fromModule + "/stdlib/src/api/core.pini"
+    let fromWorkspace = findStdlibRoot(start = workspaceRoot)
+    if len(fromWorkspace) > 0:
+        return fromWorkspace + "/stdlib/src/api/core.pini"
+    return ""
+
+; 名字区间：按标量解回原文；非法序列就地收尾，返回已解出的前缀。
+nameAt|func(bytes: Array<U8>, start: I32, end: I32,) -> (String,):
+    var out = ""
+    var i = start
+    while i >= 0 && i < end:
+        let decoded = decodeScalarAt(bytes = bytes, offset = i)
+        if decoded.length == 0:
+            return out
+        out = out + "\(chr(decoded.code))"
+        i = i + decoded.length
+    return out
+
+; 方法键：目标类型与方法名拼成一条判等键；`#` 不在标识符字符集里，不会撞名。
+methodKey|func(target: String, name: String,) -> (String,):
+    return target + "#" + name
+
+; 表内命中：整串相等即真；顺序扫描，表长是标准库声明数量级。
+hasText|func(items: Array<String>, text: String,) -> (Bool,):
+    var i = 0
+    while i < len(items):
+        if items[i] == text:
+            return true
+        i = i + 1
+    return false
+
+; 具名顶层声明：自由函数与五种名义类型；扩展块、导入与外部块没有可被占用的名字。
+isNamedDeclCode|func(code: I32,) -> (Bool,):
+    if isFunctionDeclCode(code):
+        return true
+    if isStructDeclCode(code):
+        return true
+    if isObjectDeclCode(code):
+        return true
+    if isEnumDeclCode(code):
+        return true
+    if isGivenDeclCode(code):
+        return true
+    if isTraitDeclCode(code):
+        return true
+    return false
+
+; 已装判定：单元表里已有虚拟名就算装过，重复调用原样返回。
+hasStdlib|func(units: Array<CompilationUnit>,) -> (Bool,):
+    var i = 0
+    while i < len(units):
+        if units[i].path == "<stdlib>":
+            return true
+        i = i + 1
+    return false
+
+; 让位：用户占用的顶层名与扩展方法从标准库那份里摘掉，其余保留。
+; 摘而不靠「后声明者覆盖」：扩展方法按 `名__类型` 出符号，两份同名会在发射通道重定义。
+prune|func(unit: CompilationUnit, claimedNames: Array<String>, claimedMethods: Array<String>,) -> (CompilationUnit,):
+    var ast = unit.ast
+    let bytes = unitBytes(unit)
+    var kept: Array<I32> = []
+    var i = 0
+    while i < len(ast.items):
+        let id: I32 = ast.items[i]
+        let decl = ast.decls[id]
+        if isExtensionDeclCode(decl.kind):
+            let target = nameAt(bytes = bytes, start = decl.nameStart, end = decl.nameEnd)
+            var methods: Array<I32> = []
+            var k = 0
+            while k < len(decl.kids):
+                let method = ast.decls[decl.kids[k]]
+                let key = methodKey(target = target, name = nameAt(bytes = bytes, start = method.nameStart, end = method.nameEnd))
+                if !hasText(items = claimedMethods, text = key):
+                    methods = methods.append(decl.kids[k])
+                k = k + 1
+            if len(methods) > 0:
+                ast.decls[id].kids = methods
+                kept = kept.append(id)
+        elif isNamedDeclCode(code = decl.kind):
+            let name = nameAt(bytes = bytes, start = decl.nameStart, end = decl.nameEnd)
+            if !hasText(items = claimedNames, text = name):
+                kept = kept.append(id)
+        else:
+            kept = kept.append(id)
+        i = i + 1
+    ast.items = kept
+    var out = unit
+    out.ast = ast
+    return out
+
+; 单包装配：先收集本包占用的名字，再把标准库那份剪好放在单元表首位。
+; 空包不装：没有单元就没有编译单元可承载声明，与宿主「只在首个单元并入」同效。
+assemblePackage|func(group: PackageUnits, unit: CompilationUnit,) -> (PackageUnits,):
+    var out = group
+    if len(group.units) == 0:
+        return out
+    if hasStdlib(units = group.units):
+        return out
+    var claimedNames: Array<String> = []
+    var claimedMethods: Array<String> = []
+    var i = 0
+    while i < len(group.units):
+        let one = group.units[i]
+        let bytes = unitBytes(one)
+        var d = 0
+        while d < one.ast.itemCount():
+            let decl = one.ast.declAt(one.ast.itemAt(d))
+            if isExtensionDeclCode(decl.kind):
+                let target = nameAt(bytes = bytes, start = decl.nameStart, end = decl.nameEnd)
+                var k = 0
+                while k < len(decl.kids):
+                    let method = one.ast.declAt(decl.kids[k])
+                    let key = methodKey(target = target, name = nameAt(bytes = bytes, start = method.nameStart, end = method.nameEnd))
+                    claimedMethods = claimedMethods.append(key)
+                    k = k + 1
+            elif isNamedDeclCode(code = decl.kind):
+                claimedNames = claimedNames.append(nameAt(bytes = bytes, start = decl.nameStart, end = decl.nameEnd))
+            d = d + 1
+        i = i + 1
+    let pruned = prune(unit = unit, claimedNames = claimedNames, claimedMethods = claimedMethods)
+    if pruned.ast.itemCount() == 0:
+        return out
+    var units: Array<CompilationUnit> = []
+    units = units.append(pruned)
+    i = 0
+    while i < len(group.units):
+        units = units.append(group.units[i])
+        i = i + 1
+    out.units = units
+    return out
+
+; 工作区装配：文本读一次，逐包各解析一份再剪枝——结构体按引用传递，共用一棵树会让后一包的让位改动前一包。
+; 错误进 `ws.errors` 而不就地中断：调用方按既有装载错误通道渲染，路径固定为 `<stdlib>`。
+assembleStdlib|func(ws: WorkspaceUnits, sourcePath: String,) -> (WorkspaceUnits,):
+    var out = ws
+    if len(out.packages) == 0:
+        return out
+    if len(sourcePath) == 0 || !exists(sourcePath):
+        out.errors = out.errors.append(makeLoadError(kind = .errorStdlibMissing, path = "<stdlib>", detail = sourcePath))
+        return out
+    let read = tryReadFile(sourcePath)
+    var content = ""
+    match read:
+        case ok(text,):
+            content = text
+        case err(reason,):
+            out.errors = out.errors.append(makeLoadError(kind = .errorFileUnreadable, path = "<stdlib>", detail = sourcePath))
+            return out
+    var p = 0
+    while p < len(out.packages):
+        let loaded = loadUnit(path = "<stdlib>", text = content)
+        if loaded.failed:
+            out.errors = out.errors.append(loaded.error)
+            return out
+        out.packages[p] = assemblePackage(group = out.packages[p], unit = loaded.unit)
+        p = p + 1
+    return out

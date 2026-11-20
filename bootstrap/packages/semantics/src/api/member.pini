@@ -204,6 +204,18 @@ nominalTypeId|func(world: MemberWorld, name: String,) -> (I32,):
         i = i + 1
     return -1
 
+; 属主类型：名义类型先查；内建标量与容器按名字兜底，扩展块挂在内建类型上时 `self` 也要有型。
+ownerTypeId|func(world: MemberWorld, name: String,) -> (I32,):
+    let nominal = nominalTypeId(world = world, name = name)
+    if nominal >= 0:
+        return nominal
+    var i = 0
+    while i < len(world.types.pool.entries):
+        if world.types.pool.entries[i].name == name:
+            return i
+        i = i + 1
+    return -1
+
 ; 标签序号：按类型下标取标签串，逐项比 NFC 键；未命中答 -1。
 tupleLabelIndex|func(world: MemberWorld, typeId: I32, key: Array<U8>,) -> (I32,):
     var r = 0
@@ -390,7 +402,21 @@ checkVariantMember|func(world: MemberWorld, out: MemberResult, owner: String, re
     done.symbol = symbol
     return done
 
+; 未命中：失败且类别为未知成员；只有这一种情况才回落到内建成员表。
+isUnknownMember|func(result: MemberResult,) -> (Bool,):
+    if !result.failed:
+        return false
+    return isMemberError(error = result.error, kind = .memberUnknown)
+
+; 声明探测：在独立的结果盒里查一次，未命中不污染调用方的那份。
+; 参数按引用传入，探测失败会写进同一个盒；内建回落因此必须先拿到干净结果。
+probeDeclared|func(world: MemberWorld, pool: TypePool, entry: TypeEntry, access: MemberAccess,) -> (MemberResult,):
+    var box = MemberResult()
+    box.pool = pool
+    return checkNominalMember(world = world, out = box, entry = entry, access = access)
+
 ; 判定入口：接收者非法即待定；元组、字符串、容器与名义类型各走一条。
+; 字符串与容器先查声明：扩展块挂在内建类型上时声明压过原生，与宿主 body-first 同序。
 checkMember|func(world: MemberWorld, access: MemberAccess,) -> (MemberResult,):
     var out = MemberResult()
     out.pool = world.types.pool
@@ -400,8 +426,14 @@ checkMember|func(world: MemberWorld, access: MemberAccess,) -> (MemberResult,):
     if isTypeClass(kind = entry.kind, expected = .typeClassTuple):
         return checkTupleMember(world = world, out = out, entry = entry, access = access)
     if isTypeClass(kind = entry.kind, expected = .typeClassScalar) && entry.name == "String":
+        let declared = probeDeclared(world = world, pool = out.pool, entry = entry, access = access)
+        if !isUnknownMember(result = declared):
+            return declared
         return checkBuiltinMember(world = world, out = out, owner = entry.name, kids = [], access = access)
     if isTypeClass(kind = entry.kind, expected = .typeClassCollection):
+        let declared = probeDeclared(world = world, pool = out.pool, entry = entry, access = access)
+        if !isUnknownMember(result = declared):
+            return declared
         return checkBuiltinMember(world = world, out = out, owner = entry.name, kids = entry.kids, access = access)
     if isNominalClass(entry.kind):
         return checkNominalMember(world = world, out = out, entry = entry, access = access)
