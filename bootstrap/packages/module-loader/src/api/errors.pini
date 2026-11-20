@@ -1,4 +1,4 @@
-; 装载错误类别：文件系统侧四类，源文本侧三类；每一类对应一种可判定的失效。
+; 装载错误类别：文件系统侧四类，源文本侧三类，生成模块侧四类；每一类对应一种可判定的失效。
 [LoadErrorKind]
 errorRootMissing
 errorDirectoryUnreadable
@@ -7,6 +7,10 @@ errorFileUnreadable
 errorSourceBom
 errorSourceNul
 errorSourceNotUtf8
+errorPlanMissing
+errorPlanBroken
+errorPlanStale
+errorGeneratedMissing
 
 ; 装载错误：类别、相对工作区根的路径与补充细节；偏移是源内字节位置，不适用时为 -1。
 (LoadError)
@@ -32,6 +36,14 @@ loadErrorName|func(_kind: LoadErrorKind,) -> (String,):
             return "源文件含 NUL 字节"
         case errorSourceNotUtf8:
             return "源文件不是合法 UTF-8"
+        case errorPlanMissing:
+            return "构建计划不存在"
+        case errorPlanBroken:
+            return "构建计划不合法"
+        case errorPlanStale:
+            return "构建计划与脚本不一致"
+        case errorGeneratedMissing:
+            return "生成模块不存在"
     return "装载失败"
 
 ; 造错误：路径取工作区相对形式，偏移缺省为 -1。

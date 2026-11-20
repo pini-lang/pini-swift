@@ -305,6 +305,6 @@ runBuild|func(root: String,) -> ():
         print("build-failed", path, "缺构建目录", directory)
         assert(false, "构建计划未落盘")
         return
-    writeFile(path = path, content = planFileText(filled.plan))
+    writeFile(path, planFileText(filled.plan))
     print("build-ok", steps, filled.missing)
     return

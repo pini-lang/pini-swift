@@ -82,6 +82,24 @@
     assert(文本.contains("4fb4e551e0f7318c8f6a724118fca65d2f4362c461bdf1f0fa47ecf2dba6cb8c"), "缺头文件时指纹只含写法与定义")
     return
 
+; 计划回读：渲染出的文本能被读回，包与步骤逐项对上；版本不符即判不合法。
+计划回读|test() -> ():
+    let 计划 = planWorkspace("./fixtures/build-script")
+    let 文本 = planFileText(计划)
+    let 读 = parsePlanText(text = 文本, path = "plan.toml")
+    assert(读.present, "应标记存在")
+    assert(len(读.broken) == 0, "不应不合法：" + 读.broken)
+    assert(len(读.packages) == 1, "一个包条目")
+    assert(读.packages[0].name == "builddemo", "包名回读")
+    assert(读.packages[0].root == "pkg", "包根回读")
+    assert(len(读.steps) == 2, "两条步骤")
+    assert(读.steps[0].package == "builddemo", "步骤归属")
+    assert(读.steps[0].name == "cstr", "步骤名回读")
+    assert(读.steps[0].output == ".build/debug/packages/builddemo/generated/cstr.pini", "产物路径回读")
+    let 坏 = parsePlanText(text = "[plan]\nversion = 9\n", path = "plan.toml")
+    assert(len(坏.broken) > 0, "版本不符应判不合法")
+    return
+
 ; 测试助手：错误表首条文本；空表答空串，用于断言里的失败信息。
 首条错误|func(_errors: Array<ManifestError>,) -> (String,):
     if len(_errors) == 0:
