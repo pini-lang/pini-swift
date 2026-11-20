@@ -1,0 +1,219 @@
+[build_script|import]
+_syntax = "../../../syntax"
+_unicode = "../../../unicode"
+
+; 翻译步：块名即步骤名与产物文件名；头文件、包含路径与定义是全部输入。
+(BuildStep)
+name: String = ""
+headerPath: String = ""
+includePaths: Array<String> = []
+defines: Array<String> = []
+outputPath: String = ""
+
+; 构建脚本：脚本路径、是否存在、解析出的步骤与错误；缺脚本时步骤为空且不报错。
+(BuildScript)
+path: String = ""
+present: Bool = false
+steps: Array<BuildStep> = []
+errors: Array<ManifestError> = []
+
+; 单块结果：一个给定块读成的步骤与它自己的错误；一块出错不牵连其他块。
+(StepRead)
+built: BuildStep = BuildStep()
+errors: Array<ManifestError> = []
+
+; 字段取值结果：字符串与字符串数组各一套，成功位为假时取值无意义。
+(StringRead)
+ok: Bool = false
+value: String = ""
+
+(ListRead)
+ok: Bool = false
+values: Array<String> = []
+
+; 读脚本：没有 build.pini 的包照常构建，不算错误；有则整份读成步骤。
+readBuildScript|func(packageAbs: String,) -> (BuildScript,):
+    var out = BuildScript()
+    out.path = packageAbs + "/build.pini"
+    if !exists(out.path):
+        return out
+    return parseBuildScript(text = readFile(out.path), path = out.path)
+
+; 解析脚本：语法问题先拦下，再逐块收步骤；给定块是唯一合法声明。
+parseBuildScript|func(text: String, path: String,) -> (BuildScript,):
+    var out = BuildScript()
+    out.path = path
+    out.present = true
+    let normalized = normalizeScriptText(text)
+    let parsed = parseFile(text = normalized, file = path)
+    if len(parsed.diagnostics) > 0:
+        let first = parsed.diagnostics[0]
+        out.errors = out.errors.append(manifestError(kind = .errorBuildScriptSyntax, path = path, detail = first.code + " " + first.message))
+        return out
+    if len(parsed.issues) > 0:
+        out.errors = out.errors.append(manifestError(kind = .errorBuildScriptSyntax, path = path, detail = "词法问题 \(len(parsed.issues)) 处"))
+        return out
+    return collectSteps(script = out, ast = parsed.ast, bytes = tempUtf8Bytes(normalized))
+
+; 换行归一：CRLF 折成 LF，与装载面的口径一致；孤立 CR 不动。
+normalizeScriptText|func(_text: String,) -> (String,):
+    if _text.indexOf("\r\n") < 0:
+        return _text
+    let parts = _text.split("\r\n")
+    var out = parts[0]
+    var i = 1
+    while i < len(parts):
+        out = out + "\n" + parts[i]
+        i = i + 1
+    return out
+
+; 逐块收集：非给定块记一条，读成功的块再查重名；错误按块出现序排列。
+collectSteps|func(script: BuildScript, ast: Ast, bytes: Array<U8>,) -> (BuildScript,):
+    var out = script
+    var i = 0
+    while i < ast.itemCount():
+        let block = ast.declAt(ast.itemAt(i))
+        i = i + 1
+        if !isGivenDeclCode(block.kind):
+            let name = decodeScriptRange(bytes = bytes, start = block.nameStart, end = block.nameEnd)
+            out.errors = out.errors.append(manifestError(kind = .errorBuildScriptDecl, path = out.path, detail = name))
+            continue
+        let read = readStep(ast = ast, bytes = bytes, block = block, scriptPath = out.path)
+        var e = 0
+        while e < len(read.errors):
+            out.errors = out.errors.append(read.errors[e])
+            e = e + 1
+        if len(read.errors) > 0:
+            continue
+        if hasEarlierStep(steps = out.steps, name = read.built.name):
+            out.errors = out.errors.append(manifestError(kind = .errorBuildStepName, path = out.path, detail = read.built.name))
+            continue
+        out.steps = out.steps.append(read.built)
+    return out
+
+; 单块读取：块名须是路径分量；三个字段按名取值，未知字段与缺头文件各记一条。
+readStep|func(ast: Ast, bytes: Array<U8>, block: DeclNode, scriptPath: String,) -> (StepRead,):
+    var out = StepRead()
+    let name = decodeScriptRange(bytes = bytes, start = block.nameStart, end = block.nameEnd)
+    out.built.name = name
+    if !isPathComponent(name):
+        out.errors = out.errors.append(manifestError(kind = .errorBuildStepName, path = scriptPath, detail = name))
+    var sawHeader = false
+    var i = 0
+    while i < len(block.kids):
+        let field = ast.declAt(block.kids[i])
+        i = i + 1
+        let fieldName = decodeScriptRange(bytes = bytes, start = field.nameStart, end = field.nameEnd)
+        if fieldName == "头文件":
+            sawHeader = true
+            let read = readFieldText(ast = ast, bytes = bytes, field = field)
+            if read.ok:
+                out.built.headerPath = read.value
+            else:
+                out.errors = out.errors.append(manifestError(kind = .errorBuildStepField, path = scriptPath, detail = name + "：头文件 取值必须是字符串字面量"))
+        elif fieldName == "包含路径":
+            let read = readFieldList(ast = ast, bytes = bytes, field = field)
+            if read.ok:
+                out.built.includePaths = read.values
+            else:
+                out.errors = out.errors.append(manifestError(kind = .errorBuildStepField, path = scriptPath, detail = name + "：包含路径 取值必须是字符串数组字面量"))
+        elif fieldName == "定义":
+            let read = readFieldList(ast = ast, bytes = bytes, field = field)
+            if read.ok:
+                out.built.defines = read.values
+            else:
+                out.errors = out.errors.append(manifestError(kind = .errorBuildStepField, path = scriptPath, detail = name + "：定义 取值必须是字符串数组字面量"))
+        else:
+            out.errors = out.errors.append(manifestError(kind = .errorBuildStepField, path = scriptPath, detail = name + "：" + fieldName))
+    if !sawHeader:
+        out.errors = out.errors.append(manifestError(kind = .errorBuildStepField, path = scriptPath, detail = name + "：缺 头文件"))
+    return out
+
+; 字段取字符串：没有初值即失败，初值不是字符串字面量也失败。
+readFieldText|func(ast: Ast, bytes: Array<U8>, field: DeclNode,) -> (StringRead,):
+    var out = StringRead()
+    if len(field.kids) == 0:
+        return out
+    return readStringLiteral(ast = ast, bytes = bytes, id = field.kids[0])
+
+; 字段取字符串数组：空数组合法，任一元素不是字面量则整条失败。
+readFieldList|func(ast: Ast, bytes: Array<U8>, field: DeclNode,) -> (ListRead,):
+    var out = ListRead()
+    if len(field.kids) == 0:
+        return out
+    let id = field.kids[0]
+    if !ast.isArrayExpr(id):
+        return out
+    let node = ast.exprAt(id)
+    var i = 0
+    while i < len(node.kids):
+        let one = readStringLiteral(ast = ast, bytes = bytes, id = node.kids[i])
+        if !one.ok:
+            return ListRead()
+        out.values = out.values.append(one.value)
+        i = i + 1
+    out.ok = true
+    return out
+
+; 字符串字面量：跨度含两侧引号，六种转义在此解掉，再按标量拼回文本。
+readStringLiteral|func(ast: Ast, bytes: Array<U8>, id: I32,) -> (StringRead,):
+    var out = StringRead()
+    if !ast.isStringExpr(id):
+        return out
+    let node = ast.exprAt(id)
+    let inner = unquoteBytes(bytes = bytes, start = node.start, end = node.end)
+    out.ok = true
+    out.value = decodeScriptRange(bytes = inner, start = 0, end = len(inner))
+    return out
+
+; 去引号解转义：非法转义按原字节保留，不在这里另报错——词法面已经记过。
+unquoteBytes|func(bytes: Array<U8>, start: I32, end: I32,) -> (Array<U8>,):
+    var out: Array<U8> = []
+    var i = start + 1
+    let stop = end - 1
+    while i < stop:
+        let value = tempByteToInt(bytes[i])
+        if value == 92 && i + 1 < stop:
+            out = out.append(tempIntToByte(escapeByte(value = tempByteToInt(bytes[i + 1]))))
+            i = i + 2
+            continue
+        out = out.append(bytes[i])
+        i = i + 1
+    return out
+
+; 转义表：n / t / r / 反斜线 / 引号 / 零各给目标字节，其余原样返回。
+escapeByte|func(value: I32,) -> (I32,):
+    if value == 110:
+        return 10
+    if value == 116:
+        return 9
+    if value == 114:
+        return 13
+    if value == 92:
+        return 92
+    if value == 34:
+        return 34
+    if value == 48:
+        return 0
+    return value
+
+; 字节区间解码：按标量取回原文；非法序列就地收尾，返回已解出的前缀。
+decodeScriptRange|func(bytes: Array<U8>, start: I32, end: I32,) -> (String,):
+    var out = ""
+    var i = start
+    while i < end:
+        let unit = decodeScalarAt(bytes = bytes, offset = i)
+        if unit.length == 0:
+            return out
+        out = out + "\(chr(unit.code))"
+        i = i + unit.length
+    return out
+
+; 步骤重名：只看更早的步骤，重名报一次即可。
+hasEarlierStep|func(steps: Array<BuildStep>, name: String,) -> (Bool,):
+    var i = 0
+    while i < len(steps):
+        if steps[i].name == name:
+            return true
+        i = i + 1
+    return false

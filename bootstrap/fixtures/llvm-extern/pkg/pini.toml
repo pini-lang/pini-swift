@@ -1,0 +1,6 @@
+[package]
+name = "externdemo"
+
+[lib]
+name = "externdemo"
+entry = "src/api/main.pini"

@@ -35,6 +35,22 @@ llvmSignature|func(pool: IrTypePool, fn: IrFunction, isDefine: Bool,) -> (String
         head = "define"
     return head + " " + llvmReturnType(pool = pool, fn = fn) + " @" + mangleName(name = fn.name) + "(" + llvmParams(pool = pool, fn = fn) + ")"
 
+; 外部声明：名字保留 C 拼写，不做内部编码；变参在固定形参后留省略号。
+llvmExternSignature|func(pool: IrTypePool, fn: IrExternFunction,) -> (String,):
+    var out = "declare " + llvmTypeName(pool = pool, typeId = fn.returnType) + " @" + fn.name + "("
+    var i = 0
+    while i < len(fn.params):
+        if i > 0:
+            out = out + ", "
+        out = out + llvmTypeName(pool = pool, typeId = fn.params[i])
+        i = i + 1
+    if fn.isVarargs:
+        if len(fn.params) > 0:
+            out = out + ", ..."
+        else:
+            out = out + "..."
+    return out + ")"
+
 ; 名字键：按 NFC 归一，等价拼写（如分解形式）落到同一个键上。
 nameKey|func(name: String,) -> (String,):
     let bytes = tempUtf8Bytes(name)

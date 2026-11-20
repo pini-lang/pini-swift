@@ -9,7 +9,7 @@ _backend_llvm = "../../../backend-llvm"
 _testkit = "../../../testkit"
 
 ; 驱动主程序：无参数只装配清单并打印产物行；各子命令的根取位置参数，缺省从模块根上溯。
-; check 跑完整检查，lower 走降载，dump 出结构转储，emit 出 LLVM 文本，test 出跑器文本。
+; check 跑完整检查，plan 打印构建计划，lower 走降载，dump 出结构转储，emit 出 LLVM 文本，test 出跑器文本。
 ; cases 只列裸名用例位置；降载前先填表达式类型表并把池换成填表后的池。
 main|func() -> ():
     let args = argv()
@@ -85,6 +85,11 @@ main|func() -> ():
         let units = collectWorkspaceUnits(ws)
         let build = buildWorld(units = units, packages = ws.packages)
         printBareCases(units = units, world = build.world)
+        return
+    if len(args) > 0 && args[0] == "plan":
+        if len(args) > 1:
+            root = args[1]
+        print(planText(planWorkspace(root)))
         return
     if 全量:
         let report = checkWorkspace(root = root)

@@ -58,6 +58,80 @@ _backend_kit = "../../backend-kit"
     assert(发射含子串(text = result.text, needle = "ret i32 0"), "main 应补零返回")
     return
 
+; 外部声明：模块表里的函数按签名出 declare，调用点直呼 C 名字，不按内部编码。
+; 变参在固定形参后留省略号；两者都只凭模块算，不查后端私有表。
+外部声明|test() -> ():
+    var module = IrModule()
+    module.types = 发射造类型池()
+    var nodes = IrNodePool()
+    var literal = irMakeNode(kind = tagOfName(name = "intConst"), typeId = 0)
+    literal.intValue = 5
+    let placedLiteral = irAppendNode(pool = nodes, node = literal)
+    nodes = placedLiteral.pool
+    var called = irMakeNode(kind = tagOfName(name = "call"), typeId = 0)
+    called.text = 0
+    called.kids = [placedLiteral.id]
+    let placedCalled = irAppendNode(pool = nodes, node = called)
+    nodes = placedCalled.pool
+    var back = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    back.kids = [placedCalled.id]
+    let placedBack = irAppendNode(pool = nodes, node = back)
+    nodes = placedBack.pool
+    module.nodes = nodes
+    module.texts = module.texts.append("abs")
+    var fn = IrFunction()
+    fn.name = "main"
+    fn.returnType = 0
+    fn.body = [placedBack.id]
+    module.functions = module.functions.append(fn)
+    var declared = IrExternFunction()
+    declared.name = "abs"
+    declared.returnType = 0
+    declared.params = declared.params.append(0)
+    module.externs = module.externs.append(declared)
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    assert(!result.failed, "外部声明应发得出来")
+    assert(发射含子串(text = result.text, needle = "call i32 @abs(i32"), "调用点应直呼 C 名字")
+    assert(发射含子串(text = result.text, needle = "declare i32 @abs(i32)"), "应按模块表出 declare")
+    return
+
+; 外部变参：定参后留省略号，返回 void 时不写类型。
+外部变参|test() -> ():
+    var module = IrModule()
+    module.types = 发射造类型池()
+    var nodes = IrNodePool()
+    var called = irMakeNode(kind = tagOfName(name = "call"), typeId = -1)
+    called.text = 0
+    let placedCalled = irAppendNode(pool = nodes, node = called)
+    nodes = placedCalled.pool
+    var stmt = irMakeNode(kind = tagOfName(name = "exprStmt"), typeId = -1)
+    stmt.kids = [placedCalled.id]
+    let placedStmt = irAppendNode(pool = nodes, node = stmt)
+    nodes = placedStmt.pool
+    var back = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    let placedBack = irAppendNode(pool = nodes, node = back)
+    nodes = placedBack.pool
+    module.nodes = nodes
+    module.texts = module.texts.append("fake")
+    var fn = IrFunction()
+    fn.name = "main"
+    fn.returnType = -1
+    fn.body = [placedStmt.id, placedBack.id]
+    module.functions = module.functions.append(fn)
+    var declared = IrExternFunction()
+    declared.name = "fake"
+    declared.returnType = -1
+    declared.params = declared.params.append(0)
+    declared.isVarargs = true
+    module.externs = module.externs.append(declared)
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    var why = "无缺口"
+    if len(result.gaps) > 0:
+        why = result.gaps[0]
+    assert(!result.failed, "变参声明应发得出来：" + why)
+    assert(发射含子串(text = result.text, needle = "declare void @fake(i32, ...)"), "变参应在定参后留省略号")
+    return
+
 ; 缺口：族未声明时按族报，且整份文本不出；失败不静默。
 ; 声明表由入口给，故这里交一份空表来覆盖这条缺口；后端自己的族表已全声明。
 族未声明|test() -> ():

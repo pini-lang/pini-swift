@@ -50,6 +50,14 @@ captures: Array<IrCaptureSlot> = []
 name: String = ""
 typeId: I32 = -1
 
+; 外部函数声明：名字、返回类型、形参类型与变参标志；发射期按它出 `declare`。
+; 名字保留 C 拼写，不走内部函数的编码；形参只收标量、指针与串，聚合在语义层已拒。
+(IrExternFunction)
+name: String = ""
+returnType: I32 = -1
+params: Array<I32> = []
+isVarargs: Bool = false
+
 ; 模块：类型池、节点池、字符串池、函数表、声明面、槽位面与两张错误表。
 ; `errors` 只放函数级降载失败，`typeErrors` 放类型映射失败：前者与空体一一对应，后者没有函数。
 ; 后端只读这张模块：声明、槽位、位置与份额都在里面，不再回查语义层。
@@ -61,6 +69,7 @@ functions: Array<IrFunction> = []
 decls: IrDeclTable = IrDeclTable()
 slots: IrSlotTable = IrSlotTable()
 externData: Array<IrExternData> = []
+externs: Array<IrExternFunction> = []
 errors: Array<LowerError> = []
 typeErrors: Array<LowerError> = []
 
@@ -76,6 +85,7 @@ types: ExprTypes = ExprTypes()
 decls: IrDeclTable = IrDeclTable()
 slots: IrSlotTable = IrSlotTable()
 externData: Array<IrExternData> = []
+externs: Array<IrExternFunction> = []
 unitIndex: I32 = 0
 bytes: Array<U8> = []
 
@@ -181,6 +191,7 @@ lowerFunction|func(state: LowerState, unit: CompilationUnit, declId: I32, owner:
         fn.body = body.ids
         fn.positions = body.positions
         out.externData = mergeExternData(table = out.externData, more = body.frame.externData)
+        out.externs = mergeExternFunction(table = out.externs, more = body.frame.externs)
         var c = 0
         while c < len(body.frame.closures):
             out.functions = out.functions.append(body.frame.closures[c])
@@ -280,6 +291,7 @@ lowerWorkspace|func(input: LowerWorld,) -> (IrModule,):
     out.decls = state.decls
     out.slots = state.slots
     out.externData = state.externData
+    out.externs = state.externs
     out.errors = state.errors
     out.typeErrors = state.map.errors
     return out
@@ -299,6 +311,32 @@ mergeExternData|func(table: Array<IrExternData>, more: Array<IrExternData>,) -> 
             out = out.append(more[i])
         i = i + 1
     return out
+
+; 外部函数合并：同名只留一条，签名取先登记的；顺序即首次使用序。
+; 同名异型本该在语义层的声明裁决里报错，这里只防降载路径绕过裁决。
+mergeExternFunction|func(table: Array<IrExternFunction>, more: Array<IrExternFunction>,) -> (Array<IrExternFunction>,):
+    var out = table
+    var i = 0
+    while i < len(more):
+        var found = false
+        var j = 0
+        while j < len(out):
+            if out[j].name == more[i].name:
+                found = true
+            j = j + 1
+        if !found:
+            out = out.append(more[i])
+        i = i + 1
+    return out
+
+; 外部函数按名字查：未命中答 -1；发射期用它判调用点是否走模块声明。
+findExternFunction|func(module: IrModule, name: String,) -> (I32,):
+    var i = 0
+    while i < len(module.externs):
+        if module.externs[i].name == name:
+            return i
+        i = i + 1
+    return -1
 
 ; 函数表按名字查：未命中答 -1；同名不应出现，出现即说明降载重复。
 findFunction|func(module: IrModule, name: String,) -> (I32,):

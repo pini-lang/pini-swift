@@ -1,6 +1,10 @@
 [package]
 name = "package"
 
+[require]
+unicode = "*"
+syntax = "*"
+
 [lib]
 name = "package"
 entry = "src/api/workspace.pini"
