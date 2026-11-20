@@ -1,0 +1,7 @@
+; 外部声明夹具：手写块声明 libc 的 abs，调用点按 C 名字直呼。
+; 输出需出现 `declare i32 @abs(i32)`，链接后 main 返回 5。
+[libc|foreign]
+abs: (I32,) -> (I32,)
+
+main|func() -> (I32,):
+    return abs(-5)

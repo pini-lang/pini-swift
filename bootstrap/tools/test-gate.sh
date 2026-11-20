@@ -134,6 +134,32 @@ case "$full_out" in
     ;;
 esac
 
+# 外部声明：模块表出 declare，调用点直呼 C 名字；链接执行读数与手算一致。
+extern_fixture="$root/bootstrap/fixtures/llvm-extern"
+extern_raw="$work/extern-raw.ll"
+extern_ll="$work/extern.ll"
+if ! "$pini" emit "$extern_fixture" > "$extern_raw" 2>/dev/null; then
+    echo " 行不通  [测试自检] 外部声明夹具发射失败" >&2
+    fail=1
+fi
+tail -n +3 "$extern_raw" > "$extern_ll"
+if ! grep -q "declare i32 @abs(i32)" "$extern_ll"; then
+    echo " 行不通  [测试自检] 外部声明未出 declare" >&2
+    fail=1
+fi
+if ! "$clang_bin" -o "$work/extern-bin" "$extern_ll" -L"$runtime_dir" -lPiniRuntime \
+    -Wl,-rpath,"$runtime_dir" >/dev/null 2>&1; then
+    echo " 行不通  [测试自检] 外部声明夹具链接失败" >&2
+    fail=1
+fi
+if [ -x "$work/extern-bin" ]; then
+    "$work/extern-bin"
+    if [ "$?" -ne 5 ]; then
+        echo " 行不通  [测试自检] 外部声明夹具读数应为 5" >&2
+        fail=1
+    fi
+fi
+
 if [ "$fail" -ne 0 ]; then
     exit 1
 fi

@@ -496,7 +496,8 @@ emitExprCore|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
             ; 站点类型是任务句柄：这条调用是派发，不是直呼。
             return emitTaskSpawn(out = out, module = module, node = node, target = target)
         if target < 0:
-            if len(externSignature(name = callee)) == 0:
+            let declared = findExternFunction(module = module, name = callee)
+            if declared < 0 && len(externSignature(name = callee)) == 0:
                 out.ctx = addGap(ctx = out.ctx, gap = "外部调用 " + callee)
                 return out
             useExtern(use = out.ctx.externs, name = callee)

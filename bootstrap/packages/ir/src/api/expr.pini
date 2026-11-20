@@ -16,6 +16,7 @@ lowerClosure|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: 
     closure.world = done.frame.world
     closure.decls = done.frame.decls
     closure.externData = done.frame.externData
+    closure.externs = done.frame.externs
     closure.outerLocals = done.frame.locals
     var params: Array<IrParam> = []
     var body = -1
@@ -70,6 +71,7 @@ lowerClosure|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: 
         done.frame.closures = done.frame.closures.append(lowered.frame.closures[c])
         c = c + 1
     done.frame.closures = done.frame.closures.append(fn)
+    done.frame.externs = mergeExternFunction(table = done.frame.externs, more = lowered.frame.externs)
     let placed = internText(texts = lowered.texts, value = fn.name)
     var node = irMakeNode(kind = irExprTag(.irClosureLiteral), typeId = typeId)
     node.text = placed.id
@@ -608,6 +610,10 @@ params: Array<CallParam> = []
 ret: I32 = -1
 ordered: Bool = false
 takesReceiver: Bool = false
+; 外部符号：symbol 供登记声明取标志，sigId 是语义函数类型，ret 取签名尾。
+isForeign: Bool = false
+symbol: I32 = -1
+sigId: I32 = -1
 
 ; 读节点结果：池、文本池与节点下标；读改写先把目标读一次。
 (IrLoadNode)
@@ -770,6 +776,17 @@ calleeOfFunction|func(frame: LowerFrame, map: TypeMap, name: String,) -> (IrCall
     if ref.unit < 0:
         return calleeOfBuiltin(frame = frame, map = map, name = name)
     let decl = frame.world.units[ref.unit].ast.decls[ref.decl]
+    let entry = frame.world.table.symbolAt(symbol)
+    if entry.isForeign:
+        ; 外部条目不是函数声明类别，签名从符号绑定的类型取；变参标志随符号走。
+        out.found = true
+        out.isForeign = true
+        out.symbol = symbol
+        out.name = name
+        out.sigId = frame.world.types.typeOf(unit = ref.unit, decl = ref.decl)
+        if out.sigId >= 0 && out.sigId < len(frame.world.types.pool.entries):
+            out.ret = frame.world.types.pool.entries[out.sigId].ret
+        return out
     if !isFunctionDeclCode(decl.kind):
         return calleeOfBuiltin(frame = frame, map = map, name = name)
     out.found = true
@@ -899,6 +916,48 @@ givenTypeName|func(frame: LowerFrame, map: TypeMap, semanticTypeId: I32,) -> (St
     if isGivenDeclCode(frame.world.units[ref.unit].ast.decls[ref.decl].kind):
         return entry.name
     return ""
+
+; 外部声明登记：名字、返回、形参与变参标志；同名只留一条。
+; 类型映射不到时记 -1，发射期按 void 出；白名单外的类型在语义层已拒。
+noteExternFunction|func(frame: LowerFrame, map: TypeMap, symbol: I32, sigId: I32, name: String,) -> (LowerFrame,):
+    var out = frame
+    if sigId < 0 || sigId >= len(out.world.types.pool.entries):
+        return out
+    let sig = out.world.types.pool.entries[sigId]
+    let entry = out.world.table.symbolAt(symbol)
+    var row = IrExternFunction()
+    row.name = name
+    row.returnType = irIdOf(map = map, semanticId = sig.ret)
+    var i = 0
+    while i < len(sig.kids):
+        row.params = row.params.append(irIdOf(map = map, semanticId = sig.kids[i]))
+        i = i + 1
+    row.isVarargs = containsFlagText(items = entry.foreignFlags, name = "varargs")
+    out.externs = mergeExternFunction(table = out.externs, more = [row])
+    return out
+
+; 外部调用：按源序传参、名字用 C 拼写；不接标签，也不进内建特判。
+lowerForeignCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32, name: String, actuals: Array<IrActual>, leading: I32, ret: I32,) -> (LowerExpr,):
+    var done = out
+    let typeId = callResultType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id, ret = ret)
+    if typeId == -2:
+        return missType(out = done, unit = unit, id = id, bytes = bytes)
+    var kids: Array<I32> = []
+    if leading >= 0:
+        kids = kids.append(leading)
+    var i = 0
+    while i < len(actuals):
+        kids = kids.append(actuals[i].id)
+        i = i + 1
+    let placed = internText(texts = done.texts, value = name)
+    var node = irMakeNode(kind = irExprTag(.irCall), typeId = typeId)
+    node.text = placed.id
+    node.kids = kids
+    let inserted = irAppendNode(pool = done.pool, node = node)
+    done.texts = placed.texts
+    done.pool = inserted.pool
+    done.id = inserted.id
+    return done
 
 ; 具名调用：实参按形参序归位，接收者（若有）排在最前；归位失败即报缺口。
 lowerNamedCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32, name: String, actuals: Array<IrActual>, params: Array<CallParam>, leading: I32, ret: I32,) -> (LowerExpr,):
@@ -1293,6 +1352,9 @@ lowerCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: Typ
         let constructed = lowerCaseConstruct(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id, name = maybeCase, actuals = actuals)
         if constructed.id >= 0:
             return constructed
+    if resolved.found && resolved.isForeign:
+        done.frame = noteExternFunction(frame = done.frame, map = map, symbol = resolved.symbol, sigId = resolved.sigId, name = resolved.name)
+        return lowerForeignCall(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id, name = resolved.name, actuals = actuals, leading = receiver, ret = resolved.ret)
     if len(builtinMember) > 0:
         if builtinType >= 0 && builtinType < irTypeCount(map.pool) && irTypeTag(irTypeAt(pool = map.pool, id = builtinType).kind) == irTypeTag(.irTypeString):
             return lowerStringMember(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id, member = builtinMember, receiver = receiver, actuals = actuals)

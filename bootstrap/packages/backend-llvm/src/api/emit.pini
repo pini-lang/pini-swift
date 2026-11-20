@@ -229,11 +229,16 @@ emitGivenDefs|func(sink: LineSink, bundle: EmitPass,) -> ():
         i = i + 1
     return
 
-; 外部声明段：按首次调用序逐条出 declare。
-emitExterns|func(sink: LineSink, bundle: EmitPass,) -> ():
+; 外部声明段：模块登记的按签名出，内建表按名字抄；按首次调用序逐条出。
+emitExterns|func(sink: LineSink, bundle: EmitPass, module: IrModule,) -> ():
     var i = 0
     while i < externUseCount(use = bundle.externs):
-        appendLine(sink = sink, text = externSignature(name = bundle.externs.names[i]))
+        let name = bundle.externs.names[i]
+        let at = findExternFunction(module = module, name = name)
+        if at >= 0:
+            appendLine(sink = sink, text = llvmExternSignature(pool = module.types, fn = module.externs[at]))
+        else:
+            appendLine(sink = sink, text = externSignature(name = name))
         i = i + 1
     return
 
@@ -299,7 +304,7 @@ emitModule|func(entry: BackendEntry, target: TargetProfile, module: IrModule,) -
     emitTaskBodies(sink = sink, bundle = bundle)
     emitGivenDefs(sink = sink, bundle = bundle)
     emitLazyWrappers(sink = sink, bundle = bundle)
-    emitExterns(sink = sink, bundle = bundle)
+    emitExterns(sink = sink, bundle = bundle, module = module)
     emitConstants(sink = sink, extra = [], bundle = bundle)
     var result = EmitResult()
     result.detail = "llvm"
@@ -363,7 +368,7 @@ emitTestModule|func(entry: BackendEntry, target: TargetProfile, module: IrModule
     appendLine(sink = sink, text = "@__pini_test_failed = internal global i32 0")
     appendLine(sink = sink, text = "@__pini_test_msg = internal global ptr null")
     let extra = emitTestDriver(sink = sink, module = module, plan = plan, bundle = bundle)
-    emitExterns(sink = sink, bundle = bundle)
+    emitExterns(sink = sink, bundle = bundle, module = module)
     emitConstants(sink = sink, extra = extra, bundle = bundle)
     var result = EmitResult()
     result.detail = "llvm"
