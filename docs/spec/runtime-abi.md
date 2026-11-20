@@ -21,7 +21,7 @@
 
 ### 0.3 量具口径
 
-**122 = `@_cdecl("bk_…")` 的匹配数**，即导出符号数，不是 `@_cdecl` 的字样出现数。
+**124 = `@_cdecl("bk_…")` 的匹配数**，即导出符号数，不是 `@_cdecl` 的字样出现数。
 两者相差 2：正文有两处注释提到 `@_cdecl` 却不导出符号。数出来差 1 或 2 时，先分清数的是哪一个。
 器械是 `tools/runtime-abi-check.py`。
 
@@ -32,7 +32,7 @@
 - 集合、并发、LazyRef、FFI 共用同一个运行时段，不另设独立 shim。
 - 新增符号同批登记本件，等式「清单数 = 导出数」是它唯一的自检方式。
 
-## 2. 符号清单（122 个）
+## 2. 符号清单（124 个）
 
 | 族 | 符号 | 数 |
 |---|---|---|
@@ -43,7 +43,7 @@
 | LazyRef | `bk_lazyref_create` `bk_lazyref_destroy` `bk_lazyref_value` | 3 |
 | 默认实例 | `bk_given_get` | 1 |
 | 指针 | `bk_ptr_load_f32` `bk_ptr_load_f64` `bk_ptr_load_i32` `bk_ptr_load_i64` `bk_ptr_load_i8` `bk_ptr_store` | 6 |
-| 展示 / 陷阱 | `bk_cstr` `bk_double_to_string` `bk_panic` `bk_print_lock` `bk_print_unlock` | 5 |
+| 展示 / 陷阱 | `bk_cstr` `bk_double_bits` `bk_double_to_string` `bk_parse_double` `bk_panic` `bk_print_lock` `bk_print_unlock` | 7 |
 | 运行时 | `bk_runtime_cleanup` | 1 |
 | 字符 | `bk_char_equal` `bk_char_equal_string` `bk_char_release` `bk_char_retain` `bk_char_to_heap_string` `bk_chars` `bk_chr` `bk_is_letter` `bk_is_number` `bk_ord` `bk_temp_byte_to_int` `bk_temp_int_to_byte` `bk_temp_utf8_bytes` | 13 |
 | 字符串面 | `bk_str_alloc` `bk_str_append_cstr` `bk_str_concat` `bk_str_dup` `bk_str_from_cstr` `bk_str_header_bytes` `bk_str_refcount` `bk_str_table_min_cap` `bk_str_release` `bk_str_retain` `bk_string_char_at` `bk_string_contains` `bk_string_count` `bk_string_index_of` `bk_string_lower` `bk_string_slice` `bk_string_split` `bk_string_trim_left` `bk_string_trim_right` `bk_string_upper` `bk_substring` | 21 |
@@ -55,7 +55,7 @@
 | 让出族 | `bk_task_await` `bk_task_frame` `bk_task_slot` | 3 |
 | 调度驱动面 | `bk_task_bind_sched` `bk_task_state` | 2 |
 | 错误载荷 | `bk_cancel_error_create` `bk_error_code` `bk_error_create` `bk_error_from_enum` `bk_error_is_cancel` `bk_error_lookup` `bk_error_message` `bk_error_with_code` | 8 |
-| **合计** | | **122** |
+| **合计** | | **124** |
 
 ## 3. 语义约束
 
@@ -114,9 +114,10 @@
 | `bk_task_is_cancelled` `bk_capabilities` `bk_task_yield` `bk_task_state` | 4 | 解释器与宿主观测面，发射器不产出 |
 | `bk_str_alloc` `bk_str_header_bytes` `bk_str_refcount` `bk_str_table_min_cap` `bk_handle_shares` `bk_scope_close` `bk_runtime_cleanup` | 7 | 只被 ABI 测试或宿主直接调用；`bk_str_alloc` 的拼接调用点已并入 `bk_str_concat` |
 | `bk_str_handle_bytes` `bk_str_handle_len` `bk_str_handle_retain` `bk_str_handle_release` | 4 | C 侧读字节与收账的入口；发射器只发 `bk_str_handle_new` |
+| `bk_double_bits` `bk_parse_double` | 2 | 只由自举编译器在编译期调用，发射器不产出 |
 
-本表与编译器侧清单互补：`BuiltinInventory.swift` 列出已接线的 98 条，本表列出其余 21 条，
-两者合计即第 2 节的 119。互补关系由 `tools/builtin-inventory-check.py` 校验。
+本表与编译器侧清单互补：`BuiltinInventory.swift` 列出已接线的 101 条，本表列出其余 23 条，
+两者合计即第 2 节的 124。互补关系由 `tools/builtin-inventory-check.py` 校验。
 
 ## 5. 维护条款
 

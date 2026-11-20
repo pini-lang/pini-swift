@@ -1533,6 +1533,23 @@ public func bk_double_to_string(_ v: Double) -> UnsafeMutablePointer<CChar>? {
     return _bkStrDup(String(v))
 }
 
+// MARK: - 编译期浮点字面量：取值与位模式
+
+/// `bk_parse_double(text)`：按 C `strtod` 口径把十进制拼写解析成 double。自举降载据此填
+/// `irFloatConst.floatValue`；宿主用 `Double(text)`，两者同为正确舍入，故取值逐位相同。
+@_cdecl("bk_parse_double")
+public func bk_parse_double(_ text: UnsafePointer<CChar>?) -> Double {
+    guard let text else { return 0 }
+    return strtod(text, nil)
+}
+
+/// `bk_double_bits(value)`：取 IEEE-754 位模式。发射侧对指数写法与零写十六进制常量，
+/// 与宿主的 `%016llX` 拼法同形；值不经十进制往返，故不受格式化影响。
+@_cdecl("bk_double_bits")
+public func bk_double_bits(_ value: Double) -> Int64 {
+    return Int64(bitPattern: value.bitPattern)
+}
+
 // MARK: - G15: whole-file read for the LLVM leg
 
 /// `readFile(path)`: the whole file as a NUL-terminated, malloc-allocated UTF-8 C string, or NULL if it

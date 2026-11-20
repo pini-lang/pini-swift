@@ -1,0 +1,21 @@
+; 浮点字面量：`floatConstantText` 与宿主 IREmitter.doubleLiteral 同口径，解析走 strtod 口径。
+
+; 定点写法走最短往返十进制，整数形补小数点。
+定点文本|test() -> ():
+    assert(floatConstantText(1.5) == "1.5", "1.5 应原样输出")
+    assert(floatConstantText(3.0) == "3.0", "3.0 应补小数点")
+    return
+
+; 零与指数写法退位模式十六进制，十六位大写零填充。
+位模式文本|test() -> ():
+    assert(floatConstantText(0.0) == "0x0000000000000000", "零应走位模式")
+    assert(floatConstantText(1.0e-5) == "0x3EE4F8B588E368F1", "指数写法应走位模式")
+    return
+
+; 解析：十进制拼写按正确舍入变成值，走的是降载期的字面量分支。
+字面量解析|test() -> ():
+    let 精确 = 2.5
+    let 循环 = 0.1
+    assert(精确 == 2.5, "2.5 应解析为精确值")
+    assert(循环 == 0.1, "0.1 应按正确舍入取值")
+    return

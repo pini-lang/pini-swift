@@ -509,6 +509,25 @@ public enum RuntimeOps {
                 return .null
             }
 
+            // bk_parse_double(text: String) -> F64：编译期浮点字面量取值，与宿主 `Double(text)` 同舍入。
+            shims["bk_parse_double"] = LibcShim(shape: [.string]) { args in
+                guard case .string(let text) = args[0] else {
+                    throw RuntimeError.invalidOperation(reason: "bk_parse_double 的参数须为字符串", location: loc)
+                }
+                guard let value = Double(text) else {
+                    throw RuntimeError.invalidOperation(reason: "bk_parse_double 无法解析 `\(text)`", location: loc)
+                }
+                return .float(value)
+            }
+
+            // bk_double_bits(value: F64) -> I64：位模式，发射侧据此写十六进制常量。
+            shims["bk_double_bits"] = LibcShim(shape: [.floating]) { args in
+                guard case .float(let value) = args[0] else {
+                    throw RuntimeError.invalidOperation(reason: "bk_double_bits 的参数须为浮点", location: loc)
+                }
+                return .int(Int(bitPattern: UInt(value.bitPattern)))
+            }
+
             // memcpy(dst: *U8, src: *U8, n: U64) -> *U8。
             shims["memcpy"] = LibcShim(shape: [.pointer, .pointer, .integer]) { args in
                 guard args.count >= 3 else { throw RuntimeError.argumentCountMismatch(name: "memcpy", expected: 3, got: args.count, location: loc) }

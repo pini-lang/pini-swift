@@ -1,4 +1,4 @@
-; 运行时段 C ABI 的 Pini 声明面：可经外部块表达的 120 个符号，按族分块。
+; 运行时段 C ABI 的 Pini 声明面：可经外部块表达的 122 个符号，按族分块。
 ; 符号清单以运行时 ABI 契约为权威；块名只是标签，不参与符号解析。
 ; 宽度不在 IR 的两条（bk_capabilities、bk_ptr_load_f32）走内建，不在这里声明。
 
@@ -10,6 +10,11 @@ bk_panic: (String,) -> ()
 bk_print_lock: () -> ()
 bk_print_unlock: () -> ()
 bk_runtime_cleanup: () -> ()
+
+; 浮点字面量族：编译期把拼写变成值与位模式，调用方是编译器自身，生成代码不呼。
+[float|foreign]
+bk_double_bits: (F64,) -> (I64,)
+bk_parse_double: (String,) -> (F64,)
 
 ; 句柄与 COW 族：只搬不透明指针，计数由运行时段维护。
 [handles|foreign]

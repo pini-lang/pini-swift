@@ -235,8 +235,38 @@ case "$gen_report" in
     ;;
 esac
 
+# 浮点字面量：常量按位模式出十六进制，四则与打印读数与宿主逐行相同。
+float_fixture="$root/bootstrap/fixtures/llvm-float"
+float_raw="$work/float-raw.ll"
+float_ll="$work/float.ll"
+if ! "$pini" emit "$float_fixture" > "$float_raw" 2>/dev/null; then
+    echo " 行不通  [测试自检] 浮点夹具发射失败" >&2
+    fail=1
+fi
+tail -n +3 "$float_raw" > "$float_ll"
+if ! grep -q "double 0x" "$float_ll"; then
+    echo " 行不通  [测试自检] 浮点常量未按位模式发射" >&2
+    fail=1
+fi
+if ! "$clang_bin" -o "$work/float-bin" "$float_ll" -L"$runtime_dir" -lPiniRuntime \
+    -Wl,-rpath,"$runtime_dir" >/dev/null 2>&1; then
+    echo " 行不通  [测试自检] 浮点夹具链接失败" >&2
+    fail=1
+fi
+if [ -x "$work/float-bin" ]; then
+    float_report="$("$work/float-bin")"
+    float_expected="18.75
+3.75
+0.30000000000000004
+1e-05"
+    if [ "$float_report" != "$float_expected" ]; then
+        echo " 行不通  [测试自检] 浮点读数不符：$float_report" >&2
+        fail=1
+    fi
+fi
+
 if [ "$fail" -ne 0 ]; then
     exit 1
 fi
-echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入"
+echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入，浮点常量走位模式"
 exit 0
