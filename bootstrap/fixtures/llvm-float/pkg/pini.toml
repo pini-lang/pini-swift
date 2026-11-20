@@ -1,0 +1,6 @@
+[package]
+name = "floatdemo"
+
+[lib]
+name = "floatdemo"
+entry = "src/api/main.pini"

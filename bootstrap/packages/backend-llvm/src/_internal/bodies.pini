@@ -457,6 +457,9 @@ emitExprCore|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
     if node.kind == 1:
         out.text = countText(node.intValue as I32)
         return out
+    if node.kind == 2:
+        out.text = floatConstantText(node.floatValue)
+        return out
     if node.kind == 3:
         let flag = node.intValue as I32
         if flag != 0:
