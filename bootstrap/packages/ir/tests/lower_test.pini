@@ -412,3 +412,45 @@ module: IrModule = IrModule()
     assert(取函数(样例 = 样例, name = "id") < 0, "模板不应进函数表")
     assert(取节点(样例 = 样例, kind = irExprTag(.irCall), text = "id__I32") >= 0, "调用点应指向实例符号")
     return
+
+; 跨单元样例：两个单元各走同一装配链，用于钉跨单元的符号与编号。
+造两单元样例|func(_源一: String, _源二: String,) -> (降载样例,):
+    let 载一 = loadUnit(path = "packages/p/src/api/a.pini", text = _源一)
+    let 载二 = loadUnit(path = "packages/p/src/api/b.pini", text = _源二)
+    assert(!载一.failed, "首单元应可加载")
+    assert(!载二.failed, "次单元应可加载")
+    assert(len(载一.unit.diagnostics) == 0, "首单元应无语法诊断")
+    assert(len(载二.unit.diagnostics) == 0, "次单元应无语法诊断")
+    let units = [载一.unit, 载二.unit]
+    let table = registerPackage(units)
+    let types = resolvePackage(units = units, table = table)
+    var world = makeMemberWorld(units = units, table = table, types = types)
+    let 填 = fillExprTypes(world = world, units = units)
+    let 泛 = instantiateGenerics(world = world, units = units, fill = 填)
+    var 类型面 = world.types
+    类型面.pool = 泛.pool
+    world.types = 类型面
+    var input = LowerWorld()
+    input.world = world
+    input.types = 泛.types
+    input.generics = 泛
+    let shapes = makeShapeTable(world)
+    input.shapes = shapes
+    input.layouts = layoutAll(shapes = shapes, pool = world.types.pool)
+    var out = 降载样例()
+    out.module = lowerWorkspace(input = input)
+    return out
+
+; 跨单元闭包编号：两个单元各自第一个闭包都取全局水位，函数名与 env 类型名不撞。
+闭包编号跨单元唯一|test() -> ():
+    let 样例 = 造两单元样例(_源一 = "主一|func() -> ():\n    let f = func (x: I32,) -> (I32,): return x + 1\n    print(f(1))\n", _源二 = "主二|func() -> ():\n    let g = func (x: I32,) -> (I32,): return x + 2\n    print(g(1))\n")
+    assert(len(样例.module.errors) == 0, "跨单元闭包应降载成功")
+    let 首 = 取函数(样例 = 样例, name = "__closure_0")
+    let 次 = 取函数(样例 = 样例, name = "__closure_1")
+    assert(首 >= 0, "首单元闭包应取编号 0")
+    assert(次 >= 0, "次单元闭包应取编号 1")
+    assert(样例.module.functions[首].closureId == 0, "条目编号与名字同源")
+    assert(样例.module.functions[次].closureId == 1, "条目编号与名字同源")
+    assert(取节点(样例 = 样例, kind = irExprTag(.irClosureLiteral), text = "__closure_0") >= 0, "首个闭包字面量指向 0")
+    assert(取节点(样例 = 样例, kind = irExprTag(.irClosureLiteral), text = "__closure_1") >= 0, "次个闭包字面量指向 1")
+    return

@@ -121,6 +121,20 @@ makeInstanceExprTypes|func(units: Array<CompilationUnit>, only: I32,) -> (ExprTy
         u = u + 1
     return out
 
+; 实例世界：逐字段另立一份，类型表也换新对象；不依赖结构体复制的层层隔离。
+instanceWorld|func(world: MemberWorld, table: TypeTable, binds: Array<GenericBinding>,) -> (MemberWorld,):
+    var out = MemberWorld()
+    out.units = world.units
+    out.table = world.table
+    out.types = table
+    out.symbols = world.symbols
+    out.decls = world.decls
+    out.builtins = world.builtins
+    out.functions = world.functions
+    out.labels = world.labels
+    out.genericBindings = binds
+    return out
+
 ; 建实例：解析模板签名得实例绑定，世界换成实例表，再推模板体类型。
 ; 签名解析绕过解析期的模板跳过；返回类型与参数类型都进 overrides 供播种与降载读。
 buildInstance|func(world: MemberWorld, name: String, ref: DeclRef, decl: DeclNode, argIds: Array<I32>, argTexts: Array<String>, key: String, work: GenericFill,) -> (GenericFill,):
@@ -155,19 +169,17 @@ buildInstance|func(world: MemberWorld, name: String, ref: DeclRef, decl: DeclNod
     table.members = world.types.members
     table.unitStart = world.types.unitStart
     table.overrides = stage.bindings
-    var iw = probeWorld(world = world, pool = stage.pool)
-    var iwTable = iw.types
-    iwTable.overrides = stage.bindings
-    iw.types = iwTable
-    iw.genericBindings = binds
+    var iw = instanceWorld(world = world, table = table, binds = binds)
     let instTypes = makeInstanceExprTypes(units = world.units, only = ref.unit)
     let inferred = inferUnitExprs(world = iw, unitIndex = ref.unit, types = instTypes)
     out.pool = inferred.pool
-    iw = probeWorld(world = iw, pool = inferred.pool)
-    iwTable = iw.types
-    iwTable.overrides = stage.bindings
-    iw.types = iwTable
-    iw.genericBindings = binds
+    var settled = TypeTable()
+    settled.pool = inferred.pool
+    settled.bindings = world.types.bindings
+    settled.members = world.types.members
+    settled.unitStart = world.types.unitStart
+    settled.overrides = stage.bindings
+    iw = instanceWorld(world = world, table = settled, binds = binds)
     var inst = GenericInstance()
     inst.name = instanceSymbol(instances = out.instances, functionName = name, argTexts = argTexts)
     inst.key = key
@@ -250,6 +262,18 @@ scanGenericCalls|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32,
         i = i + 1
     return out
 
+; 实例化后重推：调用点由实例补型，同单元下游（如对结果的取下标）此时才拿得到类型。
+; 只补未定的节点，已定的不覆盖，故可整单元跑一遍。
+repinGenerics|func(world: MemberWorld, work: GenericFill,) -> (GenericFill,):
+    var out = work
+    var u = 0
+    while u < len(world.units):
+        let one = inferUnitExprs(world = probeWorld(world = world, pool = out.pool), unitIndex = u, types = out.types)
+        out.pool = one.pool
+        out.types = one.types
+        u = u + 1
+    return out
+
 ; 实例化入口：扫全工作区调用点，建实例并推实例体类型。
 ; 实例体内再调用泛型函数不在本批范围内，故不排二次扫描。
 instantiateGenerics|func(world: MemberWorld, units: Array<CompilationUnit>, fill: ExprFill,) -> (GenericFill,):
@@ -260,4 +284,5 @@ instantiateGenerics|func(world: MemberWorld, units: Array<CompilationUnit>, fill
     while u < len(units):
         out = scanGenericCalls(world = world, unit = units[u], unitIndex = u, work = out)
         u = u + 1
+    out = repinGenerics(world = world, work = out)
     return out

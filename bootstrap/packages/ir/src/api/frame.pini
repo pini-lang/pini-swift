@@ -27,6 +27,8 @@ closures: Array<IrFunction> = []
 isAsync: Bool = false
 ; 泛型实例表随帧走：调用点按节点查实例名，与降载层读同一份。
 generics: GenericFill = GenericFill()
+; 闭包编号全工作区递增：函数名与 env 类型名同源，跨单元不得撞。
+closureSerial: I32 = 0
 
 ; 声明局部：槽位取当前水位，随后水位加一。
 declareIrLocal|func(frame: LowerFrame, name: String, typeId: I32, mutable: Bool,) -> (LowerFrame,):

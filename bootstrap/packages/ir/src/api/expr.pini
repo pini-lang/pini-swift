@@ -4,11 +4,13 @@ _semantics = "../../../semantics"
 _module_loader = "../../../module-loader"
 
 ; 函数字面量：体挂在本节点的 `kids`，另建同体函数条目供发射期出定义。
-; 帧换成闭包帧：形参占低位槽，外层可见名字按首次使用登记为捕获；
-; 捕获槽记的是创建点外层帧的槽位，env 由发射期按同序填槽地址。
+; 帧换成闭包帧：形参占低位槽，外层可见名字按首次使用登记为捕获；捕获槽记的是创建点
+; 外层帧的槽位，env 由发射期按同序填槽地址。编号取帧上的工作区水位，跨单元不撞。
 lowerClosure|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
     let expr = unit.ast.exprAt(id)
     var done = out
+    let serial = done.frame.closureSerial
+    done.frame.closureSerial = serial + 1
     let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
     if typeId < 0:
         return missType(out = done, unit = unit, id = id, bytes = bytes)
@@ -18,6 +20,7 @@ lowerClosure|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: 
     closure.externData = done.frame.externData
     closure.externs = done.frame.externs
     closure.outerLocals = done.frame.locals
+    closure.closureSerial = serial + 1
     var params: Array<IrParam> = []
     var body = -1
     var i = 0
@@ -58,13 +61,13 @@ lowerClosure|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: 
         done.offset = lowered.offset
         return done
     var fn = IrFunction()
-    fn.name = "__closure_" + countText(id)
+    fn.name = "__closure_" + countText(serial)
     fn.params = params
     fn.returnType = ret
     fn.body = lowered.ids
     fn.positions = lowered.positions
     fn.isClosure = true
-    fn.closureId = id
+    fn.closureId = serial
     fn.captures = lowered.frame.captures
     var c = 0
     while c < len(lowered.frame.closures):
@@ -75,7 +78,7 @@ lowerClosure|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: 
     let placed = internText(texts = lowered.texts, value = fn.name)
     var node = irMakeNode(kind = irExprTag(.irClosureLiteral), typeId = typeId)
     node.text = placed.id
-    node.intValue = id as I64
+    node.intValue = serial as I64
     node.kids = lowered.ids
     var slots: Array<I32> = []
     var s = 0
@@ -87,6 +90,7 @@ lowerClosure|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: 
     done.pool = inserted.pool
     done.texts = placed.texts
     done.id = inserted.id
+    done.frame.closureSerial = lowered.frame.closureSerial
     return done
 
 ; 表达式降载：AST 节点 + 推导表 + 局部帧 → IR 节点。
@@ -293,8 +297,8 @@ addIrNode|func(pool: IrNodePool, kind: I32, typeId: I32, op: I32, kids: Array<I3
     node.kids = kids
     return irAppendNode(pool = pool, node = node)
 
-; 类型后备：推导表不覆盖非字面量初始化的局部，其下游的下标读与字段读同样落空，这里按形状补判。
-; 比较与逻辑答布尔，一元答操作数类型，成员查字段声明，下标按容器分量取；待推导表补面后删除。
+; 类型后备：推导表不覆盖非字面量初始化的局部，其下游的字段读仍会落空，这里按形状补判。
+; 比较与逻辑答布尔，一元答操作数类型，成员查字段声明；下标类型由推导表给出，不在此兜底。
 fallbackIrType|func(map: TypeMap, types: ExprTypes, unit: CompilationUnit, unitIndex: I32, frame: LowerFrame, bytes: Array<U8>, id: I32,) -> (I32,):
     if id < 0 || id >= unit.ast.exprCount():
         return -1
@@ -327,25 +331,6 @@ fallbackIrType|func(map: TypeMap, types: ExprTypes, unit: CompilationUnit, unitI
             return -1
         let fieldName = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
         return irIdOf(map = map, semanticId = fieldTypeOf(frame = frame, owner = owner, fieldName = fieldName))
-    if unit.ast.isSubscriptExpr(id):
-        if len(expr.kids) < 1:
-            return -1
-        let containerType = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = frame, bytes = bytes, id = expr.kids[0])
-        if containerType < 0 || containerType >= irTypeCount(map.pool):
-            return -1
-        let entry = irTypeAt(pool = map.pool, id = containerType)
-        let tag = irTypeTag(entry.kind)
-        if tag == irTypeTag(.irTypeArray):
-            if len(entry.kids) > 0:
-                return entry.kids[0]
-            return -1
-        if tag == irTypeTag(.irTypeDict):
-            if len(entry.kids) > 1:
-                return entry.kids[1]
-            return -1
-        if tag == irTypeTag(.irTypeString):
-            return map.charId
-        return -1
     return -1
 
 ; 表达式类型：先读推导表，标识符回查帧，最后按运算符形状取后备；都没有答 -1。
