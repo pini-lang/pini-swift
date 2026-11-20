@@ -2,14 +2,14 @@
 _unicode = "../../../unicode"
 _syntax = "../../../syntax"
 
-; 标准库装配：把一份标准库源并进每个包的单元表，路径用虚拟名 `<stdlib>`，与宿主同名。
-; 只在装载层做一次：检查、降载、转储、发射与测试都从同一份单元表出发，不各装一遍。
+; 标准库装配：把一份标准库源并进工作区，路径用虚拟名 `<stdlib>`，与宿主同名。
+; 整个工作区只放一份：逐包各装会让发射面出现同名定义；只在装载层做一次。
 ; 让位规则与宿主同形：自由函数按顶层名让位，扩展方法按「目标#方法」让位，整块让尽则整块摘掉。
 
-; 装配选项：开关与显式源路径。默认关：方法调用尚未降载，开了会 check 过而 emit 缺口。
-; 显式给 `--stdlib <路径>` 即打开；编译器自身构建与不需要标准库的通道显式关掉。
+; 装配选项：开关与显式源路径。默认开：成员形态已闭环，函数形态等泛型函数。
+; 显式给 `--stdlib <路径>` 可换源；编译器自身构建与不需要标准库的通道传 `--no-stdlib`。
 (StdlibOption)
-enabled: Bool = false
+enabled: Bool = true
 path: String = ""
 
 ; 关装配：编译器自身构建与只验装载逻辑的单元测试用它，避免标准库内容进入读数。
@@ -146,16 +146,14 @@ prune|func(unit: CompilationUnit, claimedNames: Array<String>, claimedMethods: A
     out.ast = ast
     return out
 
-; 单包装配：先收集本包占用的名字，再把标准库那份剪好放在单元表首位。
-; 空包不装：没有单元就没有编译单元可承载声明，与宿主「只在首个单元并入」同效。
-assemblePackage|func(group: PackageUnits, unit: CompilationUnit,) -> (PackageUnits,):
-    var out = group
-    if len(group.units) == 0:
-        return out
-    if hasStdlib(units = group.units):
-        return out
-    var claimedNames: Array<String> = []
-    var claimedMethods: Array<String> = []
+; 让位主张：全工作区用户占用的顶层名与扩展方法键，标准库只按这组并集剪一次。
+(StdlibClaims)
+names: Array<String> = []
+methods: Array<String> = []
+
+; 收主张：逐单元扫顶层声明；扩展块按目标与全部方法名登记，供剪枝判让位。
+collectClaims|func(group: PackageUnits,) -> (StdlibClaims,):
+    var out = StdlibClaims()
     var i = 0
     while i < len(group.units):
         let one = group.units[i]
@@ -169,29 +167,57 @@ assemblePackage|func(group: PackageUnits, unit: CompilationUnit,) -> (PackageUni
                 while k < len(decl.kids):
                     let method = one.ast.declAt(decl.kids[k])
                     let key = methodKey(target = target, name = nameAt(bytes = bytes, start = method.nameStart, end = method.nameEnd))
-                    claimedMethods = claimedMethods.append(key)
+                    out.methods = out.methods.append(key)
                     k = k + 1
             elif isNamedDeclCode(code = decl.kind):
-                claimedNames = claimedNames.append(nameAt(bytes = bytes, start = decl.nameStart, end = decl.nameEnd))
+                out.names = out.names.append(nameAt(bytes = bytes, start = decl.nameStart, end = decl.nameEnd))
             d = d + 1
         i = i + 1
-    let pruned = prune(unit = unit, claimedNames = claimedNames, claimedMethods = claimedMethods)
-    if pruned.ast.itemCount() == 0:
-        return out
+    return out
+
+; 置首：合成单元排在最前；调用方保证单元可承载声明。
+prependUnit|func(group: PackageUnits, unit: CompilationUnit,) -> (PackageUnits,):
+    var out = group
     var units: Array<CompilationUnit> = []
-    units = units.append(pruned)
-    i = 0
+    units = units.append(unit)
+    var i = 0
     while i < len(group.units):
         units = units.append(group.units[i])
         i = i + 1
     out.units = units
     return out
 
-; 工作区装配：文本读一次，逐包各解析一份再剪枝——结构体按引用传递，共用一棵树会让后一包的让位改动前一包。
-; 错误进 `ws.errors` 而不就地中断：调用方按既有装载错误通道渲染，路径固定为 `<stdlib>`。
+; 单包装配：先收集本包占用的名字，再把标准库那份剪好放在单元表首位。
+; 空包不装：没有单元就没有编译单元可承载声明，与宿主「只在首个单元并入」同效。
+assemblePackage|func(group: PackageUnits, unit: CompilationUnit,) -> (PackageUnits,):
+    var out = group
+    if len(group.units) == 0:
+        return out
+    if hasStdlib(units = group.units):
+        return out
+    let claims = collectClaims(group = group)
+    let pruned = prune(unit = unit, claimedNames = claims.names, claimedMethods = claims.methods)
+    if pruned.ast.itemCount() == 0:
+        return out
+    return prependUnit(group = group, unit = pruned)
+
+; 工作区装配：读源一次、解析一份、剪一次，只放进首个非空包；任一包已装即幂等。
+; 单份是必须的：逐包各装一份会让发射面出现同名定义；让位按全工作区并集，跨包覆盖同效。
 assembleStdlib|func(ws: WorkspaceUnits, sourcePath: String,) -> (WorkspaceUnits,):
     var out = ws
     if len(out.packages) == 0:
+        return out
+    var carrier = -1
+    var installed = false
+    var p = 0
+    while p < len(out.packages):
+        if len(out.packages[p].units) > 0:
+            if carrier < 0:
+                carrier = p
+        if hasStdlib(units = out.packages[p].units):
+            installed = true
+        p = p + 1
+    if installed || carrier < 0:
         return out
     if len(sourcePath) == 0 || !exists(sourcePath):
         out.errors = out.errors.append(makeLoadError(kind = .errorStdlibMissing, path = "<stdlib>", detail = sourcePath))
@@ -204,12 +230,25 @@ assembleStdlib|func(ws: WorkspaceUnits, sourcePath: String,) -> (WorkspaceUnits,
         case err(reason,):
             out.errors = out.errors.append(makeLoadError(kind = .errorFileUnreadable, path = "<stdlib>", detail = sourcePath))
             return out
-    var p = 0
+    let loaded = loadUnit(path = "<stdlib>", text = content)
+    if loaded.failed:
+        out.errors = out.errors.append(loaded.error)
+        return out
+    var claims = StdlibClaims()
+    p = 0
     while p < len(out.packages):
-        let loaded = loadUnit(path = "<stdlib>", text = content)
-        if loaded.failed:
-            out.errors = out.errors.append(loaded.error)
-            return out
-        out.packages[p] = assemblePackage(group = out.packages[p], unit = loaded.unit)
+        let one = collectClaims(group = out.packages[p])
+        var n = 0
+        while n < len(one.names):
+            claims.names = claims.names.append(one.names[n])
+            n = n + 1
+        n = 0
+        while n < len(one.methods):
+            claims.methods = claims.methods.append(one.methods[n])
+            n = n + 1
         p = p + 1
+    let pruned = prune(unit = loaded.unit, claimedNames = claims.names, claimedMethods = claims.methods)
+    if pruned.ast.itemCount() == 0:
+        return out
+    out.packages[carrier] = prependUnit(group = out.packages[carrier], unit = pruned)
     return out

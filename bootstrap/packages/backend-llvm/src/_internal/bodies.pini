@@ -573,6 +573,10 @@ emitExprCore|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
         return emitEnumConstruct(out = out, module = module, node = node)
     if node.kind == 28:
         return emitFieldGet(out = out, module = module, node = node)
+    if node.kind == 40:
+        if node.op == 1:
+            return emitStringUnaryCall(out = out, module = module, node = node, symbol = "bk_string_upper")
+        return emitStringUnaryCall(out = out, module = module, node = node, symbol = "bk_string_lower")
     if node.kind == 41:
         return emitStringPairCall(out = out, module = module, node = node, symbol = "bk_string_contains", asBool = true)
     if node.kind == 42:
@@ -583,6 +587,10 @@ emitExprCore|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
         return emitArrayJoin(out = out, module = module, node = node)
     if node.kind == 46:
         return emitInterp(out = out, module = module, node = node)
+    if node.kind == 47:
+        return emitStringUnaryCall(out = out, module = module, node = node, symbol = "bk_string_trim_left")
+    if node.kind == 48:
+        return emitStringUnaryCall(out = out, module = module, node = node, symbol = "bk_string_trim_right")
     if node.kind == 49:
         return emitStringPairCall(out = out, module = module, node = node, symbol = "bk_string_index_of", asBool = false)
     if node.kind == 56:
@@ -2101,6 +2109,22 @@ emitShortCircuit|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut
     done.ctx.temp = id + 1
     let name = tempName(index = id)
     appendLine(sink = done.ctx.lines, text = "  " + name + " = load i1, ptr " + slot.text)
+    done.text = name
+    return done
+
+; 一元字符串调用：接收者求值一次后交给运行时段，upper/lower 与左右修剪共用这一形状。
+emitStringUnaryCall|func(out: ExprOut, module: IrModule, node: IrNode, symbol: String,) -> (ExprOut,):
+    var done = out
+    if len(node.kids) < 1:
+        done.ctx = addGap(ctx = done.ctx, gap = "字串一元成员缺接收者")
+        return done
+    let receiver = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[0])
+    done.ctx = receiver.ctx
+    useExtern(use = done.ctx.externs, name = symbol)
+    let id = done.ctx.temp
+    done.ctx.temp = id + 1
+    let name = tempName(index = id)
+    appendLine(sink = done.ctx.lines, text = "  " + name + " = call ptr @" + symbol + "(ptr " + receiver.text + ")")
     done.text = name
     return done
 

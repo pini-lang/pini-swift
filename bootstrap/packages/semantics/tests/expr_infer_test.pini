@@ -110,6 +110,15 @@ types: ExprTypes = ExprTypes()
     assert(typeText(pool = 推.pool, id = exprTypeAt(table = 推.types, unit = 0, node = 二元)) == "I32", "加法应推 I32")
     return
 
+; 内建目标扩展：`((String))` 的 self 取内建类型，链式调用与加法才有型。
+内建扩展自身有型|test() -> ():
+    let 样例 = 造推导样例("((String))\ntrimBoth|self() -> (String,):\n    return self.trimLeft() + self.trimRight()\n\nf|func(s: String,) -> (String,):\n    return s.trimBoth()\n")
+    let 推 = inferUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
+    let 二元 = 首个二元节点(样例.unit)
+    assert(二元 >= 0, "样例应含二元节点")
+    assert(typeText(pool = 推.pool, id = exprTypeAt(table = 推.types, unit = 0, node = 二元)) == "String", "扩展方法内的加法应推 String")
+    return
+
 ; 函数返回：顶层函数的调用点取声明返回类型。
 函数返回类型|test() -> ():
     let 样例 = 造推导样例("甲|func() -> (I32,):\n    return 1\n\nf|func() -> ():\n    甲()\n")

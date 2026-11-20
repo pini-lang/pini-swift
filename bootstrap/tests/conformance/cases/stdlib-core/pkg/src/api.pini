@@ -1,0 +1,55 @@
+; 正例：十八个标准库成员经装配进入用户模块；函数逐个接收参数以便测试边界。
+; 注意  这里不 import 标准库，装配由驱动完成。
+修剪|func(s: String,) -> (String,):
+    return s.trim()
+
+前缀|func(s: String, p: String,) -> (Bool,):
+    return s.startsWith(prefix = p)
+
+后缀|func(s: String, p: String,) -> (Bool,):
+    return s.endsWith(suffix = p)
+
+替换|func(s: String, old: String, replacement: String,) -> (String,):
+    return s.replace(old = old, new = replacement)
+
+重复|func(s: String, times: I32,) -> (String,):
+    return s.repeat(times = times)
+
+左填|func(s: String, width: I32, fill: String,) -> (String,):
+    return s.padLeft(width = width, fill = fill)
+
+右填|func(s: String, width: I32, fill: String,) -> (String,):
+    return s.padRight(width = width, fill = fill)
+
+末位|func(s: String, needle: String,) -> (I32,):
+    return s.lastIndexOf(needle = needle)
+
+判空|func(s: String,) -> (Bool,):
+    return s.isEmpty()
+
+计数|func(s: String, sub: String,) -> (I32,):
+    return s.count(sub = sub)
+
+去前缀|func(s: String, prefix: String,) -> (String,):
+    return s.stripPrefix(prefix = prefix)
+
+去后缀|func(s: String, suffix: String,) -> (String,):
+    return s.stripSuffix(suffix = suffix)
+
+补前缀|func(s: String, prefix: String,) -> (String,):
+    return s.ensurePrefix(prefix = prefix)
+
+补后缀|func(s: String, suffix: String,) -> (String,):
+    return s.ensureSuffix(suffix = suffix)
+
+逆序|func(s: String,) -> (String,):
+    return s.reversed()
+
+首大|func(s: String,) -> (String,):
+    return s.capitalized()
+
+居中|func(s: String, width: I32, fill: String,) -> (String,):
+    return s.center(width = width, fill = fill)
+
+截断|func(s: String, width: I32,) -> (String,):
+    return s.truncate(width = width)

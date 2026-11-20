@@ -2,24 +2,35 @@
 _module_loader = "../../module-loader"
 _syntax = "../../syntax"
 
-; 标准库装配：合成单元位置、让位、幂等与缺件四条；只走内存夹具，不读用户工作区。
-; 装配源路径取仓库根那份：模块根往上三级即仓库根，与运行目录无关。
+; 标准库装配：单包与多包的位置、让位、幂等与缺件；只走内存夹具，不读用户工作区。
+; 装配源路径取 bootstrap 下那份：模块根往上两级即 bootstrap，与运行目录无关。
+
+; 装配单包：包名即根路径，一个用户单元；文本必须能过解析。
+装配单包|func(name: String, text: String,) -> (PackageUnits,):
+    var group = PackageUnits()
+    group.name = name
+    group.rootPath = name
+    let loaded = loadUnit(path = name + "/src/main.pini", text = text)
+    assert(!loaded.failed, "夹具单元应能解析")
+    group.units = group.units.append(loaded.unit)
+    return group
+
+; 空包：没有单元，用来验承载包选择。
+造空包|func() -> (PackageUnits,):
+    var group = PackageUnits()
+    group.name = "empty"
+    group.rootPath = "empty"
+    return group
 
 ; 工作区夹具：一个包、一个用户单元；文本必须能过解析。
 造装配包|func(text: String,) -> (WorkspaceUnits,):
     var ws = WorkspaceUnits()
-    var group = PackageUnits()
-    group.name = "demo"
-    group.rootPath = "demo"
-    let loaded = loadUnit(path = "demo/src/main.pini", text = text)
-    assert(!loaded.failed, "夹具单元应能解析")
-    group.units = group.units.append(loaded.unit)
-    ws.packages = ws.packages.append(group)
+    ws.packages = ws.packages.append(装配单包(name = "demo", text = text))
     return ws
 
-; 装配源路径：仓库根的分段源；装配首批只装 core。
+; 装配源路径：bootstrap 下那份源；装配首批只装 core。
 装配源路径|func() -> (String,):
-    return moduleRoot() + "/../../../stdlib/src/api/core.pini"
+    return moduleRoot() + "/../../stdlib/src/api/core.pini"
 
 ; 合成单元位：按虚拟路径找；未装答 -1。
 合成单元位|func(group: PackageUnits,) -> (I32,):
@@ -77,4 +88,61 @@ _syntax = "../../syntax"
     assert(len(结果.errors) == 1, "应有一条装载错误")
     assert(isLoadError(error = 结果.errors[0], kind = .errorStdlibMissing), "类别应为缺装配源路径")
     assert(len(结果.packages[0].units) == 1, "缺件时不注入单元")
+    return
+
+; 双包一份：合成单元只进首个非空包，第二个包的单元表原样保留。
+双包一份|test() -> ():
+    var ws = WorkspaceUnits()
+    ws.packages = ws.packages.append(装配单包(name = "alpha", text = "main|func() -> ():\n    return\n"))
+    ws.packages = ws.packages.append(装配单包(name = "beta", text = "main|func() -> ():\n    return\n"))
+    let 结果 = assembleStdlib(ws = ws, sourcePath = 装配源路径())
+    assert(len(结果.errors) == 0, "装配不应报错")
+    assert(len(结果.packages[0].units) == 2, "承载包应多一个合成单元")
+    assert(len(结果.packages[1].units) == 1, "第二包不应追加单元")
+    assert(合成单元位(group = 结果.packages[0]) == 0, "合成单元应在承载包首位")
+    assert(合成单元位(group = 结果.packages[1]) == -1, "第二包不应有合成单元")
+    return
+
+; 空首包：首个包没有单元，合成单元落到第一个非空包。
+空首包|test() -> ():
+    var ws = WorkspaceUnits()
+    ws.packages = ws.packages.append(造空包())
+    ws.packages = ws.packages.append(装配单包(name = "alpha", text = "main|func() -> ():\n    return\n"))
+    let 结果 = assembleStdlib(ws = ws, sourcePath = 装配源路径())
+    assert(len(结果.errors) == 0, "装配不应报错")
+    assert(len(结果.packages[0].units) == 0, "空包仍应为空")
+    assert(合成单元位(group = 结果.packages[0]) == -1, "空包不承载合成单元")
+    assert(合成单元位(group = 结果.packages[1]) == 0, "合成单元应在首个非空包首位")
+    assert(len(结果.packages[1].units) == 2, "首个非空包应多一个合成单元")
+    return
+
+; 跨包让位：后包声明的 trim 也让标准库那份退出，承载包里的合成单元应剩十七条。
+跨包让位|test() -> ():
+    let 后包文本 = "((String))\ntrim|self() -> (String,):\n    return self\n\nmain|func() -> ():\n    return\n"
+    var ws = WorkspaceUnits()
+    ws.packages = ws.packages.append(装配单包(name = "alpha", text = "main|func() -> ():\n    return\n"))
+    ws.packages = ws.packages.append(装配单包(name = "beta", text = 后包文本))
+    let 结果 = assembleStdlib(ws = ws, sourcePath = 装配源路径())
+    assert(len(结果.errors) == 0, "装配不应报错")
+    assert(扩展条数(unit = 结果.packages[0].units[0]) == 17, "跨包让位后应剩十七条")
+    assert(扩展条数(unit = 结果.packages[1].units[0]) == 1, "后包用户扩展应原样保留")
+    return
+
+; 双包幂等：装过再装，承载包不追加，第二包仍无合成单元。
+双包幂等|test() -> ():
+    var ws = WorkspaceUnits()
+    ws.packages = ws.packages.append(装配单包(name = "alpha", text = "main|func() -> ():\n    return\n"))
+    ws.packages = ws.packages.append(装配单包(name = "beta", text = "main|func() -> ():\n    return\n"))
+    let 一次 = assembleStdlib(ws = ws, sourcePath = 装配源路径())
+    let 两次 = assembleStdlib(ws = 一次, sourcePath = 装配源路径())
+    assert(len(两次.packages[0].units) == 2, "重复装配不追加单元")
+    assert(len(两次.packages[1].units) == 1, "第二包仍应只有一个单元")
+    assert(合成单元位(group = 两次.packages[1]) == -1, "第二包仍无合成单元")
+    return
+
+; 空工作区：没有包就不装，也不报缺件。
+空工作区|test() -> ():
+    let 结果 = assembleStdlib(ws = WorkspaceUnits(), sourcePath = 装配源路径())
+    assert(len(结果.errors) == 0, "空工作区不应报缺件")
+    assert(len(结果.packages) == 0, "空工作区仍为空")
     return

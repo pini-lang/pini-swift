@@ -305,7 +305,7 @@ walkInferFunction|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32
     out.types = walked.types
     return out
 
-; 逐声明走体：顶层函数直接走，类型与扩展块下钻到成员函数，所属类型按块名解一次。
+; 逐声明走体：顶层函数直接走，类型与扩展块下钻到成员函数，所属类型按块名解一次；内建目标同样有型。
 walkInferDecls|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, state: WalkState,) -> (WalkState,):
     var out = state
     var d = 0
@@ -315,7 +315,7 @@ walkInferDecls|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, s
             out = walkInferFunction(world = world, unit = unit, unitIndex = unitIndex, declId = d, ownerType = -1, state = out)
         elif isOwnerDeclCode(decl.kind):
             let ownerName = decodeRange(bytes = out.bytes, start = decl.nameStart, end = decl.nameEnd)
-            let ownerType = nominalTypeId(world = world, name = ownerName)
+            let ownerType = ownerTypeId(world = world, name = ownerName)
             var i = 0
             while i < len(decl.kids):
                 let child = decl.kids[i]

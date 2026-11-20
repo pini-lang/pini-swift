@@ -633,7 +633,7 @@ fieldTypeOf|func(frame: LowerFrame, owner: String, fieldName: String,) -> (I32,)
         return -1
     return frame.world.types.typeOf(unit = ref.unit, decl = ref.decl)
 
-; 接收者所有者：名义与枚举答名字，其余答空串；空串说明按名找不到方法符号。
+; 接收者所有者：名义、枚举与内建 String/Array 答名字，其余答空串；空串说明按名找不到方法符号。
 receiverOwner|func(map: TypeMap, typeId: I32,) -> (String,):
     if typeId < 0 || typeId >= irTypeCount(map.pool):
         return ""
@@ -643,6 +643,10 @@ receiverOwner|func(map: TypeMap, typeId: I32,) -> (String,):
         return entry.name
     if tag == irTypeTag(.irTypeEnumeration):
         return entry.name
+    if tag == irTypeTag(.irTypeString):
+        return "String"
+    if tag == irTypeTag(.irTypeArray):
+        return "Array"
     return ""
 
 ; 读节点：名字、槽位与类型给定，造一个按槽位读并把名字驻留进文本池。
@@ -1287,6 +1291,8 @@ lowerCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: Typ
                 elif isStringMember(memberName = memberName, receiverType = recvType, map = map):
                     builtinMember = memberName
                     builtinType = recvType
+                    if builtinType < 0:
+                        builtinType = map.stringId
                 else:
                     return missExpr(out = done, unit = unit, id = id, what = "成员被调 " + memberName)
             if resolved.found && !resolved.takesReceiver:
@@ -1400,22 +1406,32 @@ lowerArrayMember|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, m
         return done
     return missExpr(out = done, unit = unit, id = id, what = "成员被调 " + member)
 
-; 字符串成员判定：名字在五类之内且接收者类型是字符串。
+; 字符串成员判定：名字在九类之内；upper/lower/trimLeft/trimRight 只属字串，接收者未定时也认。
 isStringMember|func(memberName: String, receiverType: I32, map: TypeMap,) -> (Bool,):
     if memberName != "contains" && memberName != "split" && memberName != "substring" && memberName != "indexOf" && memberName != "slice":
-        return false
+        if memberName != "upper" && memberName != "lower" && memberName != "trimLeft" && memberName != "trimRight":
+            return false
+    let unary = memberName == "upper" || memberName == "lower" || memberName == "trimLeft" || memberName == "trimRight"
     if receiverType < 0 || receiverType >= irTypeCount(map.pool):
-        return false
+        return unary
     return irTypeTag(irTypeAt(pool = map.pool, id = receiverType).kind) == irTypeTag(.irTypeString)
 
 ; 字符串成员：contains / split / substring / indexOf 各发专属节点，slice 发切片节点。
-; 结果类型取推导表；数目不符或名字不认识时报「成员被调」，不猜。
+; upper/lower 共用大小写节点按 op 分上下，trimLeft/trimRight 各发专属节点。
+; 结果类型取推导表；缺失时只补给字符串结果，切分不猜。
 lowerStringMember|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32, member: String, receiver: I32, actuals: Array<IrActual>,) -> (LowerExpr,):
     var done = out
-    let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
+    var typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
     if typeId < 0:
         if member == "contains":
             return lowerStringNode(out = done, unit = unit, id = id, kind = .irStringContains, typeId = map.booleanId, receiver = receiver, actuals = actuals)
+        if member == "indexOf":
+            typeId = map.i32Id
+        elif member == "split":
+            return missType(out = done, unit = unit, id = id, bytes = bytes)
+        else:
+            typeId = map.stringId
+    if typeId < 0:
         return missType(out = done, unit = unit, id = id, bytes = bytes)
     if member == "contains" && len(actuals) == 1:
         return lowerStringNode(out = done, unit = unit, id = id, kind = .irStringContains, typeId = typeId, receiver = receiver, actuals = actuals)
@@ -1427,6 +1443,14 @@ lowerStringMember|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, 
         return lowerStringNode(out = done, unit = unit, id = id, kind = .irStringSubstring, typeId = typeId, receiver = receiver, actuals = actuals)
     if member == "slice" && len(actuals) == 2:
         return lowerStringNode(out = done, unit = unit, id = id, kind = .irSliceCall, typeId = typeId, receiver = receiver, actuals = actuals)
+    if member == "upper" && len(actuals) == 0:
+        return lowerStringUnary(out = done, kind = .irStringCase, typeId = typeId, op = 1, receiver = receiver)
+    if member == "lower" && len(actuals) == 0:
+        return lowerStringUnary(out = done, kind = .irStringCase, typeId = typeId, op = 0, receiver = receiver)
+    if member == "trimLeft" && len(actuals) == 0:
+        return lowerStringUnary(out = done, kind = .irStringTrimLeft, typeId = typeId, op = 0, receiver = receiver)
+    if member == "trimRight" && len(actuals) == 0:
+        return lowerStringUnary(out = done, kind = .irStringTrimRight, typeId = typeId, op = 0, receiver = receiver)
     return missExpr(out = done, unit = unit, id = id, what = "成员被调 " + member)
 
 ; 字符串成员节点：接收者在前，实参按源序排在其后。
@@ -1437,6 +1461,14 @@ lowerStringNode|func(out: LowerExpr, unit: CompilationUnit, id: I32, kind: IrExp
         kids = kids.append(actuals[i].id)
         i = i + 1
     let inserted = addIrNode(pool = out.pool, kind = irExprTag(kind), typeId = typeId, op = 0, kids = kids)
+    var done = out
+    done.pool = inserted.pool
+    done.id = inserted.id
+    return done
+
+; 字符串一元成员：接收者一个子节点；upper/lower 用 op 分上下，修剪各用专属类别。
+lowerStringUnary|func(out: LowerExpr, kind: IrExprKind, typeId: I32, op: I32, receiver: I32,) -> (LowerExpr,):
+    let inserted = addIrNode(pool = out.pool, kind = irExprTag(kind), typeId = typeId, op = op, kids = [receiver])
     var done = out
     done.pool = inserted.pool
     done.id = inserted.id

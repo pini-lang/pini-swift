@@ -1177,8 +1177,9 @@ y: I32 = 0
 `map` 只能映射到同一元素类型：跨类型要先有一块空的 `Array<U>` 作起点，语言今天构造不出。
 
 注意 —— 标准库收的是 Pini 源码写得出的东西。`Dictionary` / `Set` 没有扩展通道，它们的成员方法不在其中；
-平台能力（时间 / 随机 / 环境变量）不是 Pini 源码能表达的，不在其中，要走宿主内建。源码是
-`Sources/PiniSyntax/Resources/stdlib.pini`，诊断里它的文件名显示为 `<stdlib>`。
+平台能力（时间 / 随机 / 环境变量）不是 Pini 源码能表达的，不在其中，要走宿主内建。源码在
+`bootstrap/stdlib/src/api/`，宿主发行副本是 `Sources/PiniSyntax/Resources/stdlib.pini`，诊断里它的
+文件名显示为 `<stdlib>`。
 
 `pini fmt` 与 `pini parse` 不装配标准库：这两个命令输出的是用户写下的那棵树，把标准库并进去会连同它的
 声明一起打印出来。

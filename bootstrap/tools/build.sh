@@ -39,11 +39,19 @@ runtime="$(pini_runtime_lib "$root")" || exit 1
 export PINI_RUNTIME_LIB="$runtime"
 echo "运行时段 $runtime"
 
-TMPDIR="$tmp" "$pini" build "$root/bootstrap"
+# 编译器自身构建不装标准库：否则改标准库就要重建编译器，自举环里多一道回边。
+TMPDIR="$tmp" "$pini" build --no-stdlib "$root/bootstrap"
 code=$?
 if [ "$code" -ne 0 ]; then
     echo " 行不通  [构建] 退出码 ${code}；产物未验证" >&2
     exit "$code"
+fi
+
+# 编译器产物一旦并进标准库，自举链就多一道回边；驱动包出现扩展方法符号即说明没带 --no-stdlib。
+guard_ir="$root/bootstrap/.build/debug/packages/driver/pini-bootstrap.ll"
+if grep -q -E '@[A-Za-z_]+__(String|Array)\(' "$guard_ir"; then
+    echo " 行不通  [构建] 编译器产物含标准库扩展符号；构建须带 --no-stdlib" >&2
+    exit 1
 fi
 
 # 回读：二进制必须在，更新数按时间戳判，避免把「全部跳过」当成「构建成功」。

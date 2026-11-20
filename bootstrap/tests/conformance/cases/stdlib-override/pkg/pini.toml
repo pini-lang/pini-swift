@@ -1,0 +1,10 @@
+[package]
+name = "case"
+
+[lib]
+name = "case"
+entry = "src/api.pini"
+
+[[test]]
+name = "case-tests"
+entry = "tests"

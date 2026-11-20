@@ -182,4 +182,3 @@ truncate|self(width: I32,) -> (String,):
     if width >= len(self):
         return self
     return self.slice(0, width)
-

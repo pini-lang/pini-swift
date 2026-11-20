@@ -57,6 +57,16 @@ module: IrModule = IrModule()
         i = i + 1
     return -1
 
+; 取指定类别与操作的节点：同一类别可能发多次，按 op 区分，找不到答 -1。
+取节点按操作|func(样例: 降载样例, kind: I32, op: I32,) -> (I32,):
+    var i = 0
+    while i < irNodeCount(样例.module.nodes):
+        let 节点 = irNodeAt(pool = 样例.module.nodes, id = i)
+        if 节点.kind == kind && 节点.op == op:
+            return i
+        i = i + 1
+    return -1
+
 ; 名字编码：非 ASCII 标量按 `_u` 加四位大写十六进制，与宿主同一规则。
 方法名编码|test() -> ():
     assert(mangleName(name = "plus") == "plus", "ASCII 名应原样返回")
@@ -253,6 +263,26 @@ module: IrModule = IrModule()
     let 节点 = irNodeAt(pool = 样例.module.nodes, id = at)
     assert(len(节点.kids) == 3, "接收者加两个边界")
     assert(irTypeText(pool = 样例.module.types, id = 节点.typeId) == "array<i32>", "结果类型应与接收者同形")
+    return
+
+; 字符串一元成员：upper/lower 共用大小写节点按 op 分上下，修剪各发专属节点。
+字符串一元成员|test() -> ():
+    let src = "f|func(_s: String,) -> (String,):\n    let a = _s.upper()\n    let b = _s.lower()\n    let c = _s.trimLeft()\n    let d = _s.trimRight()\n    return a\n"
+    let 样例 = 造样例(src)
+    assert(len(样例.module.errors) == 0, "字符串一元成员应降载成功")
+    assert(取节点按操作(样例 = 样例, kind = irExprTag(.irStringCase), op = 1) >= 0, "upper 应发 op 为 1 的大小写节点")
+    assert(取节点按操作(样例 = 样例, kind = irExprTag(.irStringCase), op = 0) >= 0, "lower 应发 op 为 0 的大小写节点")
+    assert(取节点按类别(样例 = 样例, kind = irExprTag(.irStringTrimLeft)) >= 0, "trimLeft 应发修剪左节点")
+    assert(取节点按类别(样例 = 样例, kind = irExprTag(.irStringTrimRight)) >= 0, "trimRight 应发修剪右节点")
+    return
+
+; 字符串链式成员：内层调用结果类型未定时，只属字串的一元名仍应认出接收者。
+字符串链式成员|test() -> ():
+    let src = "f|func(_s: String,) -> (String,):\n    let a = _s.trimLeft().trimRight()\n    let b = _s.substring(0, 1).upper()\n    return a\n"
+    let 样例 = 造样例(src)
+    assert(len(样例.module.errors) == 0, "链式字符串成员应降载成功")
+    assert(取节点按类别(样例 = 样例, kind = irExprTag(.irStringTrimRight)) >= 0, "链式 trimRight 应发修剪右节点")
+    assert(取节点按操作(样例 = 样例, kind = irExprTag(.irStringCase), op = 1) >= 0, "链式 upper 应发大小写节点")
     return
 
 ; 文本池：同内容复用下标，新内容追加到末尾，池只增不复制。

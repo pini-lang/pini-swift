@@ -1353,8 +1353,8 @@ func evaluateForeignMacros(
     return try ForeignMacroEvaluator.evaluate(symbols: symbols, config: config)
 }
 
-func checkSingleFileDiagnostics(source: String, fileName: String) -> FileCheckResult {
-    let module = parseOrReport(source: source, fileName: fileName)
+func checkSingleFileDiagnostics(source: String, fileName: String, withStdlib: Bool = true) -> FileCheckResult {
+    let module = parseOrReport(source: source, fileName: fileName, withStdlib: withStdlib)
 
     let analyzer = SemanticAnalyzer()
     let semanticErrors = analyzer.analyzeCollecting(module: module)
@@ -1395,8 +1395,8 @@ func checkSingleFileDiagnostics(source: String, fileName: String) -> FileCheckRe
     return result
 }
 
-func runCheckCommand(source: String, fileName: String) throws {
-    let result = checkSingleFileDiagnostics(source: source, fileName: fileName)
+func runCheckCommand(source: String, fileName: String, withStdlib: Bool = true) throws {
+    let result = checkSingleFileDiagnostics(source: source, fileName: fileName, withStdlib: withStdlib)
     for d in result.diagnostics {
         FileHandle.standardError.write(Data((d + "\n").utf8))
     }
@@ -1825,7 +1825,7 @@ func emitAndRunLLVMTests(
 
 // check / build 接收文件或目录：文件 → 单文件收集式 check；目录含 `pini.toml` → 显式多文件模块，
 // 跨文件 analyze/check 首个错误即报；目录无清单 → 逐 `.pini` 独立 check，并跳过嵌套模块子目录。
-func runCheckPath(_ path: String) {
+func runCheckPath(_ path: String, withStdlib: Bool = true) {
     var isDir: ObjCBool = false
     guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir) else {
         printError("Error: 路径不存在：\(path)")
@@ -1838,7 +1838,7 @@ func runCheckPath(_ path: String) {
             printError("Error: \(error.localizedDescription)"); exit(1)
         }
         do {
-            try runCheckCommand(source: source, fileName: path)
+            try runCheckCommand(source: source, fileName: path, withStdlib: withStdlib)
         } catch {
             if !diagnosticRow(error) { printError("Error: \(error.localizedDescription)") }
             exit(1)
@@ -1856,7 +1856,7 @@ func runCheckPath(_ path: String) {
     if let manifest = manifest {
         // 显式多文件模块
         let pkg: Package
-        do { pkg = try loadPackageWithGenerated(path: path, manifest: manifest) } catch {
+        do { pkg = try loadPackageWithGenerated(path: path, manifest: manifest, withStdlib: withStdlib) } catch {
             if !diagnosticRow(error) { printError(formatCLIError(error: error, source: nil)) }
             exit(1)
         }
@@ -1928,7 +1928,7 @@ func runCheckPath(_ path: String) {
             continue
         }
         let fileName = (full as NSString).lastPathComponent
-        let checkResult = checkSingleFileDiagnostics(source: source, fileName: fileName)
+        let checkResult = checkSingleFileDiagnostics(source: source, fileName: fileName, withStdlib: withStdlib)
         if !checkResult.diagnostics.isEmpty {
             for d in checkResult.diagnostics {
                 FileHandle.standardError.write(Data(("\(fileName): " + d + "\n").utf8))
@@ -2109,8 +2109,8 @@ private func lowerPackage(
 
 /// 装载包并接上计划里的生成模块。需要看见生成声明的命令都走这里：
 /// `.build` 路径只在生成模块装载器里拼一份，命令层不自行拼。
-func loadPackageWithGenerated(path: String, manifest: ModuleManifest?) throws -> Package {
-    let package = try FileLoader.loadDirectory(path: path, manifest: manifest)
+func loadPackageWithGenerated(path: String, manifest: ModuleManifest?, withStdlib: Bool = true) throws -> Package {
+    let package = try FileLoader.loadDirectory(path: path, manifest: manifest, withStdlib: withStdlib)
     return try GeneratedModules.attach(to: package, packageRoot: path)
 }
 
@@ -2127,7 +2127,7 @@ func foreignConfigFor(root: String, manifest: ModuleManifest?) -> FFIConfig {
 
 /// `pini build`：先配置（登记翻译步，出计划），再执行（翻译），最后才是发射与链接。
 /// 单包在翻译之后仍走 check，工作区根则按计划产出接口、IR 和可执行文件。
-func runBuildPath(_ path: String, printPlan: Bool = false) {
+func runBuildPath(_ path: String, printPlan: Bool = false, withStdlib: Bool = true) {
     do {
         let configured = try BuildRunner.configure(rootDirectory: path)
         if printPlan {
@@ -2158,10 +2158,10 @@ func runBuildPath(_ path: String, printPlan: Bool = false) {
             }
         }
         guard let workspace = try WorkspaceBuilder.plan(rootDirectory: path) else {
-            runCheckPath(path)
+            runCheckPath(path, withStdlib: withStdlib)
             return
         }
-        try buildWorkspace(workspace)
+        try buildWorkspace(workspace, withStdlib: withStdlib)
         CommentStyleHint.emit()
     } catch {
         if !diagnosticRow(error) { printError(formatCLIError(error: error, source: nil)) }
@@ -2170,13 +2170,14 @@ func runBuildPath(_ path: String, printPlan: Bool = false) {
 }
 
 /// 整图校验先于逐 target 发射；任何上游失败都阻止下游产物，避免留下半张构建图。
-private func buildWorkspace(_ plan: WorkspaceBuildPlan) throws {
+private func buildWorkspace(_ plan: WorkspaceBuildPlan, withStdlib: Bool) throws {
     var writtenInterfaces: Set<String> = []
     // 同一包按 target 反复装载；警告属于源码，一个包只报一次。
     var reportedWarnings: Set<String> = []
     for package in plan.packages {
         for target in package.targets where target.isBuiltByDefault {
-            let loaded = try WorkspaceBuilder.load(package: package, target: target)
+            let loaded = try WorkspaceBuilder.load(
+                package: package, target: target, withStdlib: withStdlib)
             if reportedWarnings.insert(package.name).inserted {
                 emitLexerWarnings(loaded.package.warnings)
             }
@@ -2709,6 +2710,7 @@ case "bind":
 case "build":
     var shared = false
     var printPlan = false
+    var noStdlib = false
     var outputPath: String?
     var positional: [String] = []
     var cursor = 2
@@ -2719,6 +2721,9 @@ case "build":
             cursor += 1
         case "--print-plan":
             printPlan = true
+            cursor += 1
+        case "--no-stdlib":
+            noStdlib = true
             cursor += 1
         case "--diagnostics-tsv":
             diagnosticsTSV = true
@@ -2733,7 +2738,9 @@ case "build":
         default:
             guard !args[cursor].hasPrefix("-") else {
                 printError("Error: \(args[cursor])")
-                printError("  合法用法：pini build <路径>｜pini build --shared <路径> [-o <产物路径>]")
+                printError(
+                    "  合法用法：pini build <路径> [--no-stdlib]｜pini build --shared <路径> [-o <产物路径>]"
+                )
                 exit(1)
             }
             positional.append(args[cursor])
@@ -2749,13 +2756,17 @@ case "build":
             printError("Error: --print-plan 只用于普通构建，不与 --shared 同用")
             exit(1)
         }
+        guard !noStdlib else {
+            printError("Error: --no-stdlib 只用于普通构建，不与 --shared 同用")
+            exit(1)
+        }
         runBuildShared(path: path, outputPath: outputPath)
     } else {
         guard outputPath == nil else {
             printError("Error: -o 只跟 --shared 一起用")
             exit(1)
         }
-        runBuildPath(path, printPlan: printPlan)
+        runBuildPath(path, printPlan: printPlan, withStdlib: !noStdlib)
     }
 case "test":
     // 测试子命令：path 可选；无参 = 收集当前目录所属模块或工作区。

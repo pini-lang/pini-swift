@@ -97,6 +97,14 @@ externSignature|func(name: String,) -> (String,):
         return "declare ptr @bk_string_split(ptr, ptr)"
     if name == "bk_string_char_at":
         return "declare i64 @bk_string_char_at(ptr, i32)"
+    if name == "bk_string_upper":
+        return "declare ptr @bk_string_upper(ptr)"
+    if name == "bk_string_lower":
+        return "declare ptr @bk_string_lower(ptr)"
+    if name == "bk_string_trim_left":
+        return "declare ptr @bk_string_trim_left(ptr)"
+    if name == "bk_string_trim_right":
+        return "declare ptr @bk_string_trim_right(ptr)"
     if name == "bk_str_append_cstr":
         return "declare ptr @bk_str_append_cstr(ptr, ptr, i32)"
     ; 容器族：元素按地址搬运，宽度与标签由发射层给。
