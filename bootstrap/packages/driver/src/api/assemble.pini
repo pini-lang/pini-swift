@@ -26,13 +26,15 @@ typed: I32 = 0
     let units = collectWorkspaceUnits(ws)
     let build = buildWorld(units = units, packages = ws.packages)
     let 填 = fillExprTypes(world = build.world, units = units)
+    let 泛 = instantiateGenerics(world = build.world, units = units, fill = 填)
     var 世界 = build.world
     var 类型面 = 世界.types
-    类型面.pool = 填.pool
+    类型面.pool = 泛.pool
     世界.types = 类型面
     var input = LowerWorld()
     input.world = 世界
-    input.types = 填.types
+    input.types = 泛.types
+    input.generics = 泛
     let shapes = makeShapeTable(世界)
     input.shapes = shapes
     input.layouts = layoutAll(shapes = shapes, pool = 世界.types.pool)
@@ -72,9 +74,10 @@ typed: I32 = 0
     print("stage-fill", typedExprCount(table = 填.types))
     if stage <= 5:
         return out
+    let 泛 = instantiateGenerics(world = 世界, units = units, fill = 填)
     var 带池 = 世界
     var 类型面 = 带池.types
-    类型面.pool = 填.pool
+    类型面.pool = 泛.pool
     带池.types = 类型面
     let shapes = makeShapeTable(带池)
     let layouts = layoutAll(shapes = shapes, pool = 带池.types.pool)
@@ -83,7 +86,8 @@ typed: I32 = 0
         return out
     var input = LowerWorld()
     input.world = 带池
-    input.types = 填.types
+    input.types = 泛.types
+    input.generics = 泛
     input.shapes = shapes
     input.layouts = layouts
     out.module = lowerWorkspace(input = input)

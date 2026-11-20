@@ -49,17 +49,58 @@ findStdlibRoot|func(start: String,) -> (String,):
         depth = depth + 1
     return ""
 
-; 默认源：模块根先试，再试工作区根；都没有答空串，由装配处报硬错误。
-stdlibSourcePath|func(option: StdlibOption, workspaceRoot: String,) -> (String,):
+; 源集：显式路径是目录就扫它、是文件就单元素；缺省扫定位根的 `src`。
+; 目录扫描按路径升序，入口 `core.pini` 提到最前：成员形态先于函数形态。
+stdlibSourcePaths|func(option: StdlibOption, workspaceRoot: String,) -> (Array<String>,):
+    var roots: Array<String> = []
     if len(option.path) > 0:
-        return option.path
-    let fromModule = findStdlibRoot(start = moduleRoot())
-    if len(fromModule) > 0:
-        return fromModule + "/stdlib/src/api/core.pini"
-    let fromWorkspace = findStdlibRoot(start = workspaceRoot)
-    if len(fromWorkspace) > 0:
-        return fromWorkspace + "/stdlib/src/api/core.pini"
-    return ""
+        roots = roots.append(option.path)
+    else:
+        let fromModule = findStdlibRoot(start = moduleRoot())
+        if len(fromModule) > 0:
+            roots = roots.append(fromModule + "/stdlib/src")
+        else:
+            let fromWorkspace = findStdlibRoot(start = workspaceRoot)
+            if len(fromWorkspace) > 0:
+                roots = roots.append(fromWorkspace + "/stdlib/src")
+    return entryFirst(paths = sourceFilesAt(roots = roots))
+
+; 逐根展开：目录走扫描，文件直接收；缺根留空，由装配处报缺失。
+sourceFilesAt|func(roots: Array<String>,) -> (Array<String>,):
+    var out: Array<String> = []
+    var noExcludes: Array<String> = []
+    var i = 0
+    while i < len(roots):
+        let root = roots[i]
+        if isDir(root):
+            let state = scan(absDir = root, rootRel = "", relDir = "", excludes = noExcludes, state = ScanState())
+            var j = 0
+            while j < len(state.files):
+                out = out.append(root + "/" + state.files[j])
+                j = j + 1
+        else:
+            if exists(root):
+                out = out.append(root)
+        i = i + 1
+    return out
+
+; 入口先：结尾是 `core.pini` 的排最前，其余保持扫描序。
+entryFirst|func(paths: Array<String>,) -> (Array<String>,):
+    var out: Array<String> = []
+    var rest: Array<String> = []
+    var i = 0
+    while i < len(paths):
+        let at = paths[i].indexOf("/core.pini")
+        if at >= 0 && at + 10 == len(paths[i]):
+            out = out.append(paths[i])
+        else:
+            rest = rest.append(paths[i])
+        i = i + 1
+    i = 0
+    while i < len(rest):
+        out = out.append(rest[i])
+        i = i + 1
+    return out
 
 ; 名字区间：按标量解回原文；非法序列就地收尾，返回已解出的前缀。
 nameAt|func(bytes: Array<U8>, start: I32, end: I32,) -> (String,):
@@ -201,9 +242,9 @@ assemblePackage|func(group: PackageUnits, unit: CompilationUnit,) -> (PackageUni
         return out
     return prependUnit(group = group, unit = pruned)
 
-; 工作区装配：读源一次、解析一份、剪一次，只放进首个非空包；任一包已装即幂等。
+; 工作区装配：读源集一次、拼接解析一份、剪一次，只放进首个非空包；任一包已装即幂等。
 ; 单份是必须的：逐包各装一份会让发射面出现同名定义；让位按全工作区并集，跨包覆盖同效。
-assembleStdlib|func(ws: WorkspaceUnits, sourcePath: String,) -> (WorkspaceUnits,):
+assembleStdlib|func(ws: WorkspaceUnits, paths: Array<String>,) -> (WorkspaceUnits,):
     var out = ws
     if len(out.packages) == 0:
         return out
@@ -219,17 +260,25 @@ assembleStdlib|func(ws: WorkspaceUnits, sourcePath: String,) -> (WorkspaceUnits,
         p = p + 1
     if installed || carrier < 0:
         return out
-    if len(sourcePath) == 0 || !exists(sourcePath):
-        out.errors = out.errors.append(makeLoadError(kind = .errorStdlibMissing, path = "<stdlib>", detail = sourcePath))
+    if len(paths) == 0:
+        out.errors = out.errors.append(makeLoadError(kind = .errorStdlibMissing, path = "<stdlib>", detail = ""))
         return out
-    let read = tryReadFile(sourcePath)
     var content = ""
-    match read:
-        case ok(text,):
-            content = text
-        case err(reason,):
-            out.errors = out.errors.append(makeLoadError(kind = .errorFileUnreadable, path = "<stdlib>", detail = sourcePath))
+    var f = 0
+    while f < len(paths):
+        if !exists(paths[f]):
+            out.errors = out.errors.append(makeLoadError(kind = .errorStdlibMissing, path = "<stdlib>", detail = paths[f]))
             return out
+        let read = tryReadFile(paths[f])
+        match read:
+            case ok(text,):
+                if f > 0:
+                    content = content + "\n"
+                content = content + text
+            case err(reason,):
+                out.errors = out.errors.append(makeLoadError(kind = .errorFileUnreadable, path = "<stdlib>", detail = paths[f]))
+                return out
+        f = f + 1
     let loaded = loadUnit(path = "<stdlib>", text = content)
     if loaded.failed:
         out.errors = out.errors.append(loaded.error)

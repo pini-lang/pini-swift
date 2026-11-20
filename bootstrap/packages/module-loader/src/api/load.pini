@@ -261,8 +261,8 @@ loadWorkspaceGrouped|func(_plan: BuildPlan, stdlib: StdlibOption,) -> (Workspace
         out.packages = out.packages.append(group)
         i = i + 1
     if stdlib.enabled:
-        let sourcePath = stdlibSourcePath(option = stdlib, workspaceRoot = _plan.rootPath)
-        out = assembleStdlib(ws = out, sourcePath = sourcePath)
+        let paths = stdlibSourcePaths(option = stdlib, workspaceRoot = _plan.rootPath)
+        out = assembleStdlib(ws = out, paths = paths)
     return out
 
 ((WorkspaceUnits))

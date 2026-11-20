@@ -28,9 +28,12 @@ _syntax = "../../syntax"
     ws.packages = ws.packages.append(装配单包(name = "demo", text = text))
     return ws
 
-; 装配源路径：bootstrap 下那份源；装配首批只装 core。
-装配源路径|func() -> (String,):
-    return moduleRoot() + "/../../stdlib/src/api/core.pini"
+; 装配源集：bootstrap 下那份源目录，成员与算法两份都在。
+; 走与驱动同一条解析：目录扫描、路径升序、入口先。
+装配源路径|func() -> (Array<String>,):
+    var option = StdlibOption()
+    option.path = moduleRoot() + "/../../stdlib/src"
+    return stdlibSourcePaths(option = option, workspaceRoot = moduleRoot())
 
 ; 合成单元位：按虚拟路径找；未装答 -1。
 合成单元位|func(group: PackageUnits,) -> (I32,):
@@ -54,7 +57,7 @@ _syntax = "../../syntax"
 ; 注入：合成单元排在首位，路径是虚拟名，装配本身不产生错误。
 装配注入|test() -> ():
     let ws = 造装配包(text = "main|func() -> ():\n    return\n")
-    let 结果 = assembleStdlib(ws = ws, sourcePath = 装配源路径())
+    let 结果 = assembleStdlib(ws = ws, paths = 装配源路径())
     assert(len(结果.errors) == 0, "装配不应报错")
     let at = 合成单元位(group = 结果.packages[0])
     assert(at == 0, "合成单元应排在首位，实得 " + "\(at)")
@@ -66,7 +69,7 @@ _syntax = "../../syntax"
 让位|test() -> ():
     let 文本 = "((String))\ntrim|self() -> (String,):\n    return self\n\nmain|func() -> ():\n    return\n"
     let ws = 造装配包(text = 文本)
-    let 结果 = assembleStdlib(ws = ws, sourcePath = 装配源路径())
+    let 结果 = assembleStdlib(ws = ws, paths = 装配源路径())
     assert(len(结果.errors) == 0, "装配不应报错")
     let at = 合成单元位(group = 结果.packages[0])
     assert(扩展条数(unit = 结果.packages[0].units[at]) == 17, "trim 让位后应剩十七条")
@@ -75,8 +78,8 @@ _syntax = "../../syntax"
 ; 幂等：装过一次再装，单元数不变，也不会多出第二份合成单元。
 幂等|test() -> ():
     let ws = 造装配包(text = "main|func() -> ():\n    return\n")
-    let 一次 = assembleStdlib(ws = ws, sourcePath = 装配源路径())
-    let 两次 = assembleStdlib(ws = 一次, sourcePath = 装配源路径())
+    let 一次 = assembleStdlib(ws = ws, paths = 装配源路径())
+    let 两次 = assembleStdlib(ws = 一次, paths = 装配源路径())
     assert(len(两次.packages[0].units) == 2, "重复装配不追加单元")
     assert(合成单元位(group = 两次.packages[0]) == 0, "合成单元仍在首位")
     return
@@ -84,7 +87,7 @@ _syntax = "../../syntax"
 ; 缺件：源不存在时记一条装载错误，单元表原样保留，错误类别可判。
 缺件|test() -> ():
     let ws = 造装配包(text = "main|func() -> ():\n    return\n")
-    let 结果 = assembleStdlib(ws = ws, sourcePath = "/nonexistent/stdlib/core.pini")
+    let 结果 = assembleStdlib(ws = ws, paths = ["/nonexistent/stdlib/core.pini"])
     assert(len(结果.errors) == 1, "应有一条装载错误")
     assert(isLoadError(error = 结果.errors[0], kind = .errorStdlibMissing), "类别应为缺装配源路径")
     assert(len(结果.packages[0].units) == 1, "缺件时不注入单元")
@@ -95,7 +98,7 @@ _syntax = "../../syntax"
     var ws = WorkspaceUnits()
     ws.packages = ws.packages.append(装配单包(name = "alpha", text = "main|func() -> ():\n    return\n"))
     ws.packages = ws.packages.append(装配单包(name = "beta", text = "main|func() -> ():\n    return\n"))
-    let 结果 = assembleStdlib(ws = ws, sourcePath = 装配源路径())
+    let 结果 = assembleStdlib(ws = ws, paths = 装配源路径())
     assert(len(结果.errors) == 0, "装配不应报错")
     assert(len(结果.packages[0].units) == 2, "承载包应多一个合成单元")
     assert(len(结果.packages[1].units) == 1, "第二包不应追加单元")
@@ -108,7 +111,7 @@ _syntax = "../../syntax"
     var ws = WorkspaceUnits()
     ws.packages = ws.packages.append(造空包())
     ws.packages = ws.packages.append(装配单包(name = "alpha", text = "main|func() -> ():\n    return\n"))
-    let 结果 = assembleStdlib(ws = ws, sourcePath = 装配源路径())
+    let 结果 = assembleStdlib(ws = ws, paths = 装配源路径())
     assert(len(结果.errors) == 0, "装配不应报错")
     assert(len(结果.packages[0].units) == 0, "空包仍应为空")
     assert(合成单元位(group = 结果.packages[0]) == -1, "空包不承载合成单元")
@@ -122,7 +125,7 @@ _syntax = "../../syntax"
     var ws = WorkspaceUnits()
     ws.packages = ws.packages.append(装配单包(name = "alpha", text = "main|func() -> ():\n    return\n"))
     ws.packages = ws.packages.append(装配单包(name = "beta", text = 后包文本))
-    let 结果 = assembleStdlib(ws = ws, sourcePath = 装配源路径())
+    let 结果 = assembleStdlib(ws = ws, paths = 装配源路径())
     assert(len(结果.errors) == 0, "装配不应报错")
     assert(扩展条数(unit = 结果.packages[0].units[0]) == 17, "跨包让位后应剩十七条")
     assert(扩展条数(unit = 结果.packages[1].units[0]) == 1, "后包用户扩展应原样保留")
@@ -133,8 +136,8 @@ _syntax = "../../syntax"
     var ws = WorkspaceUnits()
     ws.packages = ws.packages.append(装配单包(name = "alpha", text = "main|func() -> ():\n    return\n"))
     ws.packages = ws.packages.append(装配单包(name = "beta", text = "main|func() -> ():\n    return\n"))
-    let 一次 = assembleStdlib(ws = ws, sourcePath = 装配源路径())
-    let 两次 = assembleStdlib(ws = 一次, sourcePath = 装配源路径())
+    let 一次 = assembleStdlib(ws = ws, paths = 装配源路径())
+    let 两次 = assembleStdlib(ws = 一次, paths = 装配源路径())
     assert(len(两次.packages[0].units) == 2, "重复装配不追加单元")
     assert(len(两次.packages[1].units) == 1, "第二包仍应只有一个单元")
     assert(合成单元位(group = 两次.packages[1]) == -1, "第二包仍无合成单元")
@@ -142,7 +145,28 @@ _syntax = "../../syntax"
 
 ; 空工作区：没有包就不装，也不报缺件。
 空工作区|test() -> ():
-    let 结果 = assembleStdlib(ws = WorkspaceUnits(), sourcePath = 装配源路径())
+    let 结果 = assembleStdlib(ws = WorkspaceUnits(), paths = 装配源路径())
     assert(len(结果.errors) == 0, "空工作区不应报缺件")
     assert(len(结果.packages) == 0, "空工作区仍为空")
+    return
+
+; 顶层自由函数条数：只数顶层函数声明，扩展块内方法不算。
+顶层函数条数|func(unit: CompilationUnit,) -> (I32,):
+    var out = 0
+    var i = 0
+    while i < len(unit.ast.items):
+        if isFunctionDeclCode(unit.ast.decls[unit.ast.items[i]].kind):
+            out = out + 1
+        i = i + 1
+    return out
+
+; 算法并入：目录源集把成员与算法拼成一份，扩展条数与自由函数条数同时成立。
+算法并入|test() -> ():
+    let ws = 造装配包(text = "main|func() -> ():\n    return\n")
+    let 结果 = assembleStdlib(ws = ws, paths = 装配源路径())
+    assert(len(结果.errors) == 0, "装配不应报错")
+    let at = 合成单元位(group = 结果.packages[0])
+    assert(at == 0, "合成单元应排在首位")
+    assert(扩展条数(unit = 结果.packages[0].units[at]) == 18, "core 有十八个扩展方法")
+    assert(顶层函数条数(unit = 结果.packages[0].units[at]) == 26, "算法有二十六个自由函数")
     return

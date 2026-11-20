@@ -1858,6 +1858,10 @@ lowerExpr|func(pool: IrNodePool, texts: IrTextPool, map: TypeMap, types: ExprTyp
     if unit.ast.isFunctionExpr(id):
         return lowerClosure(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
     if unit.ast.isGenericExpr(id):
+        ; 泛型函数调用点先按实例表发实例调用；未命中才是 `LazyRef<T>` 构造。
+        let at = findGenericCall(calls = frame.generics.calls, unit = unitIndex, node = id)
+        if at >= 0:
+            return lowerGenericCall(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id, instance = at)
         return lowerLazyRefConstruct(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id, callee = id)
     if unit.ast.isNilExpr(id):
         return lowerNil(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
@@ -1881,3 +1885,35 @@ lowerExpr|func(pool: IrNodePool, texts: IrTextPool, map: TypeMap, types: ExprTyp
         return lowerSubscript(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
     let node = unit.ast.exprAt(id)
     return missExpr(out = out, unit = unit, id = id, what = exprKindName(node.kind))
+
+; 泛型实例调用：实参按源序降载，符号取实例名；带标签的实参本批不收，报缺口不猜顺序。
+lowerGenericCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32, instance: I32,) -> (LowerExpr,):
+    var done = out
+    let inst = done.frame.generics.instances[instance]
+    let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
+    if typeId < 0:
+        return missType(out = done, unit = unit, id = id, bytes = bytes)
+    let expr = unit.ast.exprAt(id)
+    var kids: Array<I32> = []
+    var i = 0
+    while i < len(expr.kids):
+        let kid: I32 = expr.kids[i]
+        if unit.ast.isLabeledArgument(kid):
+            return missExpr(out = done, unit = unit, id = id, what = "泛型实例调用带标签实参")
+        let one = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = kid)
+        done.pool = one.pool
+        done.texts = one.texts
+        done.frame = one.frame
+        if one.failed:
+            return takeFailure(out = done, one = one)
+        kids = kids.append(one.id)
+        i = i + 1
+    let placed = internText(texts = done.texts, value = inst.name)
+    var node = irMakeNode(kind = irExprTag(.irCall), typeId = typeId)
+    node.text = placed.id
+    node.kids = kids
+    let inserted = irAppendNode(pool = done.pool, node = node)
+    done.texts = placed.texts
+    done.pool = inserted.pool
+    done.id = inserted.id
+    return done

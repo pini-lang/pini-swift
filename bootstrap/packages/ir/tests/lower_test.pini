@@ -10,7 +10,7 @@ _semantics = "../../semantics"
 (降载样例)
 module: IrModule = IrModule()
 
-; 造样例：装载、注册、类型、世界、填表、降载六步，顺序不能反。
+; 造样例：装载、注册、类型、世界、填表、泛型实例、降载七步，顺序不能反。
 造样例|func(_src: String,) -> (降载样例,):
     let loaded = loadUnit(path = "packages/p/src/api/a.pini", text = _src)
     assert(!loaded.failed, "样例应可加载")
@@ -20,12 +20,14 @@ module: IrModule = IrModule()
     let types = resolvePackage(units = units, table = table)
     var world = makeMemberWorld(units = units, table = table, types = types)
     let 填 = fillExprTypes(world = world, units = units)
+    let 泛 = instantiateGenerics(world = world, units = units, fill = 填)
     var 类型面 = world.types
-    类型面.pool = 填.pool
+    类型面.pool = 泛.pool
     world.types = 类型面
     var input = LowerWorld()
     input.world = world
-    input.types = 填.types
+    input.types = 泛.types
+    input.generics = 泛
     let shapes = makeShapeTable(world)
     input.shapes = shapes
     input.layouts = layoutAll(shapes = shapes, pool = world.types.pool)
@@ -400,4 +402,13 @@ module: IrModule = IrModule()
     let 样例 = 造样例(src)
     assert(len(样例.module.errors) == 0, "显式实例应降载成功")
     assert(取节点按类别(样例 = 样例, kind = irExprTag(.irGivenInstance)) < 0, "显式实例不应补取用点")
+    return
+
+; 泛型实例：模板不进函数表，实例按类型实参取名，调用点文本指向实例。
+泛型实例发射|test() -> ():
+    let 样例 = 造样例("id|func<T>(value: T,) -> (T,):\n    return value\n\nuse|func() -> (I32,):\n    return id<I32>(1)\n")
+    assert(len(样例.module.errors) == 0, "泛型实例应降载成功")
+    assert(取函数(样例 = 样例, name = "id__I32") >= 0, "I32 实例应进函数表")
+    assert(取函数(样例 = 样例, name = "id") < 0, "模板不应进函数表")
+    assert(取节点(样例 = 样例, kind = irExprTag(.irCall), text = "id__I32") >= 0, "调用点应指向实例符号")
     return
