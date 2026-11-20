@@ -1,0 +1,240 @@
+[task|import]
+_semantics = "../../../semantics"
+_ir = "../../../ir"
+_backend_kit = "../../../backend-kit"
+
+; 任务发射：派发、体包装、等待与分离四处；体包装按被调函数去重，跨函数共用一份登记。
+; 帧头一个 i64 留给续跑点：运行时段分配时已清零，本后端不让出，故从不写它。
+{TaskDefs}
+names: Array<String> = []
+lines: Array<String> = []
+
+; 字宽加宽：整型按符号扩展，浮点按位搬运，其余（指针一族）按整数搬运。
+widenSpelling|func(name: String,) -> (String,):
+    if name == "i64":
+        return ""
+    if name == "i32" || name == "i8":
+        return "sext"
+    if name == "i1":
+        return "zext"
+    if name == "double":
+        return "bitcast"
+    return "ptrtoint"
+
+; 字还原：整型截断，浮点按位搬运，其余（指针一族）还原成目标指针拼写。
+narrowSpelling|func(name: String,) -> (String,):
+    if name == "i64":
+        return ""
+    if name == "i32" || name == "i8" || name == "i1":
+        return "trunc"
+    if name == "double":
+        return "bitcast"
+    return "inttoptr"
+
+; 已登记判定：同名体包装只发一份。
+hasTaskBody|func(defs: TaskDefs, name: String,) -> (Bool,):
+    var i = 0
+    while i < len(defs.names):
+        if defs.names[i] == name:
+            return true
+        i = i + 1
+    return false
+
+; 体包装名：一函数一份，名字由被调函数名加前缀得到。
+taskBodyName|func(fnName: String,) -> (String,):
+    return "__task_body_" + mangleName(name = fnName)
+
+; 体包装：运行时要「一个 C 函数指针 + 一段实参缓冲」，被调方的 IR 签名是它自己的形参表。
+; 这里拆缓冲、调体、把返回摊进三槽；体跑在别的线程，故实参一律按字宽搬运。
+ensureTaskBody|func(defs: TaskDefs, module: IrModule, target: I32,) -> (TaskDefs,):
+    var out = defs
+    if target < 0 || target >= len(module.functions):
+        return out
+    let callee = module.functions[target]
+    let name = taskBodyName(fnName = callee.name)
+    if hasTaskBody(defs = out, name = name):
+        return out
+    if callee.returnType < 0:
+        return out
+    let retEntry = irTypeAt(pool = module.types, id = callee.returnType)
+    if irTypeTag(retEntry.kind) != irResultTypeTag() || len(retEntry.kids) != 1:
+        return out
+    let retSpelling = llvmTypeName(pool = module.types, typeId = callee.returnType)
+    let okSpelling = llvmTypeName(pool = module.types, typeId = retEntry.kids[0])
+    var body = ""
+    var args = ""
+    var i = 0
+    while i < len(callee.params):
+        let spelling = llvmTypeName(pool = module.types, typeId = callee.params[i].typeId)
+        let at = "%f" + countText(i)
+        body = body + "  " + at + " = getelementptr i8, ptr %env, i64 " + countText(8 + i * 8) + "\n"
+        let word = "%w" + countText(i)
+        body = body + "  " + word + " = load i64, ptr " + at + "\n"
+        var value = word
+        let op = narrowSpelling(name = spelling)
+        if len(op) > 0:
+            value = "%a" + countText(i)
+            body = body + "  " + value + " = " + op + " i64 " + word + " to " + spelling + "\n"
+        if i > 0:
+            args = args + ", "
+        args = args + spelling + " " + value
+        i = i + 1
+    let result = "%r"
+    body = body + "  " + result + " = call " + retSpelling + " @" + mangleName(name = callee.name) + "(" + args + ")\n"
+    let tag = "%tag"
+    body = body + "  " + tag + " = extractvalue " + retSpelling + " " + result + ", 0\n"
+    let ok = "%ok"
+    body = body + "  " + ok + " = extractvalue " + retSpelling + " " + result + ", 1\n"
+    let err = "%err"
+    body = body + "  " + err + " = extractvalue " + retSpelling + " " + result + ", 2\n"
+    var word = ok
+    let op = widenSpelling(name = okSpelling)
+    if len(op) > 0:
+        word = "%okw"
+        body = body + "  " + word + " = " + op + " " + okSpelling + " " + ok + " to i64\n"
+    body = body + "  store i64 " + tag + ", ptr %out\n"
+    body = body + "  %os = getelementptr i8, ptr %out, i64 8\n"
+    body = body + "  store i64 " + word + ", ptr %os\n"
+    body = body + "  %es = getelementptr i8, ptr %out, i64 16\n"
+    body = body + "  store i64 " + err + ", ptr %es\n"
+    body = body + "  ret i32 0\n"
+    out.lines = out.lines.append("define i32 @" + name + "(ptr %code, ptr %env, ptr %out) {\n" + body + "}\n\n")
+    out.names = out.names.append(name)
+    return out
+
+; 三槽 → Result 聚合：标签、ok 载荷、错误字各取一格，错误字恒为 i64。
+collectTaskResult|func(out: ExprOut, module: IrModule, typeId: I32, slot: String,) -> (ExprOut,):
+    var done = out
+    let entry = irTypeAt(pool = module.types, id = typeId)
+    let spelling = llvmTypeName(pool = module.types, typeId = typeId)
+    var okSpelling = "i64"
+    if len(entry.kids) > 0:
+        okSpelling = llvmTypeName(pool = module.types, typeId = entry.kids[0])
+    let base = done.ctx.temp
+    done.ctx.temp = base + 4
+    let tag = tempName(index = base)
+    appendLine(sink = done.ctx.lines, text = "  " + tag + " = load i64, ptr " + slot)
+    let okAt = tempName(index = base + 1)
+    appendLine(sink = done.ctx.lines, text = "  " + okAt + " = getelementptr i8, ptr " + slot + ", i64 8")
+    let ok = tempName(index = base + 2)
+    appendLine(sink = done.ctx.lines, text = "  " + ok + " = load " + okSpelling + ", ptr " + okAt)
+    let errAt = tempName(index = base + 3)
+    appendLine(sink = done.ctx.lines, text = "  " + errAt + " = getelementptr i8, ptr " + slot + ", i64 16")
+    let err = tempName(index = base + 4)
+    done.ctx.temp = base + 5
+    appendLine(sink = done.ctx.lines, text = "  " + err + " = load i64, ptr " + errAt)
+    let withTag = tempName(index = done.ctx.temp)
+    done.ctx.temp = done.ctx.temp + 1
+    appendLine(sink = done.ctx.lines, text = "  " + withTag + " = insertvalue " + spelling + " undef, i64 " + tag + ", 0")
+    let withOk = tempName(index = done.ctx.temp)
+    done.ctx.temp = done.ctx.temp + 1
+    appendLine(sink = done.ctx.lines, text = "  " + withOk + " = insertvalue " + spelling + " " + withTag + ", " + okSpelling + " " + ok + ", 1")
+    let filled = tempName(index = done.ctx.temp)
+    done.ctx.temp = done.ctx.temp + 1
+    appendLine(sink = done.ctx.lines, text = "  " + filled + " = insertvalue " + spelling + " " + withOk + ", i64 " + err + ", 2")
+    done.text = filled
+    return done
+
+; 派发：建帧、实参按字宽写进帧、起任务；句柄即表达式的值。
+; 实参交给任务所有，调用方不再持有那一份，故这里不做份额转手。
+emitTaskSpawn|func(out: ExprOut, module: IrModule, node: IrNode, target: I32,) -> (ExprOut,):
+    var done = out
+    let callee = module.functions[target]
+    useExtern(use = done.ctx.externs, name = "bk_task_frame")
+    useExtern(use = done.ctx.externs, name = "bk_task_spawn")
+    done.ctx.taskDefs = ensureTaskBody(defs = done.ctx.taskDefs, module = module, target = target)
+    let frameId = done.ctx.temp
+    done.ctx.temp = frameId + 1
+    let frame = tempName(index = frameId)
+    appendLine(sink = done.ctx.lines, text = "  " + frame + " = call ptr @bk_task_frame(i64 " + countText(8 + len(node.kids) * 8) + ")")
+    var i = 0
+    while i < len(node.kids):
+        let one = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[i])
+        done.ctx = one.ctx
+        var argType = irNodeAt(pool = module.nodes, id = node.kids[i]).typeId
+        if i < len(callee.params):
+            argType = callee.params[i].typeId
+        let shaped = storeValue(ctx = done.ctx, module = module, text = one.text, fromType = irNodeAt(pool = module.nodes, id = node.kids[i]).typeId, toType = argType)
+        done.ctx = shaped.ctx
+        let spelling = llvmTypeName(pool = module.types, typeId = argType)
+        var word = shaped.text
+        let op = widenSpelling(name = spelling)
+        if len(op) > 0:
+            let wide = done.ctx.temp
+            done.ctx.temp = wide + 1
+            word = tempName(index = wide)
+            appendLine(sink = done.ctx.lines, text = "  " + word + " = " + op + " " + spelling + " " + shaped.text + " to i64")
+        let slotId = done.ctx.temp
+        done.ctx.temp = slotId + 1
+        let slot = tempName(index = slotId)
+        appendLine(sink = done.ctx.lines, text = "  " + slot + " = getelementptr i8, ptr " + frame + ", i64 " + countText(8 + i * 8))
+        appendLine(sink = done.ctx.lines, text = "  store i64 " + word + ", ptr " + slot)
+        i = i + 1
+    let handleId = done.ctx.temp
+    done.ctx.temp = handleId + 1
+    let handle = tempName(index = handleId)
+    let body = taskBodyName(fnName = callee.name)
+    appendLine(sink = done.ctx.lines, text = "  " + handle + " = call ptr @bk_task_spawn(ptr @" + body + ", ptr null, ptr " + frame + ", i32 0, i32 0)")
+    done.text = handle
+    return done
+
+; 等待：三槽落栈交给运行时段归一化，再装配成 Result；本后端不让出，await 与 wait 同一条。
+emitTaskJoin|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut,):
+    var done = out
+    let one = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[0])
+    done.ctx = one.ctx
+    useExtern(use = done.ctx.externs, name = "bk_task_join")
+    let slotId = done.ctx.temp
+    done.ctx.temp = slotId + 1
+    let slot = tempName(index = slotId)
+    appendLine(sink = done.ctx.lines, text = "  " + slot + " = alloca { i64, i64, i64 }, align 8")
+    appendLine(sink = done.ctx.lines, text = "  %joinrc" + countText(slotId) + " = call i32 @bk_task_join(ptr " + one.text + ", ptr " + slot + ")")
+    return collectTaskResult(out = done, module = module, typeId = node.typeId, slot = slot)
+
+; 分离：把任务从父剪枝，父返回时不再取消它；返回值丢弃。
+emitTaskDetach|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut,):
+    var done = out
+    let one = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[0])
+    done.ctx = one.ctx
+    useExtern(use = done.ctx.externs, name = "bk_task_detach")
+    let rcId = done.ctx.temp
+    done.ctx.temp = rcId + 1
+    appendLine(sink = done.ctx.lines, text = "  " + tempName(index = rcId) + " = call i32 @bk_task_detach(ptr " + one.text + ")")
+    done.text = ""
+    return done
+
+; 结果构造：标签置位，载荷按自身类型入槽；错误槽擦成一个机器字。
+emitResultConstruct|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut,):
+    var done = out
+    let one = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[0])
+    done.ctx = one.ctx
+    let entry = irTypeAt(pool = module.types, id = node.typeId)
+    let spelling = llvmTypeName(pool = module.types, typeId = node.typeId)
+    var okSpelling = "i64"
+    if len(entry.kids) > 0:
+        okSpelling = llvmTypeName(pool = module.types, typeId = entry.kids[0])
+    let withTag = tempName(index = done.ctx.temp)
+    done.ctx.temp = done.ctx.temp + 1
+    appendLine(sink = done.ctx.lines, text = "  " + withTag + " = insertvalue " + spelling + " undef, i64 " + countText(node.op) + ", 0")
+    let filled = tempName(index = done.ctx.temp)
+    done.ctx.temp = done.ctx.temp + 1
+    ; 载荷按自身类型入槽；ok 槽先对齐结果类型，err 槽一律擦成一个机器字。
+    let payloadType = irNodeAt(pool = module.nodes, id = node.kids[0]).typeId
+    let payloadSpelling = llvmTypeName(pool = module.types, typeId = payloadType)
+    if node.op == 0:
+        var value = one.text
+        if payloadSpelling != okSpelling:
+            let shaped = storeValue(ctx = done.ctx, module = module, text = one.text, fromType = payloadType, toType = entry.kids[0])
+            done.ctx = shaped.ctx
+            value = shaped.text
+        appendLine(sink = done.ctx.lines, text = "  " + filled + " = insertvalue " + spelling + " " + withTag + ", " + okSpelling + " " + value + ", 1")
+    else:
+        var word = one.text
+        let op = widenSpelling(name = payloadSpelling)
+        if len(op) > 0:
+            word = tempName(index = done.ctx.temp)
+            done.ctx.temp = done.ctx.temp + 1
+            appendLine(sink = done.ctx.lines, text = "  " + word + " = " + op + " " + payloadSpelling + " " + one.text + " to i64")
+        appendLine(sink = done.ctx.lines, text = "  " + filled + " = insertvalue " + spelling + " " + withTag + ", i64 " + word + ", 2")
+    done.text = filled
+    return done

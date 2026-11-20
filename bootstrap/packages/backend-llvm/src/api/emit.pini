@@ -28,7 +28,7 @@ fmtResult: String = ""
 ; 能力族：本后端声明为已接的族码，驱动按这份登记，测试也照抄，三处不再各写一串。
 ; 族码与 backend-kit 同序；未登记的族在缺口里写作「族未声明」，与「已声明但没接」分开。
 llvmFamilies|func() -> (Array<I32>,):
-    return [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    return [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
 
 ; 外部数据声明：取址与读写都指向符号本身，声明随模块走。
 ; 字符串池与类型池同规：这里只出模块级声明，函数体内的用法由语句段登记。
@@ -138,6 +138,8 @@ externs: ExternUse = ExternUse()
 gaps: Array<String> = []
 emitted: Array<String> = []
 lazyDefs: LazyRefDefs = LazyRefDefs()
+taskDefs: TaskDefs = TaskDefs()
+givenDefs: GivenDefs = GivenDefs()
 
 ; 闭包环境声明：捕获表非空的闭包各一份，字段全是 ptr，按捕获序排。
 closureEnvDecls|func(module: IrModule,) -> (Array<String>,):
@@ -190,9 +192,13 @@ emitFunctions|func(sink: LineSink, module: IrModule, entry: BackendEntry, target
             ctx.pointerBytes = target.pointerWidth
             ctx.testExit = testMode && fn.isTest
             ctx.lazyDefs = bundle.lazyDefs
+            ctx.taskDefs = bundle.taskDefs
+            ctx.givenDefs = bundle.givenDefs
             ctx = seedParams(ctx = ctx, module = module, fn = fn)
             ctx = emitStmts(ctx = ctx, module = module, ids = fn.body)
             ctx = closeFunction(ctx = ctx, module = module)
+            bundle.taskDefs = ctx.taskDefs
+            bundle.givenDefs = ctx.givenDefs
             copyLines(sink = sink, from = ctx.head)
             copyLines(sink = sink, from = body.lines)
             var k = 0
@@ -203,11 +209,36 @@ emitFunctions|func(sink: LineSink, module: IrModule, entry: BackendEntry, target
         i = i + 1
     return
 
-; 外部声明段：按首次调用序逐条出 declare。
-emitExterns|func(sink: LineSink, bundle: EmitPass,) -> ():
+; 任务体段：按首次派发序出定义；同一被调函数只有一份。
+emitTaskBodies|func(sink: LineSink, bundle: EmitPass,) -> ():
+    var i = 0
+    while i < len(bundle.taskDefs.lines):
+        appendLine(sink = sink, text = bundle.taskDefs.lines[i])
+        i = i + 1
+    return
+
+; 默认实例段：槽声明在前，初始化适配在后；同一类型只有一份。
+emitGivenDefs|func(sink: LineSink, bundle: EmitPass,) -> ():
+    var i = 0
+    while i < len(bundle.givenDefs.slots):
+        appendLine(sink = sink, text = "@" + bundle.givenDefs.slots[i] + " = internal global ptr null")
+        i = i + 1
+    i = 0
+    while i < len(bundle.givenDefs.bodies):
+        appendLine(sink = sink, text = bundle.givenDefs.bodies[i])
+        i = i + 1
+    return
+
+; 外部声明段：模块登记的按签名出，内建表按名字抄；按首次调用序逐条出。
+emitExterns|func(sink: LineSink, bundle: EmitPass, module: IrModule,) -> ():
     var i = 0
     while i < externUseCount(use = bundle.externs):
-        appendLine(sink = sink, text = externSignature(name = bundle.externs.names[i]))
+        let name = bundle.externs.names[i]
+        let at = findExternFunction(module = module, name = name)
+        if at >= 0:
+            appendLine(sink = sink, text = llvmExternSignature(pool = module.types, fn = module.externs[at]))
+        else:
+            appendLine(sink = sink, text = externSignature(name = name))
         i = i + 1
     return
 
@@ -270,8 +301,10 @@ emitModule|func(entry: BackendEntry, target: TargetProfile, module: IrModule,) -
         appendLine(sink = sink, text = 胶水[i])
         i = i + 1
     emitFunctions(sink = sink, module = module, entry = entry, target = target, testMode = false, bundle = bundle)
+    emitTaskBodies(sink = sink, bundle = bundle)
+    emitGivenDefs(sink = sink, bundle = bundle)
     emitLazyWrappers(sink = sink, bundle = bundle)
-    emitExterns(sink = sink, bundle = bundle)
+    emitExterns(sink = sink, bundle = bundle, module = module)
     emitConstants(sink = sink, extra = [], bundle = bundle)
     var result = EmitResult()
     result.detail = "llvm"
@@ -335,7 +368,7 @@ emitTestModule|func(entry: BackendEntry, target: TargetProfile, module: IrModule
     appendLine(sink = sink, text = "@__pini_test_failed = internal global i32 0")
     appendLine(sink = sink, text = "@__pini_test_msg = internal global ptr null")
     let extra = emitTestDriver(sink = sink, module = module, plan = plan, bundle = bundle)
-    emitExterns(sink = sink, bundle = bundle)
+    emitExterns(sink = sink, bundle = bundle, module = module)
     emitConstants(sink = sink, extra = extra, bundle = bundle)
     var result = EmitResult()
     result.detail = "llvm"

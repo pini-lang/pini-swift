@@ -1,15 +1,15 @@
 测试目标: 工作区 .（13 个测试 target）
 包 support / support-tests（7 个测试，7 通过）
 包 diagnostics / diagnostics-tests（20 个测试，20 通过）
-包 package / package-tests（23 个测试，23 通过）
 包 unicode / unicode-tests（41 个测试，41 通过）
 包 syntax / syntax-tests（91 个测试，91 通过）
-包 module_loader / module-loader-tests（14 个测试，14 通过）
-包 semantics / semantics-tests（352 个测试，352 通过）
-包 ir / ir-tests（34 个测试，34 通过）
+包 package / package-tests（35 个测试，35 通过）
+包 module_loader / module-loader-tests（20 个测试，20 通过）
+包 semantics / semantics-tests（357 个测试，357 通过）
+包 ir / ir-tests（40 个测试，40 通过）
 包 backend_kit / backend-kit-tests（4 个测试，4 通过）
 包 backend_dump / backend-dump-tests（5 个测试，5 通过）
-包 backend_llvm / backend-llvm-tests（22 个测试，22 通过）
+包 backend_llvm / backend-llvm-tests（25 个测试，25 通过）
 包 testkit / testkit-tests（9 个测试，9 通过）
 包 driver / driver-tests（16 个测试，16 通过）
-结果: 638 通过, 0 失败（用时）
+结果: 670 通过, 0 失败（用时）

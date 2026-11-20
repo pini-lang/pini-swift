@@ -34,6 +34,8 @@ ownedSlots: Array<String> = []
 ownedTypes: Array<I32> = []
 pendingSlot: I32 = -1
 testExit: Bool = false
+taskDefs: TaskDefs = TaskDefs()
+givenDefs: GivenDefs = GivenDefs()
 lazyDefs: LazyRefDefs = LazyRefDefs()
 
 ; 表达式结果：上下文与值串；值串只给操作数，类型由所在指令给。
@@ -490,8 +492,12 @@ emitExprCore|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
         let target = findIrFunctionIndex(module = module, name = callee)
         if target >= 0:
             symbol = mangleName(name = module.functions[target].name)
+        if target >= 0 && typeTagAt(module = module, typeId = node.typeId) == irFutureTypeTag():
+            ; 站点类型是任务句柄：这条调用是派发，不是直呼。
+            return emitTaskSpawn(out = out, module = module, node = node, target = target)
         if target < 0:
-            if len(externSignature(name = callee)) == 0:
+            let declared = findExternFunction(module = module, name = callee)
+            if declared < 0 && len(externSignature(name = callee)) == 0:
                 out.ctx = addGap(ctx = out.ctx, gap = "外部调用 " + callee)
                 return out
             useExtern(use = out.ctx.externs, name = callee)
@@ -536,6 +542,12 @@ emitExprCore|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
         out.ctx = emitAssert(ctx = out.ctx, module = module, node = node)
         out.text = ""
         return out
+    if node.kind == 15:
+        return emitResultConstruct(out = out, module = module, node = node)
+    if node.kind == 52:
+        return emitTaskJoin(out = out, module = module, node = node)
+    if node.kind == 53:
+        return emitGivenInstance(out = out, module = module, node = node)
     if node.kind == 18:
         return emitArrayLiteral(out = out, module = module, node = node)
     if node.kind == 21:
@@ -2385,6 +2397,11 @@ emitStmtCore|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (BodyCtx,):
         return emitPanic(ctx = out, module = module, node = node)
     if node.kind == 115:
         return emitFieldStore(ctx = out, module = module, node = node)
+    if node.kind == 117:
+        var boxed = ExprOut()
+        boxed.ctx = out
+        let detached = emitTaskDetach(out = boxed, module = module, node = node)
+        return detached.ctx
     return addGap(ctx = out, gap = nodeGap(ctx = out, kind = node.kind))
 
 ; 跳出：帧深从一数，一即最内层循环；没有可跳的帧时报缺口，不产裸跳转。

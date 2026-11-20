@@ -16,6 +16,7 @@ lowerClosure|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: 
     closure.world = done.frame.world
     closure.decls = done.frame.decls
     closure.externData = done.frame.externData
+    closure.externs = done.frame.externs
     closure.outerLocals = done.frame.locals
     var params: Array<IrParam> = []
     var body = -1
@@ -70,6 +71,7 @@ lowerClosure|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: 
         done.frame.closures = done.frame.closures.append(lowered.frame.closures[c])
         c = c + 1
     done.frame.closures = done.frame.closures.append(fn)
+    done.frame.externs = mergeExternFunction(table = done.frame.externs, more = lowered.frame.externs)
     let placed = internText(texts = lowered.texts, value = fn.name)
     var node = irMakeNode(kind = irExprTag(.irClosureLiteral), typeId = typeId)
     node.text = placed.id
@@ -596,6 +598,7 @@ id: I32 = -1
 ; 归位结果：按形参声明序排好的节点下标；缺位时带原因。
 (IrOrder)
 ids: Array<I32> = []
+usingSlots: Array<I32> = []
 failed: Bool = false
 detail: String = ""
 
@@ -607,6 +610,10 @@ params: Array<CallParam> = []
 ret: I32 = -1
 ordered: Bool = false
 takesReceiver: Bool = false
+; 外部符号：symbol 供登记声明取标志，sigId 是语义函数类型，ret 取签名尾。
+isForeign: Bool = false
+symbol: I32 = -1
+sigId: I32 = -1
 
 ; 读节点结果：池、文本池与节点下标；读改写先把目标读一次。
 (IrLoadNode)
@@ -693,10 +700,13 @@ orderActuals|func(actuals: Array<IrActual>, params: Array<CallParam>,) -> (IrOrd
     i = 0
     while i < len(slots):
         if slots[i] < 0:
-            out.failed = true
             if params[i].isUsing:
-                out.detail = "省略取用实参"
-            elif params[i].hasDefault:
+                ; 取用位留给调用方补取用点：这里只记槽位，不算失败。
+                out.usingSlots = out.usingSlots.append(i)
+                i = i + 1
+                continue
+            out.failed = true
+            if params[i].hasDefault:
                 out.detail = "省略默认值实参"
             else:
                 out.detail = "缺实参 " + params[i].name
@@ -766,6 +776,17 @@ calleeOfFunction|func(frame: LowerFrame, map: TypeMap, name: String,) -> (IrCall
     if ref.unit < 0:
         return calleeOfBuiltin(frame = frame, map = map, name = name)
     let decl = frame.world.units[ref.unit].ast.decls[ref.decl]
+    let entry = frame.world.table.symbolAt(symbol)
+    if entry.isForeign:
+        ; 外部条目不是函数声明类别，签名从符号绑定的类型取；变参标志随符号走。
+        out.found = true
+        out.isForeign = true
+        out.symbol = symbol
+        out.name = name
+        out.sigId = frame.world.types.typeOf(unit = ref.unit, decl = ref.decl)
+        if out.sigId >= 0 && out.sigId < len(frame.world.types.pool.entries):
+            out.ret = frame.world.types.pool.entries[out.sigId].ret
+        return out
     if !isFunctionDeclCode(decl.kind):
         return calleeOfBuiltin(frame = frame, map = map, name = name)
     out.found = true
@@ -878,6 +899,66 @@ lowerConstructDefaults|func(out: LowerExpr, map: TypeMap, types: ExprTypes, ref:
     done.id = inserted.id
     return done
 
+; 给定类型名：形参类型落到名义条目、且该名字的声明是给定块才答名字，其余答空串。
+givenTypeName|func(frame: LowerFrame, map: TypeMap, semanticTypeId: I32,) -> (String,):
+    let irId = irIdOf(map = map, semanticId = semanticTypeId)
+    if irId < 0:
+        return ""
+    let entry = irTypeAt(pool = map.pool, id = irId)
+    if irTypeTag(entry.kind) != irTypeTag(.irTypeNominal):
+        return ""
+    let symbol = lookupTopByName(index = frame.world.symbols, name = entry.name)
+    if symbol < 0:
+        return ""
+    let ref = symbolDecl(world = frame.world, symbol = symbol)
+    if ref.unit < 0:
+        return ""
+    if isGivenDeclCode(frame.world.units[ref.unit].ast.decls[ref.decl].kind):
+        return entry.name
+    return ""
+
+; 外部声明登记：名字、返回、形参与变参标志；同名只留一条。
+; 类型映射不到时记 -1，发射期按 void 出；白名单外的类型在语义层已拒。
+noteExternFunction|func(frame: LowerFrame, map: TypeMap, symbol: I32, sigId: I32, name: String,) -> (LowerFrame,):
+    var out = frame
+    if sigId < 0 || sigId >= len(out.world.types.pool.entries):
+        return out
+    let sig = out.world.types.pool.entries[sigId]
+    let entry = out.world.table.symbolAt(symbol)
+    var row = IrExternFunction()
+    row.name = name
+    row.returnType = irIdOf(map = map, semanticId = sig.ret)
+    var i = 0
+    while i < len(sig.kids):
+        row.params = row.params.append(irIdOf(map = map, semanticId = sig.kids[i]))
+        i = i + 1
+    row.isVarargs = containsFlagText(items = entry.foreignFlags, name = "varargs")
+    out.externs = mergeExternFunction(table = out.externs, more = [row])
+    return out
+
+; 外部调用：按源序传参、名字用 C 拼写；不接标签，也不进内建特判。
+lowerForeignCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32, name: String, actuals: Array<IrActual>, leading: I32, ret: I32,) -> (LowerExpr,):
+    var done = out
+    let typeId = callResultType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id, ret = ret)
+    if typeId == -2:
+        return missType(out = done, unit = unit, id = id, bytes = bytes)
+    var kids: Array<I32> = []
+    if leading >= 0:
+        kids = kids.append(leading)
+    var i = 0
+    while i < len(actuals):
+        kids = kids.append(actuals[i].id)
+        i = i + 1
+    let placed = internText(texts = done.texts, value = name)
+    var node = irMakeNode(kind = irExprTag(.irCall), typeId = typeId)
+    node.text = placed.id
+    node.kids = kids
+    let inserted = irAppendNode(pool = done.pool, node = node)
+    done.texts = placed.texts
+    done.pool = inserted.pool
+    done.id = inserted.id
+    return done
+
 ; 具名调用：实参按形参序归位，接收者（若有）排在最前；归位失败即报缺口。
 lowerNamedCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32, name: String, actuals: Array<IrActual>, params: Array<CallParam>, leading: I32, ret: I32,) -> (LowerExpr,):
     var done = out
@@ -892,7 +973,20 @@ lowerNamedCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map
         kids = kids.append(leading)
     var i = 0
     while i < len(order.ids):
-        kids = kids.append(order.ids[i])
+        if order.ids[i] >= 0:
+            kids = kids.append(order.ids[i])
+            i = i + 1
+            continue
+        ; 省略的取用实参：该形参类型是给定块才补取用点，否则按缺口报。
+        let givenName = givenTypeName(frame = done.frame, map = map, semanticTypeId = params[i].typeId)
+        if len(givenName) == 0:
+            return missExpr(out = done, unit = unit, id = id, what = "省略的取用实参没有默认实例")
+        let givenType = irFindType(pool = map.pool, kind = .irTypeNominal, name = givenName, kids = [], ret = -1, uses = [], flags = 0)
+        if givenType < 0:
+            return missType(out = done, unit = unit, id = id, bytes = bytes)
+        let point = addIrNode(pool = done.pool, kind = irExprTag(.irGivenInstance), typeId = givenType, op = 0, kids = [])
+        done.pool = point.pool
+        kids = kids.append(point.id)
         i = i + 1
     let placed = internText(texts = done.texts, value = name)
     var node = irMakeNode(kind = irExprTag(.irCall), typeId = typeId)
@@ -1059,6 +1153,61 @@ lowerLazyRefConstruct|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U
     done.id = inserted.id
     return done
 
+; 等待：操作数一个子节点，形式记在 `op`（0 = await，1 = wait）；站点类型是结算后的 Result。
+; 上下文按帧的异步位硬判：`await` 只在异步体，`wait` 只在同步体，闭包帧不继承外层。
+lowerJoin|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
+    var done = out
+    let expr = unit.ast.exprAt(id)
+    if len(expr.kids) != 1:
+        return missExpr(out = done, unit = unit, id = id, what = "等待缺操作数")
+    let awaits = unit.ast.isAwaitJoin(id)
+    if awaits && !done.frame.isAsync:
+        return missNeed(out = done, unit = unit, id = id, what = "`await` 只许出现在异步体内")
+    if !awaits && done.frame.isAsync:
+        return missNeed(out = done, unit = unit, id = id, what = "`wait` 只许出现在同步体内")
+    let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
+    if typeId < 0:
+        return missType(out = done, unit = unit, id = id, bytes = bytes)
+    let one = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = expr.kids[0])
+    done.pool = one.pool
+    done.texts = one.texts
+    done.frame = one.frame
+    if one.failed:
+        return takeFailure(out = done, one = one)
+    let handleType = irNodeAt(pool = done.pool, id = one.id).typeId
+    if irTypeTag(irTypeAt(pool = map.pool, id = handleType).kind) != irTypeTag(.irTypeFuture):
+        return missNeed(out = done, unit = unit, id = id, what = "等待目标不是任务句柄")
+    var form = 1
+    if awaits:
+        form = 0
+    let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irJoin), typeId = typeId, op = form, kids = [one.id])
+    done.pool = inserted.pool
+    done.id = inserted.id
+    return done
+
+; 结果构造：载荷一个子节点，`op` 记标签（0 = ok，1 = err）；错误槽在发射期擦成一个机器字。
+lowerResultConstruct|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32, isOk: Bool,) -> (LowerExpr,):
+    var done = out
+    let expr = unit.ast.exprAt(id)
+    if len(expr.kids) != 2:
+        return missNeed(out = done, unit = unit, id = id, what = "结果构造需要恰好一个载荷")
+    let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
+    if typeId < 0:
+        return missType(out = done, unit = unit, id = id, bytes = bytes)
+    let one = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = expr.kids[1])
+    done.pool = one.pool
+    done.texts = one.texts
+    done.frame = one.frame
+    if one.failed:
+        return takeFailure(out = done, one = one)
+    var tag = 1
+    if isOk:
+        tag = 0
+    let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irResultConstruct), typeId = typeId, op = tag, kids = [one.id])
+    done.pool = inserted.pool
+    done.id = inserted.id
+    return done
+
 ; 间接调用：被调是函数值，首个子节点是值的读取；形参类型取自函数类型，返回取签名尾。
 ; 实参个数与签名不符即缺口 —— 后端按签名定型，少一个多一个都会错位。
 lowerIndirectCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, callId: I32, calleeId: I32, fnType: I32,) -> (LowerExpr,):
@@ -1145,6 +1294,8 @@ lowerCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: Typ
     elif unit.ast.isIdentifierExpr(callee):
         let calleeExpr = unit.ast.exprAt(callee)
         let name = decodeSpelling(bytes = bytes, start = calleeExpr.nameStart, end = calleeExpr.nameEnd)
+        if name == "ok" || name == "err":
+            return lowerResultConstruct(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id, isOk = name == "ok")
         ; 省略类型实参的构造：元素类型取自初值闭包的返回。
         if name == "LazyRef" && len(expr.kids) == 2:
             return lowerLazyRefConstruct(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id, callee = -1)
@@ -1162,7 +1313,7 @@ lowerCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: Typ
                 var isObject = false
                 if isObjectDeclCode(decl.kind):
                     isObject = true
-                if isStructDeclCode(decl.kind) || isObjectDeclCode(decl.kind):
+                if isStructDeclCode(decl.kind) || isObjectDeclCode(decl.kind) || isGivenDeclCode(decl.kind):
                     let typeId = zeroConstructType(map = map, name = name, isObject = isObject)
                     if typeId >= 0:
                         let shaped = lowerConstructDefaults(out = done, map = map, types = types, ref = ref, typeId = typeId)
@@ -1201,6 +1352,9 @@ lowerCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: Typ
         let constructed = lowerCaseConstruct(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id, name = maybeCase, actuals = actuals)
         if constructed.id >= 0:
             return constructed
+    if resolved.found && resolved.isForeign:
+        done.frame = noteExternFunction(frame = done.frame, map = map, symbol = resolved.symbol, sigId = resolved.sigId, name = resolved.name)
+        return lowerForeignCall(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id, name = resolved.name, actuals = actuals, leading = receiver, ret = resolved.ret)
     if len(builtinMember) > 0:
         if builtinType >= 0 && builtinType < irTypeCount(map.pool) && irTypeTag(irTypeAt(pool = map.pool, id = builtinType).kind) == irTypeTag(.irTypeString):
             return lowerStringMember(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id, member = builtinMember, receiver = receiver, actuals = actuals)
@@ -1662,6 +1816,8 @@ lowerExpr|func(pool: IrNodePool, texts: IrTextPool, map: TypeMap, types: ExprTyp
         return lowerBinary(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
     if unit.ast.isUnaryExpr(id):
         return lowerUnary(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
+    if unit.ast.isJoinExpr(id):
+        return lowerJoin(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
     if unit.ast.isCallExpr(id):
         return lowerCall(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
     if unit.ast.isMemberExpr(id):

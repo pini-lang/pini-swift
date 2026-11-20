@@ -1,0 +1,176 @@
+; 计划文件：与宿主同一份 TOML 形状；路径一律根相对，跨机器逐字节相同。
+; 构建器写它，检查器读它；`check` / `test` 只读计划，不执行 `build.pini`。
+
+; 计划版本与翻译器标签：版本不符要重跑 `build`，翻译器变了要重翻。
+planVersion|func() -> (I32,):
+    return 1
+
+planTranslator|func() -> (String,):
+    return "pini-bind/1"
+
+; 计划路径：`<根>/.build/<profile>/plan.toml`，与宿主布局同一处。
+planFilePath|func(root: String, profile: String,) -> (String,):
+    return root + "/.build/" + profile + "/plan.toml"
+
+; 渲染：包在前、步骤在后；每个条目另起一段，空数组写 `[]`。
+planFileText|func(_plan: BuildPlan,) -> (String,):
+    var text = "[plan]\nversion = \(planVersion())\ntranslator = \"" + planTranslator() + "\"\n"
+    var i = 0
+    while i < len(_plan.packages):
+        let pkg = _plan.packages[i]
+        text = text + "\n[[package]]\n"
+        text = text + "name = \"" + pkg.name + "\"\n"
+        text = text + "root = \"" + pkg.rootPath + "\"\n"
+        text = text + "script_hash = \"" + pkg.scriptHash + "\"\n"
+        i = i + 1
+    i = 0
+    while i < len(_plan.packages):
+        let pkg = _plan.packages[i]
+        var s = 0
+        while s < len(pkg.steps):
+            text = text + stepText(pkg = pkg, one = pkg.steps[s])
+            s = s + 1
+        i = i + 1
+    return text
+
+; 一条步骤：包名、步骤名、头文件、包含路径、定义、产物与指纹。
+stepText|func(pkg: PackagePlan, one: BuildStep,) -> (String,):
+    var text = "\n[[step]]\n"
+    text = text + "package = \"" + pkg.name + "\"\n"
+    text = text + "name = \"" + one.name + "\"\n"
+    text = text + "header = \"" + rootedPath(root = pkg.rootPath, rel = one.headerPath) + "\"\n"
+    text = text + "include_paths = [" + quotedRootedList(root = pkg.rootPath, values = one.includePaths) + "]\n"
+    text = text + "defines = [" + quotedList(values = one.defines) + "]\n"
+    text = text + "output = \"" + one.outputPath + "\"\n"
+    text = text + "input_hash = \"" + one.inputHash + "\"\n"
+    return text
+
+; 根相对拼接：包根为 `.` 时原样给，否则前缀包根。
+rootedPath|func(root: String, rel: String,) -> (String,):
+    if root == "." || len(root) == 0:
+        return rel
+    return root + "/" + rel
+
+; 带引号列表：逗号加空格分隔，与宿主渲染同一写法。
+quotedList|func(values: Array<String>,) -> (String,):
+    var text = ""
+    var i = 0
+    while i < len(values):
+        if i > 0:
+            text = text + ", "
+        text = text + "\"" + values[i] + "\""
+        i = i + 1
+    return text
+
+; 带包根的带引号列表：包含路径按源写法相对包根。
+quotedRootedList|func(root: String, values: Array<String>,) -> (String,):
+    var shifted: Array<String> = []
+    var i = 0
+    while i < len(values):
+        shifted = shifted.append(rootedPath(root = root, rel = values[i]))
+        i = i + 1
+    return quotedList(values = shifted)
+
+; 输入指纹：翻译器标签、头文件写法、包含路径、定义与头文件内容；任一变了就重算。
+stepInputDigest|func(root: String, packageRoot: String, one: BuildStep,) -> (String,):
+    var text = planTranslator() + "\n" + one.headerPath + "\n"
+    var i = 0
+    while i < len(one.includePaths):
+        text = text + one.includePaths[i] + "\n"
+        i = i + 1
+    i = 0
+    while i < len(one.defines):
+        text = text + one.defines[i] + "\n"
+        i = i + 1
+    let headerPath = rootedPath(root = packageRoot, rel = one.headerPath)
+    let absolute = root + "/" + headerPath
+    if exists(absolute):
+        text = text + readFile(absolute)
+    return sha256Hex(text)
+
+; 补指纹结果：填好的计划与缺头文件的条数；缺头文件由调用方转成诊断。
+(HashFill)
+plan: BuildPlan = BuildPlan()
+missing: I32 = 0
+
+; 计划里的包条目：包名、包根与脚本哈希；哈希为空表示该包没有构建脚本。
+(PlanEntry)
+name: String = ""
+root: String = ""
+scriptHash: String = ""
+
+; 计划里的步骤条目：装载判据只取包名、步骤名与产物路径。
+(PlanEntryStep)
+package: String = ""
+name: String = ""
+output: String = ""
+
+; 计划读取结果：存在标记、不合法原因与两张条目表；原因非空时条目表不可用。
+(PlanRead)
+present: Bool = false
+broken: String = ""
+packages: Array<PlanEntry> = []
+steps: Array<PlanEntryStep> = []
+
+; 解析计划文本：版本不符或形状非法答不合法原因；条目按出现序保留，不做跨条目校验。
+parsePlanText|func(text: String, path: String,) -> (PlanRead,):
+    var out = PlanRead()
+    out.present = true
+    let doc = parseToml(text = text, path = path)
+    if len(doc.errors) > 0:
+        out.broken = "形状不合法"
+        return out
+    if tomlValue(doc = doc, table = "plan", key = "version") != "\(planVersion())":
+        out.broken = "版本与当前不符"
+        return out
+    var r = 0
+    while r < tomlRowCount(doc = doc, table = "package"):
+        var one = PlanEntry()
+        one.name = tomlRowValue(doc = doc, table = "package", row = r, key = "name")
+        one.root = tomlRowValue(doc = doc, table = "package", row = r, key = "root")
+        one.scriptHash = tomlRowValue(doc = doc, table = "package", row = r, key = "script_hash")
+        out.packages = out.packages.append(one)
+        r = r + 1
+    r = 0
+    while r < tomlRowCount(doc = doc, table = "step"):
+        var one = PlanEntryStep()
+        one.package = tomlRowValue(doc = doc, table = "step", row = r, key = "package")
+        one.name = tomlRowValue(doc = doc, table = "step", row = r, key = "name")
+        one.output = tomlRowValue(doc = doc, table = "step", row = r, key = "output")
+        out.steps = out.steps.append(one)
+        r = r + 1
+    return out
+
+; 读计划文件：文件不在答不存在；其余交给解析，读不出按不合法记。
+readPlanFile|func(root: String, profile: String,) -> (PlanRead,):
+    var out = PlanRead()
+    let path = planFilePath(root = root, profile = profile)
+    if !exists(path):
+        return out
+    return parsePlanText(text = readFile(path), path = path)
+
+; 补指纹：逐包逐步算输入指纹，顺带数出读不到的头文件。
+fillPlanHashes|func(plan: BuildPlan, root: String,) -> (HashFill,):
+    var out = HashFill()
+    var packages: Array<PackagePlan> = []
+    var i = 0
+    while i < len(plan.packages):
+        var pkg = plan.packages[i]
+        var steps: Array<BuildStep> = []
+        var s = 0
+        while s < len(pkg.steps):
+            var one = pkg.steps[s]
+            one.inputHash = stepInputDigest(root = root, packageRoot = pkg.rootPath, one = one)
+            let absolute = root + "/" + rootedPath(root = pkg.rootPath, rel = one.headerPath)
+            if !exists(absolute):
+                out.missing = out.missing + 1
+            steps = steps.append(one)
+            s = s + 1
+        pkg.steps = steps
+        packages = packages.append(pkg)
+        i = i + 1
+    out.plan.rootPath = plan.rootPath
+    out.plan.profile = plan.profile
+    out.plan.packages = packages
+    out.plan.errors = plan.errors
+    return out

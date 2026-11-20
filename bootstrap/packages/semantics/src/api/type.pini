@@ -125,6 +125,27 @@ lazyRefElement|func(pool: TypePool, id: I32,) -> (I32,):
         return -1
     return entry.kids[0]
 
+; 任务句柄判定：名字为 Future 的泛型实例；载荷类型即唯一实参。
+isFutureType|func(pool: TypePool, id: I32,) -> (Bool,):
+    if id < 0 || id >= len(pool.entries):
+        return false
+    let entry = pool.entries[id]
+    if !isTypeClass(kind = entry.kind, expected = .typeClassGeneric):
+        return false
+    return entry.name == "Future" && len(entry.kids) == 1
+
+; 任务载荷：Future 的唯一实参；其余答 -1。
+futurePayload|func(pool: TypePool, id: I32,) -> (I32,):
+    if !isFutureType(pool = pool, id = id):
+        return -1
+    return pool.entries[id].kids[0]
+
+; 任务句柄类型：载荷进唯一实参位；与 LazyRef 同为泛型实例，靠名字区分。
+futureType|func(pool: TypePool, payload: I32,) -> (TypeInsert,):
+    var kids: Array<I32> = []
+    kids = kids.append(payload)
+    return intern(pool = pool, kind = .typeClassGeneric, name = "Future", kids = kids, ret = -1)
+
 ; 跨包判定：枚举项不能跨包引用，下游按类别逐个问；每条走一次类别判定。
 isScalarClass|func(_kind: TypeClass,) -> (Bool,):
     return isTypeClass(kind = _kind, expected = .typeClassScalar)

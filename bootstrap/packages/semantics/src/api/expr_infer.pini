@@ -219,10 +219,25 @@ walkInferIf|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmt
 ; 匹配语句：只推主题与各分支块；模式里的绑定名不猜类型 —— 枚举载荷不在推导面。
 walkInferMatch|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, stmtId: I32, state: WalkState,) -> (WalkState,):
     var out = inferStmtKid(world = world, unit = unit, unitIndex = unitIndex, stmtId = stmtId, index = 0, state = state)
+    let subject = unit.ast.stmtChild(id = stmtId, index = 0)
+    let subjectType = exprTypeAt(table = out.types, unit = unitIndex, node = subject)
     let count = len(unit.ast.stmtAt(stmtId).kids)
     var i = 1
     while i + 1 < count:
-        out = walkInferStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = unit.ast.stmtChild(id = stmtId, index = i + 1), state = out)
+        let patternNode = unit.ast.stmtChild(id = stmtId, index = i)
+        var inner = out
+        if subjectType >= 0:
+            ; 臂内绑定按用例载荷定型：没有这一步，`case ok(v)` 的 v 在体里推不出类型。
+            let info = classifyPattern(unit = unit, node = patternNode)
+            let payloads = patternPayloadTypes(world = world, pool = out.pool, subjectType = subjectType, caseName = info.name)
+            var table = inner.table
+            var b = 0
+            while b < len(info.bindings):
+                if b < len(payloads):
+                    table = noteName(table = table, name = info.bindings[b], typeId = payloads[b])
+                b = b + 1
+            inner.table = table
+        out = walkInferStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = unit.ast.stmtChild(id = stmtId, index = i + 1), state = inner)
         i = i + 2
     return out
 
@@ -279,6 +294,11 @@ walkInferFunction|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32
         let ret = annotationType(world = world, unit = unit, node = decl.typeId, pool = inner.pool)
         inner.pool = ret.pool
         inner.returnType = ret.id
+    if decl.isAsync && inner.returnType >= 0:
+        ; 异步体交的是结算值：`return ok(v)` 的期望类型是 `Result<T>`，不是句柄。
+        let settled = resultType(pool = inner.pool, elem = inner.returnType)
+        inner.pool = settled.pool
+        inner.returnType = settled.id
     let walked = walkInferStmt(world = world, unit = unit, unitIndex = unitIndex, stmtId = decl.body, state = inner)
     var out = state
     out.pool = walked.pool
@@ -306,6 +326,7 @@ walkInferDecls|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, s
     return out
 
 ; 函数返回类型：按声明上的类型节点解析；顶层函数才有这一位。
+; 异步函数的调用方看到的是任务句柄 `Future<T>`，体里要交的却是 `Result<T>`。
 returnTypeOf|func(world: MemberWorld, symbol: I32, pool: TypePool,) -> (TypeInsert,):
     let ref = symbolDecl(world = world, symbol = symbol)
     if ref.unit < 0:
@@ -313,7 +334,11 @@ returnTypeOf|func(world: MemberWorld, symbol: I32, pool: TypePool,) -> (TypeInse
     let decl = world.units[ref.unit].ast.decls[ref.decl]
     if !isFunctionDeclCode(decl.kind):
         return hitType(pool = pool, id = -1)
-    return annotationType(world = world, unit = world.units[ref.unit], node = decl.typeId, pool = pool)
+    let resolved = annotationType(world = world, unit = world.units[ref.unit], node = decl.typeId, pool = pool)
+    if !decl.isAsync || resolved.id < 0:
+        return resolved
+    let wrapped = futureType(pool = resolved.pool, payload = resolved.id)
+    return hitType(pool = wrapped.pool, id = wrapped.id)
 
 ; 外部数据符号的类型：外部块里非函数类型的条目；其余答 -1。
 foreignDataSymbolType|func(world: MemberWorld, name: String,) -> (I32,):
@@ -398,7 +423,20 @@ inferNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
     if unit.ast.isMemberExpr(node):
         return inferMember(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out, bytes = bytes)
     if unit.ast.isCallExpr(node):
-        return inferCall(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out, bytes = bytes)
+        return inferCall(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out, bytes = bytes, expected = expected)
+    if unit.ast.isJoinExpr(node):
+        ; 等待：操作数须是任务句柄，站点类型是它结算后的 `Result<T>`；不是句柄留未写。
+        let operated = unit.ast.childOf(id = node, index = 0)
+        let future = inferNode(world = world, unit = unit, unitIndex = unitIndex, node = operated, names = names, pool = out.pool, types = out.types, bytes = bytes, expected = noExpectation())
+        out.pool = future.pool
+        out.types = future.types
+        let payload = futurePayload(pool = out.pool, id = future.typeId)
+        if payload >= 0:
+            let settled = resultType(pool = out.pool, elem = payload)
+            out.pool = settled.pool
+            out.typeId = settled.id
+            out.types = writeExprType(table = out.types, unit = unitIndex, node = node, typeId = out.typeId)
+        return out
     if unit.ast.isBinaryExpr(node):
         return inferBinary(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out, bytes = bytes)
     if unit.ast.isUnaryExpr(node):
@@ -529,7 +567,7 @@ inferActuals|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, nod
     done.typeId = unsetTypeId()
     return done
 
-inferCall|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, out: InferResult, bytes: Array<U8>,) -> (InferResult,):
+inferCall|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, out: InferResult, bytes: Array<U8>, expected: Expectation,) -> (InferResult,):
     var done = out
     let expr = unit.ast.exprAt(node)
     if len(expr.kids) < 1:
@@ -551,6 +589,30 @@ inferCall|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
         return inferActuals(world = world, unit = unit, unitIndex = unitIndex, node = node, params = [], names = names, out = done, bytes = bytes)
     let calleeExpr = unit.ast.exprAt(callee)
     let name = decodeRange(bytes = bytes, start = calleeExpr.nameStart, end = calleeExpr.nameEnd)
+    if name == "ok" || name == "err":
+        ; 结果构造：`ok(v)` 的载荷进 ok 槽；`err(e)` 的 ok 槽取期望类型的载荷，缺期望按空元组。
+        done = inferActuals(world = world, unit = unit, unitIndex = unitIndex, node = node, params = [], names = names, out = done, bytes = bytes)
+        if len(expr.kids) != 2:
+            return done
+        let argument = exprTypeAt(table = done.types, unit = unitIndex, node = expr.kids[1])
+        if argument < 0:
+            return done
+        var payload = argument
+        if name == "err":
+            payload = -1
+            if expected.hasExpected && expected.typeId >= 0 && expected.typeId < len(done.pool.entries):
+                let wanted = done.pool.entries[expected.typeId]
+                if isTypeClass(kind = wanted.kind, expected = .typeClassResult) && len(wanted.kids) > 0:
+                    payload = wanted.kids[0]
+            if payload < 0:
+                let empty = intern(pool = done.pool, kind = .typeClassTuple, name = "", kids = [], ret = -1)
+                done.pool = empty.pool
+                payload = empty.id
+        let settled = resultType(pool = done.pool, elem = payload)
+        done.pool = settled.pool
+        done.typeId = settled.id
+        done.types = writeExprType(table = done.types, unit = unitIndex, node = node, typeId = done.typeId)
+        return done
     if name == "LazyRef":
         ; 省略类型实参的写法：元素类型取初值闭包的返回。
         done = inferActuals(world = world, unit = unit, unitIndex = unitIndex, node = node, params = [], names = names, out = done, bytes = bytes)
@@ -594,7 +656,7 @@ inferCall|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
             let decl = world.units[ref.unit].ast.decls[ref.decl]
             if isForeignSymbolCode(decl.kind):
                 return inferForeignCall(world = world, unit = unit, unitIndex = unitIndex, node = node, ref = ref, names = names, out = done, bytes = bytes)
-            if (isStructDeclCode(decl.kind) || isObjectDeclCode(decl.kind)) && len(expr.kids) == 1:
+            if (isStructDeclCode(decl.kind) || isObjectDeclCode(decl.kind) || isGivenDeclCode(decl.kind)) && len(expr.kids) == 1:
                 let planted = nominalTypeId(world = world, name = name)
                 if planted >= 0:
                     done.typeId = planted

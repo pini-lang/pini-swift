@@ -48,6 +48,25 @@ insertPending|func(items: Array<PendingUnit>, value: PendingUnit,) -> (Array<Pen
         out = out.append(value)
     return out
 
+; 按路径插入单元：保持升序；同路径已在集内时原样返回，生成模块与源码同处一条序列。
+insertGeneratedUnit|func(items: Array<CompilationUnit>, value: CompilationUnit,) -> (Array<CompilationUnit>,):
+    var out: Array<CompilationUnit> = []
+    var placed = false
+    var i = 0
+    while i < len(items):
+        if !placed:
+            let order = comparePaths(first = value.path, second = items[i].path)
+            if order == 0:
+                return items
+            if order < 0:
+                out = out.append(value)
+                placed = true
+        out = out.append(items[i])
+        i = i + 1
+    if !placed:
+        out = out.append(value)
+    return out
+
 ; 目标源码根：测试目标由公共生产源码与入口目录组成，其余只取计划给的源码根。
 targetRoots|func(_target: TargetPlan,) -> (Array<String>,):
     var out: Array<String> = []
@@ -204,10 +223,12 @@ packages: Array<PackageUnits> = []
 errors: Array<LoadError> = []
 
 ; 装载整个工作区并保留包分组：单元归属与声明依赖随分组一起交出去。
+; 计划文件读一次，逐包按脚本步骤并入生成模块；未声明构建面的包不受影响。
 loadWorkspaceGrouped|func(_plan: BuildPlan,) -> (WorkspaceUnits,):
     var out = WorkspaceUnits()
     if !_plan.isOK():
         return out
+    let planRead: PlanRead = package.readPlanFile(root = _plan.rootPath, profile = _plan.profile)
     var i = 0
     while i < len(_plan.packages):
         let planned: PackagePlan = _plan.packages[i]
@@ -226,6 +247,16 @@ loadWorkspaceGrouped|func(_plan: BuildPlan,) -> (WorkspaceUnits,):
         while e < len(loaded.errors):
             out.errors = out.errors.append(loaded.errors[e])
             e = e + 1
+        let declared: GeneratedPackage = declaredPackage(planned)
+        let attached = attachGenerated(root = _plan.rootPath, profile = _plan.profile, plan = planRead, pkg = declared)
+        e = 0
+        while e < len(attached.errors):
+            out.errors = out.errors.append(attached.errors[e])
+            e = e + 1
+        var a = 0
+        while a < len(attached.units):
+            group.units = insertGeneratedUnit(items = group.units, value = attached.units[a])
+            a = a + 1
         out.packages = out.packages.append(group)
         i = i + 1
     return out
@@ -237,10 +268,19 @@ count|self() -> (I32,):
 ; 包读：下标越界是运行时陷阱，调用方先经 packageOf 定位。
 packageAt|self(_index: I32,) -> (PackageUnits,):
     return self.packages[_index]
-; 单元归属：按路径分段前缀命中唯一包根，未命中答空串。
+; 单元归属：先按装载分组的单元路径精确命中，未命中再按路径分段前缀；都未命中答空串。
+; 生成模块落在 `.build` 下，路径前缀不属于任何包，只能靠分组归属。
 packageOf|self(_unitPath: String,) -> (String,):
-    let parts = _unitPath.split("/")
     var i = 0
+    while i < len(self.packages):
+        var u = 0
+        while u < len(self.packages[i].units):
+            if self.packages[i].units[u].path == _unitPath:
+                return self.packages[i].name
+            u = u + 1
+        i = i + 1
+    let parts = _unitPath.split("/")
+    i = 0
     while i < len(self.packages):
         if partsStartWith(parts = parts, prefix = self.packages[i].rootPath.split("/")):
             return self.packages[i].name

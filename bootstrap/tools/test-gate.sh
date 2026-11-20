@@ -134,8 +134,108 @@ case "$full_out" in
     ;;
 esac
 
+# 外部声明：模块表出 declare，调用点直呼 C 名字；链接执行读数与手算一致。
+extern_fixture="$root/bootstrap/fixtures/llvm-extern"
+extern_raw="$work/extern-raw.ll"
+extern_ll="$work/extern.ll"
+if ! "$pini" emit "$extern_fixture" > "$extern_raw" 2>/dev/null; then
+    echo " 行不通  [测试自检] 外部声明夹具发射失败" >&2
+    fail=1
+fi
+tail -n +3 "$extern_raw" > "$extern_ll"
+if ! grep -q "declare i32 @abs(i32)" "$extern_ll"; then
+    echo " 行不通  [测试自检] 外部声明未出 declare" >&2
+    fail=1
+fi
+if ! "$clang_bin" -o "$work/extern-bin" "$extern_ll" -L"$runtime_dir" -lPiniRuntime \
+    -Wl,-rpath,"$runtime_dir" >/dev/null 2>&1; then
+    echo " 行不通  [测试自检] 外部声明夹具链接失败" >&2
+    fail=1
+fi
+if [ -x "$work/extern-bin" ]; then
+    "$work/extern-bin"
+    if [ "$?" -ne 5 ]; then
+        echo " 行不通  [测试自检] 外部声明夹具读数应为 5" >&2
+        fail=1
+    fi
+fi
+
+# 构建脚本：给定块读成翻译步，产物路径落在包内 generated，非给定块按错误报。
+script_fixture="$root/bootstrap/fixtures/build-script"
+script_plan="$work/build-script-plan.txt"
+if ! "$pini" plan "$script_fixture" > "$script_plan" 2>&1; then
+    echo " 行不通  [测试自检] 构建脚本夹具出不了计划" >&2
+    fail=1
+fi
+if ! grep -q "step cstr header=include/cstr.h include=include defs=_GNU_SOURCE" "$script_plan"; then
+    echo " 行不通  [测试自检] 计划缺 cstr 步骤行" >&2
+    fail=1
+fi
+if ! grep -q "/generated/mathf.pini" "$script_plan"; then
+    echo " 行不通  [测试自检] 步骤产物未落在包内 generated" >&2
+    fail=1
+fi
+if grep -q "^error" "$script_plan"; then
+    echo " 行不通  [测试自检] 计划不应带错误：$(cat "$script_plan")" >&2
+    fail=1
+fi
+
+# 生成模块：计划登记且产物在 .build 下才并入；缺计划、缺产物、脚本改动各报一条指向 build 的诊断。
+gen_fixture="$work/generated-load"
+rm -rf "$gen_fixture"
+cp -R "$root/bootstrap/fixtures/generated-load" "$gen_fixture"
+gen_plan="$gen_fixture/.build/debug/plan.toml"
+gen_out="$gen_fixture/.build/debug/packages/gendemo/generated/cstr.pini"
+mkdir -p "$gen_fixture/.build/debug/packages/gendemo/generated"
+"$pini" build "$gen_fixture" > /dev/null 2>&1
+if [ ! -f "$gen_plan" ]; then
+    echo " 行不通  [测试自检] 生成模块夹具没落计划" >&2
+    fail=1
+fi
+cat > "$gen_out" <<'EOF'
+[cstr|foreign]
+pini_double: (I32,) -> (I32,)
+EOF
+gen_report="$("$pini" check "$gen_fixture" 2>&1)"
+case "$gen_report" in
+*"workspace-ok"*) ;;
+*)
+    echo " 行不通  [测试自检] 生成模块未并入，检查未通过：$gen_report" >&2
+    fail=1
+    ;;
+esac
+mv "$gen_plan" "$work/generated-plan.bak"
+gen_report="$("$pini" check "$gen_fixture" 2>&1)"
+case "$gen_report" in
+*"构建计划不存在"*) ;;
+*)
+    echo " 行不通  [测试自检] 缺计划未报定向诊断：$gen_report" >&2
+    fail=1
+    ;;
+esac
+mv "$work/generated-plan.bak" "$gen_plan"
+mv "$gen_out" "$work/generated-out.bak"
+gen_report="$("$pini" check "$gen_fixture" 2>&1)"
+case "$gen_report" in
+*"生成模块不存在"*) ;;
+*)
+    echo " 行不通  [测试自检] 缺产物未报定向诊断：$gen_report" >&2
+    fail=1
+    ;;
+esac
+mv "$work/generated-out.bak" "$gen_out"
+printf '\n; 改一行\n' >> "$gen_fixture/pkg/build.pini"
+gen_report="$("$pini" check "$gen_fixture" 2>&1)"
+case "$gen_report" in
+*"构建计划与脚本不一致"*) ;;
+*)
+    echo " 行不通  [测试自检] 脚本改动未报计划过期：$gen_report" >&2
+    fail=1
+    ;;
+esac
+
 if [ "$fail" -ne 0 ]; then
     exit 1
 fi
-echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段"
+echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入"
 exit 0

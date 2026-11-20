@@ -1,0 +1,9 @@
+; 构建脚本：块名即步骤名与产物名，字段只有头文件、包含路径与定义三个。
+[cstr|given]
+头文件: String = "include/cstr.h"
+包含路径: Array<String> = ["include"]
+定义: Array<String> = ["_GNU_SOURCE"]
+
+[mathf|given]
+头文件: String = "include/mathf.h"
+包含路径: Array<String> = []

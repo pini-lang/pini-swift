@@ -34,9 +34,12 @@ rootPath: String = ""
 members: Array<String> = []
 profile: String = "debug"
 
-; 解析结果：清单与错误并列；错误非空时清单不参与建计划。
+; 解析结果：清单与错误并列；构建脚本的步骤与路径随包一起交出。
 (PackageParse)
 manifest: PackageManifest = PackageManifest()
+steps: Array<BuildStep> = []
+scriptPath: String = ""
+scriptHash: String = ""
 errors: Array<ManifestError> = []
 
 ; FFI 解析结果：配置与错误并列；错误非空时配置仍可读，建计划前会整体拦下。

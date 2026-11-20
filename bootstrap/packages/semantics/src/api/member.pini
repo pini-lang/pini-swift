@@ -138,7 +138,7 @@ memberAccess|func(receiver: I32, name: String, isTypeName: Bool, owner: String, 
 
 ; 名义类别：结构、对象与枚举三类，其余答无效。
 nominalClassOf|func(_code: I32,) -> (TypeClass,):
-    if isStructDeclCode(_code):
+    if isStructDeclCode(_code) || isGivenDeclCode(_code):
         return .typeClassStruct
     if isObjectDeclCode(_code):
         return .typeClassObject

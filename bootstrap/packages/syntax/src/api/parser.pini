@@ -138,6 +138,20 @@ skipNewlines|self() -> ():
     while self.pos < self.total && self.tokens[self.pos].tag == kindTag(.newline):
         self.pos = self.pos + 1
     return
+; 缩进体开头：跳换行与块缩进；没有缩进即空体，按空块继续。
+; 声明体的解析器（字段、变体、方法）各自只读「块内行」，开闭由调用方成对处理。
+openIndentedBody|self() -> ():
+    self.skipNewlines()
+    if self.at(.indent):
+        self.advance()
+        self.skipNewlines()
+    return
+; 缩进体收尾：块末的反缩进一并吃掉，外层继续按顶级声明或语句读。
+closeIndentedBody|self() -> ():
+    self.skipNewlines()
+    if self.at(.dedent):
+        self.advance()
+    return
 ; 报一条语法诊断：跨度为当前记号；到达文件末尾时改用上一条记号的终点。
 report|self(code: String, message: String,) -> ():
     var start = self.current().start
@@ -259,7 +273,7 @@ closeTraitHeader|self() -> ():
 ; 特征体：变量签名、抽象方法签名与带默认实现的方法三种；遇到下一个顶级声明收尾。
 parseTraitBody|self(_isExtension: Bool,) -> (Array<I32>,):
     var entries: Array<I32> = []
-    self.skipNewlines()
+    self.openIndentedBody()
     while !self.atEnd():
         if self.at(.identifier) && self.isKindAt(offset = 1, kind = .colon):
             let fields: Array<I32> = self.parseFieldLines()
@@ -283,6 +297,7 @@ parseTraitBody|self(_isExtension: Bool,) -> (Array<I32>,):
             self.skipNewlines()
             continue
         break
+    self.closeIndentedBody()
     return entries
 ; `{名}(参数,) -> (返回,)` 形态的抽象签名：先吃花括号名，再走共用签名尾巴。
 parseBraceTraitSignature|self() -> (I32,):
@@ -371,7 +386,7 @@ parseBracketDecl|self() -> (I32,):
         let id: I32 = self.newDecl(kind = .declExtension, start = start, end = self.previousEnd())
         self.setDeclName(id = id, start = nameStart, end = nameEnd)
         self.setDeclGeneric(id = id, kids = generics)
-        self.setDeclKids(id = id, kids = self.parseMethodLines())
+        self.setDeclKids(id = id, kids = self.parseMethodBlock())
         return id
     self.advance()
     let nameStart: I32 = self.current().nameStart
@@ -415,18 +430,18 @@ parseBracketDecl|self() -> (I32,):
         let 给定节点: I32 = self.newDecl(kind = .declGiven, start = start, end = self.previousEnd())
         self.setDeclName(id = 给定节点, start = nameStart, end = nameEnd)
         self.setDeclGeneric(id = 给定节点, kids = generics)
-        self.setDeclKids(id = 给定节点, kids = self.parseFieldLines())
+        self.setDeclKids(id = 给定节点, kids = self.parseFieldBlock())
         return 给定节点
     if modifier == 2:
         let 对象节点: I32 = self.newDecl(kind = .declObject, start = start, end = self.previousEnd())
         self.setDeclName(id = 对象节点, start = nameStart, end = nameEnd)
         self.setDeclGeneric(id = 对象节点, kids = generics)
-        self.setDeclKids(id = 对象节点, kids = self.parseFieldLines())
+        self.setDeclKids(id = 对象节点, kids = self.parseFieldBlock())
         return 对象节点
     let id: I32 = self.newDecl(kind = .declEnum, start = start, end = self.previousEnd())
     self.setDeclName(id = id, start = nameStart, end = nameEnd)
     self.setDeclGeneric(id = id, kids = generics)
-    self.setDeclKids(id = id, kids = self.parseVariantLines())
+    self.setDeclKids(id = id, kids = self.parseVariantBlock())
     return id
 ; 导入体：`[名|import]` 的 `]` 已被消费；条目形如 `别名 = "包路径"`，遇到非条目行即收尾。
 parseImportBody|self(start: I32, nameStart: I32, nameEnd: I32,) -> (I32,):
@@ -573,7 +588,7 @@ parseParenDecl|self() -> (I32,):
         let id: I32 = self.newDecl(kind = .declExtension, start = start, end = self.previousEnd())
         self.setDeclName(id = id, start = nameStart, end = nameEnd)
         self.setDeclGeneric(id = id, kids = generics)
-        self.setDeclKids(id = id, kids = self.parseMethodLines())
+        self.setDeclKids(id = id, kids = self.parseMethodBlock())
         return id
     self.advance()
     let nameStart: I32 = self.current().nameStart
@@ -588,7 +603,7 @@ parseParenDecl|self() -> (I32,):
     let id: I32 = self.newDecl(kind = .declStruct, start = start, end = self.previousEnd())
     self.setDeclName(id = id, start = nameStart, end = nameEnd)
     self.setDeclGeneric(id = id, kids = generics)
-    self.setDeclKids(id = id, kids = self.parseStructFields())
+    self.setDeclKids(id = id, kids = self.parseStructBlock())
     return id
 ; 花括号声明：`{名}` 对象块与 `{{名}}` 对象扩展。
 parseBraceDecl|self() -> (I32,):
@@ -607,7 +622,7 @@ parseBraceDecl|self() -> (I32,):
         let id: I32 = self.newDecl(kind = .declExtension, start = start, end = self.previousEnd())
         self.setDeclName(id = id, start = nameStart, end = nameEnd)
         self.setDeclGeneric(id = id, kids = generics)
-        self.setDeclKids(id = id, kids = self.parseMethodLines())
+        self.setDeclKids(id = id, kids = self.parseMethodBlock())
         return id
     self.advance()
     let nameStart: I32 = self.current().nameStart
@@ -622,8 +637,14 @@ parseBraceDecl|self() -> (I32,):
     let id: I32 = self.newDecl(kind = .declObject, start = start, end = self.previousEnd())
     self.setDeclName(id = id, start = nameStart, end = nameEnd)
     self.setDeclGeneric(id = id, kids = generics)
-    self.setDeclKids(id = id, kids = self.parseFieldLines())
+    self.setDeclKids(id = id, kids = self.parseFieldBlock())
     return id
+; 字段体：`[名|object]`、`[名|given]` 与 `{名}` 三种块共用；缩进开闭在此成对处理。
+parseFieldBlock|self() -> (Array<I32>,):
+    self.openIndentedBody()
+    let fields: Array<I32> = self.parseFieldLines()
+    self.closeIndentedBody()
+    return fields
 ; 字段块：`名字: 类型 [= 初值]` 与 `实现: 特征` 逐行读取，遇到非字段行即收尾。
 parseFieldLines|self() -> (Array<I32>,):
     var fields: Array<I32> = []
@@ -693,6 +714,12 @@ parseGenericParamItems|self() -> (Array<I32>,):
             self.advance()
         self.skipNewlines()
     return params
+; 结构体字段体：缩进开闭在此成对处理，字段规则交 parseStructFields。
+parseStructBlock|self() -> (Array<I32>,):
+    self.openIndentedBody()
+    let fields: Array<I32> = self.parseStructFields()
+    self.closeIndentedBody()
+    return fields
 ; 结构体字段：首行裸类型名是内嵌组合，接着按普通字段读。
 parseStructFields|self() -> (Array<I32>,):
     var fields: Array<I32> = []
@@ -714,6 +741,12 @@ parseStructFields|self() -> (Array<I32>,):
         fields = fields.append(rest[i])
         i = i + 1
     return fields
+; 枚举体：缩进开闭在此成对处理，变体规则交 parseVariantLines。
+parseVariantBlock|self() -> (Array<I32>,):
+    self.openIndentedBody()
+    let variants: Array<I32> = self.parseVariantLines()
+    self.closeIndentedBody()
+    return variants
 ; 枚举体：`变体` 或 `变体(字段, ...)`；带载荷的字段按参数形状登记。
 parseVariantLines|self() -> (Array<I32>,):
     var variants: Array<I32> = []
@@ -774,6 +807,12 @@ isMethodLine|self() -> (Bool,):
     if !self.at(.identifier) || !self.isKindAt(offset = 1, kind = .opBitOr):
         return false
     return self.isKindAt(offset = 2, kind = .kwSelf) || self.isKindAt(offset = 2, kind = .kwOwn)
+; 方法体：四种扩展块的成员，缩进开闭在此成对处理；方法自身块体各开一层。
+parseMethodBlock|self() -> (Array<I32>,):
+    self.openIndentedBody()
+    let methods: Array<I32> = self.parseMethodLines()
+    self.closeIndentedBody()
+    return methods
 parseMethodLines|self() -> (Array<I32>,):
     var methods: Array<I32> = []
     self.skipNewlines()

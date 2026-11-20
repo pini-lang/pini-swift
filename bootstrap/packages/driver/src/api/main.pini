@@ -9,7 +9,7 @@ _backend_llvm = "../../../backend-llvm"
 _testkit = "../../../testkit"
 
 ; 驱动主程序：无参数只装配清单并打印产物行；各子命令的根取位置参数，缺省从模块根上溯。
-; check 跑完整检查，lower 走降载，dump 出结构转储，emit 出 LLVM 文本，test 出跑器文本。
+; check 跑完整检查，build 落构建计划，plan 打印计划，lower 走降载，dump 出结构转储，emit 出 LLVM 文本。
 ; cases 只列裸名用例位置；降载前先填表达式类型表并把池换成填表后的池。
 main|func() -> ():
     let args = argv()
@@ -85,6 +85,16 @@ main|func() -> ():
         let units = collectWorkspaceUnits(ws)
         let build = buildWorld(units = units, packages = ws.packages)
         printBareCases(units = units, world = build.world)
+        return
+    if len(args) > 0 && args[0] == "build":
+        if len(args) > 1:
+            root = args[1]
+        runBuild(root = root)
+        return
+    if len(args) > 0 && args[0] == "plan":
+        if len(args) > 1:
+            root = args[1]
+        print(planText(planWorkspace(root)))
         return
     if 全量:
         let report = checkWorkspace(root = root)
@@ -271,3 +281,30 @@ printBareCases|func(units: Array<CompilationUnit>, world: MemberWorld,) -> ():
             files = files + 1
         u = u + 1
     print("cases-ok", total, files)
+
+; 执行期：补输入指纹、数缺头文件的步、落计划；自举侧不翻译，生成文本由宿主 bind 产出。
+runBuild|func(root: String,) -> ():
+    let plan = planWorkspace(root)
+    if !plan.isOK():
+        print("build-plan-failed", plan.errorCount())
+        var i = 0
+        while i < len(plan.errors):
+            print("计划错误", manifestErrorKindName(plan.errors[i].kind), plan.errors[i].path, plan.errors[i].detail)
+            i = i + 1
+        assert(false, "构建计划未通过")
+        return
+    let filled = fillPlanHashes(plan = plan, root = root)
+    var steps = 0
+    var p = 0
+    while p < len(filled.plan.packages):
+        steps = steps + len(filled.plan.packages[p].steps)
+        p = p + 1
+    let path = planFilePath(root = root, profile = filled.plan.profile)
+    let directory = root + "/.build/" + filled.plan.profile
+    if !isDir(directory):
+        print("build-failed", path, "缺构建目录", directory)
+        assert(false, "构建计划未落盘")
+        return
+    writeFile(path, planFileText(filled.plan))
+    print("build-ok", steps, filled.missing)
+    return

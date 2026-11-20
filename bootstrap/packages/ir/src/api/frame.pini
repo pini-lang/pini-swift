@@ -17,11 +17,14 @@ nextSlot: I32 = 0
 world: MemberWorld = MemberWorld()
 decls: IrDeclTable = IrDeclTable()
 externData: Array<IrExternData> = []
+externs: Array<IrExternFunction> = []
 ; 闭包帧专用：创建点可见的外层局部快照、已结算的捕获表与待入模块的闭包函数。
 ; 外层快照按值复制，嵌套闭包因此能沿已结算的捕获继续向外追。
 outerLocals: Array<IrLocal> = []
 captures: Array<IrCaptureSlot> = []
 closures: Array<IrFunction> = []
+; 异步体标记：`await` 与 `wait` 的上下文判据按它分，闭包帧不继承外层。
+isAsync: Bool = false
 
 ; 声明局部：槽位取当前水位，随后水位加一。
 declareIrLocal|func(frame: LowerFrame, name: String, typeId: I32, mutable: Bool,) -> (LowerFrame,):

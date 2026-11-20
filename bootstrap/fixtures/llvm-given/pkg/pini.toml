@@ -1,0 +1,6 @@
+[package]
+name = "pkg"
+
+[lib]
+name = "pkg"
+entry = "src/api"

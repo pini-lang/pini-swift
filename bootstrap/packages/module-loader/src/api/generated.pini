@@ -1,0 +1,121 @@
+[generated|import]
+package = "../../../package"
+
+; 生成模块装载：按计划登记的步骤取产物，并入声明它的包。
+; 缺计划、脚本不符、产物缺失都报定向诊断，不静默跳过：跳过会让外部符号整体消失，
+; 表现为一串未定义调用，真正的原因隔了好几层。
+
+; 生成模块装载结果：与源码合并的单元与装载期错误；错误非空时单元集不完整。
+(GeneratedAttach)
+units: Array<CompilationUnit> = []
+errors: Array<LoadError> = []
+
+; 声明包：装载只关心包名、脚本哈希与产物路径，构建计划的其余字段不进门。
+(GeneratedPackage)
+name: String = ""
+scriptHash: String = ""
+outputs: Array<String> = []
+
+; 从包计划取声明面：步骤按源序，产物路径已是根相对写法。
+declaredPackage|func(_pkg: PackagePlan,) -> (GeneratedPackage,):
+    var out = GeneratedPackage()
+    out.name = _pkg.name
+    out.scriptHash = _pkg.scriptHash
+    var i = 0
+    while i < len(_pkg.steps):
+        let one: BuildStep = _pkg.steps[i]
+        out.outputs = out.outputs.append(one.outputPath)
+        i = i + 1
+    return out
+
+; 声明包是否要读计划：有构建脚本（脚本哈希非空）或有步骤就要。
+packageNeedsPlan|func(_pkg: GeneratedPackage,) -> (Bool,):
+    return len(_pkg.scriptHash) > 0 || len(_pkg.outputs) > 0
+
+; 按包名找计划条目：未命中答 -1。
+findPlanEntry|func(entries: Array<PlanEntry>, name: String,) -> (I32,):
+    var i = 0
+    while i < len(entries):
+        if entries[i].name == name:
+            return i
+        i = i + 1
+    return -1
+
+; 首段判定：路径第一段等于 `.build` 才认；其余写法一概要不得。
+isBuildPath|func(_path: String,) -> (Bool,):
+    let parts = _path.split("/")
+    if len(parts) == 0:
+        return false
+    return parts[0] == ".build"
+
+; 越界产物：返回该包第一条不在 `.build` 下的产物路径，全在则答空串。
+outsideBuild|func(entries: Array<PlanEntryStep>, packageName: String,) -> (String,):
+    var i = 0
+    while i < len(entries):
+        if entries[i].package == packageName && !isBuildPath(entries[i].output):
+            return entries[i].output
+        i = i + 1
+    return ""
+
+; 步骤对齐：计划里该包的步骤与脚本读出的产物一一对上且数目一致，才算登记过。
+stepsMatch|func(outputs: Array<String>, entries: Array<PlanEntryStep>, packageName: String,) -> (Bool,):
+    var count = 0
+    var i = 0
+    while i < len(entries):
+        if entries[i].package == packageName:
+            count = count + 1
+        i = i + 1
+    if count != len(outputs):
+        return false
+    i = 0
+    while i < len(outputs):
+        var hit = false
+        var e = 0
+        while e < len(entries):
+            if entries[e].package == packageName && entries[e].output == outputs[i]:
+                hit = true
+            e = e + 1
+        if !hit:
+            return false
+        i = i + 1
+    return true
+
+; 装载一个包的生成模块：存在性与路径白名单先判，产物按路径升序并入。
+attachGenerated|func(root: String, profile: String, plan: PlanRead, pkg: GeneratedPackage,) -> (GeneratedAttach,):
+    var out = GeneratedAttach()
+    let at = findPlanEntry(entries = plan.packages, name = pkg.name)
+    if !packageNeedsPlan(pkg) && at < 0:
+        return out
+    let relPath = ".build/" + profile + "/plan.toml"
+    if !plan.present:
+        out.errors = out.errors.append(makeLoadError(kind = .errorPlanMissing, path = relPath, detail = "请先运行 build"))
+        return out
+    if len(plan.broken) > 0:
+        out.errors = out.errors.append(makeLoadError(kind = .errorPlanBroken, path = relPath, detail = plan.broken))
+        return out
+    if at < 0:
+        out.errors = out.errors.append(makeLoadError(kind = .errorPlanStale, path = relPath, detail = "计划里没有这个包"))
+        return out
+    if plan.packages[at].scriptHash != pkg.scriptHash:
+        out.errors = out.errors.append(makeLoadError(kind = .errorPlanStale, path = relPath, detail = "脚本哈希不符"))
+        return out
+    let outside = outsideBuild(entries = plan.steps, packageName = pkg.name)
+    if len(outside) > 0:
+        out.errors = out.errors.append(makeLoadError(kind = .errorPlanStale, path = outside, detail = "产物路径越出 .build"))
+        return out
+    if !stepsMatch(outputs = pkg.outputs, entries = plan.steps, packageName = pkg.name):
+        out.errors = out.errors.append(makeLoadError(kind = .errorPlanStale, path = relPath, detail = "步骤与脚本不一致"))
+        return out
+    var i = 0
+    while i < len(pkg.outputs):
+        let output: String = pkg.outputs[i]
+        if !exists(root + "/" + output):
+            out.errors = out.errors.append(makeLoadError(kind = .errorGeneratedMissing, path = output, detail = "请先运行 build"))
+            return out
+        let loaded = loadUnitFile(absPath = root + "/" + output, unitPath = output)
+        if loaded.failed:
+            out.errors = out.errors.append(loaded.error)
+        else:
+            out.units = insertGeneratedUnit(items = out.units, value = loaded.unit)
+        i = i + 1
+    return out
