@@ -2,10 +2,17 @@
 _syntax = "../../../syntax"
 _module_loader = "../../../module-loader"
 
+; 类型形参绑定：实例化后把形参名对到具体类型的池下标，模板解析期为空。
+(GenericBinding)
+name: String = ""
+typeId: I32 = -1
+
 ; 类型世界：全部编译单元与符号表；具名类型查声明、字段环查成员体都从这里取。
+; `genericBindings` 非空时解析器先认类型形参名。
 (TypeWorld)
 units: Array<CompilationUnit> = []
 table: SymbolTable = SymbolTable()
+genericBindings: Array<GenericBinding> = []
 
 ; 类型绑定：单元下标与声明下标对上类型池下标，供后续检查与降载消费。
 (TypeBinding)
@@ -48,11 +55,13 @@ state: Array<I32> = []
 cycle: Bool = false
 
 ; 类型表：池、按路径与声明序排好的绑定、聚合成员与每单元的绑定起点；错误统一挂在池上。
+; `overrides` 是实例表，优先于全局绑定回答模板形参与返回类型。
 (TypeTable)
 pool: TypePool = TypePool()
 bindings: Array<TypeBinding> = []
 members: Array<TypeMember> = []
 unitStart: Array<I32> = []
+overrides: Array<TypeBinding> = []
 
 ; 每单元的绑定起点：绑定按单元升序连续追加，扫一遍即得各单元首条下标。
 unitStarts|func(bindings: Array<TypeBinding>, unitCount: I32,) -> (Array<I32>,):
@@ -79,6 +88,11 @@ bindingCount|self() -> (I32,):
 ; 声明查类型：绑定按单元升序连续追加，先跳到该单元的首条再顺序扫，越过单元即止。
 ; 同一单元内同一声明只留一条绑定；找不到答 -1。
 typeOf|self(unit: I32, decl: I32,) -> (I32,):
+    var o = 0
+    while o < len(self.overrides):
+        if self.overrides[o].unit == unit && self.overrides[o].decl == decl:
+            return self.overrides[o].typeId
+        o = o + 1
     var i = 0
     if unit >= 0 && unit < len(self.unitStart):
         i = self.unitStart[unit]
@@ -287,6 +301,12 @@ resolveFunction|func(cursor: TypeCursor, pool: TypePool, node: TypeNode,) -> (Ty
 resolveNamed|func(cursor: TypeCursor, pool: TypePool, node: TypeNode, name: String,) -> (TypeResolution,):
     var out = TypeResolution()
     out.pool = pool
+    var g = 0
+    while g < len(cursor.world.genericBindings):
+        if cursor.world.genericBindings[g].name == name:
+            out.root = cursor.world.genericBindings[g].typeId
+            return out
+        g = g + 1
     if name == "StringHandle":
         if !cursor.foreignFace:
             out.pool = addTypeError(pool = pool, error = makeTypeError(kind = .typeErrorForeignOnlyName, file = cursor.file, offset = node.start, name = name))
@@ -397,6 +417,8 @@ resolveDecl|func(stage: TypePass, cursor: TypeCursor, unitIndex: I32, declId: I3
         out = openMember(stage = out, owner = owner, form = decl.kind, file = cursor.file, offset = decl.start)
         return resolveNominalMembers(stage = out, cursor = cursor, unitIndex = unitIndex, decl = decl, owner = owner)
     if isFunctionDeclCode(decl.kind):
+        if len(decl.generic) > 0:
+            return out
         out = resolveOne(stage = out, cursor = cursor, unitIndex = unitIndex, declId = declId, typeId = decl.typeId)
         return resolveSignature(stage = out, cursor = cursor, unitIndex = unitIndex, decl = decl)
     if isForeignDeclCode(decl.kind):

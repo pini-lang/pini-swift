@@ -64,6 +64,7 @@ decls: DeclIndex = DeclIndex()
 builtins: Array<BuiltinMember> = []
 functions: Array<BuiltinFunction> = []
 labels: Array<TypeLabels> = []
+genericBindings: Array<GenericBinding> = []
 
 ; 成员类别名：诊断、测试与回执共用一份拼写。
 memberKindName|func(_kind: MemberKind,) -> (String,):

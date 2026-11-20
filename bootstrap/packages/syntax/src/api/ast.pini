@@ -43,7 +43,7 @@ nameEnd: I32 = -1
 kids: Array<I32> = []
 
 ; 声明节点：参数、字段、变体与导入项同池，`typeId` 与 `body` 按需填写；
-; `generic` 是类型形参表，只有可带泛型的声明用它；`isAsync` 由 `=>` 置位。
+; `generic` 是类型形参表，类型声明与函数声明共用；`isAsync` 由 `=>` 置位。
 (DeclNode)
 kind: I32 = 0
 start: I32 = 0

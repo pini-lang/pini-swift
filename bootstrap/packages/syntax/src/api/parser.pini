@@ -818,7 +818,9 @@ parseMethodLines|self() -> (Array<I32>,):
     self.skipNewlines()
     while self.isMethodLine():
         let id: I32 = self.parseFunctionDecl()
-        if id >= 0:
+        if id >= 0 && len(self.ast.decls[id].generic) > 0:
+            self.report(code = "E2-001", message = "方法不支持类型形参")
+        elif id >= 0:
             methods = methods.append(id)
         self.skipNewlines()
     return methods
@@ -858,6 +860,14 @@ parseFunctionDecl|self() -> (I32,):
         return -1
     else:
         self.advance()
+    let generics: Array<I32> = self.parseGenericParams()
+    var genericIndex: I32 = 0
+    while genericIndex < len(generics):
+        if self.ast.decls[generics[genericIndex]].typeId >= 0:
+            self.report(code = "E2-001", message = "类型形参约束尚未支持")
+            self.recover()
+            return -1
+        genericIndex = genericIndex + 1
     if !self.at(.leftParen):
         self.report(code = "E2-001", message = "期望参数表 `(`")
         self.recover()
@@ -887,6 +897,7 @@ parseFunctionDecl|self() -> (I32,):
     self.setDeclBody(id = id, body = body)
     self.setFunctionMarks(id = id, isTest = isTest, isSelf = isSelf, isOwn = isOwn, isForeign = isForeign, isUnsafe = isUnsafe)
     self.setDeclAsync(id = id, value = isAsync)
+    self.setDeclGeneric(id = id, kids = generics)
     return id
 ; 参数表：`(` 到 `)`，每项可带 own / using / self 前缀与默认值。
 parseParams|self() -> (Array<I32>,):
@@ -1258,8 +1269,8 @@ parseCallArguments|self(id: I32,) -> ():
             self.advance()
         self.skipNewlines()
     return
-; 泛型构造前瞻：`名<类型实参>(...)`。只扫记号形状，不建节点 ——
-; 判定失手时仍按标识符解析，`a < b` 这类比较因此不受影响。
+; 泛型应用前瞻：`名<类型实参>(...)`，函数调用与类型构造共用同一形状。
+; 只扫记号形状不建节点，判定失手仍按标识符解析，`a < b` 比较不受影响。
 looksLikeGenericConstruct|self() -> (Bool,):
     var i: I32 = self.pos + 1
     if i >= self.total || !isKind(token = self.tokens[i], kind = .opLt):
@@ -1277,7 +1288,8 @@ looksLikeGenericConstruct|self() -> (Bool,):
     if depth != 0:
         return false
     return i < self.total && isKind(token = self.tokens[i], kind = .leftParen)
-; 泛型构造：类型位收泛型类型节点，实参按调用表排布；类型名与实参个数由语义面判。
+; 泛型应用：类型位收被调名与类型实参，实参按调用表排布；
+; 是函数调用还是类型构造由语义面按符号判。
 parseGenericConstruct|self() -> (I32,):
     let start: I32 = self.current().start
     let typeId: I32 = self.parseType()

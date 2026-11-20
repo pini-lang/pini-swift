@@ -163,6 +163,7 @@ resolveAnnotation|func(world: MemberWorld, unit: CompilationUnit, node: I32, out
     var types = TypeWorld()
     types.units = world.units
     types.table = world.table
+    types.genericBindings = world.genericBindings
     cursor.world = types
     cursor.file = unit.path
     cursor.ast = unit.ast
