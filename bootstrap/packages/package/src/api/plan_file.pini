@@ -93,6 +93,62 @@ stepInputDigest|func(root: String, packageRoot: String, one: BuildStep,) -> (Str
 plan: BuildPlan = BuildPlan()
 missing: I32 = 0
 
+; 计划里的包条目：包名、包根与脚本哈希；哈希为空表示该包没有构建脚本。
+(PlanEntry)
+name: String = ""
+root: String = ""
+scriptHash: String = ""
+
+; 计划里的步骤条目：装载判据只取包名、步骤名与产物路径。
+(PlanEntryStep)
+package: String = ""
+name: String = ""
+output: String = ""
+
+; 计划读取结果：存在标记、不合法原因与两张条目表；原因非空时条目表不可用。
+(PlanRead)
+present: Bool = false
+broken: String = ""
+packages: Array<PlanEntry> = []
+steps: Array<PlanEntryStep> = []
+
+; 解析计划文本：版本不符或形状非法答不合法原因；条目按出现序保留，不做跨条目校验。
+parsePlanText|func(text: String, path: String,) -> (PlanRead,):
+    var out = PlanRead()
+    out.present = true
+    let doc = parseToml(text = text, path = path)
+    if len(doc.errors) > 0:
+        out.broken = "形状不合法"
+        return out
+    if tomlValue(doc = doc, table = "plan", key = "version") != "\(planVersion())":
+        out.broken = "版本与当前不符"
+        return out
+    var r = 0
+    while r < tomlRowCount(doc = doc, table = "package"):
+        var one = PlanEntry()
+        one.name = tomlRowValue(doc = doc, table = "package", row = r, key = "name")
+        one.root = tomlRowValue(doc = doc, table = "package", row = r, key = "root")
+        one.scriptHash = tomlRowValue(doc = doc, table = "package", row = r, key = "script_hash")
+        out.packages = out.packages.append(one)
+        r = r + 1
+    r = 0
+    while r < tomlRowCount(doc = doc, table = "step"):
+        var one = PlanEntryStep()
+        one.package = tomlRowValue(doc = doc, table = "step", row = r, key = "package")
+        one.name = tomlRowValue(doc = doc, table = "step", row = r, key = "name")
+        one.output = tomlRowValue(doc = doc, table = "step", row = r, key = "output")
+        out.steps = out.steps.append(one)
+        r = r + 1
+    return out
+
+; 读计划文件：文件不在答不存在；其余交给解析，读不出按不合法记。
+readPlanFile|func(root: String, profile: String,) -> (PlanRead,):
+    var out = PlanRead()
+    let path = planFilePath(root = root, profile = profile)
+    if !exists(path):
+        return out
+    return parsePlanText(text = readFile(path), path = path)
+
 ; 补指纹：逐包逐步算输入指纹，顺带数出读不到的头文件。
 fillPlanHashes|func(plan: BuildPlan, root: String,) -> (HashFill,):
     var out = HashFill()

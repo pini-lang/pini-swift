@@ -1,0 +1,6 @@
+[package]
+name = "gendemo"
+
+[lib]
+name = "gendemo"
+entry = "src/api/main.pini"
