@@ -160,8 +160,28 @@ if [ -x "$work/extern-bin" ]; then
     fi
 fi
 
+# 构建脚本：给定块读成翻译步，产物路径落在包内 generated，非给定块按错误报。
+script_fixture="$root/bootstrap/fixtures/build-script"
+script_plan="$work/build-script-plan.txt"
+if ! "$pini" plan "$script_fixture" > "$script_plan" 2>&1; then
+    echo " 行不通  [测试自检] 构建脚本夹具出不了计划" >&2
+    fail=1
+fi
+if ! grep -q "step cstr header=include/cstr.h include=include defs=_GNU_SOURCE" "$script_plan"; then
+    echo " 行不通  [测试自检] 计划缺 cstr 步骤行" >&2
+    fail=1
+fi
+if ! grep -q "/generated/mathf.pini" "$script_plan"; then
+    echo " 行不通  [测试自检] 步骤产物未落在包内 generated" >&2
+    fail=1
+fi
+if grep -q "^error" "$script_plan"; then
+    echo " 行不通  [测试自检] 计划不应带错误：$(cat "$script_plan")" >&2
+    fail=1
+fi
+
 if [ "$fail" -ne 0 ]; then
     exit 1
 fi
-echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段"
+echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划"
 exit 0

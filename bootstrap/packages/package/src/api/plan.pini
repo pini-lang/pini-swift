@@ -9,7 +9,7 @@ interfacePath: String = ""
 executablePath: String = ""
 isBuiltByDefault: Bool = true
 
-; 包计划：包名、包根相对路径、声明依赖、构建排除项、FFI 配置与按清单顺序排好的 target。
+; 包计划：包名、包根相对路径、声明依赖、构建排除项、FFI 配置、翻译步与按清单顺序排好的 target。
 (PackagePlan)
 name: String = ""
 rootPath: String = ""
@@ -17,6 +17,8 @@ requires: Array<String> = []
 targets: Array<TargetPlan> = []
 excludes: Array<String> = []
 ffi: FFIConfig = FFIConfig()
+scriptPath: String = ""
+steps: Array<BuildStep> = []
 
 ; 构建计划：根、profile、拓扑序上的包与全部错误；错误非空时 packages 为空。
 (BuildPlan)
@@ -58,6 +60,16 @@ planText|func(_plan: BuildPlan,) -> (String,):
             if len(target.executablePath) > 0:
                 text = text + "  exe " + target.executablePath + "\n"
             t = t + 1
+        var s = 0
+        while s < len(pkg.steps):
+            let one = pkg.steps[s]
+            var line = "  step " + one.name + " header=" + one.headerPath
+            if len(one.includePaths) > 0:
+                line = line + " include=" + joinPlanArray(one.includePaths)
+            if len(one.defines) > 0:
+                line = line + " defs=" + joinPlanArray(one.defines)
+            text = text + line + " out=" + one.outputPath + "\n"
+            s = s + 1
         text = text + ffiPlanText(pkg.ffi)
         i = i + 1
     return text
@@ -131,7 +143,13 @@ assemblePlan|func(workspace: WorkspaceParse, parses: Array<PackageParse>,) -> (B
     i = 0
     while i < len(topo.order):
         let at = findPackage(packages = packages, name = topo.order[i])
-        plan.packages = plan.packages.append(packagePlan(pkg = packages[at], root = plan.rootPath, profile = plan.profile))
+        let parsed = findParse(parses = parses, rootPath = packages[at].rootPath)
+        var steps: Array<BuildStep> = []
+        var scriptPath = ""
+        if parsed >= 0:
+            steps = parses[parsed].steps
+            scriptPath = parses[parsed].scriptPath
+        plan.packages = plan.packages.append(packagePlan(pkg = packages[at], root = plan.rootPath, profile = plan.profile, steps = steps, scriptPath = scriptPath))
         i = i + 1
     return plan
 
@@ -159,18 +177,30 @@ planWorkspace|func(_root: String,) -> (BuildPlan,):
             missing.errors = missing.errors.append(manifestError(kind = .errorManifestMissing, path = memberManifest, detail = norm.value))
             parses = parses.append(missing)
             continue
-        parses = parses.append(parsePackageManifest(text = readFile(memberManifest), rootPath = norm.value, path = memberManifest))
+        var parse = parsePackageManifest(text = readFile(memberManifest), rootPath = norm.value, path = memberManifest)
+        let script = readBuildScript(packageAbs = _root + "/" + norm.value)
+        parse.steps = script.steps
+        parse.scriptPath = script.path
+        parse.errors = appendErrors(errors = parse.errors, extra = script.errors)
+        parses = parses.append(parse)
     return assemblePlan(workspace = workspace, parses = parses)
 
-; 单包计划：产物目录按 profile 定；可执行另给 bin 路径，测试目标不默认构建。
-packagePlan|func(pkg: PackageManifest, root: String, profile: String,) -> (PackagePlan,):
+; 单包计划：产物目录按 profile 定；翻译步落在包内的 generated 目录，测试目标不默认构建。
+packagePlan|func(pkg: PackageManifest, root: String, profile: String, steps: Array<BuildStep>, scriptPath: String,) -> (PackagePlan,):
     var out = PackagePlan()
     out.name = pkg.name
     out.rootPath = pkg.rootPath
     out.requires = pkg.requires
     out.excludes = pkg.excludes
     out.ffi = pkg.ffi
+    out.scriptPath = scriptPath
     let buildDir = root + "/.build/" + profile + "/packages/" + pkg.name
+    var s = 0
+    while s < len(steps):
+        var one = steps[s]
+        one.outputPath = buildDir + "/generated/" + one.name + ".pini"
+        out.steps = out.steps.append(one)
+        s = s + 1
     var i = 0
     while i < len(pkg.targets):
         let target = pkg.targets[i]

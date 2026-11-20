@@ -20,6 +20,10 @@ errorExecutableCollision
 errorDependencyCycle
 errorFFIABI
 errorFFILibrary
+errorBuildScriptSyntax
+errorBuildScriptDecl
+errorBuildStepName
+errorBuildStepField
 
 ; 清单错误：类别、出错清单路径与细节；细节带具体包名、target 名或成员路径。
 (ManifestError)
@@ -78,6 +82,14 @@ manifestErrorKindName|func(_kind: ManifestErrorKind,) -> (String,):
             return "ffi.abi 只认 C"
         case errorFFILibrary:
             return "ffi.libs 的名字不带 -l"
+        case errorBuildScriptSyntax:
+            return "构建脚本读不出"
+        case errorBuildScriptDecl:
+            return "构建脚本只收给定块"
+        case errorBuildStepName:
+            return "翻译步名缺失、非法或重复"
+        case errorBuildStepField:
+            return "翻译步字段缺失、未知或取值不是字面量"
     return "清单错误"
 
 ; 同类别判定：枚举相等比较不可用，按名称比。
