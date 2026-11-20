@@ -18,6 +18,7 @@ targets: Array<TargetPlan> = []
 excludes: Array<String> = []
 ffi: FFIConfig = FFIConfig()
 scriptPath: String = ""
+scriptHash: String = ""
 steps: Array<BuildStep> = []
 
 ; 构建计划：根、profile、拓扑序上的包与全部错误；错误非空时 packages 为空。
@@ -146,10 +147,12 @@ assemblePlan|func(workspace: WorkspaceParse, parses: Array<PackageParse>,) -> (B
         let parsed = findParse(parses = parses, rootPath = packages[at].rootPath)
         var steps: Array<BuildStep> = []
         var scriptPath = ""
+        var scriptHash = ""
         if parsed >= 0:
             steps = parses[parsed].steps
             scriptPath = parses[parsed].scriptPath
-        plan.packages = plan.packages.append(packagePlan(pkg = packages[at], root = plan.rootPath, profile = plan.profile, steps = steps, scriptPath = scriptPath))
+            scriptHash = parses[parsed].scriptHash
+        plan.packages = plan.packages.append(packagePlan(pkg = packages[at], root = plan.rootPath, profile = plan.profile, steps = steps, scriptPath = scriptPath, scriptHash = scriptHash))
         i = i + 1
     return plan
 
@@ -181,12 +184,13 @@ planWorkspace|func(_root: String,) -> (BuildPlan,):
         let script = readBuildScript(packageAbs = _root + "/" + norm.value)
         parse.steps = script.steps
         parse.scriptPath = script.path
+        parse.scriptHash = script.hash
         parse.errors = appendErrors(errors = parse.errors, extra = script.errors)
         parses = parses.append(parse)
     return assemblePlan(workspace = workspace, parses = parses)
 
 ; 单包计划：产物目录按 profile 定；翻译步落在包内的 generated 目录，测试目标不默认构建。
-packagePlan|func(pkg: PackageManifest, root: String, profile: String, steps: Array<BuildStep>, scriptPath: String,) -> (PackagePlan,):
+packagePlan|func(pkg: PackageManifest, root: String, profile: String, steps: Array<BuildStep>, scriptPath: String, scriptHash: String,) -> (PackagePlan,):
     var out = PackagePlan()
     out.name = pkg.name
     out.rootPath = pkg.rootPath
@@ -194,13 +198,14 @@ packagePlan|func(pkg: PackageManifest, root: String, profile: String, steps: Arr
     out.excludes = pkg.excludes
     out.ffi = pkg.ffi
     out.scriptPath = scriptPath
-    let buildDir = root + "/.build/" + profile + "/packages/" + pkg.name
+    out.scriptHash = scriptHash
     var s = 0
     while s < len(steps):
         var one = steps[s]
-        one.outputPath = buildDir + "/generated/" + one.name + ".pini"
+        one.outputPath = ".build/" + profile + "/packages/" + pkg.name + "/generated/" + one.name + ".pini"
         out.steps = out.steps.append(one)
         s = s + 1
+    let buildDir = root + "/.build/" + profile + "/packages/" + pkg.name
     var i = 0
     while i < len(pkg.targets):
         let target = pkg.targets[i]

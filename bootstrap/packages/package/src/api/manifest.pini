@@ -39,6 +39,7 @@ profile: String = "debug"
 manifest: PackageManifest = PackageManifest()
 steps: Array<BuildStep> = []
 scriptPath: String = ""
+scriptHash: String = ""
 errors: Array<ManifestError> = []
 
 ; FFI 解析结果：配置与错误并列；错误非空时配置仍可读，建计划前会整体拦下。
