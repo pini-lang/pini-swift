@@ -495,8 +495,12 @@ if ! "$clang_bin" -shared -o "$export_lib" "$export_ll" -L"$runtime_dir" -lPiniR
     echo " 行不通  [测试自检] 导出面夹具链接失败" >&2
     fail=1
 fi
+# 符号表读法按平台归一：Darwin 的 nm 名字带下划线前缀，GNU nm 用 --defined-only 且不带。
+has_export() {
+    nm -g --defined-only "$1" 2>/dev/null | awk '{print $NF}' | grep -qx -e "$2" -e "_$2"
+}
 for symbol in calc_add calc_len calc_cfg_get calc_init calc_shutdown; do
-    if ! nm -gU "$export_lib" 2>/dev/null | grep -q " _$symbol$"; then
+    if ! has_export "$export_lib" "$symbol"; then
         echo " 行不通  [测试自检] 导出符号缺 $symbol" >&2
         fail=1
     fi
