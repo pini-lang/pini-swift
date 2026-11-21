@@ -20,7 +20,6 @@ TIMEOUT = 180
 
 CODE_RE = re.compile(r"E[0-9]-[0-9]{3}")
 LOC_RE = re.compile(r":(\d+):(\d+)")
-VERSION_RE = re.compile(r"Pini \d+\.\d+\.\d+")
 
 HEADER = [
     "# 对照夹具读数：每条用例两侧的退出码、首条诊断与全文比对。",
@@ -106,12 +105,11 @@ def expand_args(text):
 
 
 def normalize(text):
-    """抹掉只与机器有关的前缀；`./` 这类产品选择保留，它也是待对齐的一项。"""
+    """抹掉只与机器有关的前缀；`./` 前缀与版本号保留，二者本身就是待对齐项。"""
     text = text.replace(str(ROOT), "<ROOT>")
     text = re.sub(r"/private/var/folders/[^\s\"']+", "<TMP>", text)
     text = re.sub(r"/var/folders/[^\s\"']+", "<TMP>", text)
-    text = re.sub(r"/tmp/[^\s\"']+", "<TMP>", text)
-    return VERSION_RE.sub("Pini <VERSION>", text)
+    return re.sub(r"/tmp/[^\s\"']+", "<TMP>", text)
 
 
 def run(binary, args):
