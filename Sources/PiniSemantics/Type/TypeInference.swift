@@ -74,6 +74,18 @@ public final class TypeInference {
             }
 
         case .genericConstruct(let typeName, let typeArgs, _, let loc):
+            // 泛型函数调用点：表达式的类型是特化签名的返回面（多值成元组），不是类型构造名。
+            // 先按名字认函数再做类型构造回退，`map<I32>(...)` 才不会把 `map<I32>` 当成值类型。
+            if let paramCount = environment?.genericFunctionParamCount(name: typeName),
+                paramCount == typeArgs.count,
+                let sig = environment?.lookupSpecializedFunctionSignature(name: typeName, typeArgs: typeArgs)
+            {
+                if sig.returns.count == 1 { return sig.returns[0] }
+                let labels: [String?] =
+                    sig.returnLabels.count == sig.returns.count
+                    ? sig.returnLabels : Array(repeating: nil, count: sig.returns.count)
+                return .tuple(labels: labels, elements: sig.returns, location: loc)
+            }
             // P2-1.4：泛型构造返回特化类型 Box<T> 等，供成员方法调用点推断对象类型
             return .generic(name: typeName, params: typeArgs, location: loc)
 
@@ -534,6 +546,10 @@ public final class TypeInference {
             returnTypes = [rt]
         } else if !expectedReturns.isEmpty {
             returnTypes = expectedReturns.compactMap { $0 }
+        } else if let body = decl.body, !hasValueReturn(in: body) {
+            /// 体无带值返回：返回表记空元组，与 `(T,) -> ()` 的空返回表对齐；
+            /// 落到通配 `_` 会让 `forEach([...], 闭包)` 这类调用在可赋值判定时报不匹配。
+            returnTypes = []
         } else {
             returnTypes = [.simple(name: "_", location: location)]
         }
@@ -624,6 +640,40 @@ public final class TypeInference {
     private func declaredVars(in statements: [Statement]) -> Set<String> {
         statements.reduce(into: Set<String>()) {
             if case .varDecl(let name, _, _, _, _) = $1 { $0.insert(name) }
+        }
+    }
+
+    /// 体是否含带值 `return`（含嵌套块）。无带值返回的闭包返回表记空元组。
+    private func hasValueReturn(in block: Block) -> Bool {
+        block.statements.contains { hasValueReturn(in: $0) }
+    }
+    private func hasValueReturn(in stmt: Statement) -> Bool {
+        switch stmt {
+        case .returnStatement(let value, _):
+            return value != nil
+        case .ifStatement(_, let thenBlock, let elifs, let elseBlock, _, _):
+            if hasValueReturn(in: thenBlock) { return true }
+            if elifs.contains(where: { hasValueReturn(in: $0.block) }) { return true }
+            if let elseBlock, hasValueReturn(in: elseBlock) { return true }
+            return false
+        case .whileStatement(_, let body, let step, _, _):
+            if hasValueReturn(in: body) { return true }
+            if let step, hasValueReturn(in: step) { return true }
+            return false
+        case .forStatement(_, _, let body, let step, _, _):
+            if hasValueReturn(in: body) { return true }
+            if let step, hasValueReturn(in: step) { return true }
+            return false
+        case .unrollStatement(_, _, let body, _):
+            return hasValueReturn(in: body)
+        case .scopedBlock(_, let body, _):
+            return hasValueReturn(in: body)
+        case .matchStatement(_, let cases, _):
+            return cases.contains { hasValueReturn(in: $0.block) }
+        case .deferStatement(let inner, _):
+            return hasValueReturn(in: inner)
+        default:
+            return false
         }
     }
 

@@ -1,5 +1,6 @@
 [check_test|import]
 package = "../../package"
+_module_loader = "../../module-loader"
 
 ; 工作区检查：清单失效时报告非空，退出码为 1；零诊断判据由产物探针承担。
 ; 这里不跑全工作区：解释器通道下装载整棵树过慢，零诊断由原生二进制自己跑。
@@ -10,7 +11,7 @@ package = "../../package"
 
 ; 缺清单：给一个没有 pini.toml 的目录，报告非空且退出码为 1。
 缺清单报错|test() -> ():
-    let report = checkWorkspace(root = 工作区根() + "/packages/package/src")
+    let report = checkWorkspace(root = 工作区根() + "/packages/package/src", stdlib = stdlibOff())
     assert(report.errorCount > 0, "缺清单应报错")
     assert(report.exitCode == 1, "退出码应为 1")
     assert(report.packages == 0, "清单不可用时包数为零")

@@ -168,3 +168,27 @@ FFI进计划|test() -> ():
     let 空计划 = assemblePlan(workspace = 造工作区(["q"]), parses = 空表)
     assert(!planText(空计划).contains("ffi "), "全默认不印 FFI 行")
     return
+
+; 分波按依赖深度：链式三层落三波，独立包与根同在第一波。
+波次分层|test() -> ():
+    let 工作区 = 造工作区(["packages/a", "packages/b", "packages/c", "packages/d"])
+    var 解析表: Array<PackageParse> = []
+    解析表 = 解析表.append(造包(rootPath = "packages/a", name = "a", requires = 空依赖(), targets = [库目标("a")]))
+    解析表 = 解析表.append(造包(rootPath = "packages/b", name = "b", requires = ["a"], targets = [库目标("b")]))
+    解析表 = 解析表.append(造包(rootPath = "packages/c", name = "c", requires = ["b"], targets = [库目标("c")]))
+    解析表 = 解析表.append(造包(rootPath = "packages/d", name = "d", requires = 空依赖(), targets = [库目标("d")]))
+    let 计划 = assemblePlan(workspace = 工作区, parses = 解析表)
+    assert(计划.isOK(), "不应有错误：" + planText(计划))
+    let 波 = planWaveOf(计划)
+    assert(len(波) == 4, "四个包各一档")
+    var i = 0
+    while i < len(波):
+        let 名 = 计划.packageAt(i).name
+        if 名 == "b":
+            assert(波[i] == 1, "b 在第二波")
+        elif 名 == "c":
+            assert(波[i] == 2, "c 在第三波")
+        else:
+            assert(波[i] == 0, "根与独立包在第一波")
+        i = i + 1
+    return

@@ -25,6 +25,10 @@ captures: Array<IrCaptureSlot> = []
 closures: Array<IrFunction> = []
 ; 异步体标记：`await` 与 `wait` 的上下文判据按它分，闭包帧不继承外层。
 isAsync: Bool = false
+; 泛型实例表随帧走：调用点按节点查实例名，与降载层读同一份。
+generics: GenericFill = GenericFill()
+; 闭包编号全工作区递增：函数名与 env 类型名同源，跨单元不得撞。
+closureSerial: I32 = 0
 
 ; 声明局部：槽位取当前水位，随后水位加一。
 declareIrLocal|func(frame: LowerFrame, name: String, typeId: I32, mutable: Bool,) -> (LowerFrame,):
@@ -98,11 +102,12 @@ frameSlotCount|func(frame: LowerFrame,) -> (I32,):
 
 ; 播种帧：参数与自身由语义层播种，这里照抄一遍，槽位与类型一并带过来。
 ; 不抄的话赋值目标与局部类型查找都认不出参数，形参赋值会被报成非局部目标。
-seedLowerFrame|func(scope: ScopeStack, map: TypeMap, world: MemberWorld, decls: IrDeclTable,) -> (LowerFrame,):
+seedLowerFrame|func(scope: ScopeStack, map: TypeMap, world: MemberWorld, decls: IrDeclTable, generics: GenericFill,) -> (LowerFrame,):
     var out = LowerFrame()
     out.nextSlot = scope.nextSlot
     out.world = world
     out.decls = decls
+    out.generics = generics
     var i = 0
     while i < len(scope.locals):
         let local = scope.locals[i]

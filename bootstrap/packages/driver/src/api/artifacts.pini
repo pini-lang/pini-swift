@@ -1,0 +1,211 @@
+[artifacts|import]
+_package = "../../../package"
+_module_loader = "../../../module-loader"
+_semantics = "../../../semantics"
+_ir = "../../../ir"
+_backend_kit = "../../../backend-kit"
+_backend_llvm = "../../../backend-llvm"
+
+; 逐包产物：按单元路径首段归包，逐包只发本包函数的定义，其余有体函数出声明。
+; 记录落 `<根>/.build/<profile>/artifacts.toml`；接口摘要读接口记录，不重算公开面。
+; 输入指纹命中时不发射、不重写，只把既有记录与文本接回工作区记录。
+(ArtifactWrite)
+ok: Bool = false
+packages: I32 = 0
+files: I32 = 0
+bytes: I32 = 0
+emitted: I32 = 0
+reused: I32 = 0
+cached: I32 = 0
+
+; 包归属：单元路径形如 `<包名>/<相对源根路径>`，首段即包名；空路径答空串。
+packageOfUnitPath|func(unitPath: String,) -> (String,):
+    if len(unitPath) == 0:
+        return ""
+    let parts = unitPath.split("/")
+    if len(parts) == 0:
+        return ""
+    return parts[0]
+
+; 本包名单：按函数源文件归属收名，顺序即模块顺序，同一份模块两次结果相同。
+ownedForPackage|func(module: IrModule, name: String,) -> (Array<String>,):
+    var out: Array<String> = []
+    var i = 0
+    while i < len(module.functions):
+        let fn = module.functions[i]
+        if packageOfUnitPath(unitPath = fn.sourceFile) == name:
+            out = out.append(fn.name)
+        i = i + 1
+    return out
+
+; 依赖摘要：按计划里的 require 顺序从接口记录取摘要，缺记录的依赖不收。
+packageDeps|func(entries: Array<InterfaceEntry>, requires: Array<String>,) -> (Array<InterfaceDep>,):
+    var out: Array<InterfaceDep> = []
+    var i = 0
+    while i < len(requires):
+        let at = findEntryName(entries = entries, name = requires[i])
+        if at >= 0:
+            var dep = InterfaceDep()
+            dep.name = requires[i]
+            dep.hash = entries[at].hash
+            out = out.append(dep)
+        i = i + 1
+    return out
+
+; 产物记录读取结果：ok 为 false 时 path 指向不可用的那份记录。
+(ArtifactUse)
+ok: Bool = false
+path: String = ""
+entries: Array<ArtifactEntry> = []
+
+; 产物记录读取：文件不存在或解析不合法答 ok=false，调用方当无记录处理。
+readArtifactLedger|func(root: String, profile: String,) -> (ArtifactUse,):
+    var out = ArtifactUse()
+    out.path = artifactLedgerPath(root = root, profile = profile)
+    if !exists(out.path):
+        return out
+    let parsed = parseArtifactLedger(text = readFile(out.path), path = out.path)
+    if len(parsed.errors) > 0:
+        return out
+    out.ok = true
+    out.entries = parsed.entries
+    return out
+
+; 接口记录读取结果：ok 为 false 时 path 指向不可用的那份记录。
+(InterfaceUse)
+ok: Bool = false
+path: String = ""
+entries: Array<InterfaceEntry> = []
+
+; 接口记录读取：文件不存在或解析不合法答 ok=false，调用方当无记录处理。
+readInterfaceLedger|func(root: String, profile: String,) -> (InterfaceUse,):
+    var out = InterfaceUse()
+    out.path = interfacesFilePath(root = root, profile = profile)
+    if !exists(out.path):
+        return out
+    let parsed = parseLedger(text = readFile(out.path), path = out.path)
+    if len(parsed.errors) > 0:
+        return out
+    out.ok = true
+    out.entries = parsed.entries
+    return out
+
+; 记录合并：单包发射只换本包条目，其余包的原条目原样留住。
+withoutArtifactName|func(entries: Array<ArtifactEntry>, name: String,) -> (Array<ArtifactEntry>,):
+    var out: Array<ArtifactEntry> = []
+    var i = 0
+    while i < len(entries):
+        if entries[i].name != name:
+            out = out.append(entries[i])
+        i = i + 1
+    return out
+
+; 发射产物：接口记录先在，缺记录不发射；按计划拓扑序逐包判输入指纹，命中不发射。
+; onlyName 非空时只发该包，记录里其余包条目保留；cacheDir 非空时按输入指纹共享产物。
+writeArtifacts|func(root: String, stdlib: StdlibOption, onlyName: String, cacheDir: String,) -> (ArtifactWrite,):
+    var out = ArtifactWrite()
+    let plan = planWorkspace(root)
+    if !plan.isOK():
+        print("workspace-plan-failed", plan.errorCount())
+        return out
+    let profile = plan.profile
+    let ledger = readInterfaceLedger(root = root, profile = profile)
+    if !ledger.ok:
+        print("emit-packages-blocked", "接口记录不可用", ledger.path)
+        return out
+    let 产物 = 降载工作区(root = root, stdlib = stdlib)
+    if 产物.packages == 0:
+        return out
+    if len(产物.check.errors) > 0:
+        print("emit-packages-blocked", len(产物.check.errors))
+        return out
+    let module = 产物.module
+    let old = readArtifactLedger(root = root, profile = profile)
+    let entry = makeBackendOf(name = "llvm", outputCode = backendOutputNativeCode(), families = llvmFamilies(), entry = 2)
+    var record = ArtifactLedger()
+    record.profile = profile
+    if len(onlyName) > 0:
+        record.entries = withoutArtifactName(entries = old.entries, name = onlyName)
+    var p = 0
+    while p < len(plan.packages):
+        let planned = plan.packages[p]
+        if len(onlyName) > 0 && planned.name != onlyName:
+            p = p + 1
+            continue
+        let dir = root + "/.build/" + profile + "/packages/" + planned.name
+        if !isDir(dir):
+            print("emit-packages-failed", planned.name, "缺产物目录", dir)
+            return out
+        let path = artifactPath(root = root, profile = profile, name = planned.name)
+        let source = packageSourceDigestOf(units = withoutStdlib(units = packageUnitsOf(产物.units, name = planned.name)), root = root)
+        let deps = packageDeps(entries = ledger.entries, requires = planned.requires)
+        let input = packageInputDigest(source = source, deps = deps)
+        let seen = findArtifactName(entries = old.entries, name = planned.name)
+        let cachePath = cacheDir + "/" + input + "/" + planned.name + ".ll"
+        var one = ArtifactEntry()
+        var text = ""
+        if len(cacheDir) > 0 && exists(cachePath):
+            text = readFile(cachePath)
+            if !exists(path) || readFile(path) != text:
+                writeFile(path, text)
+            one.name = planned.name
+            one.path = ".build/" + profile + "/packages/" + planned.name + "/" + planned.name + ".ll"
+            one.hash = sha256Hex(text)
+            one.input = input
+            one.deps = deps
+            out.cached = out.cached + 1
+        elif seen >= 0 && exists(path) && artifactReusable(recordedInput = old.entries[seen].input, recordedHash = old.entries[seen].hash, currentInput = input, artifactText = readFile(path)):
+            one = old.entries[seen]
+            text = readFile(path)
+            out.reused = out.reused + 1
+        else:
+            let owned = ownedForPackage(module = module, name = planned.name)
+            let emitted = emitPartition(entry = entry, target = defaultTarget(), module = module, owned = owned)
+            if emitted.failed:
+                print("emit-packages-gaps", planned.name, emitGapCount(result = emitted), emitted.detail)
+                return out
+            text = emitted.text
+            if len(cacheDir) > 0:
+                let cacheHome = cacheDir + "/" + input
+                if !isDir(cacheHome):
+                    print("emit-packages-cache-missing", cacheHome)
+                    return out
+                writeFile(cachePath, text)
+            if !exists(path) || readFile(path) != text:
+                writeFile(path, text)
+            one.name = planned.name
+            one.path = ".build/" + profile + "/packages/" + planned.name + "/" + planned.name + ".ll"
+            one.hash = sha256Hex(text)
+            one.input = input
+            one.deps = deps
+            out.emitted = out.emitted + 1
+        record.entries = record.entries.append(one)
+        out.packages = out.packages + 1
+        out.files = out.files + 1
+        out.bytes = out.bytes + len(text)
+        p = p + 1
+    writeFile(artifactLedgerPath(root = root, profile = profile), artifactLedgerText(record))
+    out.ok = true
+    return out
+
+; 分波读数：每波一行，包名按计划序，供外部步骤并行调度。
+printPlanWaves|func(_plan: BuildPlan,) -> ():
+    let depth = planWaveOf(_plan)
+    var maxDepth = -1
+    var i = 0
+    while i < len(depth):
+        if depth[i] > maxDepth:
+            maxDepth = depth[i]
+        i = i + 1
+    var w = 0
+    while w <= maxDepth:
+        var names = ""
+        i = 0
+        while i < len(depth):
+            if depth[i] == w:
+                if len(names) > 0:
+                    names = names + " "
+                names = names + _plan.packages[i].name
+            i = i + 1
+        print("wave", w, names)
+        w = w + 1

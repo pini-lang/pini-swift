@@ -8,11 +8,30 @@ _backend_dump = "../../../backend-dump"
 _backend_llvm = "../../../backend-llvm"
 _testkit = "../../../testkit"
 
-; 驱动主程序：无参数只装配清单并打印产物行；各子命令的根取位置参数，缺省从模块根上溯。
+; 驱动主程序：无参数只装配清单并打印产物行；子命令的根取位置参数，缺省从模块根上溯。
 ; check 跑完整检查，build 落构建计划，plan 打印计划，lower 走降载，dump 出结构转储，emit 出 LLVM 文本。
-; cases 只列裸名用例位置；降载前先填表达式类型表并把池换成填表后的池。
+; cases 只列裸名用例位置；降载前先填表达式类型表并把池换成填表后的池；`--no-stdlib` 与 `--stdlib` 先摘出去。
 main|func() -> ():
-    let args = argv()
+    var args: Array<String> = []
+    var stdlib = StdlibOption()
+    let raw = argv()
+    var q = 0
+    while q < len(raw):
+        let one: String = raw[q]
+        if one == "--no-stdlib":
+            stdlib.enabled = false
+            q = q + 1
+        elif one == "--stdlib" && q + 1 < len(raw):
+            stdlib.path = raw[q + 1]
+            stdlib.enabled = true
+            q = q + 2
+        elif one.indexOf("--stdlib=") == 0:
+            stdlib.path = one.slice(9, len(one))
+            stdlib.enabled = true
+            q = q + 1
+        else:
+            args = args.append(one)
+            q = q + 1
     var root = workspaceRootOf(start = moduleRoot())
     var 全量 = false
     var 结构化 = false
@@ -20,6 +39,9 @@ main|func() -> ():
     var 分段 = 0
     var 转储 = false
     var 发射 = false
+    var 分包 = false
+    var 单包 = ""
+    var 缓存目录 = ""
     if len(args) > 0 && args[0] == "check":
         全量 = true
         var c = 1
@@ -44,8 +66,18 @@ main|func() -> ():
             root = args[1]
     if len(args) > 0 && args[0] == "emit":
         发射 = true
-        if len(args) > 1:
-            root = args[1]
+        var e = 1
+        while e < len(args):
+            let one: String = args[e]
+            if one == "--packages":
+                分包 = true
+            elif len(one) > 10 && one.indexOf("--package=") == 0:
+                单包 = one.slice(10, len(one))
+            elif len(one) > 12 && one.indexOf("--cache-dir=") == 0:
+                缓存目录 = one.slice(12, len(one))
+            else:
+                root = one
+            e = e + 1
     if len(args) > 0 && args[0] == "test":
         var testRoot = workspaceRootOf(start = moduleRoot())
         var testFilter = ""
@@ -72,7 +104,7 @@ main|func() -> ():
             else:
                 testRoot = arg
                 cursor = cursor + 1
-        runTest(root = testRoot, filter = testFilter, skips = testSkips, listOnly = testListOnly)
+        runTest(root = testRoot, filter = testFilter, skips = testSkips, listOnly = testListOnly, stdlib = stdlib)
         return
     if len(args) > 0 && args[0] == "cases":
         if len(args) > 1:
@@ -81,10 +113,29 @@ main|func() -> ():
         if !plan.isOK():
             print("workspace-plan-failed", plan.errorCount())
             return
-        let ws = loadWorkspaceGrouped(plan)
+        let ws = loadWorkspaceGrouped(plan, stdlib = stdlib)
         let units = collectWorkspaceUnits(ws)
         let build = buildWorld(units = units, packages = ws.packages)
         printBareCases(units = units, world = build.world)
+        return
+    if len(args) > 0 && args[0] == "interfaces":
+        var 读记录 = false
+        var icursor = 1
+        while icursor < len(args):
+            let one: String = args[icursor]
+            if one == "--read":
+                读记录 = true
+            else:
+                root = one
+            icursor = icursor + 1
+        if 读记录:
+            printInterfaceLedger(root = root)
+            return
+        let done = writeInterfaces(root = root, stdlib = stdlib)
+        if done.ok:
+            print("interfaces-ok", done.packages, done.changed, done.reused)
+        else:
+            assert(false, "接口缓存未写入")
         return
     if len(args) > 0 && args[0] == "build":
         if len(args) > 1:
@@ -92,12 +143,22 @@ main|func() -> ():
         runBuild(root = root)
         return
     if len(args) > 0 && args[0] == "plan":
-        if len(args) > 1:
-            root = args[1]
-        print(planText(planWorkspace(root)))
+        var 分波 = false
+        var pc = 1
+        while pc < len(args):
+            if args[pc] == "--waves":
+                分波 = true
+            else:
+                root = args[pc]
+            pc = pc + 1
+        let planned = planWorkspace(root)
+        if 分波:
+            printPlanWaves(planned)
+        else:
+            print(planText(planned))
         return
     if 全量:
-        let report = checkWorkspace(root = root)
+        let report = checkWorkspace(root = root, stdlib = stdlib)
         if 结构化:
             if len(report.tsv) > 0:
                 print(report.tsv)
@@ -112,12 +173,12 @@ main|func() -> ():
     if 降载:
         var 产物 = 降载产物()
         if 分段 > 0:
-            产物 = 降载工作区至(root = root, stage = 分段)
+            产物 = 降载工作区至(root = root, stage = 分段, stdlib = stdlib)
             ; 分段读数只出到所指阶段：未走完的链不给全量读数，免得被当成通过。
             if 分段 < 8:
                 return
         else:
-            产物 = 降载工作区(root = root)
+            产物 = 降载工作区(root = root, stdlib = stdlib)
         if 产物.packages == 0:
             return
         let module = 产物.module
@@ -134,7 +195,7 @@ main|func() -> ():
         printTypeErrors(module = module)
         return
     if 转储:
-        let 产物 = 降载工作区(root = root)
+        let 产物 = 降载工作区(root = root, stdlib = stdlib)
         if 产物.packages == 0:
             return
         if len(产物.check.errors) > 0:
@@ -150,7 +211,14 @@ main|func() -> ():
         print(emitted.text)
         return
     if 发射:
-        let 产物 = 降载工作区(root = root)
+        if 分包:
+            let written = writeArtifacts(root = root, stdlib = stdlib, onlyName = 单包, cacheDir = 缓存目录)
+            if written.ok:
+                print("emit-packages-ok", written.packages, written.emitted, written.reused, written.bytes)
+            else:
+                assert(false, "逐包产物未写成")
+            return
+        let 产物 = 降载工作区(root = root, stdlib = stdlib)
         if 产物.packages == 0:
             return
         if len(产物.check.errors) > 0:

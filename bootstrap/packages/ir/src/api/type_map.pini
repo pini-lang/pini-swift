@@ -153,7 +153,7 @@ mapTuple|func(map: TypeMap, pool: TypePool, kids: Array<I32>, semanticId: I32,) 
     out.pool = inserted.pool
     return setMapped(map = out, semanticId = semanticId, irId = inserted.id)
 
-; 函数映射：形参逐个递归，返回单独递归；取用位此刻没有生产者，留空。
+; 函数映射：形参逐个递归，返回单独递归；空返回（`-> ()`）记 -1，取用位此刻没有生产者，留空。
 mapFunction|func(map: TypeMap, pool: TypePool, entry: TypeEntry, semanticId: I32,) -> (TypeMap,):
     var out = map
     var ids: Array<I32> = []
@@ -165,10 +165,12 @@ mapFunction|func(map: TypeMap, pool: TypePool, entry: TypeEntry, semanticId: I32
             return out
         ids = ids.append(mapped)
         i = i + 1
-    out = mapSemanticType(map = out, pool = pool, id = entry.ret)
-    let ret = irIdOf(map = out, semanticId = entry.ret)
-    if ret < 0:
-        return out
+    var ret = -1
+    if entry.ret >= 0:
+        out = mapSemanticType(map = out, pool = pool, id = entry.ret)
+        ret = irIdOf(map = out, semanticId = entry.ret)
+        if ret < 0:
+            return out
     let inserted = irFunctionType(pool = out.pool, params = ids, ret = ret, uses = [])
     out.pool = inserted.pool
     return setMapped(map = out, semanticId = semanticId, irId = inserted.id)

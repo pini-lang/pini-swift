@@ -31,7 +31,7 @@ runtime_dir="$(dirname "$runtime")"
 link_args=(-o "$work/gen2" "$work/gen2.ll" -L"$runtime_dir" -lPiniRuntime -Wl,-rpath,"$runtime_dir")
 
 # 首代发射整图；先两行读数，其后才是 LLVM 文本。
-if ! "$gen1" emit "$root/bootstrap" > "$work/gen2.txt"; then
+if ! "$gen1" emit "$root/bootstrap" --no-stdlib > "$work/gen2.txt"; then
     echo " 行不通  [自洽] 首代发射整图失败" >&2
     exit 1
 fi
@@ -84,7 +84,7 @@ if PATH="$clean_path" command -v pini > /dev/null 2>&1; then
     exit 1
 fi
 git status --porcelain > "$work/status-before.txt"
-if ! PATH="$clean_path" "$work/gen2" build "$root/bootstrap" > "$work/build2.txt" 2>&1; then
+if ! PATH="$clean_path" "$work/gen2" build "$root/bootstrap" --no-stdlib > "$work/build2.txt" 2>&1; then
     echo " 行不通  [自洽] 次代 build 失败；报告见 $work/build2.txt" >&2
     exit 1
 fi
@@ -109,7 +109,7 @@ if ! cmp -s "$work/report1.txt" "$work/report2.txt"; then
 fi
 
 # 不动点：次代再发射同一工作区，文本与首代逐字节相同。
-if ! "$work/gen2" emit "$root/bootstrap" > "$work/gen3.txt"; then
+if ! "$work/gen2" emit "$root/bootstrap" --no-stdlib > "$work/gen3.txt"; then
     echo " 行不通  [自洽] 次代发射整图失败" >&2
     exit 1
 fi

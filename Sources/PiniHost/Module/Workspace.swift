@@ -120,8 +120,10 @@ public enum WorkspaceBuilder {
     }
 
     /// 装载单个 target。普通库只取生产源码，可执行入口彼此隔离，测试入口只加入测试 target。
+    /// 标准库由调用方决定是否并入：编译器自身构建必须关，否则改标准库就要重建编译器。
     public static func load(
-        package plan: WorkspacePackagePlan, target: WorkspaceTargetPlan
+        package plan: WorkspacePackagePlan, target: WorkspaceTargetPlan,
+        withStdlib: Bool = true
     ) throws -> WorkspaceLoadedTarget {
         let loaded = try FileLoader.loadDirectory(
             path: plan.rootPath, manifest: plan.manifest, withStdlib: false)
@@ -169,8 +171,9 @@ public enum WorkspaceBuilder {
                     missing: drift.missingInRequire, extra: drift.extraInRequire)
             }
         }
+        let assembled = withStdlib ? interfacePackage.assemblingStdlib() : interfacePackage
         return WorkspaceLoadedTarget(
-            package: interfacePackage.assemblingStdlib(), publicInterface: interface)
+            package: assembled, publicInterface: interface)
     }
 
     private static func targetPlans(

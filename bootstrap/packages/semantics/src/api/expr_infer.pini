@@ -305,7 +305,7 @@ walkInferFunction|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32
     out.types = walked.types
     return out
 
-; 逐声明走体：顶层函数直接走，类型与扩展块下钻到成员函数，所属类型按块名解一次。
+; 逐声明走体：顶层函数直接走，类型与扩展块下钻到成员函数，所属类型按块名解一次；内建目标同样有型。
 walkInferDecls|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, state: WalkState,) -> (WalkState,):
     var out = state
     var d = 0
@@ -315,7 +315,7 @@ walkInferDecls|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, s
             out = walkInferFunction(world = world, unit = unit, unitIndex = unitIndex, declId = d, ownerType = -1, state = out)
         elif isOwnerDeclCode(decl.kind):
             let ownerName = decodeRange(bytes = out.bytes, start = decl.nameStart, end = decl.nameEnd)
-            let ownerType = nominalTypeId(world = world, name = ownerName)
+            let ownerType = ownerTypeId(world = world, name = ownerName)
             var i = 0
             while i < len(decl.kids):
                 let child = decl.kids[i]
@@ -384,8 +384,21 @@ inferNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
     let known = exprTypeAt(table = types, unit = unitIndex, node = node)
     if known >= 0:
         out.typeId = known
+        ; 已定的非叶节点仍下推一次：补表的调用点晚于父节点落型，
+        ; 父节点的比较与调用结果先定型，子树里的取下标要等补表后才拿得到类型。
+        ; 自身类型保持已定值，只把子表达补进表，故不会覆盖既有判定。
+        if len(unit.ast.exprAt(node).kids) == 0:
+            return out
+        let children = inferKids(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, pool = out.pool, types = out.types, bytes = bytes)
+        out.pool = children.pool
+        out.types = children.types
         return out
     if unit.ast.isLiteralExpr(node):
+        ; 插值串的代码段要先推：字面量面只给整串类型，不进入段内表达式。
+        if unit.ast.isInterpolatedExpr(node):
+            let parts = inferKids(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, pool = out.pool, types = out.types, bytes = bytes)
+            out.pool = parts.pool
+            out.types = parts.types
         let typed = checkLiteral(unit = unit, unitIndex = unitIndex, node = node, expectation = expected, pool = out.pool, types = out.types)
         out.pool = typed.pool
         out.types = typed.types
@@ -446,6 +459,10 @@ inferNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
     if unit.ast.isSubscriptExpr(node) || unit.ast.isSliceExpr(node):
         return inferIndex(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out, bytes = bytes)
     if unit.ast.isCastExpr(node):
+        ; 转换只改结果类型，操作数的类型仍要落表，否则下游降载查不到。
+        let operand = inferKids(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, pool = out.pool, types = out.types, bytes = bytes)
+        out.pool = operand.pool
+        out.types = operand.types
         let expr = unit.ast.exprAt(node)
         let resolved = annotationType(world = world, unit = unit, node = expr.typeId, pool = out.pool)
         out.pool = resolved.pool

@@ -11,6 +11,7 @@ errorPlanMissing
 errorPlanBroken
 errorPlanStale
 errorGeneratedMissing
+errorStdlibMissing
 
 ; 装载错误：类别、相对工作区根的路径与补充细节；偏移是源内字节位置，不适用时为 -1。
 (LoadError)
@@ -44,6 +45,8 @@ loadErrorName|func(_kind: LoadErrorKind,) -> (String,):
             return "构建计划与脚本不一致"
         case errorGeneratedMissing:
             return "生成模块不存在"
+        case errorStdlibMissing:
+            return "标准库源不存在"
     return "装载失败"
 
 ; 造错误：路径取工作区相对形式，偏移缺省为 -1。

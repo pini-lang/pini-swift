@@ -19,6 +19,12 @@ if [ ! -x "$pini" ]; then
     exit 1
 fi
 
+# 编译器自身工作区关装配：改标准库不该触发编译器重建，读数也不该随库内容漂移。
+# 其余工作区保持默认（装），与用户构建同一条路径。
+if [ "$workspace" = "$root/bootstrap" ]; then
+    set -- --no-stdlib "$@"
+fi
+
 clang_bin="$(command -v clang || true)"
 if [ -z "$clang_bin" ]; then
     echo " 行不通  [测试] 未找到 clang —— 链接无法执行，不等于通过" >&2

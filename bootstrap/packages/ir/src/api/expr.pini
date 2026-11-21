@@ -4,11 +4,13 @@ _semantics = "../../../semantics"
 _module_loader = "../../../module-loader"
 
 ; 函数字面量：体挂在本节点的 `kids`，另建同体函数条目供发射期出定义。
-; 帧换成闭包帧：形参占低位槽，外层可见名字按首次使用登记为捕获；
-; 捕获槽记的是创建点外层帧的槽位，env 由发射期按同序填槽地址。
+; 帧换成闭包帧：形参占低位槽，外层可见名字按首次使用登记为捕获；捕获槽记的是创建点
+; 外层帧的槽位，env 由发射期按同序填槽地址。编号取帧上的工作区水位，跨单元不撞。
 lowerClosure|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
     let expr = unit.ast.exprAt(id)
     var done = out
+    let serial = done.frame.closureSerial
+    done.frame.closureSerial = serial + 1
     let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
     if typeId < 0:
         return missType(out = done, unit = unit, id = id, bytes = bytes)
@@ -18,6 +20,7 @@ lowerClosure|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: 
     closure.externData = done.frame.externData
     closure.externs = done.frame.externs
     closure.outerLocals = done.frame.locals
+    closure.closureSerial = serial + 1
     var params: Array<IrParam> = []
     var body = -1
     var i = 0
@@ -58,13 +61,13 @@ lowerClosure|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: 
         done.offset = lowered.offset
         return done
     var fn = IrFunction()
-    fn.name = "__closure_" + countText(id)
+    fn.name = "__closure_" + countText(serial)
     fn.params = params
     fn.returnType = ret
     fn.body = lowered.ids
     fn.positions = lowered.positions
     fn.isClosure = true
-    fn.closureId = id
+    fn.closureId = serial
     fn.captures = lowered.frame.captures
     var c = 0
     while c < len(lowered.frame.closures):
@@ -75,7 +78,7 @@ lowerClosure|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: 
     let placed = internText(texts = lowered.texts, value = fn.name)
     var node = irMakeNode(kind = irExprTag(.irClosureLiteral), typeId = typeId)
     node.text = placed.id
-    node.intValue = id as I64
+    node.intValue = serial as I64
     node.kids = lowered.ids
     var slots: Array<I32> = []
     var s = 0
@@ -87,6 +90,7 @@ lowerClosure|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: 
     done.pool = inserted.pool
     done.texts = placed.texts
     done.id = inserted.id
+    done.frame.closureSerial = lowered.frame.closureSerial
     return done
 
 ; 表达式降载：AST 节点 + 推导表 + 局部帧 → IR 节点。
@@ -293,8 +297,8 @@ addIrNode|func(pool: IrNodePool, kind: I32, typeId: I32, op: I32, kids: Array<I3
     node.kids = kids
     return irAppendNode(pool = pool, node = node)
 
-; 类型后备：推导表不覆盖非字面量初始化的局部，其下游的下标读与字段读同样落空，这里按形状补判。
-; 比较与逻辑答布尔，一元答操作数类型，成员查字段声明，下标按容器分量取；待推导表补面后删除。
+; 类型后备：推导表不覆盖非字面量初始化的局部，其下游的字段读仍会落空，这里按形状补判。
+; 比较与逻辑答布尔，一元答操作数类型，成员查字段声明；下标类型由推导表给出，不在此兜底。
 fallbackIrType|func(map: TypeMap, types: ExprTypes, unit: CompilationUnit, unitIndex: I32, frame: LowerFrame, bytes: Array<U8>, id: I32,) -> (I32,):
     if id < 0 || id >= unit.ast.exprCount():
         return -1
@@ -327,25 +331,6 @@ fallbackIrType|func(map: TypeMap, types: ExprTypes, unit: CompilationUnit, unitI
             return -1
         let fieldName = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
         return irIdOf(map = map, semanticId = fieldTypeOf(frame = frame, owner = owner, fieldName = fieldName))
-    if unit.ast.isSubscriptExpr(id):
-        if len(expr.kids) < 1:
-            return -1
-        let containerType = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = frame, bytes = bytes, id = expr.kids[0])
-        if containerType < 0 || containerType >= irTypeCount(map.pool):
-            return -1
-        let entry = irTypeAt(pool = map.pool, id = containerType)
-        let tag = irTypeTag(entry.kind)
-        if tag == irTypeTag(.irTypeArray):
-            if len(entry.kids) > 0:
-                return entry.kids[0]
-            return -1
-        if tag == irTypeTag(.irTypeDict):
-            if len(entry.kids) > 1:
-                return entry.kids[1]
-            return -1
-        if tag == irTypeTag(.irTypeString):
-            return map.charId
-        return -1
     return -1
 
 ; 表达式类型：先读推导表，标识符回查帧，最后按运算符形状取后备；都没有答 -1。
@@ -633,7 +618,7 @@ fieldTypeOf|func(frame: LowerFrame, owner: String, fieldName: String,) -> (I32,)
         return -1
     return frame.world.types.typeOf(unit = ref.unit, decl = ref.decl)
 
-; 接收者所有者：名义与枚举答名字，其余答空串；空串说明按名找不到方法符号。
+; 接收者所有者：名义、枚举与内建 String/Array 答名字，其余答空串；空串说明按名找不到方法符号。
 receiverOwner|func(map: TypeMap, typeId: I32,) -> (String,):
     if typeId < 0 || typeId >= irTypeCount(map.pool):
         return ""
@@ -643,6 +628,10 @@ receiverOwner|func(map: TypeMap, typeId: I32,) -> (String,):
         return entry.name
     if tag == irTypeTag(.irTypeEnumeration):
         return entry.name
+    if tag == irTypeTag(.irTypeString):
+        return "String"
+    if tag == irTypeTag(.irTypeArray):
+        return "Array"
     return ""
 
 ; 读节点：名字、槽位与类型给定，造一个按槽位读并把名字驻留进文本池。
@@ -1287,6 +1276,8 @@ lowerCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: Typ
                 elif isStringMember(memberName = memberName, receiverType = recvType, map = map):
                     builtinMember = memberName
                     builtinType = recvType
+                    if builtinType < 0:
+                        builtinType = map.stringId
                 else:
                     return missExpr(out = done, unit = unit, id = id, what = "成员被调 " + memberName)
             if resolved.found && !resolved.takesReceiver:
@@ -1400,22 +1391,32 @@ lowerArrayMember|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, m
         return done
     return missExpr(out = done, unit = unit, id = id, what = "成员被调 " + member)
 
-; 字符串成员判定：名字在五类之内且接收者类型是字符串。
+; 字符串成员判定：名字在九类之内；upper/lower/trimLeft/trimRight 只属字串，接收者未定时也认。
 isStringMember|func(memberName: String, receiverType: I32, map: TypeMap,) -> (Bool,):
     if memberName != "contains" && memberName != "split" && memberName != "substring" && memberName != "indexOf" && memberName != "slice":
-        return false
+        if memberName != "upper" && memberName != "lower" && memberName != "trimLeft" && memberName != "trimRight":
+            return false
+    let unary = memberName == "upper" || memberName == "lower" || memberName == "trimLeft" || memberName == "trimRight"
     if receiverType < 0 || receiverType >= irTypeCount(map.pool):
-        return false
+        return unary
     return irTypeTag(irTypeAt(pool = map.pool, id = receiverType).kind) == irTypeTag(.irTypeString)
 
 ; 字符串成员：contains / split / substring / indexOf 各发专属节点，slice 发切片节点。
-; 结果类型取推导表；数目不符或名字不认识时报「成员被调」，不猜。
+; upper/lower 共用大小写节点按 op 分上下，trimLeft/trimRight 各发专属节点。
+; 结果类型取推导表；缺失时只补给字符串结果，切分不猜。
 lowerStringMember|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32, member: String, receiver: I32, actuals: Array<IrActual>,) -> (LowerExpr,):
     var done = out
-    let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
+    var typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
     if typeId < 0:
         if member == "contains":
             return lowerStringNode(out = done, unit = unit, id = id, kind = .irStringContains, typeId = map.booleanId, receiver = receiver, actuals = actuals)
+        if member == "indexOf":
+            typeId = map.i32Id
+        elif member == "split":
+            return missType(out = done, unit = unit, id = id, bytes = bytes)
+        else:
+            typeId = map.stringId
+    if typeId < 0:
         return missType(out = done, unit = unit, id = id, bytes = bytes)
     if member == "contains" && len(actuals) == 1:
         return lowerStringNode(out = done, unit = unit, id = id, kind = .irStringContains, typeId = typeId, receiver = receiver, actuals = actuals)
@@ -1427,6 +1428,14 @@ lowerStringMember|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, 
         return lowerStringNode(out = done, unit = unit, id = id, kind = .irStringSubstring, typeId = typeId, receiver = receiver, actuals = actuals)
     if member == "slice" && len(actuals) == 2:
         return lowerStringNode(out = done, unit = unit, id = id, kind = .irSliceCall, typeId = typeId, receiver = receiver, actuals = actuals)
+    if member == "upper" && len(actuals) == 0:
+        return lowerStringUnary(out = done, kind = .irStringCase, typeId = typeId, op = 1, receiver = receiver)
+    if member == "lower" && len(actuals) == 0:
+        return lowerStringUnary(out = done, kind = .irStringCase, typeId = typeId, op = 0, receiver = receiver)
+    if member == "trimLeft" && len(actuals) == 0:
+        return lowerStringUnary(out = done, kind = .irStringTrimLeft, typeId = typeId, op = 0, receiver = receiver)
+    if member == "trimRight" && len(actuals) == 0:
+        return lowerStringUnary(out = done, kind = .irStringTrimRight, typeId = typeId, op = 0, receiver = receiver)
     return missExpr(out = done, unit = unit, id = id, what = "成员被调 " + member)
 
 ; 字符串成员节点：接收者在前，实参按源序排在其后。
@@ -1437,6 +1446,14 @@ lowerStringNode|func(out: LowerExpr, unit: CompilationUnit, id: I32, kind: IrExp
         kids = kids.append(actuals[i].id)
         i = i + 1
     let inserted = addIrNode(pool = out.pool, kind = irExprTag(kind), typeId = typeId, op = 0, kids = kids)
+    var done = out
+    done.pool = inserted.pool
+    done.id = inserted.id
+    return done
+
+; 字符串一元成员：接收者一个子节点；upper/lower 用 op 分上下，修剪各用专属类别。
+lowerStringUnary|func(out: LowerExpr, kind: IrExprKind, typeId: I32, op: I32, receiver: I32,) -> (LowerExpr,):
+    let inserted = addIrNode(pool = out.pool, kind = irExprTag(kind), typeId = typeId, op = op, kids = [receiver])
     var done = out
     done.pool = inserted.pool
     done.id = inserted.id
@@ -1597,6 +1614,15 @@ lowerCaseConstruct|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>,
     done.id = inserted.id
     return done
 
+; 定界判断：下标前的连续反斜杠个数，用来区分定界引号与转义引号。
+backslashRun|func(bytes: Array<U8>, at: I32,) -> (I32,):
+    var count = 0
+    var i = at - 1
+    while i >= 0 && bytes[i] == 92 as U8:
+        count = count + 1
+        i = i - 1
+    return count
+
 ; 字符串字面量取值：去首尾引号并按转义表还原；`\0` 之后的内容全部丢弃。
 ; 字节先拼再整体解码：逐段解码会把转义切开的序列变成替换字符。
 stringLiteralText|func(bytes: Array<U8>, start: I32, end: I32,) -> (String,):
@@ -1607,7 +1633,7 @@ stringLiteralText|func(bytes: Array<U8>, start: I32, end: I32,) -> (String,):
     var stop = end
     if i < stop && bytes[i] == quote:
         i = i + 1
-    if stop > i && bytes[stop - 1] == quote:
+    if stop > i && bytes[stop - 1] == quote && backslashRun(bytes = bytes, at = stop - 1) % 2 == 0:
         stop = stop - 1
     var closed = false
     while i < stop && !closed:
@@ -1826,6 +1852,10 @@ lowerExpr|func(pool: IrNodePool, texts: IrTextPool, map: TypeMap, types: ExprTyp
     if unit.ast.isFunctionExpr(id):
         return lowerClosure(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
     if unit.ast.isGenericExpr(id):
+        ; 泛型函数调用点先按实例表发实例调用；未命中才是 `LazyRef<T>` 构造。
+        let at = findGenericCall(calls = frame.generics.calls, unit = unitIndex, node = id)
+        if at >= 0:
+            return lowerGenericCall(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id, instance = at)
         return lowerLazyRefConstruct(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id, callee = id)
     if unit.ast.isNilExpr(id):
         return lowerNil(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
@@ -1849,3 +1879,35 @@ lowerExpr|func(pool: IrNodePool, texts: IrTextPool, map: TypeMap, types: ExprTyp
         return lowerSubscript(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
     let node = unit.ast.exprAt(id)
     return missExpr(out = out, unit = unit, id = id, what = exprKindName(node.kind))
+
+; 泛型实例调用：实参按源序降载，符号取实例名；带标签的实参本批不收，报缺口不猜顺序。
+lowerGenericCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32, instance: I32,) -> (LowerExpr,):
+    var done = out
+    let inst = done.frame.generics.instances[instance]
+    let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
+    if typeId < 0:
+        return missType(out = done, unit = unit, id = id, bytes = bytes)
+    let expr = unit.ast.exprAt(id)
+    var kids: Array<I32> = []
+    var i = 0
+    while i < len(expr.kids):
+        let kid: I32 = expr.kids[i]
+        if unit.ast.isLabeledArgument(kid):
+            return missExpr(out = done, unit = unit, id = id, what = "泛型实例调用带标签实参")
+        let one = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = kid)
+        done.pool = one.pool
+        done.texts = one.texts
+        done.frame = one.frame
+        if one.failed:
+            return takeFailure(out = done, one = one)
+        kids = kids.append(one.id)
+        i = i + 1
+    let placed = internText(texts = done.texts, value = inst.name)
+    var node = irMakeNode(kind = irExprTag(.irCall), typeId = typeId)
+    node.text = placed.id
+    node.kids = kids
+    let inserted = irAppendNode(pool = done.pool, node = node)
+    done.texts = placed.texts
+    done.pool = inserted.pool
+    done.id = inserted.id
+    return done

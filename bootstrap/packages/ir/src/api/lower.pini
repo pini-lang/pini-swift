@@ -7,10 +7,11 @@ _module_loader = "../../../module-loader"
 ; 函数表与语句体一并产出；语句或表达式降不了时整函数留空并逐函数报缺口。
 ; 空体在发射期会变成能跑却错的码，故缺口必须可见。
 
-; 降载入参：世界、表达式类型表、解析表、形态表与槽布局；后两者本切片只带不改。
+; 降载入参：世界、表达式类型表、泛型实例表、解析表、形态表与槽布局；形态与槽本切片只带不改。
 (LowerWorld)
 world: MemberWorld = MemberWorld()
 types: ExprTypes = ExprTypes()
+generics: GenericFill = GenericFill()
 resolve: ResolveTable = ResolveTable()
 shapes: ShapeTable = ShapeTable()
 layouts: LayoutTable = LayoutTable()
@@ -30,7 +31,7 @@ localSlot: I32 = -1
 typeId: I32 = -1
 
 ; 函数：名字、形参、返回类型、语句节点下标与逐语句源位置；返回 -1 表示空返回。
-; 闭包另记自身编号与捕获表：编号用于 `@__closure_<编号>` 与 env 类型名，两者必须同源。
+; 闭包另记自身编号与捕获表：编号全工作区递增，用于 `@__closure_<编号>` 与 env 类型名，两者同源。
 (IrFunction)
 name: String = ""
 params: Array<IrParam> = []
@@ -88,6 +89,10 @@ externData: Array<IrExternData> = []
 externs: Array<IrExternFunction> = []
 unitIndex: I32 = 0
 bytes: Array<U8> = []
+; 泛型实例表：逐实例换世界与类型表后降载模板体，调用点按它查实例名。
+generics: GenericFill = GenericFill()
+; 闭包编号水位：跨单元、跨实例共用一格，逐闭包递增。
+closureSerial: I32 = 0
 
 ; 声明名：从源内区间解码，保留原始拼写。
 declName|func(unit: CompilationUnit, bytes: Array<U8>, decl: DeclNode,) -> (String,):
@@ -147,9 +152,9 @@ lowerParams|func(state: LowerState, unit: CompilationUnit, decl: DeclNode, scope
     return out
 
 ; 单函数：播种函数帧取参数与返回类型，再降语句体；owner 非空即方法。
+; overrideName 非空时覆盖声明名，泛型实例的符号因此与实例表同名。
 ; 体降不了就整函数留空并记一条缺口：半截体在发射期能跑却少了语句。
-; 播种失败同样记缺口 —— 它也是「节点没生成」，静默返回会让空体数与缺口数对不上。
-lowerFunction|func(state: LowerState, unit: CompilationUnit, declId: I32, owner: String,) -> (LowerState,):
+lowerFunction|func(state: LowerState, unit: CompilationUnit, declId: I32, owner: String, overrideName: String,) -> (LowerState,):
     var out = state
     let decl: DeclNode = unit.ast.decls[declId]
     let seed = seedFunctionScope(world = out.world, unitIndex = out.unitIndex, declId = declId, bytes = out.bytes)
@@ -163,6 +168,8 @@ lowerFunction|func(state: LowerState, unit: CompilationUnit, declId: I32, owner:
         return out
     var fn = IrFunction()
     fn.name = irFunctionName(unit = unit, bytes = out.bytes, decl = decl, owner = owner)
+    if len(overrideName) > 0:
+        fn.name = overrideName
     fn.isTest = decl.isTest
     fn.isUnsafe = decl.isUnsafe
     fn.isAsync = decl.isAsync
@@ -179,8 +186,9 @@ lowerFunction|func(state: LowerState, unit: CompilationUnit, declId: I32, owner:
         var start = LowerStmt()
         start.pool = out.nodes
         start.texts = out.texts
-        start.frame = seedLowerFrame(scope = seed.scope, map = out.map, world = out.world, decls = out.decls)
+        start.frame = seedLowerFrame(scope = seed.scope, map = out.map, world = out.world, decls = out.decls, generics = out.generics)
         start.frame.isAsync = decl.isAsync
+        start.frame.closureSerial = out.closureSerial
         let body = lowerBlockOf(out = start, unit = unit, bytes = out.bytes, map = out.map, types = out.types, unitIndex = out.unitIndex, blockId = decl.body)
         out.nodes = body.pool
         out.texts = body.texts
@@ -196,6 +204,7 @@ lowerFunction|func(state: LowerState, unit: CompilationUnit, declId: I32, owner:
         while c < len(body.frame.closures):
             out.functions = out.functions.append(body.frame.closures[c])
             c = c + 1
+        out.closureSerial = body.frame.closureSerial
     out.functions = out.functions.append(fn)
     return out
 
@@ -225,7 +234,8 @@ lowerGivenMaker|func(state: LowerState, unit: CompilationUnit, declId: I32,) -> 
     var one = LowerExpr()
     one.pool = out.nodes
     one.texts = out.texts
-    one.frame = seedLowerFrame(scope = ScopeStack(), map = out.map, world = out.world, decls = out.decls)
+    one.frame = seedLowerFrame(scope = ScopeStack(), map = out.map, world = out.world, decls = out.decls, generics = out.generics)
+    one.frame.closureSerial = out.closureSerial
     let built = lowerConstructDefaults(out = one, map = out.map, types = out.types, ref = ref, typeId = typeId)
     var fn = IrFunction()
     fn.name = "__given_make_" + name
@@ -237,15 +247,19 @@ lowerGivenMaker|func(state: LowerState, unit: CompilationUnit, declId: I32,) -> 
     fn.body = [placed.id]
     out.nodes = placed.pool
     out.texts = built.texts
+    out.closureSerial = built.frame.closureSerial
     out.functions = out.functions.append(fn)
     return out
 
 ; 单声明：函数直接降；类型与扩展块下钻到成员函数，owner 取块名，顺序即声明序。
+; 带类型形参的函数是模板，实例由实例表另降，这里不进函数表。
 lowerDeclBody|func(state: LowerState, unit: CompilationUnit, declId: I32,) -> (LowerState,):
     var out = state
     let decl: DeclNode = unit.ast.decls[declId]
     if isFunctionDeclCode(decl.kind):
-        return lowerFunction(state = out, unit = unit, declId = declId, owner = "")
+        if len(decl.generic) > 0:
+            return out
+        return lowerFunction(state = out, unit = unit, declId = declId, owner = "", overrideName = "")
     if isGivenDeclCode(decl.kind):
         return lowerGivenMaker(state = out, unit = unit, declId = declId)
     if isTypeDecl(decl) || isExtensionDeclCode(decl.kind):
@@ -253,8 +267,8 @@ lowerDeclBody|func(state: LowerState, unit: CompilationUnit, declId: I32,) -> (L
         var i = 0
         while i < len(decl.kids):
             let child: DeclNode = unit.ast.decls[decl.kids[i]]
-            if isFunctionDeclCode(child.kind):
-                out = lowerFunction(state = out, unit = unit, declId = decl.kids[i], owner = owner)
+            if isFunctionDeclCode(child.kind) && len(child.generic) == 0:
+                out = lowerFunction(state = out, unit = unit, declId = decl.kids[i], owner = owner, overrideName = "")
             i = i + 1
     return out
 
@@ -274,6 +288,7 @@ lowerWorkspace|func(input: LowerWorld,) -> (IrModule,):
     var state = LowerState()
     state.world = input.world
     state.types = input.types
+    state.generics = input.generics
     state.map = buildTypeMap(world = input.world)
     state.decls = makeDeclTable(shapes = input.shapes, map = state.map)
     state.slots = makeSlotTable(layouts = input.layouts, map = state.map)
@@ -283,6 +298,20 @@ lowerWorkspace|func(input: LowerWorld,) -> (IrModule,):
         state.bytes = unitBytes(input.world.units[u])
         state = lowerUnit(state = state, unit = input.world.units[u])
         u = u + 1
+    ; 实例体在模板单元上降；世界与类型表逐实例换，函数名取实例符号。
+    var g = 0
+    while g < len(input.generics.instances):
+        let inst = input.generics.instances[g]
+        let savedWorld = state.world
+        let savedTypes = state.types
+        state.world = inst.world
+        state.types = inst.types
+        state.unitIndex = inst.unit
+        state.bytes = unitBytes(inst.world.units[inst.unit])
+        state = lowerFunction(state = state, unit = inst.world.units[inst.unit], declId = inst.decl, owner = "", overrideName = inst.name)
+        state.world = savedWorld
+        state.types = savedTypes
+        g = g + 1
     var out = IrModule()
     out.types = state.map.pool
     out.nodes = state.nodes

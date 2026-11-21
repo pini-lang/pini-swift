@@ -1,0 +1,10 @@
+; 正例：用户声明的同名成员让标准库那份退出；同块其它成员仍装配。
+((String))
+trim|self() -> (String,):
+    return "override"
+
+覆盖|func() -> (String,):
+    return "  x  ".trim()
+
+前缀|func() -> (Bool,):
+    return "hello".startsWith(prefix = "he")

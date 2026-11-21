@@ -1,0 +1,6 @@
+[api|import]
+_support = "../../support"
+
+; 跨包调用支持包的公开函数。
+调用|func(x: I32,) -> (I32,):
+    return 公开(x = x)

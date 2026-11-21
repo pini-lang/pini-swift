@@ -705,6 +705,72 @@ _backend_kit = "../../backend-kit"
     module.functions = module.functions.append(fn)
     return module
 
+; 串一元模块：一个字串常量，upper/lower/trimLeft/trimRight 各一次，四条表达式语句后返回。
+发射造串一元模块|func() -> (IrModule,):
+    var module = IrModule()
+    module.types = 发射造打印类型池()
+    module.texts = module.texts.append("ab")
+    var nodes = IrNodePool()
+    var literal = irMakeNode(kind = tagOfName(name = "stringConst"), typeId = 1)
+    literal.text = 0
+    let placedLiteral = irAppendNode(pool = nodes, node = literal)
+    nodes = placedLiteral.pool
+    var upper = irMakeNode(kind = tagOfName(name = "stringCase"), typeId = 1)
+    upper.op = 1
+    upper.kids = [placedLiteral.id]
+    let placedUpper = irAppendNode(pool = nodes, node = upper)
+    nodes = placedUpper.pool
+    var lower = irMakeNode(kind = tagOfName(name = "stringCase"), typeId = 1)
+    lower.op = 0
+    lower.kids = [placedLiteral.id]
+    let placedLower = irAppendNode(pool = nodes, node = lower)
+    nodes = placedLower.pool
+    var trimmedLeft = irMakeNode(kind = tagOfName(name = "stringTrimLeft"), typeId = 1)
+    trimmedLeft.kids = [placedLiteral.id]
+    let placedTrimLeft = irAppendNode(pool = nodes, node = trimmedLeft)
+    nodes = placedTrimLeft.pool
+    var trimmedRight = irMakeNode(kind = tagOfName(name = "stringTrimRight"), typeId = 1)
+    trimmedRight.kids = [placedLiteral.id]
+    let placedTrimRight = irAppendNode(pool = nodes, node = trimmedRight)
+    nodes = placedTrimRight.pool
+    var calls: Array<I32> = [placedUpper.id, placedLower.id, placedTrimLeft.id, placedTrimRight.id]
+    var body: Array<I32> = []
+    var i = 0
+    while i < len(calls):
+        var stmt = irMakeNode(kind = tagOfName(name = "exprStmt"), typeId = -1)
+        stmt.kids = [calls[i]]
+        let placed = irAppendNode(pool = nodes, node = stmt)
+        nodes = placed.pool
+        body = body.append(placed.id)
+        i = i + 1
+    var back = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    let placedBack = irAppendNode(pool = nodes, node = back)
+    nodes = placedBack.pool
+    module.nodes = nodes
+    body = body.append(placedBack.id)
+    var fn = IrFunction()
+    fn.name = "main"
+    fn.returnType = -1
+    fn.body = body
+    module.functions = module.functions.append(fn)
+    return module
+
+; 串一元面：upper/lower 按 op 分符号，左右修剪各一条声明，四条都按一元进、串出。
+字符串一元|test() -> ():
+    let module = 发射造串一元模块()
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    if result.failed:
+        assert(false, "缺口：" + result.gaps[0])
+    assert(发射含子串(text = result.text, needle = "call ptr @bk_string_upper(ptr "), "upper 应一元进、串出")
+    assert(发射含子串(text = result.text, needle = "call ptr @bk_string_lower(ptr "), "lower 应一元进、串出")
+    assert(发射含子串(text = result.text, needle = "call ptr @bk_string_trim_left(ptr "), "trimLeft 应一元进、串出")
+    assert(发射含子串(text = result.text, needle = "call ptr @bk_string_trim_right(ptr "), "trimRight 应一元进、串出")
+    assert(发射含子串(text = result.text, needle = "declare ptr @bk_string_upper(ptr)"), "upper 应出声明")
+    assert(发射含子串(text = result.text, needle = "declare ptr @bk_string_lower(ptr)"), "lower 应出声明")
+    assert(发射含子串(text = result.text, needle = "declare ptr @bk_string_trim_left(ptr)"), "trimLeft 应出声明")
+    assert(发射含子串(text = result.text, needle = "declare ptr @bk_string_trim_right(ptr)"), "trimRight 应出声明")
+    return
+
 ; 字符串与宿主面：双参串调用收成 i1 或 i32，无参内建按零参直呼，谓词把 i32 收成 i1。
 字符串与宿主|test() -> ():
     let module = 发射造字符串模块()

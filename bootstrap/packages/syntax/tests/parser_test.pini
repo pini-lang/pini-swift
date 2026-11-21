@@ -795,3 +795,38 @@ defer单行|test() -> ():
     let 扩展 = 结果.ast.declAt(结果.ast.itemAt(0))
     assert(len(扩展.kids) == 1, "扩展块只收一个方法")
     return
+
+; 泛型函数：类型形参记在声明上，调用点按泛型应用收类型实参。
+泛型函数头|test() -> ():
+    let src = "map|func<T, R>(a: T, f: (T,) -> (R,),) -> (R,):\n    return f(a)\n\nuse|func() -> (I32,):\n    return map<I32, I32>(1, id)\n"
+    let 结果 = parseText(src)
+    assert(len(结果.diagnostics) == 0, "不应有语法诊断")
+    let ast = 结果.ast
+    let 声明 = ast.declAt(ast.itemAt(0))
+    assert(len(声明.generic) == 2, "两个类型形参")
+    let 首个 = ast.declAt(声明.generic[0])
+    assert(首个.nameStart == 9, "T 起点")
+    assert(首个.nameEnd == 10, "T 终点")
+    let 使用 = ast.declAt(ast.itemAt(1))
+    let 返回 = ast.stmtChild(id = 使用.body, index = 0)
+    let 调用 = ast.stmtChild(id = 返回, index = 0)
+    assert(ast.isExpr(id = 调用, kind = .exprGeneric), "调用点记为泛型应用")
+    assert(len(ast.exprAt(调用).kids) == 2, "两个值实参")
+    let 类型 = ast.typeAt(ast.exprAt(调用).typeId)
+    assert(类型.kind == typeKindTag(.typeGeneric), "类型位是泛型类型")
+    assert(len(类型.kids) == 2, "两个类型实参")
+    return
+
+; 类型形参约束不在本批范围：函数头带约束时语法面直接拒绝。
+类型形参约束拒绝|test() -> ():
+    let 结果 = parseText("f|func<T: I32>(a: T,) -> (T,):\n    return a\n")
+    assert(len(结果.diagnostics) > 0, "应报诊断")
+    assert(结果.diagnostics[0].code == "E2-001", "错误码 E2-001")
+    return
+
+; 泛型方法尚不支持：扩展块成员带类型形参时语法面直接拒绝。
+泛型方法拒绝|test() -> ():
+    let 结果 = parseText("((盒))\n取|self<T>(a: T,) -> (T,):\n    return a\n")
+    assert(len(结果.diagnostics) > 0, "应报诊断")
+    assert(结果.diagnostics[0].code == "E2-001", "错误码 E2-001")
+    return

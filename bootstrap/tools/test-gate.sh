@@ -265,8 +265,213 @@ if [ -x "$work/float-bin" ]; then
     fi
 fi
 
+# 接口缓存：记录落 .build 后，未变不重写、公开面变化报 E3-021、仅内部改动不失效。
+iface_expect() {
+    local label="$1"
+    local want="$2"
+    local got="$3"
+    case "$got" in
+    *"$want"*) ;;
+    *)
+        echo " 行不通  [测试自检] ${label}：${got}" >&2
+        fail=1
+        ;;
+    esac
+}
+iface_fixture="$work/interfaces-cache"
+rm -rf "$iface_fixture"
+cp -R "$root/bootstrap/fixtures/interfaces-cache" "$iface_fixture"
+mkdir -p "$iface_fixture/.build/debug/packages/app" "$iface_fixture/.build/debug/packages/support"
+iface_expect "首次接口缓存应两份新写" "interfaces-ok 2 2 0" "$("$pini" interfaces "$iface_fixture" --no-stdlib 2>&1)"
+iface_expect "接口未变不应重写" "interfaces-ok 2 0 2" "$("$pini" interfaces "$iface_fixture" --no-stdlib 2>&1)"
+if [ ! -f "$iface_fixture/.build/debug/interfaces.toml" ]; then
+    echo " 行不通  [测试自检] 接口记录未落盘" >&2
+    fail=1
+fi
+iface_expect "记录一致时检查应通过" "workspace-ok" "$("$pini" check "$iface_fixture" --no-stdlib 2>&1)"
+cp "$iface_fixture/support/src/api.pini" "$work/iface-support.bak"
+cat > "$iface_fixture/support/src/api.pini" <<EOF
+; 支持包：返回值改成 I64，公开接口变化。
+公开|func(x: I32,) -> (I64,):
+    return (x + 1) as I64
+EOF
+iface_expect "公开接口变化应报 E3-021" "E3-021" "$("$pini" check "$iface_fixture" --no-stdlib 2>&1)"
+iface_expect "记录更新应只重算两份" "interfaces-ok 2 2 0" "$("$pini" interfaces "$iface_fixture" --no-stdlib 2>&1)"
+iface_expect "记录追上源码后检查应通过" "workspace-ok" "$("$pini" check "$iface_fixture" --no-stdlib 2>&1)"
+cp "$work/iface-support.bak" "$iface_fixture/support/src/api.pini"
+iface_expect "还原源码后记录应再变一次" "interfaces-ok 2 2 0" "$("$pini" interfaces "$iface_fixture" --no-stdlib 2>&1)"
+iface_expect "还原后检查应通过" "workspace-ok" "$("$pini" check "$iface_fixture" --no-stdlib 2>&1)"
+mkdir -p "$iface_fixture/support/src/_internal"
+cat > "$iface_fixture/support/src/_internal/helper.pini" <<EOF
+; 内部文件：不进公开接口。
+辅助|func(x: I32,) -> (I32,):
+    return x + 2
+EOF
+iface_expect "仅内部改动应只重算自身" "interfaces-ok 2 1 1" "$("$pini" interfaces "$iface_fixture" --no-stdlib 2>&1)"
+iface_expect "内部改动后检查应通过" "workspace-ok" "$("$pini" check "$iface_fixture" --no-stdlib 2>&1)"
+
+# 逐包产物：接口记录在前后按包发射；每包只含本包定义，其余出声明，合并链接不冲突。
+pkg_expect() {
+    local label="$1"
+    local want="$2"
+    local got="$3"
+    case "$got" in
+    *"$want"*) ;;
+    *)
+        echo " 行不通  [测试自检] ${label}：${got}" >&2
+        fail=1
+        ;;
+    esac
+}
+pkg_fixture="$work/packages-ir"
+pkg_dir="$pkg_fixture/.build/debug/packages"
+rm -rf "$pkg_fixture"
+cp -R "$root/bootstrap/fixtures/packages-ir" "$pkg_fixture"
+mkdir -p "$pkg_dir/app" "$pkg_dir/cli" "$pkg_dir/support"
+pkg_expect "接口记录应三份新写" "interfaces-ok 3 3 0" "$("$pini" interfaces "$pkg_fixture" --no-stdlib 2>&1)"
+pkg_expect "逐包发射应写三份" "emit-packages-ok 3 3 0 " "$("$pini" emit "$pkg_fixture" --packages --no-stdlib 2>&1)"
+for pkg_name in app cli support; do
+    if [ ! -f "$pkg_dir/$pkg_name/$pkg_name.ll" ]; then
+        echo " 行不通  [测试自检] 缺 $pkg_name 的逐包产物" >&2
+        fail=1
+    fi
+done
+if ! grep -q '^define i32 @_u5957_u7528' "$pkg_dir/app/app.ll"; then
+    echo " 行不通  [测试自检] 应用包应为套用出定义" >&2
+    fail=1
+fi
+if ! grep -q '^declare i32 @_u516C_u5F00' "$pkg_dir/app/app.ll"; then
+    echo " 行不通  [测试自检] 应用包应为公开出声明" >&2
+    fail=1
+fi
+if ! grep -q '^define i32 @_u516C_u5F00' "$pkg_dir/support/support.ll"; then
+    echo " 行不通  [测试自检] 支持包应为公开出定义" >&2
+    fail=1
+fi
+if grep -q '^define i32 @_u5957_u7528' "$pkg_dir/support/support.ll"; then
+    echo " 行不通  [测试自检] 支持包不应重复定义套用" >&2
+    fail=1
+fi
+if ! grep -q '^define i32 @main' "$pkg_dir/cli/cli.ll"; then
+    echo " 行不通  [测试自检] 入口包应定义 main" >&2
+    fail=1
+fi
+if ! grep -q 'package = "app"' "$pkg_fixture/.build/debug/artifacts.toml"; then
+    echo " 行不通  [测试自检] 产物记录应含应用包" >&2
+    fail=1
+fi
+mkdir -p "$work/pkg-ll-first"
+for pkg_name in app cli support; do
+    cp "$pkg_dir/$pkg_name/$pkg_name.ll" "$work/pkg-ll-first/$pkg_name.ll"
+done
+pkg_expect "二次发射应全部复用" "emit-packages-ok 3 0 3 " "$("$pini" emit "$pkg_fixture" --packages --no-stdlib 2>&1)"
+for pkg_name in app cli support; do
+    if ! cmp -s "$work/pkg-ll-first/$pkg_name.ll" "$pkg_dir/$pkg_name/$pkg_name.ll"; then
+        echo " 行不通  [测试自检] 二次发射应逐字节相同：$pkg_name" >&2
+        fail=1
+    fi
+done
+pkg_objects=""
+pkg_objs_ok=1
+for pkg_name in app cli support; do
+    if ! "$clang_bin" -c "$pkg_dir/$pkg_name/$pkg_name.ll" -o "$work/pkg-$pkg_name.o" >/dev/null 2>&1; then
+        echo " 行不通  [测试自检] 逐包产物应能单独编译：$pkg_name" >&2
+        fail=1
+        pkg_objs_ok=0
+    fi
+    pkg_objects="$pkg_objects $work/pkg-$pkg_name.o"
+done
+if [ "$pkg_objs_ok" -eq 1 ]; then
+    if ! "$clang_bin" -o "$work/pkg-bin" $pkg_objects -L"$runtime_dir" -lPiniRuntime -Wl,-rpath,"$runtime_dir" >/dev/null 2>&1; then
+        echo " 行不通  [测试自检] 逐包产物合并链接失败" >&2
+        fail=1
+    else
+        "$work/pkg-bin"
+        pkg_rc=$?
+        if [ "$pkg_rc" -ne 1 ]; then
+            echo " 行不通  [测试自检] 合并后可执行应返回 1，实得 $pkg_rc" >&2
+            fail=1
+        fi
+    fi
+fi
+# 缓存：按拓扑序比源码与依赖摘要；实现改动只重发本包，公开面改动沿依赖传播一层。
+cp "$pkg_fixture/support/src/api.pini" "$work/pkg-support.bak"
+cat > "$pkg_fixture/support/src/api.pini" <<EOF
+; 支持包：实现加一改成加二，公开面不变。
+公开|func(x: I32,) -> (I32,):
+    return x + 2
+EOF
+pkg_expect "实现改动应只重算支持包" "interfaces-ok 3 1 2" "$("$pini" interfaces "$pkg_fixture" --no-stdlib 2>&1)"
+pkg_expect "实现改动应只重发支持包" "emit-packages-ok 3 1 2 " "$("$pini" emit "$pkg_fixture" --packages --no-stdlib 2>&1)"
+cat > "$pkg_fixture/support/src/api.pini" <<EOF
+; 支持包：返回值改成 I64，公开接口变化。
+公开|func(x: I32,) -> (I64,):
+    return (x + 1) as I64
+EOF
+pkg_expect "公开面变化应报 E3-021" "E3-021" "$("$pini" check "$pkg_fixture" --no-stdlib 2>&1)"
+pkg_expect "公开面变化应只波及直接下游" "interfaces-ok 3 2 1" "$("$pini" interfaces "$pkg_fixture" --no-stdlib 2>&1)"
+pkg_expect "公开面变化应重发下游一层" "emit-packages-ok 3 2 1 " "$("$pini" emit "$pkg_fixture" --packages --no-stdlib 2>&1)"
+cp "$work/pkg-support.bak" "$pkg_fixture/support/src/api.pini"
+pkg_expect "还原后应再波及直接下游" "interfaces-ok 3 2 1" "$("$pini" interfaces "$pkg_fixture" --no-stdlib 2>&1)"
+pkg_expect "还原后应再重发下游一层" "emit-packages-ok 3 2 1 " "$("$pini" emit "$pkg_fixture" --packages --no-stdlib 2>&1)"
+mkdir -p "$pkg_fixture/support/src/_internal"
+cat > "$pkg_fixture/support/src/_internal/helper.pini" <<EOF
+; 内部文件：不进公开接口，也不该让下游重发。
+辅助|func(x: I32,) -> (I32,):
+    return x + 3
+EOF
+pkg_expect "内部改动应只重算支持包" "interfaces-ok 3 1 2" "$("$pini" interfaces "$pkg_fixture" --no-stdlib 2>&1)"
+pkg_expect "内部改动应只重发支持包" "emit-packages-ok 3 1 2 " "$("$pini" emit "$pkg_fixture" --packages --no-stdlib 2>&1)"
+pkg_expect "逐包记录后检查应通过" "workspace-ok" "$("$pini" check "$pkg_fixture" --no-stdlib 2>&1)"
+
+# 分波与共享缓存：分波出依赖深度，单包发射只换本包记录，缓存按输入指纹跨构建复用。
+wave_expect() {
+    local label="$1"
+    local want="$2"
+    local got="$3"
+    case "$got" in
+        *"$want"*) : ;;
+        *)
+            echo " 行不通  [测试自检] $label ：$got" >&2
+            fail=1
+            ;;
+    esac
+}
+
+cache_dir="$work/packages-cache"
+rm -rf "$cache_dir"
+wave_expect "分波应出第一波" "wave 0 support" "$("$pini" plan "$pkg_fixture" --waves 2>&1)"
+wave_expect "第二波应是应用包" "wave 1 app" "$("$pini" plan "$pkg_fixture" --waves 2>&1)"
+wave_expect "第三波应是命令行包" "wave 2 cli" "$("$pini" plan "$pkg_fixture" --waves 2>&1)"
+printf '%s\n' "; 缓存探针追加一行" >> "$pkg_fixture/app/src/api.pini"
+wave_expect "单包发射只换本包" "emit-packages-ok 1 1 0 " "$("$pini" emit "$pkg_fixture" --packages --package=app --no-stdlib 2>&1)"
+if [ "$(grep -c 'package = ' "$pkg_fixture/.build/debug/artifacts.toml")" != "3" ]; then
+    echo " 行不通  [测试自检] 单包发射不该丢其余包记录" >&2
+    fail=1
+fi
+rm -f "$pkg_fixture/.build/debug/packages/app/app.ll"
+missing_cache="$("$pini" emit "$pkg_fixture" --packages --package=app --no-stdlib --cache-dir="$cache_dir" 2>&1)"
+wave_expect "缓存目录缺失应定向报" "emit-packages-cache-missing" "$missing_cache"
+cache_home="$(echo "$missing_cache" | grep -o "$cache_dir/[0-9a-f]*" | head -1)"
+if [ -z "$cache_home" ]; then
+    echo " 行不通  [测试自检] 缓存诊断未给出目录" >&2
+    fail=1
+else
+    mkdir -p "$cache_home"
+    wave_expect "缓存未命中应发射一份" "emit-packages-ok 1 1 0 " "$("$pini" emit "$pkg_fixture" --packages --package=app --no-stdlib --cache-dir="$cache_dir" 2>&1)"
+    if [ ! -f "$cache_home/app.ll" ]; then
+        echo " 行不通  [测试自检] 缓存未落盘" >&2
+        fail=1
+    fi
+    rm -f "$pkg_fixture/.build/debug/packages/app/app.ll"
+    wave_expect "删产物后应从缓存恢复" "emit-packages-ok 1 0 0 " "$("$pini" emit "$pkg_fixture" --packages --package=app --no-stdlib --cache-dir="$cache_dir" 2>&1)"
+    if ! cmp -s "$pkg_fixture/.build/debug/packages/app/app.ll" "$cache_home/app.ll"; then
+        echo " 行不通  [测试自检] 缓存恢复内容应与缓存逐字节相同" >&2
+        fail=1
+    fi
+fi
 if [ "$fail" -ne 0 ]; then
     exit 1
 fi
-echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入，浮点常量走位模式"
+echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入，浮点常量走位模式，接口缓存按记录判失效，逐包产物按包发射且合并可链接，缓存按拓扑与内容判复用，分波按依赖深度，共享缓存按指纹复用"
 exit 0

@@ -110,6 +110,15 @@ types: ExprTypes = ExprTypes()
     assert(typeText(pool = 推.pool, id = exprTypeAt(table = 推.types, unit = 0, node = 二元)) == "I32", "加法应推 I32")
     return
 
+; 内建目标扩展：`((String))` 的 self 取内建类型，链式调用与加法才有型。
+内建扩展自身有型|test() -> ():
+    let 样例 = 造推导样例("((String))\ntrimBoth|self() -> (String,):\n    return self.trimLeft() + self.trimRight()\n\nf|func(s: String,) -> (String,):\n    return s.trimBoth()\n")
+    let 推 = inferUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
+    let 二元 = 首个二元节点(样例.unit)
+    assert(二元 >= 0, "样例应含二元节点")
+    assert(typeText(pool = 推.pool, id = exprTypeAt(table = 推.types, unit = 0, node = 二元)) == "String", "扩展方法内的加法应推 String")
+    return
+
 ; 函数返回：顶层函数的调用点取声明返回类型。
 函数返回类型|test() -> ():
     let 样例 = 造推导样例("甲|func() -> (I32,):\n    return 1\n\nf|func() -> ():\n    甲()\n")
@@ -219,4 +228,27 @@ types: ExprTypes = ExprTypes()
     let 用例 = 首个用例节点(样例.unit)
     assert(用例 >= 0, "样例应含前导点用例")
     assert(typeText(pool = 推.pool, id = exprTypeAt(table = 推.types, unit = 0, node = 用例)) == "乙", "返回位应按返回类型送期望")
+    return
+
+; 泛型调用：显式类型实参建实例，调用点按实例结果定型。
+; 调用点本身就是泛型应用节点，值实参在 kids，类型实参挂在类型位。
+首个泛型调用节点|func(_unit: CompilationUnit,) -> (I32,):
+    var i = 0
+    while i < _unit.ast.exprCount():
+        if _unit.ast.isGenericExpr(i):
+            return i
+        i = i + 1
+    return -1
+
+泛型调用点定型|test() -> ():
+    let 样例 = 造推导样例("id|func<T>(value: T,) -> (T,):\n    return value\n\nuse|func() -> (I32,):\n    return id<I32>(1)\n")
+    var 单元组: Array<CompilationUnit> = [样例.unit]
+    let 填 = fillExprTypes(world = 样例.world, units = 单元组)
+    let 泛 = instantiateGenerics(world = 样例.world, units = 单元组, fill = 填)
+    assert(len(泛.instances) == 1, "应建一个实例，实得 " + countText(len(泛.instances)))
+    assert(len(泛.calls) == 1, "应记一条调用，实得 " + countText(len(泛.calls)))
+    assert(泛.instances[0].returnType >= 0, "实例返回类型应定型")
+    let 调用 = 首个泛型调用节点(样例.unit)
+    assert(调用 >= 0, "样例应含泛型调用")
+    assert(typeText(pool = 泛.pool, id = exprTypeAt(table = 泛.types, unit = 0, node = 调用)) == "I32", "调用点应为 I32")
     return

@@ -87,6 +87,24 @@ struct WorkspaceBuildTests {
         #expect(!production.publicInterface.contains("widthFloor"))
     }
 
+    @Test("装配开关决定标准库是否并入编译器包")
+    func togglesStdlibAssembly() throws {
+        let plan = try #require(
+            try WorkspaceBuilder.plan(
+                rootDirectory: WorkspaceTestSupport.bootstrapRoot.path))
+        let support = try #require(plan.packages.first { $0.name == "support" })
+        let library = try #require(support.targets.first { $0.kind == .library })
+
+        let assembled = try WorkspaceBuilder.load(package: support, target: library)
+        let bare = try WorkspaceBuilder.load(
+            package: support, target: library, withStdlib: false)
+        func declarationCount(_ package: Package) -> Int {
+            package.fileUnits.reduce(0) { $0 + $1.module.declarations.count }
+        }
+        #expect(declarationCount(assembled.package) > declarationCount(bare.package))
+        #expect(bare.package != assembled.package)
+    }
+
     @Test("删除 require 后，磁盘可见的 import 仍被拒绝")
     func rejectsUndeclaredImport() throws {
         let root = try WorkspaceTestSupport.copyBootstrap(tag: "undeclared")
