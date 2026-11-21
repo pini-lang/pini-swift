@@ -690,8 +690,8 @@ let (t, e) = some_thing_error()
 `?T` ≡ `Optional<T>`
 
 ```
-let x: I32? = nil
-let y: I32? = 42
+let x: ?I32 = nil
+let y: ?I32 = 42
 ```
 
 - `.some(值)` / `.none`
@@ -701,15 +701,18 @@ let y: I32? = 42
 **构造**：
 
 ```
-let a: I32? = .some(42)
-let b: I32? = nil
+let a: ?I32 = .some(42)
+let b: ?I32 = nil
 ```
 
 **解包**：
 
 ```
-if let 值 = 可选值:
-    ...
+match 可选值:
+    case some(值,):
+        ...
+    case nil:
+        pass
 ```
 
 ### 3.9 结果类型 `[Provisional]`
@@ -754,14 +757,14 @@ let e: ^I32 = .err(Error())
 ### 3.11 泛型 `[Provisional]`
 
 ```
-func 映射<T, U>(s: [T,], f: (T,) -> U,) -> ([U,],):
+映射<T, U>(s: [T,], f: (T,) -> U,) -> ([U,],):
     ...
 ```
 
 **约束**：
 
 ```
-func 比较<T: 可比较>(a: T, b: T,) -> I32:
+比较<T: 可比较>(a: T, b: T,) -> I32:
     ...
 ```
 
@@ -826,7 +829,7 @@ TODO(聚合值指针) 本版没有 `Raw` 的判定实现：全仓没有这个名
 **使用**：
 
 ```
-func 读取<T: Raw>(p: *T,) -> T:
+读取<T: Raw>(p: *T,) -> T:
     return unsafe load(p)
 ```
 
@@ -2053,7 +2056,7 @@ pass
 | 占位空块 | `if 条件: pass` |
 | match 分支占位 | `case 已读: pass` |
 | 显式吞掉错误 | `try f() else e: pass` |
-| 桩函数 | `func 尚未实现(): pass` |
+| 桩函数 | `尚未实现|func() -> ():`，体内只写 `pass` |
 | trait 默认方法空实现 | `<<T>>` 内 `方法(): pass` |
 
 **语义边界**：
@@ -2197,8 +2200,11 @@ _父: WeakRef<节点> = .none
 
 ```
 快照.value         ; 返回 Optional<T>
-if let 目标 = 快照.value:
-    目标.方法()
+match 快照.value:
+    case some(目标,):
+        目标.方法()
+    case nil:
+        pass
 ```
 
 **语义**：
@@ -2216,8 +2222,11 @@ if let 目标 = 快照.value:
 let 弱节点 = weak 节点
 节点.绑定回调(func () -> ():
     capture 弱节点
-    if let 目标 = 弱节点.value:
-        目标.方法()
+    match 弱节点.value:
+        case some(目标,):
+            目标.方法()
+        case nil:
+            pass
     return
 )
 ```
@@ -2383,6 +2392,7 @@ b[0] = 10           ; 写入触发克隆，a 不变
 {资源持有者}
 _句柄: *I8 = nil
 
+{{资源持有者}}
 deinit|self() -> ():
     if self._句柄 != nil:
         unsafe free(self._句柄)
@@ -2401,12 +2411,16 @@ deinit|self() -> ():
 
 ```
 {异步资源持有者}
-_句柄: 异步句柄? = nil
+_句柄: ?异步句柄 = nil
 
+{{异步资源持有者}}
 asyncDeinit|self() => ():
-    if let 句柄 = self._句柄:
-        await 句柄.关闭()
-        self._句柄 = nil
+    match self._句柄:
+        case some(句柄,):
+            await 句柄.关闭()
+            self._句柄 = nil
+        case nil:
+            pass
     return
 ```
 
