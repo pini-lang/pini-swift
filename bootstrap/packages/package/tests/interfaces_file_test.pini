@@ -11,6 +11,7 @@
     out.name = name
     out.path = ".build/debug/packages/" + name + "/interface.api.txt"
     out.hash = hash
+    out.source = "src-" + name
     out.deps = deps
     return out
 
@@ -35,6 +36,7 @@
     assert(len(读回.entries) == 2, "两条")
     assert(读回.entries[0].name == "app", "按包名排序")
     assert(读回.entries[0].path == ".build/debug/packages/app/interface.api.txt", "路径往返")
+    assert(读回.entries[0].source == "src-app", "源码摘要往返")
     assert(读回.entries[0].deps[0].name == "support" && 读回.entries[0].deps[0].hash == "bb", "依赖往返")
     assert(len(读回.entries[1].deps) == 0, "空依赖读回空表")
     assert(ledgerText(读回) == 文本 && 文本 == ledgerText(记录), "两次渲染逐字相同")
@@ -56,7 +58,7 @@
     assert(len(读回.errors) == 0, "应能读回")
     assert(len(读回.entries[0].deps) == 2, "两项")
     assert(读回.entries[0].deps[1].name == "b" && 读回.entries[0].deps[1].hash == "22", "顺序保留")
-    let 坏 = parseLedger(text = "[interfaces]\nversion = 1\nprofile = \"debug\"\n\n[[interface]]\npackage = \"app\"\ndeps = \"脏\"\n", path = "bad.toml")
+    let 坏 = parseLedger(text = "[interfaces]\nversion = 2\nprofile = \"debug\"\n\n[[interface]]\npackage = \"app\"\ndeps = \"脏\"\n", path = "bad.toml")
     assert(len(坏.errors) == 1, "坏项报一条")
     assert(len(坏.entries) == 1, "好包照收")
     return

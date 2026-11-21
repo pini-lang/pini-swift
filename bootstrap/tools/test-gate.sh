@@ -282,8 +282,8 @@ iface_fixture="$work/interfaces-cache"
 rm -rf "$iface_fixture"
 cp -R "$root/bootstrap/fixtures/interfaces-cache" "$iface_fixture"
 mkdir -p "$iface_fixture/.build/debug/packages/app" "$iface_fixture/.build/debug/packages/support"
-iface_expect "首次接口缓存应两份新写" "interfaces-ok 2 2" "$("$pini" interfaces "$iface_fixture" --no-stdlib 2>&1)"
-iface_expect "接口未变不应重写" "interfaces-ok 2 0" "$("$pini" interfaces "$iface_fixture" --no-stdlib 2>&1)"
+iface_expect "首次接口缓存应两份新写" "interfaces-ok 2 2 0" "$("$pini" interfaces "$iface_fixture" --no-stdlib 2>&1)"
+iface_expect "接口未变不应重写" "interfaces-ok 2 0 2" "$("$pini" interfaces "$iface_fixture" --no-stdlib 2>&1)"
 if [ ! -f "$iface_fixture/.build/debug/interfaces.toml" ]; then
     echo " 行不通  [测试自检] 接口记录未落盘" >&2
     fail=1
@@ -296,18 +296,18 @@ cat > "$iface_fixture/support/src/api.pini" <<EOF
     return (x + 1) as I64
 EOF
 iface_expect "公开接口变化应报 E3-021" "E3-021" "$("$pini" check "$iface_fixture" --no-stdlib 2>&1)"
-iface_expect "记录更新应只重写一份" "interfaces-ok 2 1" "$("$pini" interfaces "$iface_fixture" --no-stdlib 2>&1)"
+iface_expect "记录更新应只重算两份" "interfaces-ok 2 2 0" "$("$pini" interfaces "$iface_fixture" --no-stdlib 2>&1)"
 iface_expect "记录追上源码后检查应通过" "workspace-ok" "$("$pini" check "$iface_fixture" --no-stdlib 2>&1)"
 cp "$work/iface-support.bak" "$iface_fixture/support/src/api.pini"
-iface_expect "还原源码后记录应再变一次" "interfaces-ok 2 1" "$("$pini" interfaces "$iface_fixture" --no-stdlib 2>&1)"
+iface_expect "还原源码后记录应再变一次" "interfaces-ok 2 2 0" "$("$pini" interfaces "$iface_fixture" --no-stdlib 2>&1)"
 iface_expect "还原后检查应通过" "workspace-ok" "$("$pini" check "$iface_fixture" --no-stdlib 2>&1)"
-mkdir -p "$iface_fixture/support/_internal"
-cat > "$iface_fixture/support/_internal/helper.pini" <<EOF
+mkdir -p "$iface_fixture/support/src/_internal"
+cat > "$iface_fixture/support/src/_internal/helper.pini" <<EOF
 ; 内部文件：不进公开接口。
 辅助|func(x: I32,) -> (I32,):
     return x + 2
 EOF
-iface_expect "仅内部改动不应重写接口" "interfaces-ok 2 0" "$("$pini" interfaces "$iface_fixture" --no-stdlib 2>&1)"
+iface_expect "仅内部改动应只重算自身" "interfaces-ok 2 1 1" "$("$pini" interfaces "$iface_fixture" --no-stdlib 2>&1)"
 iface_expect "内部改动后检查应通过" "workspace-ok" "$("$pini" check "$iface_fixture" --no-stdlib 2>&1)"
 
 # 逐包产物：接口记录在前后按包发射；每包只含本包定义，其余出声明，合并链接不冲突。
@@ -318,7 +318,7 @@ pkg_expect() {
     case "$got" in
     *"$want"*) ;;
     *)
-        echo " 行不通  [测试自检] $label：$got" >&2
+        echo " 行不通  [测试自检] ${label}：${got}" >&2
         fail=1
         ;;
     esac
@@ -328,8 +328,8 @@ pkg_dir="$pkg_fixture/.build/debug/packages"
 rm -rf "$pkg_fixture"
 cp -R "$root/bootstrap/fixtures/packages-ir" "$pkg_fixture"
 mkdir -p "$pkg_dir/app" "$pkg_dir/cli" "$pkg_dir/support"
-pkg_expect "接口记录应三份新写" "interfaces-ok 3 3" "$("$pini" interfaces "$pkg_fixture" --no-stdlib 2>&1)"
-pkg_expect "逐包发射应写三份" "emit-packages-ok 3 3" "$("$pini" emit "$pkg_fixture" --packages --no-stdlib 2>&1)"
+pkg_expect "接口记录应三份新写" "interfaces-ok 3 3 0" "$("$pini" interfaces "$pkg_fixture" --no-stdlib 2>&1)"
+pkg_expect "逐包发射应写三份" "emit-packages-ok 3 3 0 " "$("$pini" emit "$pkg_fixture" --packages --no-stdlib 2>&1)"
 for pkg_name in app cli support; do
     if [ ! -f "$pkg_dir/$pkg_name/$pkg_name.ll" ]; then
         echo " 行不通  [测试自检] 缺 $pkg_name 的逐包产物" >&2
@@ -364,7 +364,7 @@ mkdir -p "$work/pkg-ll-first"
 for pkg_name in app cli support; do
     cp "$pkg_dir/$pkg_name/$pkg_name.ll" "$work/pkg-ll-first/$pkg_name.ll"
 done
-"$pini" emit "$pkg_fixture" --packages --no-stdlib >/dev/null 2>&1
+pkg_expect "二次发射应全部复用" "emit-packages-ok 3 0 3 " "$("$pini" emit "$pkg_fixture" --packages --no-stdlib 2>&1)"
 for pkg_name in app cli support; do
     if ! cmp -s "$work/pkg-ll-first/$pkg_name.ll" "$pkg_dir/$pkg_name/$pkg_name.ll"; then
         echo " 行不通  [测试自检] 二次发射应逐字节相同：$pkg_name" >&2
@@ -394,9 +394,37 @@ if [ "$pkg_objs_ok" -eq 1 ]; then
         fi
     fi
 fi
+# 缓存：按拓扑序比源码与依赖摘要；实现改动只重发本包，公开面改动沿依赖传播一层。
+cp "$pkg_fixture/support/src/api.pini" "$work/pkg-support.bak"
+cat > "$pkg_fixture/support/src/api.pini" <<EOF
+; 支持包：实现加一改成加二，公开面不变。
+公开|func(x: I32,) -> (I32,):
+    return x + 2
+EOF
+pkg_expect "实现改动应只重算支持包" "interfaces-ok 3 1 2" "$("$pini" interfaces "$pkg_fixture" --no-stdlib 2>&1)"
+pkg_expect "实现改动应只重发支持包" "emit-packages-ok 3 1 2 " "$("$pini" emit "$pkg_fixture" --packages --no-stdlib 2>&1)"
+cat > "$pkg_fixture/support/src/api.pini" <<EOF
+; 支持包：返回值改成 I64，公开接口变化。
+公开|func(x: I32,) -> (I64,):
+    return (x + 1) as I64
+EOF
+pkg_expect "公开面变化应报 E3-021" "E3-021" "$("$pini" check "$pkg_fixture" --no-stdlib 2>&1)"
+pkg_expect "公开面变化应只波及直接下游" "interfaces-ok 3 2 1" "$("$pini" interfaces "$pkg_fixture" --no-stdlib 2>&1)"
+pkg_expect "公开面变化应重发下游一层" "emit-packages-ok 3 2 1 " "$("$pini" emit "$pkg_fixture" --packages --no-stdlib 2>&1)"
+cp "$work/pkg-support.bak" "$pkg_fixture/support/src/api.pini"
+pkg_expect "还原后应再波及直接下游" "interfaces-ok 3 2 1" "$("$pini" interfaces "$pkg_fixture" --no-stdlib 2>&1)"
+pkg_expect "还原后应再重发下游一层" "emit-packages-ok 3 2 1 " "$("$pini" emit "$pkg_fixture" --packages --no-stdlib 2>&1)"
+mkdir -p "$pkg_fixture/support/src/_internal"
+cat > "$pkg_fixture/support/src/_internal/helper.pini" <<EOF
+; 内部文件：不进公开接口，也不该让下游重发。
+辅助|func(x: I32,) -> (I32,):
+    return x + 3
+EOF
+pkg_expect "内部改动应只重算支持包" "interfaces-ok 3 1 2" "$("$pini" interfaces "$pkg_fixture" --no-stdlib 2>&1)"
+pkg_expect "内部改动应只重发支持包" "emit-packages-ok 3 1 2 " "$("$pini" emit "$pkg_fixture" --packages --no-stdlib 2>&1)"
 pkg_expect "逐包记录后检查应通过" "workspace-ok" "$("$pini" check "$pkg_fixture" --no-stdlib 2>&1)"
 if [ "$fail" -ne 0 ]; then
     exit 1
 fi
-echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入，浮点常量走位模式，接口缓存按记录判失效，逐包产物按包发射且合并可链接"
+echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入，浮点常量走位模式，接口缓存按记录判失效，逐包产物按包发射且合并可链接，缓存按拓扑与内容判复用"
 exit 0

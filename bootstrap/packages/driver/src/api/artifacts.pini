@@ -8,11 +8,14 @@ _backend_llvm = "../../../backend-llvm"
 
 ; 逐包产物：按单元路径首段归包，逐包只发本包函数的定义，其余有体函数出声明。
 ; 记录落 `<根>/.build/<profile>/artifacts.toml`；接口摘要读接口记录，不重算公开面。
+; 输入指纹命中时不发射、不重写，只把既有记录与文本接回工作区记录。
 (ArtifactWrite)
 ok: Bool = false
 packages: I32 = 0
 files: I32 = 0
 bytes: I32 = 0
+emitted: I32 = 0
+reused: I32 = 0
 
 ; 包归属：单元路径形如 `<包名>/<相对源根路径>`，首段即包名；空路径答空串。
 packageOfUnitPath|func(unitPath: String,) -> (String,):
@@ -48,6 +51,25 @@ packageDeps|func(entries: Array<InterfaceEntry>, requires: Array<String>,) -> (A
         i = i + 1
     return out
 
+; 产物记录读取结果：ok 为 false 时 path 指向不可用的那份记录。
+(ArtifactUse)
+ok: Bool = false
+path: String = ""
+entries: Array<ArtifactEntry> = []
+
+; 产物记录读取：文件不存在或解析不合法答 ok=false，调用方当无记录处理。
+readArtifactLedger|func(root: String, profile: String,) -> (ArtifactUse,):
+    var out = ArtifactUse()
+    out.path = artifactLedgerPath(root = root, profile = profile)
+    if !exists(out.path):
+        return out
+    let parsed = parseArtifactLedger(text = readFile(out.path), path = out.path)
+    if len(parsed.errors) > 0:
+        return out
+    out.ok = true
+    out.entries = parsed.entries
+    return out
+
 ; 接口记录读取结果：ok 为 false 时 path 指向不可用的那份记录。
 (InterfaceUse)
 ok: Bool = false
@@ -67,7 +89,7 @@ readInterfaceLedger|func(root: String, profile: String,) -> (InterfaceUse,):
     out.entries = parsed.entries
     return out
 
-; 发射产物：接口记录先在，缺记录不发射；每包写一份 .ll，文本没变不重写。
+; 发射产物：接口记录先在，缺记录不发射；按计划拓扑序逐包判输入指纹，命中不发射。
 writeArtifacts|func(root: String, stdlib: StdlibOption,) -> (ArtifactWrite,):
     var out = ArtifactWrite()
     let plan = planWorkspace(root)
@@ -86,33 +108,47 @@ writeArtifacts|func(root: String, stdlib: StdlibOption,) -> (ArtifactWrite,):
         print("emit-packages-blocked", len(产物.check.errors))
         return out
     let module = 产物.module
+    let old = readArtifactLedger(root = root, profile = profile)
     let entry = makeBackendOf(name = "llvm", outputCode = backendOutputNativeCode(), families = llvmFamilies(), entry = 2)
     var record = ArtifactLedger()
     record.profile = profile
     var p = 0
     while p < len(plan.packages):
         let planned = plan.packages[p]
-        let owned = ownedForPackage(module = module, name = planned.name)
-        let emitted = emitPartition(entry = entry, target = defaultTarget(), module = module, owned = owned)
-        if emitted.failed:
-            print("emit-packages-gaps", planned.name, emitGapCount(result = emitted), emitted.detail)
-            return out
         let dir = root + "/.build/" + profile + "/packages/" + planned.name
         if !isDir(dir):
             print("emit-packages-failed", planned.name, "缺产物目录", dir)
             return out
         let path = artifactPath(root = root, profile = profile, name = planned.name)
-        if !exists(path) || readFile(path) != emitted.text:
-            writeFile(path, emitted.text)
+        let source = packageSourceDigestOf(units = withoutStdlib(units = packageUnitsOf(产物.units, name = planned.name)), root = root)
+        let deps = packageDeps(entries = ledger.entries, requires = planned.requires)
+        let input = packageInputDigest(source = source, deps = deps)
+        let seen = findArtifactName(entries = old.entries, name = planned.name)
         var one = ArtifactEntry()
-        one.name = planned.name
-        one.path = ".build/" + profile + "/packages/" + planned.name + "/" + planned.name + ".ll"
-        one.hash = sha256Hex(emitted.text)
-        one.deps = packageDeps(entries = ledger.entries, requires = planned.requires)
+        var text = ""
+        if seen >= 0 && exists(path) && artifactReusable(recordedInput = old.entries[seen].input, recordedHash = old.entries[seen].hash, currentInput = input, artifactText = readFile(path)):
+            one = old.entries[seen]
+            text = readFile(path)
+            out.reused = out.reused + 1
+        else:
+            let owned = ownedForPackage(module = module, name = planned.name)
+            let emitted = emitPartition(entry = entry, target = defaultTarget(), module = module, owned = owned)
+            if emitted.failed:
+                print("emit-packages-gaps", planned.name, emitGapCount(result = emitted), emitted.detail)
+                return out
+            text = emitted.text
+            if !exists(path) || readFile(path) != text:
+                writeFile(path, text)
+            one.name = planned.name
+            one.path = ".build/" + profile + "/packages/" + planned.name + "/" + planned.name + ".ll"
+            one.hash = sha256Hex(text)
+            one.input = input
+            one.deps = deps
+            out.emitted = out.emitted + 1
         record.entries = record.entries.append(one)
         out.packages = out.packages + 1
         out.files = out.files + 1
-        out.bytes = out.bytes + len(emitted.text)
+        out.bytes = out.bytes + len(text)
         p = p + 1
     writeFile(artifactLedgerPath(root = root, profile = profile), artifactLedgerText(record))
     out.ok = true

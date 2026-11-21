@@ -13,11 +13,12 @@ name: String = ""
 kind: String = ""
 dep: String = ""
 
-; 写缓存结果：是否成功、包数与重写快照数。
+; 写缓存结果：是否成功、包数、重写快照数与复用包数。
 (InterfacesWrite)
 ok: Bool = false
 packages: I32 = 0
 changed: I32 = 0
+reused: I32 = 0
 
 ; 按包名查接口记录：未命中答 -1。
 recordIndexOf|func(records: Array<InterfaceRecord>, name: String,) -> (I32,):
@@ -151,7 +152,8 @@ interfaceDriftDiagnostics|func(root: String, records: Array<InterfaceRecord>, pl
         i = i + 1
     return out
 
-; 写接口缓存：先算当前接口，再逐包比快照决定是否重写，最后写记录；缺产物目录立即失败。
+; 写接口缓存：按包序先判复用，命中不重算公开面；快照文本变了才重写，最后写记录。
+; 包序即计划拓扑序，依赖先于下游，故下游判失效时上游摘要已经就位。
 writeInterfaces|func(root: String, stdlib: StdlibOption,) -> (InterfacesWrite,):
     var out = InterfacesWrite()
     let plan = planWorkspace(root)
@@ -161,30 +163,49 @@ writeInterfaces|func(root: String, stdlib: StdlibOption,) -> (InterfacesWrite,):
     let ws = loadWorkspaceGrouped(plan, stdlib = stdlib)
     let units = collectWorkspaceUnits(ws)
     let build = buildWorld(units = units, packages = ws.packages)
-    let records = packageInterfaces(ws, world = build.world)
+    let old = readInterfaceLedger(root = root, profile = plan.profile)
+    var records: Array<InterfaceRecord> = []
     var _ledger = InterfaceLedger()
     _ledger.profile = plan.profile
     var i = 0
-    while i < len(records):
-        let record = records[i]
-        var entry = InterfaceEntry()
-        entry.name = record.name
-        entry.path = ".build/" + plan.profile + "/packages/" + record.name + "/interface.api.txt"
-        entry.hash = sha256Hex(record.text)
-        entry.deps = currentDeps(records = records, plan = plan, name = record.name)
-        let dir = root + "/.build/" + plan.profile + "/packages/" + record.name
+    while i < len(ws.packages):
+        let pk = ws.packages[i]
+        let dir = root + "/.build/" + plan.profile + "/packages/" + pk.name
         if !isDir(dir):
-            print("interfaces-failed", record.name, "缺产物目录", dir)
+            print("interfaces-failed", pk.name, "缺产物目录", dir)
             return out
-        let path = interfaceArtifactPath(root = root, profile = plan.profile, name = record.name)
-        if !exists(path) || readFile(path) != record.text:
-            writeFile(path, record.text)
+        let path = interfaceArtifactPath(root = root, profile = plan.profile, name = pk.name)
+        let claimed = withoutStdlib(units = pk.units)
+        let source = packageSourceDigestOf(units = claimed, root = root)
+        let deps = currentDeps(records = records, plan = plan, name = pk.name)
+        let seen = findEntryName(entries = old.entries, name = pk.name)
+        var keep = InterfaceEntry()
+        var text = ""
+        if seen >= 0 && exists(path) && interfaceReusable(recorded = old.entries[seen], source = source, deps = deps, artifactText = readFile(path)):
+            keep = old.entries[seen]
+            keep.deps = deps
+            text = readFile(path)
+            out.reused = out.reused + 1
+        else:
+            let record = interfaceRecord(name = pk.name, units = claimed, world = build.world)
+            text = record.text
+            keep.name = pk.name
+            keep.path = ".build/" + plan.profile + "/packages/" + pk.name + "/interface.api.txt"
+            keep.hash = sha256Hex(text)
+            keep.deps = deps
             out.changed = out.changed + 1
-        _ledger.entries = _ledger.entries.append(entry)
+            if !exists(path) || readFile(path) != text:
+                writeFile(path, text)
+        keep.source = source
+        _ledger.entries = _ledger.entries.append(keep)
+        var rec = InterfaceRecord()
+        rec.name = pk.name
+        rec.text = text
+        records = records.append(rec)
         i = i + 1
     writeFile(interfacesFilePath(root = root, profile = plan.profile), ledgerText(_ledger))
     out.ok = true
-    out.packages = len(records)
+    out.packages = len(ws.packages)
     return out
 
 ; 接口读取：按记录打印每包摘要与快照文本，供下游工具读导出面而不重算公开面。

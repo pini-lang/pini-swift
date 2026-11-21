@@ -1,9 +1,11 @@
-; 产物记录：包名、根相对 IR 路径、整份文本摘要与依赖接口摘要；记录只描述上次发射出的包产物。
+; 产物记录：包名、根相对 IR 路径、整份文本摘要、输入指纹与依赖接口摘要；
+; 输入指纹含本包源码摘要、发射身份与依赖接口摘要，记录只描述上次发射出的包产物。
 ; 渲染按包名升序，同一输入两次逐字节相同；读回不合法时不答条目，交给调用方当无记录处理。
 (ArtifactEntry)
 name: String = ""
 path: String = ""
 hash: String = ""
+input: String = ""
 deps: Array<InterfaceDep> = []
 
 ; 产物记录：profile 与按包名排好的条目。
@@ -13,7 +15,7 @@ entries: Array<ArtifactEntry> = []
 
 ; 记录版本：格式改了就升，旧记录读回按版本不符处理。
 artifactLedgerVersion|func() -> (I32,):
-    return 1
+    return 2
 
 ; 记录路径：`<根>/.build/<profile>/artifacts.toml`。
 artifactLedgerPath|func(root: String, profile: String,) -> (String,):
@@ -48,6 +50,7 @@ artifactLedgerText|func(_ledger: ArtifactLedger,) -> (String,):
         text = text + "package = \"" + one.name + "\"\n"
         text = text + "path = \"" + one.path + "\"\n"
         text = text + "hash = \"" + one.hash + "\"\n"
+        text = text + "input = \"" + one.input + "\"\n"
         text = text + "deps = \"" + depsText(deps = one.deps) + "\"\n"
         i = i + 1
     return text
@@ -84,6 +87,7 @@ parseArtifactLedger|func(text: String, path: String,) -> (ArtifactRead,):
         one.name = tomlRowValue(doc = doc, table = "artifact", row = r, key = "package")
         one.path = tomlRowValue(doc = doc, table = "artifact", row = r, key = "path")
         one.hash = tomlRowValue(doc = doc, table = "artifact", row = r, key = "hash")
+        one.input = tomlRowValue(doc = doc, table = "artifact", row = r, key = "input")
         if len(one.name) == 0:
             out.errors = out.errors.append(manifestError(kind = .errorMissingKey, path = path, detail = "artifact 条目缺 package"))
         elif findArtifactName(entries = out.entries, name = one.name) >= 0:

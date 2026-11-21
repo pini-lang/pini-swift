@@ -127,7 +127,7 @@ main|func() -> ():
             return
         let done = writeInterfaces(root = root, stdlib = stdlib)
         if done.ok:
-            print("interfaces-ok", done.packages, done.changed)
+            print("interfaces-ok", done.packages, done.changed, done.reused)
         else:
             assert(false, "接口缓存未写入")
         return
@@ -198,7 +198,7 @@ main|func() -> ():
         if 分包:
             let written = writeArtifacts(root = root, stdlib = stdlib)
             if written.ok:
-                print("emit-packages-ok", written.packages, written.files, written.bytes)
+                print("emit-packages-ok", written.packages, written.emitted, written.reused, written.bytes)
             else:
                 assert(false, "逐包产物未写成")
             return

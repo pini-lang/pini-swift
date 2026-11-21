@@ -4,11 +4,13 @@
 name: String = ""
 hash: String = ""
 
-; 接口条目：包名、根相对快照路径、整份接口文本摘要与依赖接口摘要；依赖为空表示不依赖别的包。
+; 接口条目：包名、根相对快照路径、整份文本摘要、本包源码摘要与依赖接口摘要；
+; 依赖为空表示不依赖别的包；源码摘要为空表示旧记录，调用方当未命中处理。
 (InterfaceEntry)
 name: String = ""
 path: String = ""
 hash: String = ""
+source: String = ""
 deps: Array<InterfaceDep> = []
 
 ; 接口记录：profile 与按包名排好的条目。
@@ -18,7 +20,7 @@ entries: Array<InterfaceEntry> = []
 
 ; 记录版本：格式改了就升，旧记录读回按版本不符处理。
 interfaceLedgerVersion|func() -> (I32,):
-    return 1
+    return 2
 
 ; 记录路径：`<根>/.build/<profile>/interfaces.toml`。
 interfacesFilePath|func(root: String, profile: String,) -> (String,):
@@ -89,6 +91,7 @@ ledgerText|func(_ledger: InterfaceLedger,) -> (String,):
         text = text + "package = \"" + one.name + "\"\n"
         text = text + "path = \"" + one.path + "\"\n"
         text = text + "hash = \"" + one.hash + "\"\n"
+        text = text + "source = \"" + one.source + "\"\n"
         text = text + "deps = \"" + depsText(deps = one.deps) + "\"\n"
         i = i + 1
     return text
@@ -125,6 +128,7 @@ parseLedger|func(text: String, path: String,) -> (LedgerRead,):
         one.name = tomlRowValue(doc = doc, table = "interface", row = r, key = "package")
         one.path = tomlRowValue(doc = doc, table = "interface", row = r, key = "path")
         one.hash = tomlRowValue(doc = doc, table = "interface", row = r, key = "hash")
+        one.source = tomlRowValue(doc = doc, table = "interface", row = r, key = "source")
         if len(one.name) == 0:
             out.errors = out.errors.append(manifestError(kind = .errorMissingKey, path = path, detail = "interface 条目缺 package"))
         elif findEntryName(entries = out.entries, name = one.name) >= 0:

@@ -8,12 +8,13 @@ _ir = "../../../ir"
 ; 单独成文件：测试目标不带可执行入口，链放在入口文件里会让测试读不到它。
 ; 规划失败时包数为零，调用方据此直接返回，不往下发半份产物。
 
-; 降载产物：模块、结构校验、包数与已定型表达式数。
+; 降载产物：模块、结构校验、包数、已定型表达式数与装载单元；单元供产物缓存算源码摘要。
 (降载产物)
 module: IrModule = IrModule()
 check: IrValidation = IrValidation()
 packages: I32 = 0
 typed: I32 = 0
+units: WorkspaceUnits = WorkspaceUnits()
 
 ; 装配并降载：一条链走到底，诊断只打规划错误；结构违约由调用方读 check。
 降载工作区|func(root: String, stdlib: StdlibOption,) -> (降载产物,):
@@ -23,6 +24,7 @@ typed: I32 = 0
         print("workspace-plan-failed", plan.errorCount())
         return out
     let ws = loadWorkspaceGrouped(plan, stdlib = stdlib)
+    out.units = ws
     let units = collectWorkspaceUnits(ws)
     let build = buildWorld(units = units, packages = ws.packages)
     let 填 = fillExprTypes(world = build.world, units = units)
@@ -54,6 +56,7 @@ typed: I32 = 0
         return out
     out.packages = plan.packageCount()
     let ws = loadWorkspaceGrouped(plan, stdlib = stdlib)
+    out.units = ws
     let units = collectWorkspaceUnits(ws)
     print("stage-load", len(units))
     if stage <= 1:
