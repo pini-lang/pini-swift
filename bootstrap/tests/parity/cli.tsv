@@ -16,3 +16,5 @@ tokens	tokens	在	0	0	-	-	0/0	同同同	同
 tokens-escapes	tokens	在	0	0	-	-	0/0	同同异	异:文
 backends	backends	在	0	0	-	-	0/0	同同异	异:文
 backends-tsv	backends	在	0	0	-	-	0/0	同同异	异:文
+check-unroll	check	在	0	0	-	-	0/0	同同异	异:文
+check-unroll-bad	check	在	1	1	E3-014@4:20	E3-014@4:20	1/1	同同异	异:文

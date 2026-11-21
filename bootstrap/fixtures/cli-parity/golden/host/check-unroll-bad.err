@@ -1,0 +1,7 @@
+Error: Semantic Error [E3-014]
+  at bootstrap/fixtures/cli-parity/inputs/unroll-bad.pini:4:20
+
+      unroll (甲,) in 表:
+                     ~
+
+the unroll table must be a literal collection written in place: an array whose elements are scalar literals or tuple literals

@@ -51,7 +51,8 @@ diagnosticCount|self() -> (I32,):
         i = i + 1
     return total
 
-; 从文本建单元：文本检查、换行归一、解析三步；检查不过不解析，错误带偏移。
+; 从文本建单元：文本检查、换行归一、解析、展开四步；检查不过不解析，错误带偏移。
+; 展开的诊断并入单元诊断：码与位置同宿主，行列由渲染期按标量计。
 loadUnit|func(path: String, text: String,) -> (UnitLoad,):
     var out = UnitLoad()
     let check = checkSourceText(text)
@@ -60,14 +61,33 @@ loadUnit|func(path: String, text: String,) -> (UnitLoad,):
         out.error = makeSourceError(kind = check.kind, path = path, offset = check.offset)
         return out
     let normalized = normalizeNewlines(text)
+    let bytes = tempUtf8Bytes(normalized)
     let parsed = parseFile(text = normalized, file = path)
+    let expanded = expandUnrolls(ast = parsed.ast, bytes = bytes)
     var unit = CompilationUnit()
     unit.path = path
     unit.text = normalized
-    unit.bytes = tempUtf8Bytes(normalized)
+    unit.bytes = bytes
     unit.segments = parsed.segments
-    unit.ast = parsed.ast
+    unit.ast = expanded.ast
     unit.diagnostics = parsed.diagnostics
     unit.issues = parsed.issues
+    var e = 0
+    while e < len(expanded.errors):
+        var one = Diagnostic()
+        one.file = path
+        one.category = semanticCategory()
+        one.severity = errorSeverity()
+        one.code = expanded.errors[e].code
+        one.message = expanded.errors[e].message
+        var label = Label()
+        label.start = expanded.errors[e].start
+        label.end = expanded.errors[e].end
+        label.primary = true
+        var labels: Array<Label> = []
+        labels = labels.append(label)
+        one.labels = labels
+        unit.diagnostics = unit.diagnostics.append(one)
+        e = e + 1
     out.unit = unit
     return out

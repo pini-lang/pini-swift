@@ -69,5 +69,5 @@ test	单文件	fail	-	-	语法	E2-005@20:1	无效的顶级声明
 trait	单文件	fail	-	-	语法	E2-012@5:8	缺少参数名
 try	单文件	ok	ok	ok	通过	-	-
 tuple	单文件	ok	ok	ok	通过	-	-
-unroll	单文件	fail	-	-	语义	E3-001@12:13	未定义名字：编号（文件内没有这个名字）
+unroll	单文件	ok	ok	ok	通过	-	-
 validated-match	单文件	ok	ok	ok	通过	-	-

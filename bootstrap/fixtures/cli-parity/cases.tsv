@@ -16,3 +16,5 @@ tokens	tokens	examples/hello.pini	在	同同同	记号清单逐行相同
 tokens-escapes	tokens	bootstrap/fixtures/cli-parity/inputs/escapes.pini	在	同同异	转义与空串：宿主按解码值打印、空串归插值串
 backends	backends	-	在	同同异	族表同形，自举只有两条通道
 backends-tsv	backends	--tsv	在	同同异	同上，多一行输出档次
+check-unroll	check	examples/unroll.pini	在	同同异	展开通过：多行多分量摊成多轮
+check-unroll-bad	check	bootstrap/fixtures/cli-parity/inputs/unroll-bad.pini	在	同同异	展开错误 E3-014，码与位置相同

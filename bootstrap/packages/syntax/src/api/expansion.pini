@@ -1,0 +1,617 @@
+[expansion|import]
+_unicode = "../../../unicode"
+
+; 展开错误：码取 E3-014..018；`message` 已是成品文案，位置是出错节点的源内字节区间。
+(UnrollFault)
+code: String = ""
+message: String = ""
+start: I32 = 0
+end: I32 = 0
+
+; 模式名到分量字面量的绑定：`target` 是表达式池下标，多轮共用同一节点，不复制字面量。
+(UnrollBinding)
+name: String = ""
+target: I32 = -1
+
+; 表的一行：`parts` 是分量在表达式池里的下标，单分量行只有一个元素。
+(UnrollRow)
+parts: Array<I32> = []
+
+; 表求值结果：`rows` 按源序；`failed` 表示已登记错误，调用方不再往下走。
+(UnrollRows)
+rows: Array<UnrollRow> = []
+failed: Bool = false
+
+; 展开结果：树与错误序列；错误非空时树只可能部分展开，调用方按错误阻断编译。
+(ExpandOutcome)
+ast: Ast = Ast()
+errors: Array<UnrollFault> = []
+
+; 十进制文本：只处理非负数，行号与计数都落在这一侧。
+decimalText|func(value: I32,) -> (String,):
+    if value <= 0:
+        return "0"
+    var digits: Array<I32> = []
+    var n = value
+    while n > 0:
+        digits = digits.append(n % 10)
+        n = n / 10
+    var out = ""
+    var i = len(digits) - 1
+    while i >= 0:
+        out = out + chr(48 + digits[i])
+        i = i - 1
+    return out
+
+; 字节区间解码：多字节按标量拼接，越界即停；空区间答空串。
+spellOf|func(bytes: Array<U8>, start: I32, end: I32,) -> (String,):
+    var out = ""
+    if start < 0 || end <= start:
+        return out
+    var at = start
+    while at < end && at < len(bytes):
+        let unit = decodeScalarAt(bytes = bytes, offset = at)
+        if unit.length == 0:
+            return out
+        out = out + chr(unit.code)
+        at = at + unit.length
+    return out
+
+; 绑定查找：名字逐字相同即命中，答表内下标；未命中答负一。
+bindingIndexOf|func(map: Array<UnrollBinding>, name: String,) -> (I32,):
+    var i = 0
+    while i < len(map):
+        if map[i].name == name:
+            return i
+        i = i + 1
+    return -1
+
+; 下标表包含：线性比较，表很短；退役时用来保护被克隆产物共享的字面量。
+holdsId|func(items: Array<I32>, value: I32,) -> (Bool,):
+    var i = 0
+    while i < len(items):
+        if items[i] == value:
+            return true
+        i = i + 1
+    return false
+
+; 展开器：树、源字节与错误；池只追加，克隆返回的新下标当场交给父节点。
+(UnrollExpander)
+ast: Ast = Ast()
+bytes: Array<U8> = []
+errors: Array<UnrollFault> = []
+
+((UnrollExpander))
+; 遍历全部声明的体：方法体与函数体同池，按 body 下标的节点类别过滤。
+run|self() -> ():
+    let total = len(self.ast.decls)
+    var d = 0
+    while d < total:
+        let decl = self.ast.decls[d]
+        if decl.body >= 0 && decl.body < len(self.ast.stmts):
+            if self.ast.stmts[decl.body].kind == stmtKindTag(.stmtBlock):
+                self.expandBlock(blockId = decl.body)
+        d = d + 1
+    return
+; 展开一个块：逐条过语句，`unroll` 换成多轮克隆，其余原样保留并递归其子块。
+expandBlock|self(blockId: I32,) -> ():
+    if blockId < 0 || blockId >= len(self.ast.stmts):
+        return
+    let block = self.ast.stmts[blockId]
+    var ids: Array<I32> = []
+    var i = 0
+    while i < len(block.kids):
+        let produced = self.expandStmt(id = block.kids[i])
+        var j = 0
+        while j < len(produced):
+            ids = ids.append(produced[j])
+            j = j + 1
+        i = i + 1
+    var node = block
+    node.kids = ids
+    var tree = self.ast
+    tree.stmts[blockId] = node
+    self.ast = tree
+    return
+; 单条语句：`unroll` 答展开后的语句序，其余答自身并就地处理其子块。
+expandStmt|self(id: I32,) -> (Array<I32>,):
+    var out: Array<I32> = []
+    if id < 0 || id >= len(self.ast.stmts):
+        return out
+    let stmt = self.ast.stmts[id]
+    if stmt.kind == stmtKindTag(.stmtUnroll):
+        out = self.expandUnroll(id = id)
+        self.retireUnroll(id = id)
+        return out
+    if stmt.kind == stmtKindTag(.stmtBlock):
+        self.expandBlock(blockId = id)
+        out = out.append(id)
+        return out
+    var kids: Array<I32> = []
+    var i = 0
+    while i < len(stmt.kids):
+        let kid: I32 = stmt.kids[i]
+        if self.stmtKidIsStmt(kind = stmt.kind, index = i, total = len(stmt.kids)):
+            let produced = self.expandStmt(id = kid)
+            var j = 0
+            while j < len(produced):
+                kids = kids.append(produced[j])
+                j = j + 1
+        else:
+            kids = kids.append(kid)
+        i = i + 1
+    var node = stmt
+    node.kids = kids
+    var tree = self.ast
+    tree.stmts[id] = node
+    self.ast = tree
+    out = out.append(id)
+    return out
+; 展开一条 `unroll`：校验表与体，逐行建映射并克隆体语句；任何错误都让整条消失。
+expandUnroll|self(id: I32,) -> (Array<I32>,):
+    var out: Array<I32> = []
+    let stmt = self.ast.stmts[id]
+    if len(stmt.kids) < 3:
+        return out
+    let names = self.patternNames(exprId = stmt.kids[0])
+    let before: I32 = len(self.errors)
+    let table = self.tableRows(tableId = stmt.kids[1], fallbackStart = stmt.start, fallbackEnd = stmt.end)
+    if table.failed:
+        return out
+    self.checkBody(blockId = stmt.kids[2], names = names)
+    if len(self.errors) != before:
+        return out
+    if stmt.kids[2] < 0 || stmt.kids[2] >= len(self.ast.stmts):
+        return out
+    let body = self.ast.stmts[stmt.kids[2]]
+    var row = 0
+    while row < len(table.rows):
+        let parts = table.rows[row].parts
+        if len(parts) != len(names):
+            var at = stmt.start
+            var stop = stmt.end
+            if len(parts) > 0:
+                at = self.ast.exprs[parts[0]].start
+                stop = self.ast.exprs[parts[0]].end
+            let rowText = decimalText(value = row + 1)
+            let actualText = decimalText(value = len(parts))
+            let expectedText = decimalText(value = len(names))
+            let message = "unroll 第 " + rowText + " 行有 " + actualText + " 个分量，模式要 " + expectedText + " 个"
+            self.addFault(code = "E3-015", message = message, start = at, end = stop)
+            row = row + 1
+            continue
+        var map: Array<UnrollBinding> = []
+        var slot = 0
+        while slot < len(names):
+            if names[slot] != "_":
+                var one = UnrollBinding()
+                one.name = names[slot]
+                one.target = parts[slot]
+                map = map.append(one)
+            slot = slot + 1
+        var k = 0
+        while k < len(body.kids):
+            let cloned: I32 = self.cloneStmt(id = body.kids[k], map = map)
+            if cloned >= 0:
+                out = out.append(cloned)
+            k = k + 1
+        row = row + 1
+    return out
+; 模式名：元组模式取各分量，单名模式取自身；名字区间为空答空串。
+patternNames|self(exprId: I32,) -> (Array<String>,):
+    var out: Array<String> = []
+    if exprId < 0 || exprId >= len(self.ast.exprs):
+        return out
+    let node = self.ast.exprs[exprId]
+    if node.kind == exprKindTag(.exprTuple):
+        var i = 0
+        while i < len(node.kids):
+            let kid: I32 = node.kids[i]
+            if kid >= 0 && kid < len(self.ast.exprs):
+                let part = self.ast.exprs[kid]
+                out = out.append(self.spell(start = part.nameStart, end = part.nameEnd))
+            else:
+                out = out.append("")
+            i = i + 1
+        return out
+    out = out.append(self.spell(start = node.nameStart, end = node.nameEnd))
+    return out
+; 表求值：只认数组字面量，元素是标量字面量或由标量构成的元组；失败位置取该节点。
+tableRows|self(tableId: I32, fallbackStart: I32, fallbackEnd: I32,) -> (UnrollRows,):
+    var out = UnrollRows()
+    if tableId < 0 || tableId >= len(self.ast.exprs):
+        self.addFault(code = "E3-014", message = "unroll 的表必须是写在原地的字面量集合：数组字面量，元素是标量字面量或元组字面量", start = fallbackStart, end = fallbackEnd)
+        out.failed = true
+        return out
+    let table = self.ast.exprs[tableId]
+    if table.kind != exprKindTag(.exprArray):
+        self.addFault(code = "E3-014", message = "unroll 的表必须是写在原地的字面量集合：数组字面量，元素是标量字面量或元组字面量", start = table.start, end = table.end)
+        out.failed = true
+        return out
+    if len(table.kids) == 0:
+        self.addFault(code = "E3-017", message = "unroll 的表是空的，展开零轮", start = table.start, end = table.end)
+        out.failed = true
+        return out
+    if len(table.kids) > 256:
+        let rounds = decimalText(value = len(table.kids))
+        let message = "unroll 展开 " + rounds + " 轮，超过上限 256"
+        self.addFault(code = "E3-018", message = message, start = table.start, end = table.end)
+        out.failed = true
+        return out
+    var i = 0
+    while i < len(table.kids):
+        let element: I32 = table.kids[i]
+        if element < 0 || element >= len(self.ast.exprs):
+            out.failed = true
+            return out
+        let item = self.ast.exprs[element]
+        var row = UnrollRow()
+        if item.kind == exprKindTag(.exprTuple):
+            var j = 0
+            while j < len(item.kids):
+                if !self.isScalar(id = item.kids[j]):
+                    self.addFault(code = "E3-014", message = "unroll 的表必须是写在原地的字面量集合：数组字面量，元素是标量字面量或元组字面量", start = item.start, end = item.end)
+                    out.failed = true
+                    return out
+                row.parts = row.parts.append(item.kids[j])
+                j = j + 1
+        else:
+            if !self.isScalar(id = element):
+                self.addFault(code = "E3-014", message = "unroll 的表必须是写在原地的字面量集合：数组字面量，元素是标量字面量或元组字面量", start = item.start, end = item.end)
+                out.failed = true
+                return out
+            row.parts = row.parts.append(element)
+        out.rows = out.rows.append(row)
+        i = i + 1
+    return out
+; 标量字面量：整数、浮点、字符串、布尔，以及负号加数字；其余一律不算。
+isScalar|self(id: I32,) -> (Bool,):
+    if id < 0 || id >= len(self.ast.exprs):
+        return false
+    let node = self.ast.exprs[id]
+    if node.kind == exprKindTag(.exprInteger) || node.kind == exprKindTag(.exprFloat):
+        return true
+    if node.kind == exprKindTag(.exprString):
+        return true
+    if node.kind == exprKindTag(.exprTrue) || node.kind == exprKindTag(.exprFalse):
+        return true
+    if node.kind == exprKindTag(.exprUnary) && node.op == kindTag(.opSub) && len(node.kids) == 1:
+        let inner = self.ast.exprs[node.kids[0]]
+        if inner.kind == exprKindTag(.exprInteger) || inner.kind == exprKindTag(.exprFloat):
+            return true
+    return false
+; 语句 kids 的池归属：真表示语句池，假表示表达式池；位置按类别码的排布定。
+stmtKidIsStmt|self(kind: I32, index: I32, total: I32,) -> (Bool,):
+    if kind == stmtKindTag(.stmtBlock):
+        return true
+    if kind == stmtKindTag(.stmtDefer):
+        return true
+    if kind == stmtKindTag(.stmtWhile):
+        return index >= 1
+    if kind == stmtKindTag(.stmtFor):
+        return index >= 2
+    if kind == stmtKindTag(.stmtIf):
+        if index == 1:
+            return true
+        if index % 2 == 1:
+            return true
+        if index == total - 1 && index >= 2:
+            return true
+        return false
+    if kind == stmtKindTag(.stmtMatch):
+        if index == 0:
+            return false
+        return index % 2 == 0
+    if kind == stmtKindTag(.stmtUnroll):
+        return index == 2
+    return false
+; 克隆语句：复制标量字段，kids 按池归属分派；新节点追加后返回其下标。
+;  不变量  新建节点而不是复用源节点：名义类型的赋值共享同一个箱，改副本会写回池。
+cloneStmt|self(id: I32, map: Array<UnrollBinding>,) -> (I32,):
+    if id < 0 || id >= len(self.ast.stmts):
+        return id
+    let stmt = self.ast.stmts[id]
+    var kids: Array<I32> = []
+    var i = 0
+    while i < len(stmt.kids):
+        let kid: I32 = stmt.kids[i]
+        if self.stmtKidIsStmt(kind = stmt.kind, index = i, total = len(stmt.kids)):
+            kids = kids.append(self.cloneStmt(id = kid, map = map))
+        else:
+            kids = kids.append(self.cloneExpr(id = kid, map = map))
+        i = i + 1
+    var node = StmtNode()
+    node.kind = stmt.kind
+    node.start = stmt.start
+    node.end = stmt.end
+    node.op = stmt.op
+    node.typeId = stmt.typeId
+    node.nameStart = stmt.nameStart
+    node.nameEnd = stmt.nameEnd
+    node.kids = kids
+    var tree = self.ast
+    tree.stmts = tree.stmts.append(node)
+    self.ast = tree
+    return len(self.ast.stmts) - 1
+; 克隆表达式：模式名换成表里的分量节点，其余复制标量字段并递归 kids 与处理器块。
+;  不变量  同上：新建节点，避免改到池里的源节点。
+cloneExpr|self(id: I32, map: Array<UnrollBinding>,) -> (I32,):
+    if id < 0 || id >= len(self.ast.exprs):
+        return id
+    let node = self.ast.exprs[id]
+    if node.kind == exprKindTag(.exprIdentifier):
+        let name: String = self.spell(start = node.nameStart, end = node.nameEnd)
+        let at: I32 = bindingIndexOf(map = map, name = name)
+        if at >= 0:
+            return map[at].target
+    var kids: Array<I32> = []
+    var i = 0
+    while i < len(node.kids):
+        let kid: I32 = node.kids[i]
+        if node.kind == exprKindTag(.exprFunction) && i == len(node.kids) - 1 && self.isBlockId(id = kid):
+            kids = kids.append(self.cloneStmt(id = kid, map = map))
+        elif node.kind == exprKindTag(.exprFunction):
+            kids = kids.append(self.cloneDecl(id = kid))
+        else:
+            kids = kids.append(self.cloneExpr(id = kid, map = map))
+        i = i + 1
+    var copy = ExprNode()
+    copy.kind = node.kind
+    copy.start = node.start
+    copy.end = node.end
+    copy.nameStart = node.nameStart
+    copy.nameEnd = node.nameEnd
+    copy.op = node.op
+    copy.typeId = node.typeId
+    copy.isAsync = node.isAsync
+    copy.kids = kids
+    if node.body >= 0 && node.body < len(self.ast.stmts):
+        copy.body = self.cloneStmt(id = node.body, map = map)
+    var tree = self.ast
+    tree.exprs = tree.exprs.append(copy)
+    self.ast = tree
+    return len(self.ast.exprs) - 1
+; 克隆声明：只复制节点本身，形参的默认值与泛型形参共享原节点。
+cloneDecl|self(id: I32,) -> (I32,):
+    if id < 0 || id >= len(self.ast.decls):
+        return id
+    let node = self.ast.decls[id]
+    var tree = self.ast
+    tree.decls = tree.decls.append(node)
+    self.ast = tree
+    return len(self.ast.decls) - 1
+; 体预检：顶层任何局部声明与任何位置的模式名同名都算错，各轮铺在同一条语句列表里。
+checkBody|self(blockId: I32, names: Array<String>,) -> ():
+    if blockId < 0 || blockId >= len(self.ast.stmts):
+        return
+    let block = self.ast.stmts[blockId]
+    var i = 0
+    while i < len(block.kids):
+        self.checkStmt(id = block.kids[i], names = names, topLevel = true)
+        i = i + 1
+    return
+; 语句侧预检：变量与 for 的模式、capture 名、match 绑定、赋值目标各按自己的规则判。
+checkStmt|self(id: I32, names: Array<String>, topLevel: Bool,) -> ():
+    if id < 0 || id >= len(self.ast.stmts):
+        return
+    let stmt = self.ast.stmts[id]
+    let kind: I32 = stmt.kind
+    if kind == stmtKindTag(.stmtVariable):
+        if len(stmt.kids) > 0:
+            self.checkPatternBinding(exprId = stmt.kids[0], names = names, topLevel = topLevel, at = stmt.start, stop = stmt.end)
+        if len(stmt.kids) > 1:
+            self.scanExpr(id = stmt.kids[1], names = names)
+        return
+    if kind == stmtKindTag(.stmtFor):
+        if len(stmt.kids) > 0:
+            self.checkPatternBinding(exprId = stmt.kids[0], names = names, topLevel = false, at = stmt.start, stop = stmt.end)
+        if len(stmt.kids) > 1:
+            self.scanExpr(id = stmt.kids[1], names = names)
+        var f = 2
+        while f < len(stmt.kids):
+            self.checkStmt(id = stmt.kids[f], names = names, topLevel = false)
+            f = f + 1
+        return
+    if kind == stmtKindTag(.stmtCapture):
+        let name: String = self.spell(start = stmt.nameStart, end = stmt.nameEnd)
+        self.reportName(name = name, names = names, topLevel = topLevel, at = stmt.start, stop = stmt.end)
+        return
+    if kind == stmtKindTag(.stmtAssign):
+        if len(stmt.kids) > 1:
+            let target: I32 = stmt.kids[0]
+            if target >= 0 && target < len(self.ast.exprs):
+                let node = self.ast.exprs[target]
+                if node.kind == exprKindTag(.exprIdentifier):
+                    let name: String = self.spell(start = node.nameStart, end = node.nameEnd)
+                    if self.containsName(names = names, name = name):
+                        let message = "展开体里不能用 '" + name + "'：模式名会被替换成字面量，不能作赋值目标"
+                        self.addFault(code = "E3-016", message = message, start = stmt.start, end = stmt.end)
+            self.scanExpr(id = stmt.kids[1], names = names)
+        return
+    var i = 0
+    while i < len(stmt.kids):
+        if self.stmtKidIsStmt(kind = kind, index = i, total = len(stmt.kids)):
+            self.checkStmt(id = stmt.kids[i], names = names, topLevel = false)
+        else:
+            self.scanExpr(id = stmt.kids[i], names = names)
+        i = i + 1
+    return
+; 表达式侧预检：只找会引入绑定的位置；普通标识符用到模式名是合法的，不在此判。
+scanExpr|self(id: I32, names: Array<String>,) -> ():
+    if id < 0 || id >= len(self.ast.exprs):
+        return
+    let node = self.ast.exprs[id]
+    if node.kind == exprKindTag(.exprCase):
+        var i = 0
+        while i < len(node.kids):
+            let kid: I32 = node.kids[i]
+            if kid >= 0 && kid < len(self.ast.exprs):
+                let bind = self.ast.exprs[kid]
+                let name: String = self.spell(start = bind.nameStart, end = bind.nameEnd)
+                self.reportName(name = name, names = names, topLevel = false, at = node.start, stop = node.end)
+            i = i + 1
+        return
+    if node.kind == exprKindTag(.exprFunction):
+        var p = 0
+        while p < len(node.kids):
+            let kid: I32 = node.kids[p]
+            if self.isBlockId(id = kid):
+                self.checkBody(blockId = kid, names = names)
+            elif kid >= 0 && kid < len(self.ast.decls):
+                let param = self.ast.decls[kid]
+                let name: String = self.spell(start = param.nameStart, end = param.nameEnd)
+                self.reportName(name = name, names = names, topLevel = false, at = param.start, stop = param.end)
+            p = p + 1
+        return
+    if node.kind == exprKindTag(.exprTry):
+        if node.nameEnd > node.nameStart:
+            let name: String = self.spell(start = node.nameStart, end = node.nameEnd)
+            self.reportName(name = name, names = names, topLevel = false, at = node.start, stop = node.end)
+        var t = 0
+        while t < len(node.kids):
+            self.scanExpr(id = node.kids[t], names = names)
+            t = t + 1
+        return
+    var i = 0
+    while i < len(node.kids):
+        self.scanExpr(id = node.kids[i], names = names)
+        i = i + 1
+    return
+; 声明模式：元组逐分量递归，标识符按名字判；其余模式不引入绑定。
+checkPatternBinding|self(exprId: I32, names: Array<String>, topLevel: Bool, at: I32, stop: I32,) -> ():
+    if exprId < 0 || exprId >= len(self.ast.exprs):
+        return
+    let node = self.ast.exprs[exprId]
+    if node.kind == exprKindTag(.exprTuple):
+        var i = 0
+        while i < len(node.kids):
+            self.checkPatternBinding(exprId = node.kids[i], names = names, topLevel = topLevel, at = at, stop = stop)
+            i = i + 1
+        return
+    if node.kind != exprKindTag(.exprIdentifier):
+        return
+    let name: String = self.spell(start = node.nameStart, end = node.nameEnd)
+    self.reportName(name = name, names = names, topLevel = topLevel, at = at, stop = stop)
+    return
+; 名字冲突：与模式同名优先报替换走样，顶层再报跨轮重名；两者文案与宿主一致。
+reportName|self(name: String, names: Array<String>, topLevel: Bool, at: I32, stop: I32,) -> ():
+    if self.containsName(names = names, name = name):
+        let message = "展开体里不能用 '" + name + "'：与模式同名，替换后会被静默覆盖"
+        self.addFault(code = "E3-016", message = message, start = at, end = stop)
+        return
+    if topLevel:
+        let message = "展开体里不能用 '" + name + "'：各轮铺在同一条语句列表里，局部声明会跨轮重名"
+        self.addFault(code = "E3-016", message = message, start = at, end = stop)
+    return
+; 名字表包含：逐个比较，模式名表很短，线性足够。
+containsName|self(names: Array<String>, name: String,) -> (Bool,):
+    var i = 0
+    while i < len(names):
+        if names[i] == name:
+            return true
+        i = i + 1
+    return false
+; 块判定：下标落在语句池内且类别是块。
+isBlockId|self(id: I32,) -> (Bool,):
+    if id < 0 || id >= len(self.ast.stmts):
+        return false
+    return self.ast.stmts[id].kind == stmtKindTag(.stmtBlock)
+; 名字区间解码：空区间答空串。
+spell|self(start: I32, end: I32,) -> (String,):
+    return spellOf(bytes = self.bytes, start = start, end = end)
+; 退役一条 unroll：被换掉的子树记为中立节点。
+; 池里的残留会被语义层的全池扫描读成真名字，故用空语句与空字面量。
+; 表里的分量字面量被克隆产物共享，退役时跳过；其余一律清空。
+retireUnroll|self(id: I32,) -> ():
+    if id < 0 || id >= len(self.ast.stmts):
+        return
+    let stmt = self.ast.stmts[id]
+    var keep: Array<I32> = []
+    if len(stmt.kids) >= 2:
+        keep = self.tableParts(tableId = stmt.kids[1])
+    self.retireStmt(id = id, keep = keep)
+    return
+; 表分量表：逐行取分量下标，单分量行取元素自身；表不是数组时答空表。
+tableParts|self(tableId: I32,) -> (Array<I32>,):
+    var out: Array<I32> = []
+    if tableId < 0 || tableId >= len(self.ast.exprs):
+        return out
+    let table = self.ast.exprs[tableId]
+    if table.kind != exprKindTag(.exprArray):
+        return out
+    var i = 0
+    while i < len(table.kids):
+        let element: I32 = table.kids[i]
+        if element >= 0 && element < len(self.ast.exprs):
+            let item = self.ast.exprs[element]
+            if item.kind == exprKindTag(.exprTuple):
+                var j = 0
+                while j < len(item.kids):
+                    out = out.append(item.kids[j])
+                    j = j + 1
+            else:
+                out = out.append(element)
+        i = i + 1
+    return out
+; 语句退役：先递归子节点，再把自身换成空语句；跨度保留，位置诊断仍指得回原处。
+retireStmt|self(id: I32, keep: Array<I32>,) -> ():
+    if id < 0 || id >= len(self.ast.stmts):
+        return
+    let stmt = self.ast.stmts[id]
+    var i = 0
+    while i < len(stmt.kids):
+        let kid: I32 = stmt.kids[i]
+        if self.stmtKidIsStmt(kind = stmt.kind, index = i, total = len(stmt.kids)):
+            self.retireStmt(id = kid, keep = keep)
+        else:
+            self.retireExpr(id = kid, keep = keep)
+        i = i + 1
+    var dead = StmtNode()
+    dead.kind = stmtKindTag(.stmtPass)
+    dead.start = stmt.start
+    dead.end = stmt.end
+    var tree = self.ast
+    tree.stmts[id] = dead
+    self.ast = tree
+    return
+; 表达式退役：被共享的字面量跳过，其余递归后换成空字面量。
+retireExpr|self(id: I32, keep: Array<I32>,) -> ():
+    if id < 0 || id >= len(self.ast.exprs):
+        return
+    if holdsId(items = keep, value = id):
+        return
+    let node = self.ast.exprs[id]
+    var i = 0
+    while i < len(node.kids):
+        self.retireExpr(id = node.kids[i], keep = keep)
+        i = i + 1
+    if node.body >= 0 && node.body < len(self.ast.stmts):
+        self.retireStmt(id = node.body, keep = keep)
+    var dead = ExprNode()
+    dead.kind = exprKindTag(.exprNil)
+    dead.start = node.start
+    dead.end = node.end
+    var tree = self.ast
+    tree.exprs[id] = dead
+    self.ast = tree
+    return
+; 记错误：错误序按发生序排列，位置取调用方给的区间。
+addFault|self(code: String, message: String, start: I32, end: I32,) -> ():
+    var fault = UnrollFault()
+    fault.code = code
+    fault.message = message
+    fault.start = start
+    fault.end = end
+    self.errors = self.errors.append(fault)
+    return
+
+; 展开入口：整树一遍；无 `unroll` 时树按原样返回，错误为空。
+expandUnrolls|func(ast: Ast, bytes: Array<U8>,) -> (ExpandOutcome,):
+    var worker = UnrollExpander()
+    worker.ast = ast
+    worker.bytes = bytes
+    worker.run()
+    var out = ExpandOutcome()
+    out.ast = worker.ast
+    out.errors = worker.errors
+    return out
