@@ -1,0 +1,188 @@
+[interfaces|import]
+_diagnostics = "../../../diagnostics"
+_package = "../../../package"
+_module_loader = "../../../module-loader"
+_semantics = "../../../semantics"
+
+; 接口缓存：逐包快照落构建目录，工作区记录落 interfaces.toml；记录只描述上次见过的接口。
+; 失效按整份文本判：本包摘要变了、依赖摘要变了、快照不见了，都要重跑 interfaces。
+
+; 漂移命中：包名、种类（self 本包 / dep 依赖）与依赖名。
+(DriftHit)
+name: String = ""
+kind: String = ""
+dep: String = ""
+
+; 写缓存结果：是否成功、包数与重写快照数。
+(InterfacesWrite)
+ok: Bool = false
+packages: I32 = 0
+changed: I32 = 0
+
+; 按包名查接口记录：未命中答 -1。
+recordIndexOf|func(records: Array<InterfaceRecord>, name: String,) -> (I32,):
+    var i = 0
+    while i < len(records):
+        if records[i].name == name:
+            return i
+        i = i + 1
+    return -1
+
+; 按包名查记录条目：未命中答 -1。
+ledgerIndexOf|func(_ledger: InterfaceLedger, name: String,) -> (I32,):
+    var i = 0
+    while i < len(_ledger.entries):
+        if _ledger.entries[i].name == name:
+            return i
+        i = i + 1
+    return -1
+
+; 按依赖名查记录里的依赖摘要：未命中答 -1。
+depIndexOf|func(deps: Array<InterfaceDep>, name: String,) -> (I32,):
+    var i = 0
+    while i < len(deps):
+        if deps[i].name == name:
+            return i
+        i = i + 1
+    return -1
+
+; 计划里的包下标：未命中答 -1。
+planPackageIndex|func(plan: BuildPlan, name: String,) -> (I32,):
+    var i = 0
+    while i < len(plan.packages):
+        if plan.packages[i].name == name:
+            return i
+        i = i + 1
+    return -1
+
+; 当前依赖摘要：按计划里的依赖声明顺序，从当前接口记录取摘要；依赖没有记录时留空，空摘要必判失效。
+currentDeps|func(records: Array<InterfaceRecord>, plan: BuildPlan, name: String,) -> (Array<InterfaceDep>,):
+    var out: Array<InterfaceDep> = []
+    let at = planPackageIndex(plan = plan, name = name)
+    if at < 0:
+        return out
+    let requires = plan.packages[at].requires
+    var i = 0
+    while i < len(requires):
+        var dep = InterfaceDep()
+        dep.name = requires[i]
+        let seen = recordIndexOf(records = records, name = dep.name)
+        if seen >= 0:
+            dep.hash = sha256Hex(records[seen].text)
+        out = out.append(dep)
+        i = i + 1
+    return out
+
+; 漂移判定：记录里每包先比本包摘要，再逐个比依赖摘要；记录里没有的包跳过，缺记录的依赖必判失效。
+interfaceDriftReport|func(_ledger: InterfaceLedger, records: Array<InterfaceRecord>, plan: BuildPlan,) -> (Array<DriftHit>,):
+    var out: Array<DriftHit> = []
+    var i = 0
+    while i < len(_ledger.entries):
+        let entry = _ledger.entries[i]
+        let at = recordIndexOf(records = records, name = entry.name)
+        if at < 0:
+            i = i + 1
+            continue
+        if sha256Hex(records[at].text) != entry.hash:
+            var hit = DriftHit()
+            hit.name = entry.name
+            hit.kind = "self"
+            out = out.append(hit)
+            i = i + 1
+            continue
+        let deps = currentDeps(records = records, plan = plan, name = entry.name)
+        var d = 0
+        while d < len(deps):
+            let dep = deps[d]
+            var recorded = ""
+            let seen = depIndexOf(deps = entry.deps, name = dep.name)
+            if seen >= 0:
+                recorded = entry.deps[seen].hash
+            if recorded != dep.hash:
+                var miss = DriftHit()
+                miss.name = entry.name
+                miss.kind = "dep"
+                miss.dep = dep.name
+                out = out.append(miss)
+            d = d + 1
+        i = i + 1
+    return out
+
+; 漂移诊断：记录不在答空；读不出每条错误一条；快照缺失与摘要命中各报一条，码统一走接口漂移。
+interfaceDriftDiagnostics|func(root: String, records: Array<InterfaceRecord>, plan: BuildPlan,) -> (Array<Diagnostic>,):
+    var out: Array<Diagnostic> = []
+    let path = interfacesFilePath(root = root, profile = plan.profile)
+    if !exists(path):
+        return out
+    let read = parseLedger(text = readFile(path), path = path)
+    var e = 0
+    while e < len(read.errors):
+        out = out.append(makeCheckDiagnostic(file = read.errors[e].path, category = ioCategory(), code = "E3-011", message = manifestErrorText(read.errors[e]), offset = -1))
+        e = e + 1
+    if len(read.errors) > 0:
+        return out
+    var _ledger = InterfaceLedger()
+    _ledger.profile = read.profile
+    _ledger.entries = read.entries
+    var i = 0
+    while i < len(_ledger.entries):
+        let entry = _ledger.entries[i]
+        let snapshot = interfaceArtifactPath(root = root, profile = plan.profile, name = entry.name)
+        if !exists(snapshot):
+            out = out.append(makeCheckDiagnostic(file = entry.name, category = ioCategory(), code = interfaceErrorCode(), message = "包 '" + entry.name + "' 的接口产物缺失：" + snapshot, offset = 0))
+        i = i + 1
+    let hits = interfaceDriftReport(_ledger, records = records, plan = plan)
+    i = 0
+    while i < len(hits):
+        let hit = hits[i]
+        var detail = ""
+        if hit.kind == "self":
+            let at = recordIndexOf(records = records, name = hit.name)
+            let snapshot = interfaceArtifactPath(root = root, profile = plan.profile, name = hit.name)
+            if at >= 0 && exists(snapshot):
+                let drift = interfaceDrift(recorded = readFile(snapshot), current = records[at].text)
+                let broken = interfaceDriftError(record = records[at], drift = drift)
+                detail = broken.detail
+            else:
+                detail = "接口产物缺失，无法定位差异"
+        else:
+            detail = "依赖 " + hit.dep + " 的接口与记录不一致"
+        out = out.append(makeCheckDiagnostic(file = hit.name, category = ioCategory(), code = interfaceErrorCode(), message = "包 '" + hit.name + "' 的接口与下游记录的接口不一致：" + detail, offset = 0))
+        i = i + 1
+    return out
+
+; 写接口缓存：先算当前接口，再逐包比快照决定是否重写，最后写记录；缺产物目录立即失败。
+writeInterfaces|func(root: String, stdlib: StdlibOption,) -> (InterfacesWrite,):
+    var out = InterfacesWrite()
+    let plan = planWorkspace(root)
+    if !plan.isOK():
+        print("interfaces-plan-failed", plan.errorCount())
+        return out
+    let ws = loadWorkspaceGrouped(plan, stdlib = stdlib)
+    let units = collectWorkspaceUnits(ws)
+    let build = buildWorld(units = units, packages = ws.packages)
+    let records = packageInterfaces(ws, world = build.world)
+    var _ledger = InterfaceLedger()
+    _ledger.profile = plan.profile
+    var i = 0
+    while i < len(records):
+        let record = records[i]
+        var entry = InterfaceEntry()
+        entry.name = record.name
+        entry.path = ".build/" + plan.profile + "/packages/" + record.name + "/interface.api.txt"
+        entry.hash = sha256Hex(record.text)
+        entry.deps = currentDeps(records = records, plan = plan, name = record.name)
+        let dir = root + "/.build/" + plan.profile + "/packages/" + record.name
+        if !isDir(dir):
+            print("interfaces-failed", record.name, "缺产物目录", dir)
+            return out
+        let path = interfaceArtifactPath(root = root, profile = plan.profile, name = record.name)
+        if !exists(path) || readFile(path) != record.text:
+            writeFile(path, record.text)
+            out.changed = out.changed + 1
+        _ledger.entries = _ledger.entries.append(entry)
+        i = i + 1
+    writeFile(interfacesFilePath(root = root, profile = plan.profile), ledgerText(_ledger))
+    out.ok = true
+    out.packages = len(records)
+    return out

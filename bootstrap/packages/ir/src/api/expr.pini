@@ -1614,6 +1614,15 @@ lowerCaseConstruct|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>,
     done.id = inserted.id
     return done
 
+; 定界判断：下标前的连续反斜杠个数，用来区分定界引号与转义引号。
+backslashRun|func(bytes: Array<U8>, at: I32,) -> (I32,):
+    var count = 0
+    var i = at - 1
+    while i >= 0 && bytes[i] == 92 as U8:
+        count = count + 1
+        i = i - 1
+    return count
+
 ; 字符串字面量取值：去首尾引号并按转义表还原；`\0` 之后的内容全部丢弃。
 ; 字节先拼再整体解码：逐段解码会把转义切开的序列变成替换字符。
 stringLiteralText|func(bytes: Array<U8>, start: I32, end: I32,) -> (String,):
@@ -1624,7 +1633,7 @@ stringLiteralText|func(bytes: Array<U8>, start: I32, end: I32,) -> (String,):
     var stop = end
     if i < stop && bytes[i] == quote:
         i = i + 1
-    if stop > i && bytes[stop - 1] == quote:
+    if stop > i && bytes[stop - 1] == quote && backslashRun(bytes = bytes, at = stop - 1) % 2 == 0:
         stop = stop - 1
     var closed = false
     while i < stop && !closed:

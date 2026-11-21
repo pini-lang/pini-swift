@@ -444,4 +444,9 @@ checkWorkspace|func(root: String, stdlib: StdlibOption,) -> (WorkspaceReport,):
     while i < len(exprs):
         diagnostics = diagnostics.append(exprs[i])
         i = i + 1
+    var drift = interfaceDriftDiagnostics(root = root, records = packageInterfaces(ws, world = world), plan = plan)
+    i = 0
+    while i < len(drift):
+        diagnostics = diagnostics.append(drift[i])
+        i = i + 1
     return finishReport(root = root, packages = plan.packageCount(), diagnostics = diagnostics, units = units)

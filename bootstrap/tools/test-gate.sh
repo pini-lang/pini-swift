@@ -265,8 +265,52 @@ if [ -x "$work/float-bin" ]; then
     fi
 fi
 
+# 接口缓存：记录落 .build 后，未变不重写、公开面变化报 E3-021、仅内部改动不失效。
+iface_expect() {
+    local label="$1"
+    local want="$2"
+    local got="$3"
+    case "$got" in
+    *"$want"*) ;;
+    *)
+        echo " 行不通  [测试自检] ${label}：${got}" >&2
+        fail=1
+        ;;
+    esac
+}
+iface_fixture="$work/interfaces-cache"
+rm -rf "$iface_fixture"
+cp -R "$root/bootstrap/fixtures/interfaces-cache" "$iface_fixture"
+mkdir -p "$iface_fixture/.build/debug/packages/app" "$iface_fixture/.build/debug/packages/support"
+iface_expect "首次接口缓存应两份新写" "interfaces-ok 2 2" "$("$pini" interfaces "$iface_fixture" --no-stdlib 2>&1)"
+iface_expect "接口未变不应重写" "interfaces-ok 2 0" "$("$pini" interfaces "$iface_fixture" --no-stdlib 2>&1)"
+if [ ! -f "$iface_fixture/.build/debug/interfaces.toml" ]; then
+    echo " 行不通  [测试自检] 接口记录未落盘" >&2
+    fail=1
+fi
+iface_expect "记录一致时检查应通过" "workspace-ok" "$("$pini" check "$iface_fixture" --no-stdlib 2>&1)"
+cp "$iface_fixture/support/src/api.pini" "$work/iface-support.bak"
+cat > "$iface_fixture/support/src/api.pini" <<EOF
+; 支持包：返回值改成 I64，公开接口变化。
+公开|func(x: I32,) -> (I64,):
+    return (x + 1) as I64
+EOF
+iface_expect "公开接口变化应报 E3-021" "E3-021" "$("$pini" check "$iface_fixture" --no-stdlib 2>&1)"
+iface_expect "记录更新应只重写一份" "interfaces-ok 2 1" "$("$pini" interfaces "$iface_fixture" --no-stdlib 2>&1)"
+iface_expect "记录追上源码后检查应通过" "workspace-ok" "$("$pini" check "$iface_fixture" --no-stdlib 2>&1)"
+cp "$work/iface-support.bak" "$iface_fixture/support/src/api.pini"
+iface_expect "还原源码后记录应再变一次" "interfaces-ok 2 1" "$("$pini" interfaces "$iface_fixture" --no-stdlib 2>&1)"
+iface_expect "还原后检查应通过" "workspace-ok" "$("$pini" check "$iface_fixture" --no-stdlib 2>&1)"
+mkdir -p "$iface_fixture/support/_internal"
+cat > "$iface_fixture/support/_internal/helper.pini" <<EOF
+; 内部文件：不进公开接口。
+辅助|func(x: I32,) -> (I32,):
+    return x + 2
+EOF
+iface_expect "仅内部改动不应重写接口" "interfaces-ok 2 0" "$("$pini" interfaces "$iface_fixture" --no-stdlib 2>&1)"
+iface_expect "内部改动后检查应通过" "workspace-ok" "$("$pini" check "$iface_fixture" --no-stdlib 2>&1)"
 if [ "$fail" -ne 0 ]; then
     exit 1
 fi
-echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入，浮点常量走位模式"
+echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入，浮点常量走位模式，接口缓存按记录判失效"
 exit 0

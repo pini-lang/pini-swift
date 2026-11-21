@@ -1,0 +1,62 @@
+; 助手：一条依赖摘要。
+界面造依赖|func(name: String, hash: String,) -> (InterfaceDep,):
+    var out = InterfaceDep()
+    out.name = name
+    out.hash = hash
+    return out
+
+; 助手：一条记录条目；路径按快照约定拼好。
+界面造条目|func(name: String, hash: String, deps: Array<InterfaceDep>,) -> (InterfaceEntry,):
+    var out = InterfaceEntry()
+    out.name = name
+    out.path = ".build/debug/packages/" + name + "/interface.api.txt"
+    out.hash = hash
+    out.deps = deps
+    return out
+
+; 助手：一份记录；profile 固定 debug。
+界面造记录|func(entries: Array<InterfaceEntry>,) -> (InterfaceLedger,):
+    var out = InterfaceLedger()
+    out.profile = "debug"
+    out.entries = entries
+    return out
+
+; 助手：空依赖表；直接写 `[]` 会被推成 I32 元素。
+界面空依赖|func() -> (Array<InterfaceDep>,):
+    var out: Array<InterfaceDep> = []
+    return out
+
+; 往返：渲染再解析，包名、路径、摘要与依赖串都还原；条目输入乱序时渲染仍按包名排。
+界面记录往返|test() -> ():
+    let 记录 = 界面造记录(entries = [界面造条目(name = "app", hash = "aa", deps = [界面造依赖(name = "support", hash = "bb")]), 界面造条目(name = "support", hash = "bb", deps = 界面空依赖())])
+    let 文本 = ledgerText(记录)
+    let 读回 = parseLedger(text = 文本, path = "interfaces.toml")
+    assert(len(读回.errors) == 0, "应能读回：" + 文本)
+    assert(len(读回.entries) == 2, "两条")
+    assert(读回.entries[0].name == "app", "按包名排序")
+    assert(读回.entries[0].path == ".build/debug/packages/app/interface.api.txt", "路径往返")
+    assert(读回.entries[0].deps[0].name == "support" && 读回.entries[0].deps[0].hash == "bb", "依赖往返")
+    assert(len(读回.entries[1].deps) == 0, "空依赖读回空表")
+    assert(ledgerText(读回) == 文本 && 文本 == ledgerText(记录), "两次渲染逐字相同")
+    return
+
+; 重复包名：同一条目出现两次，解析报一条重复键错误，条目只收第一份。
+界面重复包名|test() -> ():
+    let 记录 = 界面造记录(entries = [界面造条目(name = "app", hash = "aa", deps = 界面空依赖()), 界面造条目(name = "app", hash = "bb", deps = 界面空依赖())])
+    let 读回 = parseLedger(text = ledgerText(记录), path = "interfaces.toml")
+    assert(len(读回.errors) == 1, "应报一条重复包名")
+    assert(manifestErrorKindName(_kind = 读回.errors[0].kind) == "同一表内重复键", "错误类别是重复键")
+    assert(len(读回.entries) == 1, "条目只收第一份")
+    return
+
+; 依赖串往返：两项依赖按声明顺序保留；坏项报错但好项照收。
+界面依赖串往返|test() -> ():
+    let 记录 = 界面造记录(entries = [界面造条目(name = "app", hash = "aa", deps = [界面造依赖(name = "a", hash = "11"), 界面造依赖(name = "b", hash = "22")])])
+    let 读回 = parseLedger(text = ledgerText(记录), path = "interfaces.toml")
+    assert(len(读回.errors) == 0, "应能读回")
+    assert(len(读回.entries[0].deps) == 2, "两项")
+    assert(读回.entries[0].deps[1].name == "b" && 读回.entries[0].deps[1].hash == "22", "顺序保留")
+    let 坏 = parseLedger(text = "[interfaces]\nversion = 1\nprofile = \"debug\"\n\n[[interface]]\npackage = \"app\"\ndeps = \"脏\"\n", path = "bad.toml")
+    assert(len(坏.errors) == 1, "坏项报一条")
+    assert(len(坏.entries) == 1, "好包照收")
+    return

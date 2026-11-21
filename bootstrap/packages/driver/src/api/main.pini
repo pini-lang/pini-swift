@@ -105,6 +105,15 @@ main|func() -> ():
         let build = buildWorld(units = units, packages = ws.packages)
         printBareCases(units = units, world = build.world)
         return
+    if len(args) > 0 && args[0] == "interfaces":
+        if len(args) > 1:
+            root = args[1]
+        let done = writeInterfaces(root = root, stdlib = stdlib)
+        if done.ok:
+            print("interfaces-ok", done.packages, done.changed)
+        else:
+            assert(false, "接口缓存未写入")
+        return
     if len(args) > 0 && args[0] == "build":
         if len(args) > 1:
             root = args[1]
