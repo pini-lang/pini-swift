@@ -950,8 +950,8 @@ reversed、capitalized、center、truncate）可从用户模块直接调用；`u
 三处裁定：
 
 - **进程原语进 ABI**：`compile`、`run-llvm`、`test-llvm` 在宿主侧都经 `Process()` 起 `clang` 或
-  `lli`，自举侧没有任何进程入口。补 `bk_process_*` 进运行时，符号先登记 `runtime-abi.md` 再进
-  实现，第 2 节合计数与 `tools/runtime-abi-check.py` 同批更新。这三条命令因此进本线，不作保留差异。
+  `lli`，自举侧没有任何进程入口。补 `bk_process_*` 进运行时，符号先登记
+  `docs/spec/runtime-abi.md` 再进实现，第 2 节合计数与 `tools/runtime-abi-check.py` 同批更新。这三条命令因此进本线，不作保留差异。
 - **`embedded_min` 留差异**：宿主侧也只是最小集。该通道按保留差异登记，不进总判据的归零项；
   运行器随 **解释执行** 一起做，不单独立项。
 - **工具面只做最小集**：格式化的幂等往返、头翻译的两次生成一致、语言服务与调试各一份脚本化会话
@@ -1004,7 +1004,7 @@ reversed、capitalized、center、truncate）可从用户模块直接调用；`u
   要做先定一份共同的结构签名，归 **工具面** 与 `fmt` 同批。
 - **构建执行组**：`compile`、`run-llvm`、`test-llvm`，以及单文件与目录入口；`build` 补 `--shared`、
   `--print-plan`、`-o`，`emit` 补 `--backend`。三条命令都要起外部工具，前置是 `bk_process_*` 进
-  运行时；符号先登记 `runtime-abi.md` 再进实现。
+  运行时；符号先登记 `docs/spec/runtime-abi.md` 再进实现。
 - **模块工具组**：`mod` 的 `tidy`、`refresh`、`verify`、`graph`。这一组要包版本模型：`tidy` 对齐
   依赖声明与 import，`refresh` 写摘要，`verify` 比校验和；自举侧目前只有清单解析。
 
@@ -1172,7 +1172,7 @@ reversed、capitalized、center、truncate）可从用户模块直接调用；`u
 边界：
 
 - 运行时仍经 C ABI 复用，不重写；`weak` 若需旁表，只加入口。
-- 不以宿主输出回填语言判据：产物结构按 `ir-contract.md` 的字段比，宿主快照只作回归护栏。
+- 不以宿主输出回填语言判据：产物结构按 `docs/spec/ir-contract.md` 的字段比，宿主快照只作回归护栏。
 - 新能力不进编译器源码，直到自洽链能编过——沿用 **风险与控制** 的前代编译门禁。
 - **工具面** 允许长期留差异：`lsp`、`dap` 的协议版本与能力集可能一直落后，登记在表里即可，不阻塞
   其它段。
@@ -1243,7 +1243,8 @@ reversed、capitalized、center、truncate）可从用户模块直接调用；`u
 下一线是 **对齐宿主完整功能**：**差异普查** 已出四张表与对照读数，入口已收四条通道，夹具已钉
 十四条用例，只读组三条已收口；内存模型的导出面已收口，下一项是生命周期，其后按 **推进次序与裁定** 的风险前置次序
 推进——进程原语与构建执行组、**通道面**、**解释执行**、**工具面**。它接回本线排除项里的 C 头文件翻译器、`|c` 导出面与由 Pini 启动
-`clang`（经 `bk_process_*`，符号先登记 `runtime-abi.md`）；运行时重写、并行与远程缓存仍不做，
+`clang`（经 `bk_process_*`，符号先登记
+  `docs/spec/runtime-abi.md`）；运行时重写、并行与远程缓存仍不做，
 理由见 **目标与边界** 与 **构建形态演进收尾：分波计划与共享缓存（已交付）**。开工前先读
 **差异普查** 的四张表与 `bootstrap/tests/parity/cli.tsv` 的签名：没有表就动手，等于拿印象当
 差距；有表不读，等于白测。
