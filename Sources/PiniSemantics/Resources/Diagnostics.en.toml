@@ -217,6 +217,10 @@ suggestion = "give each parameter exactly one argument; remove the duplicate"
 message = "foreign data symbol '{name}' is read-only ('readonly' or 'macro') and cannot be assigned"
 suggestion = "the value comes from the C side; keep state on the Pini side, or expose a setter in C"
 
+[E4-040]
+message = "invalid destructor declaration: {reason}"
+suggestion = "write `deinit|self() -> ()` on an object type, one per type"
+
 [E5-001]
 message = "undefined variable '{name}'"
 suggestion = "Did you mean '{closest}'?"

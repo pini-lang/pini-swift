@@ -44,6 +44,8 @@ public final class TypeChecker {
 
     /// 声明上下文收紧·规则 3.2/3.14：类型字段表（register 阶段填充），供扩展块方法体检查注入 self 字段作用域。
     private var typeFieldsByName: [String: [(name: String, type: TypeAnnotation)]] = [:]
+    /// 已声明析构的类型名：每个类型至多一个 `deinit`，跨扩展块累计。
+    private var lifecycleOwners: Set<String> = []
 
     /// P4 Phase 3：多文件包分析时的包级符号索引与「当前正在分析的文件」。
     /// 单文件模式（`check(module:)`）下恒为 `nil`，故单文件行为零回归。
@@ -1956,6 +1958,32 @@ public final class TypeChecker {
 
     // MARK: - 声明检查
 
+    /// 析构成员：`deinit` 只挂在对象类型上，零形参、零返回、不同步，每个类型至多一个。
+    /// 形状不合格时释放胶水会按错的原型调用它，故在声明处拦下，不进 IR。
+    private func checkLifecycleMember(_ method: FuncDecl, owner: String) throws {
+        guard method.name == "deinit" else { return }
+        guard referenceTypeNames.contains(owner) else {
+            throw TypeError.lifecycleShapeInvalid(
+                reason: "`deinit` 只挂在对象类型（`{\(owner)}`）上", location: method.location)
+        }
+        guard method.params.isEmpty else {
+            throw TypeError.lifecycleShapeInvalid(
+                reason: "`deinit` 不带形参", location: method.location)
+        }
+        guard method.returnTypes.isEmpty else {
+            throw TypeError.lifecycleShapeInvalid(
+                reason: "`deinit` 不返回值", location: method.location)
+        }
+        guard !method.isAsync else {
+            throw TypeError.lifecycleShapeInvalid(
+                reason: "`deinit` 不能是异步函数；异步清理写 `asyncDeinit`", location: method.location)
+        }
+        guard lifecycleOwners.insert(owner).inserted else {
+            throw TypeError.lifecycleShapeInvalid(
+                reason: "`\(owner)` 已有 `deinit`，每个类型只能一个", location: method.location)
+        }
+    }
+
     private func checkTopLevelDecl(_ decl: TopLevelDecl) throws {
         // `StringHandle` 只在 C 面上成立；这一条先跑，免得它在普通函数体里留下一个不可解释的类型。
         try rejectStringHandleOutsideCFace(decl)
@@ -1967,6 +1995,7 @@ public final class TypeChecker {
             try checkFuncBody(f)
         case .structDecl(let s):
             for method in s.methods {
+                try checkLifecycleMember(method, owner: s.name)
                 try checkFuncBody(method, fields: s.fields.map { ($0.name, $0.typeAnnotation ?? .simple(name: "_", location: $0.location)) }, typeName: s.name)
             }
             if !s.traits.isEmpty { try verifyTraitConformance(typeName: s.name, traits: s.traits, location: s.location) }
@@ -1974,13 +2003,17 @@ public final class TypeChecker {
                 typeName: s.name, traits: s.traits, isEnum: false, location: s.location)
         case .objectDecl(let o):
             for method in o.methods {
+                try checkLifecycleMember(method, owner: o.name)
                 try checkFuncBody(method, fields: o.fields.map { ($0.name, $0.typeAnnotation ?? .simple(name: "_", location: $0.location)) }, typeName: o.name)
             }
             if !o.traits.isEmpty { try verifyTraitConformance(typeName: o.name, traits: o.traits, location: o.location) }
             try checkStableCodeTrait(
                 typeName: o.name, traits: o.traits, isEnum: false, location: o.location)
         case .enumDecl(let e):
-            for method in e.methods { try checkFuncBody(method) }
+            for method in e.methods {
+                try checkLifecycleMember(method, owner: e.name)
+                try checkFuncBody(method)
+            }
             if !e.traits.isEmpty { try verifyTraitConformance(typeName: e.name, traits: e.traits, location: e.location) }
             try checkStableCodeTrait(
                 typeName: e.name, traits: e.traits, isEnum: true, location: e.location)
@@ -1988,6 +2021,7 @@ public final class TypeChecker {
             // 扩展方法体检查：注入目标类型字段（同文件扩展块可访问私有字段）。
             let targetFields = typeFieldsByName[x.targetType] ?? []
             for method in x.methods {
+                try checkLifecycleMember(method, owner: x.targetType)
                 try checkFuncBody(method, fields: targetFields, typeName: x.targetType)
             }
         case .foreignDecl(let fd):

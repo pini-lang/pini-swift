@@ -348,6 +348,7 @@ public enum ErrorFormatter {
             return "调用 '\(callee)' 的形参 '\(param)' 已退出标签面（声明为 '_\(param)'），实参不要写标签"
         case .duplicateArgumentLabel(let callee, let param, _):
             return "调用 '\(callee)' 重复写了形参 '\(param)' 的标签"
+        case .lifecycleShapeInvalid(let reason, _): return "析构声明无效：\(reason)"
         }
     }
 
