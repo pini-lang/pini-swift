@@ -124,43 +124,34 @@ forgetShare|func(ctx: BodyCtx, name: String,) -> (BodyCtx,):
     out.heldTypes = types
     return out
 
-; 还入口名：按细分码选，只有计数族有入口。
-; 字符是内联值，运行时不按计数持有，故不给归还入口，与宿主一致。
-releaseSymbolOf|func(kind: I32,) -> (String,):
-    if kind == 1:
+; 还入口名：按族码选；字符是内联值，运行时不按计数持有，故族码 0 不给入口。
+releaseSymbolOf|func(family: I32,) -> (String,): ; 入参是族码，不是细分码也不是类型下标
+    if family == 1:
         return "bk_str_release"
-    if kind == 3 || kind == 4 || kind == 5 || kind == 8:
+    if family == 2:
         return "bk_handle_release"
-    if kind == 6 || kind == 7:
+    if family == 3:
         return "bk_nominal_release"
     return ""
 
 ; 留入口名：与还入口同族配对；名义箱的保留不带返回值。
-retainSymbolOf|func(kind: I32,) -> (String,): ; 入参是族码：0 答空串即静默不动作，误传类型下标就是这后果
-    if kind == 1:
+retainSymbolOf|func(family: I32,) -> (String,): ; 入参是族码：0 答空串即静默不动作，误传类型下标就是这后果
+    if family == 1:
         return "bk_str_retain"
-    if kind == 3 || kind == 4 || kind == 5 || kind == 8:
+    if family == 2:
         return "bk_handle_retain"
-    if kind == 6 || kind == 7:
+    if family == 3:
         return "bk_nominal_retain"
     return ""
 
-; 留份族码：值语义箱按名义族算（细分码 6），其余用细分码。
-;  注意  细分码只覆盖计数族，值语义箱的细分码是 0；直接查会把它当成不需要留份。
-retainKindOf|func(pool: IrTypePool, typeId: I32,) -> (I32,): ; 答族码：值语义箱折成 6，其余是细分码；0 即不动作
-    if irShareClassOf(pool = pool, typeId = typeId) == 3:
-        return 6
-    return irShareKindOf(pool = pool, typeId = typeId) ; 细分码只对计数族有值，值语义箱已在上一步接住
-
 ; 归还一个已具名的值：名义箱先走逐类型胶水，归还其字段后再还箱本身。
-;  注意  值语义箱的细分码是 0，须按份额类别认；只看细分码会把它整族漏掉。
+;  注意  值语义箱按名义族记账；按细分码认会把它整族漏掉。
 releaseValue|func(ctx: BodyCtx, module: IrModule, name: String, typeId: I32,) -> (BodyCtx,):
     var out = ctx
     if len(name) == 0:
         return out
-    let classTag = irShareClassOf(pool = module.types, typeId = typeId)
-    let kind = irShareKindOf(pool = module.types, typeId = typeId) ; 值语义箱在此答 0；少了上一行的类别判定就漏还整族
-    if classTag == 3 || kind == 6 || kind == 7:
+    let family = irRetainFamilyOf(pool = module.types, typeId = typeId) ; 族码已含值语义箱；细分码答 0 会漏还整族
+    if family == 3:
         ; 没有声明条目的名义类型发不出胶水，退回只还箱体：漏字段，但不会引用未定义符号。
         if releaseGlueExists(module = module, typeId = typeId):
             let glue = releaseGlueName(typeId = typeId)
@@ -170,7 +161,7 @@ releaseValue|func(ctx: BodyCtx, module: IrModule, name: String, typeId: I32,) ->
         useExtern(use = out.externs, name = "bk_nominal_release")
         appendLine(sink = out.lines, text = "  call i32 @bk_nominal_release(ptr " + name + ")")
         return out
-    let symbol = releaseSymbolOf(kind = kind)
+    let symbol = releaseSymbolOf(family = family)
     if len(symbol) == 0:
         return out
     useExtern(use = out.externs, name = symbol)
@@ -216,12 +207,12 @@ adoptValue|func(ctx: BodyCtx, module: IrModule, name: String, typeId: I32, adopt
     var out = ctx
     if adopt == 0 || len(name) == 0:
         return out
-    let kind = retainKindOf(pool = module.types, typeId = typeId) ; 已把值语义箱折进名义族；直查细分码则它从不留份
-    if kind == 2:
+    let family = irRetainFamilyOf(pool = module.types, typeId = typeId) ; 族码已含值语义箱；细分码答 0 则它从不留份
+    if family == 0:
         return out
     if adopt == 1 && isHeld(ctx = out, name = name):
         return forgetShare(ctx = out, name = name)
-    let symbol = retainSymbolOf(kind = kind)
+    let symbol = retainSymbolOf(family = family)
     if len(symbol) == 0:
         return out
     useExtern(use = out.externs, name = symbol)
@@ -2640,17 +2631,15 @@ releaseGlueName|func(typeId: I32,) -> (String,):
 ; 字段归还：按字段类型选入口，名义与枚举字段递归走它自己的胶水。
 appendReleaseCall|func(lines: Array<String>, module: IrModule, name: String, typeId: I32,) -> (Array<String>,):
     var out = lines
-    let classTag = irShareClassOf(pool = module.types, typeId = typeId)
-    let kind = irShareKindOf(pool = module.types, typeId = typeId) ; 值语义箱在此答 0；少了上一行的类别判定就漏还整族
-    if classTag == 3 || kind == 6 || kind == 7:
+    let family = irRetainFamilyOf(pool = module.types, typeId = typeId) ; 族码已含值语义箱；细分码答 0 会漏还整族
+    if family == 3:
         if releaseGlueExists(module = module, typeId = typeId):
             return out.append("  call void @" + releaseGlueName(typeId = typeId) + "(ptr " + name + ")")
         return out.append("  call i32 @bk_nominal_release(ptr " + name + ")")
-    if kind == 1:
-        return out.append("  call void @bk_str_release(ptr " + name + ")")
-    if kind == 3 || kind == 4 || kind == 5 || kind == 8:
+    let symbol = releaseSymbolOf(family = family)
+    if len(symbol) > 0:
         ; 容器字段与变量槽同一套账：进来时留了一份，箱归零时还掉；入参对空句柄是空操作。
-        return out.append("  call void @bk_handle_release(ptr " + name + ")")
+        return out.append("  call void @" + symbol + "(ptr " + name + ")")
     return out
 
 ; 结构体胶水：空箱直接返回；计数归零才逐字段归还，再放开箱体。
@@ -2801,21 +2790,19 @@ appendCopyField|func(lines: Array<String>, module: IrModule, agg: String, fieldT
     out = out.append("  %sf" + countText(index) + " = getelementptr " + agg + ", ptr %src, i32 0, i32 " + countText(at))
     out = out.append("  %sv" + countText(index) + " = load " + typeName + ", ptr %sf" + countText(index))
     var kept = "%sv" + countText(index)
-    ;  注意  按份额类别判，不按细分码：值语义箱的细分码是 0，按细分码判会把它当成不需要动。
+    ;  注意  值语义箱按类别认，按细分码认会把它当成不需要动。
     let classTag = irShareClassOf(pool = module.types, typeId = fieldType)
     if classTag == 3 && copyGlueExists(module = module, typeId = fieldType):
         out = out.append("  %sc" + countText(index) + " = call ptr @" + copyGlueName(typeId = fieldType) + "(ptr %sv" + countText(index) + ")")
         kept = "%sc" + countText(index)
-    if classTag == 3 && kept == "%sv" + countText(index):
-        out = out.append("  call void @bk_nominal_retain(ptr %sv" + countText(index) + ")")
-    if classTag == 4:
-        let kind = irShareKindOf(pool = module.types, typeId = fieldType) ; 已确认类别 4 才查细分；对着别的族查会拷成共享
-        if kind == 6 || kind == 7:
+    let family = irRetainFamilyOf(pool = module.types, typeId = fieldType) ; 族码含值语义箱；细分码答 0 会漏留份
+    if family == 3:
+        if kept == "%sv" + countText(index):
             out = out.append("  call void @bk_nominal_retain(ptr %sv" + countText(index) + ")")
-        if kind == 1:
-            out = out.append("  call void @bk_str_retain(ptr %sv" + countText(index) + ")")
-        if kind == 3 || kind == 4 || kind == 5 || kind == 8:
-            out = out.append("  call void @bk_handle_retain(ptr %sv" + countText(index) + ")")
+    if family != 3:
+        let symbol = retainSymbolOf(family = family)
+        if len(symbol) > 0:
+            out = out.append("  call void @" + symbol + "(ptr %sv" + countText(index) + ")")
     out = out.append("  %df" + countText(index) + " = getelementptr " + agg + ", ptr %dst, i32 0, i32 " + countText(at))
     out = out.append("  store " + typeName + " " + kept + ", ptr %df" + countText(index))
     return out

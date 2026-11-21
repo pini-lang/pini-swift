@@ -129,8 +129,8 @@ irShareClassOf|func(pool: IrTypePool, typeId: I32,) -> (I32,): ; 四族唯一判
         return 2
     return 1
 
-; 细分判定：只有计数族有细分，其余答 0。
-irShareKindOf|func(pool: IrTypePool, typeId: I32,) -> (I32,): ; 只对计数族有值，其余族答 0；拿它判握份额会整族漏份额
+; 细分判定：只有计数族有细分，其余答 0；下划线名字不出包，跨包只认族码与类别。
+_irShareKindOf|func(pool: IrTypePool, typeId: I32,) -> (I32,): ; 只对计数族有值，其余族答 0；拿它判握份额会整族漏份额
     if irShareClassOf(pool = pool, typeId = typeId) != 4:
         return 0 ; 非计数族到这里一律答 0，调用点据此静默不动作，份额就漏了
     let entry = irTypeAt(pool = pool, id = typeId)
@@ -150,6 +150,26 @@ irShareKindOf|func(pool: IrTypePool, typeId: I32,) -> (I32,): ; 只对计数族�
     if tag == irTypeTag(.irTypeLazyRef):
         return 8
     return 6
+
+; 留份族码：后端选留份与归还入口的唯一依据，细分码不出包。
+; 0 不动作 · 1 串 · 2 容器句柄 · 3 名义箱（值语义箱按名义族记账）。
+;  注意  值语义箱的细分码是 0，按细分码算会把它判成不动作；本函数先看类别再看细分。
+irRetainFamilyOf|func(pool: IrTypePool, typeId: I32,) -> (I32,):
+    let classTag = irShareClassOf(pool = pool, typeId = typeId)
+    if classTag == 3:
+        return 3
+    if classTag != 4:
+        return 0
+    let kind = _irShareKindOf(pool = pool, typeId = typeId)
+    if kind == 1:
+        return 1
+    if kind == 2:
+        return 0
+    if kind == 6 || kind == 7:
+        return 3
+    if kind == 3 || kind == 4 || kind == 5 || kind == 8:
+        return 2
+    return 0
 
 ; 整块是否握份额：可选、结果取包装分量，元组看有没有计数成员，函数值恒无。
 irAggregateHoldsShare|func(pool: IrTypePool, typeId: I32,) -> (Bool,):
@@ -232,7 +252,9 @@ irShareEffectOf|func(pool: IrTypePool, nodes: IrNodePool, nodeId: I32,) -> (I32,
 
 ; 下标读的效果：数组元素是借用；字符串下标当场造一个字符，那是新份额。
 subscriptEffect|func(pool: IrTypePool, nodes: IrNodePool, node: IrNode,) -> (I32,):
-    if irShareKindOf(pool = pool, typeId = node.typeId) != 2: ; 判类型身份（字符）；按握份额判会让每次字符读都多留一份
+    if node.typeId < 0 || node.typeId >= irTypeCount(pool):
+        return 2
+    if irTypeTag(irTypeAt(pool = pool, id = node.typeId).kind) != irTypeTag(.irTypeChar): ; 判类型身份（字符）；按握份额判会让每次字符读都多留一份
         return 2
     if len(node.kids) == 0:
         return 2
