@@ -1331,7 +1331,7 @@ _backend_kit = "../../backend-kit"
     module.functions = module.functions.append(fn)
     let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
     assert(!result.failed, "别名绑定模块应发得出来")
-    assert(发射含子串(text = result.text, needle = "define ptr @__copy_box_" + countText(boxType.id) + "(ptr %src)"), "值语义结构体应出拷贝胶水")
-    assert(发射含子串(text = result.text, needle = "call ptr @__copy_box_" + countText(boxType.id) + "(ptr "), "别名落槽要走拷贝")
-    assert(!发射含子串(text = result.text, needle = "__copy_box_" + countText(refType.id)), "对象是引用语义，不出拷贝胶水")
+    assert(发射含子串(text = result.text, needle = "define ptr @__copy_box_\(boxType.id)(ptr %src)"), "值语义结构体应出拷贝胶水")
+    assert(发射含子串(text = result.text, needle = "call ptr @__copy_box_\(boxType.id)(ptr "), "别名落槽要走拷贝")
+    assert(!发射含子串(text = result.text, needle = "__copy_box_\(refType.id)"), "对象是引用语义，不出拷贝胶水")
     return
