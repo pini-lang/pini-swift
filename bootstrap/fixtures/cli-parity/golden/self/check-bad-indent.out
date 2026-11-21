@@ -1,0 +1,8 @@
+./bootstrap/fixtures/cli-parity/inputs/indent.pini:4:5: 语法错误 [E2-006] 无效的表达式，实际得到indent
+  主标签 4:5-4:5 无效的表达式，实际得到indent
+./bootstrap/fixtures/cli-parity/inputs/indent.pini:6:1: 语法错误 [E2-005] 无效的顶级声明
+  主标签 6:1-6:1 无效的顶级声明
+./bootstrap/fixtures/cli-parity/inputs/indent.pini:6:1: 语法错误 [E2-005] 无效的顶级声明
+  主标签 6:1-6:1 无效的顶级声明
+
+workspace-check-failed 3

@@ -1,0 +1,25 @@
+4:1 identifier main
+4:5 pipe |
+4:6 keyword func
+4:10 leftParen (
+4:11 rightParen )
+4:13 arrow ->
+4:16 leftParen (
+4:17 rightParen )
+4:18 colon :
+4:19 newline \n
+5:1 indent →
+5:5 identifier print
+5:10 leftParen (
+5:11 string "Hello, World!"
+5:26 rightParen )
+5:27 newline \n
+6:5 identifier print
+6:10 leftParen (
+6:11 string "欢迎使用Pini语言"
+6:23 rightParen )
+6:24 newline \n
+7:5 keyword return
+7:11 newline \n
+8:1 dedent ←
+8:1 eof 

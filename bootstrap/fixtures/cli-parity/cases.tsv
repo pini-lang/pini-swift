@@ -1,0 +1,14 @@
+# 对照夹具清单：每条用例一行，参数按空白切分，<ROOT> 在运行时换成仓库根。
+# 「自举」= 在 / 缺；「期望」= 三位签名，依次为退出码、首条诊断、全文的比对结果。
+# 签名只能变好：某位由「异」转「同」或换词，都必须改这一列，门禁会红。
+用例	命令	参数	自举	期望	说明
+check-file	check	examples/hello.pini	在	同同异	单文件通过
+check-file-abs	check	<ROOT>/examples/hello.pini	在	同同异	绝对路径通过，输出回显输入写法
+check-pkg	check	bootstrap/fixtures/test-basic/pkg	在	同同异	包目录通过
+check-ws	check	bootstrap/fixtures/test-basic	在	同同异	工作区根通过，宿主回显绝对路径
+check-bad-name	check	bootstrap/fixtures/cli-parity/inputs/undefined.pini	在	同同异	语义错误 E3-001，码与区间相同
+check-bad-syntax	check	bootstrap/fixtures/cli-parity/inputs/unclosed.pini	在	同同异	语法错误 E2-001，码与区间相同
+check-bad-indent	check	bootstrap/fixtures/cli-parity/inputs/indent.pini	在	同异异	语法错误 E2-006，区间与级联不同
+check-missing	check	bootstrap/fixtures/cli-parity/inputs/nope.pini	在	同异异	缺件：宿主只报路径不存在
+version	version	-	缺	---	自举无此命令
+tokens	tokens	examples/hello.pini	缺	---	自举无此命令

@@ -23,6 +23,12 @@ if ! python3 "$root/bootstrap/tools/parity.py" --check > /dev/null; then
     exit 1
 fi
 
+# 命令行对照：同一批用例两侧各跑一遍，按侧比期望并核对读数表；缺命令只登记不判红。
+if ! python3 "$root/bootstrap/tools/cli-parity.py" > /dev/null; then
+    echo " 行不通  [测试自检] 命令行对照夹具未通过" >&2
+    exit 1
+fi
+
 pini="${PINI_BOOTSTRAP_BIN:-$root/bootstrap/.build/debug/bin/pini-bootstrap}"
 clang_bin="$(command -v clang || true)"
 if [ ! -x "$pini" ] || [ -z "$clang_bin" ]; then
@@ -479,5 +485,5 @@ fi
 if [ "$fail" -ne 0 ]; then
     exit 1
 fi
-echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入，浮点常量走位模式，接口缓存按记录判失效，逐包产物按包发射且合并可链接，缓存按拓扑与内容判复用，分波按依赖深度，共享缓存按指纹复用"
+echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入，浮点常量走位模式，接口缓存按记录判失效，逐包产物按包发射且合并可链接，缓存按拓扑与内容判复用，分波按依赖深度，共享缓存按指纹复用，命令对照按签名锁定"
 exit 0

@@ -1,0 +1,14 @@
+# 对照夹具读数：每条用例两侧的退出码、首条诊断与全文比对。
+# 「签名」三位依次为退出码 / 首条诊断 / 全文；诊断比码、行列与条数，全文按归一后逐字节比。
+# 由 bootstrap/tools/cli-parity.py --bless 生成，勿手改；签名只许变好。
+用例	命令	自举	宿主rc	自举rc	宿主码	自举码	码数	签名	状态
+check-file	check	在	0	0	-	-	0/0	同同异	异:文
+check-file-abs	check	在	0	0	-	-	0/0	同同异	异:文
+check-pkg	check	在	0	0	-	-	0/0	同同异	异:文
+check-ws	check	在	0	0	-	-	0/0	同同异	异:文
+check-bad-name	check	在	1	1	E3-001@3:11	E3-001@3:11	1/1	同同异	异:文
+check-bad-syntax	check	在	1	1	E2-001@4:5	E2-001@4:5	1/1	同同异	异:文
+check-bad-indent	check	在	1	1	E2-006@4:1	E2-006@4:5	2/3	同异异	异:码,文
+check-missing	check	在	1	1	-	E3-011	0/1	同异异	异:码,文
+version	version	缺	-	-	-	-	-	---	缺:命令
+tokens	tokens	缺	-	-	-	-	-	---	缺:命令
