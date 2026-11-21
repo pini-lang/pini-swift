@@ -2590,8 +2590,9 @@ appendReleaseCall|func(lines: Array<String>, module: IrModule, name: String, typ
     ; 这一格是已知泄漏，等字段级共享判定落定再补；宁漏不悬垂。
     return out
 
-; 结构体胶水：逐字段归还后还箱本身。
+; 结构体胶水：空箱直接返回，其余逐字段归还后还箱本身。
 ;  行不通  只调 bk_nominal_release：它只回收箱体，字段里的串与容器会随箱一起变成孤儿。
+;  不变量  函数出口统一归还全部槽，未赋值的格就是空指针；胶水入口不判空即当场解引用空箱。
 appendFieldGlue|func(lines: Array<String>, module: IrModule, typeId: I32,) -> (Array<String>,):
     var out = lines
     let decl = declAt(table = module.decls, typeId = typeId)
@@ -2600,6 +2601,9 @@ appendFieldGlue|func(lines: Array<String>, module: IrModule, typeId: I32,) -> (A
         return out
     out = out.append("define void @" + releaseGlueName(typeId = typeId) + "(ptr %box) {")
     out = out.append("entry:")
+    out = out.append("  %isnull = icmp eq ptr %box, null")
+    out = out.append("  br i1 %isnull, label %skip, label %fields")
+    out = out.append("fields:")
     var i = 0
     while i < len(decl.fields):
         let fieldType = decl.fields[i].typeId
@@ -2612,11 +2616,14 @@ appendFieldGlue|func(lines: Array<String>, module: IrModule, typeId: I32,) -> (A
         i = i + 1
     out = out.append("  %rc = call i32 @bk_nominal_release(ptr %box)")
     out = out.append("  ret void")
+    out = out.append("skip:")
+    out = out.append("  ret void")
     out = out.append("}")
     return out
 
-; 枚举胶水：按标签分派，只还当前用例的载荷。
+; 枚举胶水：空箱直接返回，其余按标签分派，只还当前用例的载荷。
 ; 载荷格按最宽用例定型，故只归还类型与之逐格相同的用例；类型不同的用例宁可不还，不按别的形状读同一格。
+;  不变量  函数出口统一归还全部槽，未赋值的格就是空指针；标签读在解引用前必须让空箱走旁路。
 appendEnumGlue|func(lines: Array<String>, module: IrModule, typeId: I32,) -> (Array<String>,):
     var out = lines
     let decl = declAt(table = module.decls, typeId = typeId)
@@ -2635,6 +2642,9 @@ appendEnumGlue|func(lines: Array<String>, module: IrModule, typeId: I32,) -> (Ar
         c = c + 1
     out = out.append("define void @" + releaseGlueName(typeId = typeId) + "(ptr %box) {")
     out = out.append("entry:")
+    out = out.append("  %isnull = icmp eq ptr %box, null")
+    out = out.append("  br i1 %isnull, label %done, label %live")
+    out = out.append("live:")
     out = out.append("  %tagp = getelementptr " + agg + ", ptr %box, i32 0, i32 " + countText(module.slots.headSlots))
     out = out.append("  %tag = load i32, ptr %tagp")
     if len(可还用例) > 0:
