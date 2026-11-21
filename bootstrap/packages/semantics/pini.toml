@@ -2,6 +2,7 @@
 name = "semantics"
 
 [require]
+support = "*"
 unicode = "*"
 syntax = "*"
 module_loader = "*"

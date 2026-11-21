@@ -2,6 +2,7 @@
 name = "ir"
 
 [require]
+support = "*"
 syntax = "*"
 semantics = "*"
 unicode = "*"

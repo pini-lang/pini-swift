@@ -322,7 +322,10 @@ emitModule|func(entry: BackendEntry, target: TargetProfile, module: IrModule,) -
         i = i + 1
     emitFunctions(sink = sink, module = module, entry = entry, target = target, testMode = false, bundle = bundle, owned = [], onlyOwned = false)
     emitTaskBodies(sink = sink, bundle = bundle)
+    ; 导出给定块的槽与适配函数先登记，取址点才指向已声明的符号。
+    prepareExportGivens(module = module, bundle = bundle)
     emitGivenDefs(sink = sink, bundle = bundle)
+    emitExportStubs(sink = sink, module = module, bundle = bundle)
     emitLazyWrappers(sink = sink, bundle = bundle)
     emitExterns(sink = sink, bundle = bundle, module = module)
     emitConstants(sink = sink, extra = [], bundle = bundle)

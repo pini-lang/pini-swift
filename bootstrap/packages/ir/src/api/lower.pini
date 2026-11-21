@@ -71,6 +71,8 @@ decls: IrDeclTable = IrDeclTable()
 slots: IrSlotTable = IrSlotTable()
 externData: Array<IrExternData> = []
 externs: Array<IrExternFunction> = []
+; C 面：`|c` 条目的落地形态；没有导出面时块名为空。
+cSurface: IrExportBlock = IrExportBlock()
 errors: Array<LowerError> = []
 typeErrors: Array<LowerError> = []
 
@@ -321,6 +323,7 @@ lowerWorkspace|func(input: LowerWorld,) -> (IrModule,):
     out.slots = state.slots
     out.externData = state.externData
     out.externs = state.externs
+    out.cSurface = makeExportBlock(world = input.world, functions = state.functions, decls = state.decls)
     out.errors = state.errors
     out.typeErrors = state.map.errors
     return out

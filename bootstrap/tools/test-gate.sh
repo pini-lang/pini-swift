@@ -482,8 +482,66 @@ else
         fail=1
     fi
 fi
+# 导出面：`|c` 条目出 C 入口与两个生命周期符号，判据在链接后的符号表，不在文本。
+export_fixture="$root/bootstrap/fixtures/export-c"
+export_ll="$work/export-c.ll"
+export_lib="$work/libcalc.dylib"
+if ! "$pini" emit "$export_fixture" 2>/dev/null | tail -n +3 > "$export_ll"; then
+    echo " 行不通  [测试自检] 导出面夹具发射失败" >&2
+    fail=1
+fi
+if ! "$clang_bin" -shared -o "$export_lib" "$export_ll" -L"$runtime_dir" -lPiniRuntime \
+    -Wl,-rpath,"$runtime_dir" >/dev/null 2>&1; then
+    echo " 行不通  [测试自检] 导出面夹具链接失败" >&2
+    fail=1
+fi
+# 符号表读法按平台归一：Darwin 的 nm 名字带下划线前缀，GNU nm 用 --defined-only 且不带。
+has_export() {
+    nm -g --defined-only "$1" 2>/dev/null | awk '{print $NF}' | grep -qx -e "$2" -e "_$2"
+}
+for symbol in calc_add calc_len calc_cfg_get calc_init calc_shutdown; do
+    if ! has_export "$export_lib" "$symbol"; then
+        echo " 行不通  [测试自检] 导出符号缺 $symbol" >&2
+        fail=1
+    fi
+done
+
+# 导出面负例：方法不可发布，检查须报导出面码；夹具在构建目录里现造，不留源码树。
+bad_dir="$work/export-bad"
+rm -rf "$bad_dir"
+mkdir -p "$bad_dir/pkg/src/api"
+cat > "$bad_dir/pini.toml" <<'TOML'
+[workspace]
+members = ["pkg"]
+profile = "debug"
+TOML
+cat > "$bad_dir/pkg/pini.toml" <<'TOML'
+[package]
+name = "pkg"
+
+[lib]
+name = "pkg"
+entry = "src/api"
+TOML
+cat > "$bad_dir/pkg/src/api/calc.pini" <<'PINI'
+(点)
+x: I32 = 0
+
+((点))
+取|self() -> (I32,):
+    return 1
+
+[calc|export]
+取|c = 取
+PINI
+bad_report="$("$pini" check "$bad_dir" 2>&1)"
+if ! echo "$bad_report" | grep -q "E4-026"; then
+    echo " 行不通  [测试自检] 导出面负例应报 E4-026：$bad_report" >&2
+    fail=1
+fi
+
 if [ "$fail" -ne 0 ]; then
     exit 1
 fi
-echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入，浮点常量走位模式，接口缓存按记录判失效，逐包产物按包发射且合并可链接，缓存按拓扑与内容判复用，分波按依赖深度，共享缓存按指纹复用，命令对照按签名锁定"
+echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入，浮点常量走位模式，接口缓存按记录判失效，逐包产物按包发射且合并可链接，缓存按拓扑与内容判复用，分波按依赖深度，共享缓存按指纹复用，命令对照按签名锁定，导出面按符号表核对"
 exit 0

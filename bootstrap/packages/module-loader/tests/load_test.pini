@@ -114,7 +114,8 @@ packageIndex|func(plan: BuildPlan, name: String,) -> (I32,):
 ; 单文件装载：一个文件自成一组，单元路径就是调用方给的写法，诊断因此与输入一致。
 ; 组名取文件名去后缀，包图里只有一个包，import 别的包不成立。
 单文件自成一组|test() -> ():
-    let 路径 = "./fixtures/build-script/pkg/src/api/main.pini"
+    ; 夹具按包根定位，不依赖进程工作目录：两条通道的 cwd 不同，`./` 只在工作区模式成立。
+    let 路径 = moduleRoot() + "/../../fixtures/build-script/pkg/src/api/main.pini"
     let ws = loadFileGrouped(path = 路径, stdlib = stdlibOff())
     assert(len(ws.packages) == 1, "单文件只出一组")
     assert(ws.packages[0].name == "main", "组名取文件名去后缀")

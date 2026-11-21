@@ -14,6 +14,9 @@ public final class ModuleDependencyLoader: @unchecked Sendable {
         public let publicSymbols: Set<String>
         /// 全部顶级符号名（含非 public，供诊断）
         public let allSymbols: Set<String>
+        /// public 枚举用例名集：跨模块的裸 `.用例` 只按名字判归属，父枚举与可见性在声明侧定，
+        /// 故这里与 `publicSymbols` 分开存——用例名不与声明名共用命名空间。
+        public let caseNames: Set<String>
     }
 
     public static let shared = ModuleDependencyLoader()
@@ -98,6 +101,7 @@ public final class ModuleDependencyLoader: @unchecked Sendable {
         var moduleImports: [ImportDecl] = []
         var allSymbols: Set<String> = []
         var publicSymbols: Set<String> = []
+        var caseNames: Set<String> = []
         for unit in units {
             let module = unit.module
             // 可见性按**相对模块根**的路径判定（`VisibilityLevel.forSymbol` 看的是
@@ -112,6 +116,14 @@ public final class ModuleDependencyLoader: @unchecked Sendable {
                     allSymbols.insert(name)
                     if level == .public { publicSymbols.insert(name) }
                 }
+                // 用例可见性取父枚举与自身名两处的较严者，与包级索引同一口径。
+                if case .enumDecl(let e) = decl {
+                    let parentLevel = VisibilityLevel.forSymbol(name: e.name, fileName: rel)
+                    for ec in e.cases {
+                        let level = min(parentLevel, VisibilityLevel.forSymbol(name: ec.name, fileName: rel))
+                        if level == .public { caseNames.insert(ec.name) }
+                    }
+                }
             }
         }
         let loaded = LoadedModule(
@@ -119,7 +131,8 @@ public final class ModuleDependencyLoader: @unchecked Sendable {
             imports: moduleImports,
             declarations: declarations,
             publicSymbols: publicSymbols,
-            allSymbols: allSymbols
+            allSymbols: allSymbols,
+            caseNames: caseNames
         )
         // 递归预载依赖（先于缓存写入：全图环检测覆盖）
         for imp in moduleImports {

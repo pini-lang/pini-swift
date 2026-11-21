@@ -45,6 +45,9 @@ public final class SemanticAnalyzer {
     /// some/none）。与前导点解析配套——`.name` 只要求名字是某枚举的用例，不受本地位
     /// 遮蔽影响（前导点已声明成员归属，期望类型决议在类型层完成）。
     private var enumCaseNames: Set<String> = ["some", "none"]
+    /// 隐式导入（`_别名`）带来的 public 枚举用例名：`.用例` 的归属在声明侧已定，
+    /// 本单元只需要「这个名字存在」这一关，故与本地用例名分开放，不并进 `enumCaseNames`。
+    private var importedCaseNames: Set<String> = []
 
     /// H-1 capture 校验上下文栈：每个活跃匿名函数字面量一层
     ///（boundary = 字面量体作用域边界；captured = 已先行声明的捕获名集合）。
@@ -105,10 +108,13 @@ public final class SemanticAnalyzer {
         usedSymbols = []
         // 登记 import 别名（加载被引入模块，R1 边界 + R2 禁环由加载器负责）
         importAliasInfos = [:]
+        importedCaseNames = []
         for imp in module.imports {
             let dir = (imp.location.fileName as NSString).deletingLastPathComponent
             let loaded = try ModuleDependencyLoader.shared.load(packagePath: imp.packagePath, relativeTo: dir)
             importAliasInfos[imp.alias] = (loaded.publicSymbols, loaded.allSymbols)
+            // 裸 `.用例` 只在 `_别名` 下进裸名空间；普通别名走限定访问，不进这一关。
+            if imp.alias.hasPrefix("_") { importedCaseNames.formUnion(loaded.caseNames) }
         }
 
         try setupInjections(for: module)
@@ -169,10 +175,12 @@ public final class SemanticAnalyzer {
             packageContext = (index: index, currentFileName: unit.fileName)
             defer { packageContext = nil }
             importAliasInfos = [:]
+            importedCaseNames = []
             for imp in unit.module.imports {
                 let dir = (imp.location.fileName as NSString).deletingLastPathComponent
                 let loaded = try ModuleDependencyLoader.shared.load(packagePath: imp.packagePath, relativeTo: dir)
                 importAliasInfos[imp.alias] = (loaded.publicSymbols, loaded.allSymbols)
+                if imp.alias.hasPrefix("_") { importedCaseNames.formUnion(loaded.caseNames) }
             }
             try setupInjections(for: unit.module)
             defer { teardownInjections() }
@@ -338,6 +346,7 @@ public final class SemanticAnalyzer {
 
     /// 包级用例判定：跨文件的用例声明在包索引里，按可见性与种类两关确认。
     private func packageDeclaresCase(_ name: String) -> Bool {
+        if importedCaseNames.contains(name) { return true }
         guard let ctx = packageContext, let entry = ctx.index.lookup(name) else { return false }
         return entry.kind == .enumCase && entry.isVisible(from: ctx.currentFileName)
     }
@@ -387,11 +396,13 @@ public final class SemanticAnalyzer {
         usedSymbols = []
         var errors: [SemanticError] = []
         // 登记 import 别名（与 analyze(module:) 同规则）；加载失败收集为诊断
+        importedCaseNames = []
         for imp in module.imports {
             let dir = (imp.location.fileName as NSString).deletingLastPathComponent
             do {
                 let loaded = try ModuleDependencyLoader.shared.load(packagePath: imp.packagePath, relativeTo: dir)
                 importAliasInfos[imp.alias] = (loaded.publicSymbols, loaded.allSymbols)
+                if imp.alias.hasPrefix("_") { importedCaseNames.formUnion(loaded.caseNames) }
             } catch let e as SemanticError {
                 errors.append(e)
             } catch {

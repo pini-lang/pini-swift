@@ -1,0 +1,67 @@
+[export_surface_test|import]
+_syntax = "../../syntax"
+_module_loader = "../../module-loader"
+
+; 导出面检查：只认本模块自由函数与给定块，名字转写与类型准入各走一条判据。
+; 期望值手写：错误类别与相关名字，位置不参与这几条判据。
+
+; 造世界：单文件样例，注册与类型解析都走正式入口。
+造世界|func(_src: String,) -> (MemberWorld,):
+    let loaded = loadUnit(path = "pkg/src/api/calc.pini", text = _src)
+    assert(!loaded.failed, "样例应可加载")
+    var units: Array<CompilationUnit> = []
+    units = units.append(loaded.unit)
+    let table = registerPackage(units)
+    let types = resolvePackage(units = units, table = table)
+    return makeMemberWorld(units = units, table = table, types = types)
+
+; 错误串：类别与相关名字拼成一行，用于整串比对。
+错误串|func(_check: ExportCheck,) -> (String,):
+    var out = ""
+    var i = 0
+    while i < len(_check.errors):
+        if i > 0:
+            out = out + ";"
+        out = out + exportErrorName(_check.errors[i].kind) + ":" + _check.errors[i].name
+        i = i + 1
+    return out
+
+; 方法不进 C 面：右端不是顶层符号，按目标不可发布报。
+方法不可导出|test() -> ():
+    let world = 造世界("(点)\nx: I32 = 0\n\n((点))\n取|self() -> (I32,):\n    return 1\n\n[calc|export]\n取|c = 取\n")
+    let check = checkExportSurface(world = world)
+    assert(len(check.errors) == 1, "应报一条，实得 " + 错误串(check))
+    assert(isExportError(error = check.errors[0], kind = .exportTargetUnknown), "实得 " + 错误串(check))
+    return
+
+; 串只在形参位成立：返回位写 String 即拒。
+串不能作返回|test() -> ():
+    let world = 造世界("[calc|export]\n取|c = 取\n\n取|func() -> (String,):\n    return \"x\"\n")
+    let check = checkExportSurface(world = world)
+    assert(len(check.errors) == 1, "应报一条，实得 " + 错误串(check))
+    assert(isExportError(error = check.errors[0], kind = .exportTypeRejected), "实得 " + 错误串(check))
+    return
+
+; 两条转写后同名：第二个条目按名字重复报。
+同名条目|test() -> ():
+    let world = 造世界("[calc|export]\n取|c = 取\n取|c = 取\n\n取|func() -> (I32,):\n    return 1\n")
+    let check = checkExportSurface(world = world)
+    assert(len(check.errors) == 1, "应报一条，实得 " + 错误串(check))
+    assert(isExportError(error = check.errors[0], kind = .exportNameCollision), "实得 " + 错误串(check))
+    return
+
+; 一个模块只出一个 C 面：第二个带 `|c` 的文件按重复报。
+两个C面|test() -> ():
+    let first = loadUnit(path = "pkg/src/api/calc.pini", text = "[calc|export]\n甲|c = 一\n\n一|func() -> (I32,):\n    return 1\n")
+    let second = loadUnit(path = "pkg/src/api/oth.pini", text = "[oth|export]\n乙|c = 二\n\n二|func() -> (I32,):\n    return 2\n")
+    assert(!first.failed && !second.failed, "样例应可加载")
+    var units: Array<CompilationUnit> = []
+    units = units.append(first.unit)
+    units = units.append(second.unit)
+    let table = registerPackage(units)
+    let types = resolvePackage(units = units, table = table)
+    let world = makeMemberWorld(units = units, table = table, types = types)
+    let check = checkExportSurface(world = world)
+    assert(len(check.errors) == 1, "应报一条，实得 " + 错误串(check))
+    assert(isExportError(error = check.errors[0], kind = .exportSurfaceDuplicated), "实得 " + 错误串(check))
+    return
