@@ -39,7 +39,7 @@
     assert(读回.entries[0].source == "src-app", "源码摘要往返")
     assert(读回.entries[0].deps[0].name == "support" && 读回.entries[0].deps[0].hash == "bb", "依赖往返")
     assert(len(读回.entries[1].deps) == 0, "空依赖读回空表")
-    assert(ledgerText(读回) == 文本 && 文本 == ledgerText(记录), "两次渲染逐字相同")
+    assert(ledgerText(界面造记录(entries = 读回.entries)) == 文本 && 文本 == ledgerText(记录), "两次渲染逐字相同")
     return
 
 ; 重复包名：同一条目出现两次，解析报一条重复键错误，条目只收第一份。
@@ -47,7 +47,7 @@
     let 记录 = 界面造记录(entries = [界面造条目(name = "app", hash = "aa", deps = 界面空依赖()), 界面造条目(name = "app", hash = "bb", deps = 界面空依赖())])
     let 读回 = parseLedger(text = ledgerText(记录), path = "interfaces.toml")
     assert(len(读回.errors) == 1, "应报一条重复包名")
-    assert(manifestErrorKindName(_kind = 读回.errors[0].kind) == "同一表内重复键", "错误类别是重复键")
+    assert(manifestErrorKindName(读回.errors[0].kind) == "同一表内重复键", "错误类别是重复键")
     assert(len(读回.entries) == 1, "条目只收第一份")
     return
 

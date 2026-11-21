@@ -1,5 +1,5 @@
 [digest_test|import]
-_package = "../../../package"
+_package = "../../package"
 
 ; 助手：一条依赖摘要；指纹只认名字与摘要。
 构建造依赖|func(name: String, hash: String,) -> (InterfaceDep,):

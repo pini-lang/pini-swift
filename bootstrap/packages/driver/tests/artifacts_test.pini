@@ -1,5 +1,5 @@
 [artifacts_test|import]
-_package = "../../../package"
+_package = "../../package"
 
 ; 助手：一条接口条目，只填名字与摘要。
 产物造接口|func(name: String, hash: String,) -> (InterfaceEntry,):

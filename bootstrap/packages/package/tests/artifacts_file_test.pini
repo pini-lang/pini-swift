@@ -39,7 +39,7 @@
     assert(读回.entries[0].input == "in-app", "输入指纹往返")
     assert(读回.entries[0].deps[0].name == "support" && 读回.entries[0].deps[0].hash == "bb", "依赖往返")
     assert(len(读回.entries[1].deps) == 0, "空依赖读回空表")
-    assert(artifactLedgerText(读回) == 文本 && 文本 == artifactLedgerText(记录), "两次渲染逐字相同")
+    assert(artifactLedgerText(产物造记录(entries = 读回.entries)) == 文本 && 文本 == artifactLedgerText(记录), "两次渲染逐字相同")
     return
 
 ; 重复包名：同一条目出现两次，解析报一条重复键错误，条目只收第一份。
@@ -47,7 +47,7 @@
     let 记录 = 产物造记录(entries = [产物造条目(name = "app", hash = "aa", deps = 产物空依赖()), 产物造条目(name = "app", hash = "bb", deps = 产物空依赖())])
     let 读回 = parseArtifactLedger(text = artifactLedgerText(记录), path = "artifacts.toml")
     assert(len(读回.errors) == 1, "应报一条重复包名")
-    assert(manifestErrorKindName(_kind = 读回.errors[0].kind) == "同一表内重复键", "错误类别是重复键")
+    assert(manifestErrorKindName(读回.errors[0].kind) == "同一表内重复键", "错误类别是重复键")
     assert(len(读回.entries) == 1, "条目只收第一份")
     return
 

@@ -813,7 +813,7 @@ defer单行|test() -> ():
     assert(ast.isExpr(id = 调用, kind = .exprGeneric), "调用点记为泛型应用")
     assert(len(ast.exprAt(调用).kids) == 2, "两个值实参")
     let 类型 = ast.typeAt(ast.exprAt(调用).typeId)
-    assert(类型.kind == kindTag(.typeGeneric), "类型位是泛型类型")
+    assert(类型.kind == typeKindTag(.typeGeneric), "类型位是泛型类型")
     assert(len(类型.kids) == 2, "两个类型实参")
     return
 

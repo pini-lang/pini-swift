@@ -1847,6 +1847,16 @@ func runCheckPath(_ path: String, withStdlib: Bool = true) {
     }
 
     // —— 目录 ——
+    // 工作区根先于单包判定：根清单本身是检查单位，按拓扑序逐包检查并比对接口记录。
+    do {
+        if let workspace = try WorkspaceBuilder.plan(rootDirectory: path) {
+            checkWorkspace(workspace, withStdlib: withStdlib)
+            return
+        }
+    } catch {
+        if !diagnosticRow(error) { printError(formatCLIError(error: error, source: nil)) }
+        exit(1)
+    }
     let manifest: ModuleManifest?
     do { manifest = try FileLoader.loadManifest(directory: path) } catch {
         if !diagnosticRow(error) { printError(formatCLIError(error: error, source: nil)) }
@@ -2174,6 +2184,9 @@ private func buildWorkspace(_ plan: WorkspaceBuildPlan, withStdlib: Bool) throws
     var writtenInterfaces: Set<String> = []
     // 同一包按 target 反复装载；警告属于源码，一个包只报一次。
     var reportedWarnings: Set<String> = []
+    // 记录用首次写入 interface.txt 的文本，与产物逐字节一致。
+    var interfaceTexts: [String: String] = [:]
+    var sourceDigests: [String: String] = [:]
     for package in plan.packages {
         for target in package.targets where target.isBuiltByDefault {
             let loaded = try WorkspaceBuilder.load(
@@ -2191,6 +2204,9 @@ private func buildWorkspace(_ plan: WorkspaceBuildPlan, withStdlib: Bool) throws
             if !writtenInterfaces.contains(target.interfacePath) {
                 try writeWorkspaceArtifact(loaded.publicInterface, at: target.interfacePath)
                 writtenInterfaces.insert(target.interfacePath)
+                interfaceTexts[package.name] = loaded.publicInterface
+                sourceDigests[package.name] = WorkspaceInterfaceLedger.sourceDigest(
+                    package: loaded.package, root: package.rootPath)
             }
             if let executablePath = target.executablePath {
                 try linkWorkspaceExecutable(
@@ -2200,6 +2216,108 @@ private func buildWorkspace(_ plan: WorkspaceBuildPlan, withStdlib: Bool) throws
             }
             print("已生成 \(target.irPath)")
         }
+    }
+    try writeInterfaceLedger(plan: plan, texts: interfaceTexts, sources: sourceDigests)
+}
+
+/// 工作区接口记录：按拓扑序写，依赖摘要只取已处理包的条目，故上游接口变化会进下游记录。
+private func writeInterfaceLedger(
+    plan: WorkspaceBuildPlan, texts: [String: String], sources: [String: String]
+) throws {
+    var entries: [WorkspaceInterfaceEntry] = []
+    var hashes: [String: String] = [:]
+    for package in plan.packages {
+        guard let text = texts[package.name] else { continue }
+        var deps: [WorkspaceInterfaceDep] = []
+        for name in package.manifest.require.keys.sorted() {
+            if let hash = hashes[name] { deps.append(WorkspaceInterfaceDep(name: name, hash: hash)) }
+        }
+        let hash = WorkspaceInterfaceLedger.digest(text)
+        entries.append(
+            WorkspaceInterfaceEntry(
+                name: package.name,
+                path: ".build/\(plan.profile)/packages/\(package.name)/interface.txt",
+                hash: hash,
+                source: sources[package.name] ?? "",
+                deps: deps))
+        hashes[package.name] = hash
+    }
+    let ledger = WorkspaceInterfaceLedger(profile: plan.profile, entries: entries)
+    try writeWorkspaceArtifact(
+        ledger.render(),
+        at: WorkspaceInterfaceLedger.path(root: plan.rootPath, profile: plan.profile))
+}
+
+/// 工作区检查：逐包做语义与类型检查，再按记录判接口漂移。记录缺失是首次检查的常态，不报漂移；
+/// 记录只在 build 写，check 只读。
+private func checkWorkspace(_ plan: WorkspaceBuildPlan, withStdlib: Bool) {
+    var texts: [String: String] = [:]
+    var hashes: [String: String] = [:]
+    var failures = 0
+    for package in plan.packages {
+        guard let target = package.targets.first(where: { $0.isBuiltByDefault }) else { continue }
+        do {
+            let loaded = try WorkspaceBuilder.load(
+                package: package, target: target, withStdlib: withStdlib)
+            emitLexerWarnings(loaded.package.warnings)
+            let analyzer = SemanticAnalyzer()
+            try analyzer.analyze(package: loaded.package)
+            emitSemanticWarnings(analyzer)
+            let checker = TypeChecker()
+            try checker.check(package: loaded.package)
+            texts[package.name] = loaded.publicInterface
+            hashes[package.name] = WorkspaceInterfaceLedger.digest(loaded.publicInterface)
+        } catch let err as SemanticError {
+            handleSemanticError(err)
+            failures += 1
+        } catch let err as TypeError {
+            handleTypeError(err)
+            failures += 1
+        } catch {
+            if !diagnosticRow(error) { printError(formatCLIError(error: error, source: nil)) }
+            failures += 1
+        }
+    }
+    if failures > 0 { exit(1) }
+    guard
+        let recorded = WorkspaceInterfaceLedger.read(
+            at: WorkspaceInterfaceLedger.path(root: plan.rootPath, profile: plan.profile))
+    else {
+        print("工作区检查通过（\(plan.packages.count) 个包，无接口记录）：\(plan.rootPath)")
+        CommentStyleHint.emit()
+        return
+    }
+    var drifted = 0
+    for package in plan.packages {
+        guard let entry = recorded.entries.first(where: { $0.name == package.name }),
+            let currentHash = hashes[package.name]
+        else { continue }
+        if entry.hash != currentHash {
+            let snapshot = WorkspaceInterfaceLedger.artifactPath(
+                root: plan.rootPath, profile: plan.profile, name: package.name)
+            let oldText = (try? String(contentsOfFile: snapshot, encoding: .utf8)) ?? ""
+            let detail =
+                WorkspaceInterfaceLedger.diffDetail(
+                    recorded: oldText, current: texts[package.name] ?? "")
+                ?? "接口文本已变更"
+            reportInterfaceDrift(package: package.name, detail: detail)
+            drifted += 1
+        }
+        for dep in entry.deps where hashes[dep.name] != dep.hash {
+            reportInterfaceDrift(
+                package: package.name, detail: "依赖 \(dep.name) 的接口与记录不一致")
+            drifted += 1
+        }
+    }
+    if drifted > 0 { exit(1) }
+    print("工作区检查通过（\(plan.packages.count) 个包）：\(plan.rootPath)")
+    CommentStyleHint.emit()
+}
+
+private func reportInterfaceDrift(package name: String, detail: String) {
+    let error = WorkspaceInterfaceDriftError(packageName: name, detailText: detail)
+    if !diagnosticRow(error) {
+        printError(ErrorFormatter.formatDiagnostic(error, source: ""))
     }
 }
 

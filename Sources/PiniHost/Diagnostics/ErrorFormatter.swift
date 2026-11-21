@@ -113,6 +113,7 @@ public enum ErrorFormatter {
         // 展开诊断借语义域报出（检查点在类型检查之前，归属同一次静态检查）。
         case is UnrollError: key = "semantic"; fallback = "语义错误"
         case is SemanticError: key = "semantic"; fallback = "语义错误"
+        case is WorkspaceInterfaceDriftError: key = "semantic"; fallback = "语义错误"
         case is SemanticWarning: key = "semanticWarning"; fallback = "语义警告"
         case is TypeError: key = "type"; fallback = "类型错误"
         case is RuntimeError: key = "runtime"; fallback = "运行时错误"
@@ -154,6 +155,10 @@ public enum ErrorFormatter {
 
     /// 从错误 case 关联值提取模板参数（label → String）。位置参数不入参。
     static func diagnosticArgs(of error: Error) -> [String: String] {
+        // 接口漂移是包级诊断：模板槽是 {name} 与 {detail}，与字段名不同，故显式取槽。
+        if let e = error as? WorkspaceInterfaceDriftError {
+            return ["name": e.packageName, "detail": e.detailText]
+        }
         // IR 门控错误按字段显式取槽 —— 模板槽名与字段名不同（{feature} ← message），反射猜不出来。
         if let e = error as? IRLowerer.IRLoweringError {
             // E6-005 的模板要 {expected} / {got} 两槽。未填的占位符不会被隐藏（fill 只替换传入的

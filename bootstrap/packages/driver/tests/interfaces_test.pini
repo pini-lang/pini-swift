@@ -1,6 +1,6 @@
 [interfaces_test|import]
-_package = "../../../package"
-_semantics = "../../../semantics"
+_package = "../../package"
+_semantics = "../../semantics"
 
 ; 助手：一条接口记录；被测函数只用名字与文本，摘要现算。
 接口造快照|func(name: String, text: String,) -> (InterfaceRecord,):

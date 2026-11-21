@@ -1,5 +1,4 @@
 [assemble_test|import]
-_module_loader = "../../module-loader"
 _syntax = "../../syntax"
 
 ; 标准库装配：单包与多包的位置、让位、幂等与缺件；只走内存夹具，不读用户工作区。

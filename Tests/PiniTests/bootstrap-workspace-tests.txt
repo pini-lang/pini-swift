@@ -2,14 +2,14 @@
 包 support / support-tests（7 个测试，7 通过）
 包 diagnostics / diagnostics-tests（20 个测试，20 通过）
 包 unicode / unicode-tests（41 个测试，41 通过）
-包 syntax / syntax-tests（91 个测试，91 通过）
-包 package / package-tests（35 个测试，35 通过）
-包 module_loader / module-loader-tests（20 个测试，20 通过）
-包 semantics / semantics-tests（357 个测试，357 通过）
-包 ir / ir-tests（43 个测试，43 通过）
+包 syntax / syntax-tests（94 个测试，94 通过）
+包 package / package-tests（41 个测试，41 通过）
+包 module_loader / module-loader-tests（30 个测试，30 通过）
+包 semantics / semantics-tests（359 个测试，359 通过）
+包 ir / ir-tests（47 个测试，47 通过）
 包 backend_kit / backend-kit-tests（4 个测试，4 通过）
 包 backend_dump / backend-dump-tests（5 个测试，5 通过）
-包 backend_llvm / backend-llvm-tests（25 个测试，25 通过）
+包 backend_llvm / backend-llvm-tests（26 个测试，26 通过）
 包 testkit / testkit-tests（9 个测试，9 通过）
-包 driver / driver-tests（16 个测试，16 通过）
-结果: 673 通过, 0 失败（用时）
+包 driver / driver-tests（23 个测试，23 通过）
+结果: 706 通过, 0 失败（用时）

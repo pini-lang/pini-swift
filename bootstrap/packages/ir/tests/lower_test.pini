@@ -443,7 +443,7 @@ module: IrModule = IrModule()
 
 ; 跨单元闭包编号：两个单元各自第一个闭包都取全局水位，函数名与 env 类型名不撞。
 闭包编号跨单元唯一|test() -> ():
-    let 样例 = 造两单元样例(_源一 = "主一|func() -> ():\n    let f = func (x: I32,) -> (I32,): return x + 1\n    print(f(1))\n", _源二 = "主二|func() -> ():\n    let g = func (x: I32,) -> (I32,): return x + 2\n    print(g(1))\n")
+    let 样例 = 造两单元样例("主一|func() -> ():\n    let f = func (x: I32,) -> (I32,): return x + 1\n    print(f(1))\n", "主二|func() -> ():\n    let g = func (x: I32,) -> (I32,): return x + 2\n    print(g(1))\n")
     assert(len(样例.module.errors) == 0, "跨单元闭包应降载成功")
     let 首 = 取函数(样例 = 样例, name = "__closure_0")
     let 次 = 取函数(样例 = 样例, name = "__closure_1")
