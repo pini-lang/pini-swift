@@ -39,6 +39,7 @@ main|func() -> ():
     var 分段 = 0
     var 转储 = false
     var 发射 = false
+    var 分包 = false
     if len(args) > 0 && args[0] == "check":
         全量 = true
         var c = 1
@@ -63,8 +64,14 @@ main|func() -> ():
             root = args[1]
     if len(args) > 0 && args[0] == "emit":
         发射 = true
-        if len(args) > 1:
-            root = args[1]
+        var e = 1
+        while e < len(args):
+            let one: String = args[e]
+            if one == "--packages":
+                分包 = true
+            else:
+                root = one
+            e = e + 1
     if len(args) > 0 && args[0] == "test":
         var testRoot = workspaceRootOf(start = moduleRoot())
         var testFilter = ""
@@ -106,8 +113,18 @@ main|func() -> ():
         printBareCases(units = units, world = build.world)
         return
     if len(args) > 0 && args[0] == "interfaces":
-        if len(args) > 1:
-            root = args[1]
+        var 读记录 = false
+        var icursor = 1
+        while icursor < len(args):
+            let one: String = args[icursor]
+            if one == "--read":
+                读记录 = true
+            else:
+                root = one
+            icursor = icursor + 1
+        if 读记录:
+            printInterfaceLedger(root = root)
+            return
         let done = writeInterfaces(root = root, stdlib = stdlib)
         if done.ok:
             print("interfaces-ok", done.packages, done.changed)
@@ -178,6 +195,13 @@ main|func() -> ():
         print(emitted.text)
         return
     if 发射:
+        if 分包:
+            let written = writeArtifacts(root = root, stdlib = stdlib)
+            if written.ok:
+                print("emit-packages-ok", written.packages, written.files, written.bytes)
+            else:
+                assert(false, "逐包产物未写成")
+            return
         let 产物 = 降载工作区(root = root, stdlib = stdlib)
         if 产物.packages == 0:
             return

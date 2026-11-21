@@ -309,8 +309,94 @@ cat > "$iface_fixture/support/_internal/helper.pini" <<EOF
 EOF
 iface_expect "仅内部改动不应重写接口" "interfaces-ok 2 0" "$("$pini" interfaces "$iface_fixture" --no-stdlib 2>&1)"
 iface_expect "内部改动后检查应通过" "workspace-ok" "$("$pini" check "$iface_fixture" --no-stdlib 2>&1)"
+
+# 逐包产物：接口记录在前后按包发射；每包只含本包定义，其余出声明，合并链接不冲突。
+pkg_expect() {
+    local label="$1"
+    local want="$2"
+    local got="$3"
+    case "$got" in
+    *"$want"*) ;;
+    *)
+        echo " 行不通  [测试自检] $label：$got" >&2
+        fail=1
+        ;;
+    esac
+}
+pkg_fixture="$work/packages-ir"
+pkg_dir="$pkg_fixture/.build/debug/packages"
+rm -rf "$pkg_fixture"
+cp -R "$root/bootstrap/fixtures/packages-ir" "$pkg_fixture"
+mkdir -p "$pkg_dir/app" "$pkg_dir/cli" "$pkg_dir/support"
+pkg_expect "接口记录应三份新写" "interfaces-ok 3 3" "$("$pini" interfaces "$pkg_fixture" --no-stdlib 2>&1)"
+pkg_expect "逐包发射应写三份" "emit-packages-ok 3 3" "$("$pini" emit "$pkg_fixture" --packages --no-stdlib 2>&1)"
+for pkg_name in app cli support; do
+    if [ ! -f "$pkg_dir/$pkg_name/$pkg_name.ll" ]; then
+        echo " 行不通  [测试自检] 缺 $pkg_name 的逐包产物" >&2
+        fail=1
+    fi
+done
+if ! grep -q '^define i32 @_u5957_u7528' "$pkg_dir/app/app.ll"; then
+    echo " 行不通  [测试自检] 应用包应为套用出定义" >&2
+    fail=1
+fi
+if ! grep -q '^declare i32 @_u516C_u5F00' "$pkg_dir/app/app.ll"; then
+    echo " 行不通  [测试自检] 应用包应为公开出声明" >&2
+    fail=1
+fi
+if ! grep -q '^define i32 @_u516C_u5F00' "$pkg_dir/support/support.ll"; then
+    echo " 行不通  [测试自检] 支持包应为公开出定义" >&2
+    fail=1
+fi
+if grep -q '^define i32 @_u5957_u7528' "$pkg_dir/support/support.ll"; then
+    echo " 行不通  [测试自检] 支持包不应重复定义套用" >&2
+    fail=1
+fi
+if ! grep -q '^define i32 @main' "$pkg_dir/cli/cli.ll"; then
+    echo " 行不通  [测试自检] 入口包应定义 main" >&2
+    fail=1
+fi
+if ! grep -q 'package = "app"' "$pkg_fixture/.build/debug/artifacts.toml"; then
+    echo " 行不通  [测试自检] 产物记录应含应用包" >&2
+    fail=1
+fi
+mkdir -p "$work/pkg-ll-first"
+for pkg_name in app cli support; do
+    cp "$pkg_dir/$pkg_name/$pkg_name.ll" "$work/pkg-ll-first/$pkg_name.ll"
+done
+"$pini" emit "$pkg_fixture" --packages --no-stdlib >/dev/null 2>&1
+for pkg_name in app cli support; do
+    if ! cmp -s "$work/pkg-ll-first/$pkg_name.ll" "$pkg_dir/$pkg_name/$pkg_name.ll"; then
+        echo " 行不通  [测试自检] 二次发射应逐字节相同：$pkg_name" >&2
+        fail=1
+    fi
+done
+pkg_objects=""
+pkg_objs_ok=1
+for pkg_name in app cli support; do
+    if ! "$clang_bin" -c "$pkg_dir/$pkg_name/$pkg_name.ll" -o "$work/pkg-$pkg_name.o" >/dev/null 2>&1; then
+        echo " 行不通  [测试自检] 逐包产物应能单独编译：$pkg_name" >&2
+        fail=1
+        pkg_objs_ok=0
+    fi
+    pkg_objects="$pkg_objects $work/pkg-$pkg_name.o"
+done
+if [ "$pkg_objs_ok" -eq 1 ]; then
+    if ! "$clang_bin" -o "$work/pkg-bin" $pkg_objects -L"$runtime_dir" -lPiniRuntime -Wl,-rpath,"$runtime_dir" >/dev/null 2>&1; then
+        echo " 行不通  [测试自检] 逐包产物合并链接失败" >&2
+        fail=1
+    else
+        "$work/pkg-bin"
+        pkg_rc=$?
+        if [ "$pkg_rc" -ne 1 ]; then
+            echo " 行不通  [测试自检] 合并后可执行应返回 1，实得 $pkg_rc" >&2
+            fail=1
+        fi
+    fi
+fi
+pkg_expect "逐包记录后检查应通过" "workspace-ok" "$("$pini" check "$pkg_fixture" --no-stdlib 2>&1)"
 if [ "$fail" -ne 0 ]; then
     exit 1
 fi
-echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入，浮点常量走位模式，接口缓存按记录判失效"
+echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入，浮点常量走位模式，接口缓存按记录判失效，逐包产物按包发射且合并可链接"
 exit 0

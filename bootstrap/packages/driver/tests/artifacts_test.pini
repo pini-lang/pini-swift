@@ -1,0 +1,27 @@
+[artifacts_test|import]
+_package = "../../../package"
+
+; 助手：一条接口条目，只填名字与摘要。
+产物造接口|func(name: String, hash: String,) -> (InterfaceEntry,):
+    var out = InterfaceEntry()
+    out.name = name
+    out.hash = hash
+    return out
+
+; 单元路径归包：取首段；空路径答空串。
+产物单元归包|test() -> ():
+    assert(packageOfUnitPath(unitPath = "support/src/api.pini") == "support", "取首段")
+    assert(packageOfUnitPath(unitPath = "app/src/_internal/x.pini") == "app", "嵌套目录同包")
+    assert(packageOfUnitPath(unitPath = "") == "", "空路径答空")
+    return
+
+; 依赖摘要按 requires 顺序取，缺记录的依赖跳过。
+产物依赖摘要|test() -> ():
+    let 条目 = [产物造接口(name = "support", hash = "h1"), 产物造接口(name = "app", hash = "h2")]
+    let 一项 = packageDeps(entries = 条目, requires = ["support"])
+    assert(len(一项) == 1 && 一项[0].name == "support" && 一项[0].hash == "h1", "单项")
+    let 两项 = packageDeps(entries = 条目, requires = ["app", "support"])
+    assert(len(两项) == 2 && 两项[0].name == "app" && 两项[1].name == "support", "按声明顺序")
+    let 缺 = packageDeps(entries = 条目, requires = ["missing"])
+    assert(len(缺) == 0, "缺记录跳过")
+    return

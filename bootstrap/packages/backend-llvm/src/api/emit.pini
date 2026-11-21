@@ -167,15 +167,16 @@ emitLazyWrappers|func(sink: LineSink, bundle: EmitPass,) -> ():
         i = i + 1
     return
 
-; 函数段：逐函数出定义；测试模式跳过非测试 main，并给测试函数打开早退面。
-emitFunctions|func(sink: LineSink, module: IrModule, entry: BackendEntry, target: TargetProfile, testMode: Bool, bundle: EmitPass,) -> ():
+; 函数段：逐函数出定义；owned 非空只发该名单，测试模式跳过非测试 main 并给测试函数打开早退面。
+emitFunctions|func(sink: LineSink, module: IrModule, entry: BackendEntry, target: TargetProfile, testMode: Bool, bundle: EmitPass, owned: Array<String>, onlyOwned: Bool,) -> ():
     let families = irContractFamilies()
     let builtins = builtinTable()
     var i = 0
     while i < len(module.functions):
         let fn = module.functions[i]
         let skip = testMode && fn.name == "main" && !fn.isTest
-        if needsBody(fn = fn) && !skip && !alreadyEmitted(names = bundle.emitted, name = fn.name):
+        let 越界 = onlyOwned && !hasOwned(names = owned, name = fn.name)
+        if !越界 && needsBody(fn = fn) && !skip && !alreadyEmitted(names = bundle.emitted, name = fn.name):
             bundle.emitted = bundle.emitted.append(fn.name)
             appendLine(sink = sink, text = llvmSignature(pool = module.types, fn = fn, isDefine = true) + " {")
             appendLine(sink = sink, text = "entry:")
@@ -300,7 +301,7 @@ emitModule|func(entry: BackendEntry, target: TargetProfile, module: IrModule,) -
     while i < len(胶水):
         appendLine(sink = sink, text = 胶水[i])
         i = i + 1
-    emitFunctions(sink = sink, module = module, entry = entry, target = target, testMode = false, bundle = bundle)
+    emitFunctions(sink = sink, module = module, entry = entry, target = target, testMode = false, bundle = bundle, owned = [], onlyOwned = false)
     emitTaskBodies(sink = sink, bundle = bundle)
     emitGivenDefs(sink = sink, bundle = bundle)
     emitLazyWrappers(sink = sink, bundle = bundle)
@@ -363,13 +364,102 @@ emitTestModule|func(entry: BackendEntry, target: TargetProfile, module: IrModule
     while i < len(胶水):
         appendLine(sink = sink, text = 胶水[i])
         i = i + 1
-    emitFunctions(sink = sink, module = module, entry = entry, target = target, testMode = true, bundle = bundle)
+    emitFunctions(sink = sink, module = module, entry = entry, target = target, testMode = true, bundle = bundle, owned = [], onlyOwned = false)
     emitLazyWrappers(sink = sink, bundle = bundle)
     appendLine(sink = sink, text = "@__pini_test_failed = internal global i32 0")
     appendLine(sink = sink, text = "@__pini_test_msg = internal global ptr null")
     let extra = emitTestDriver(sink = sink, module = module, plan = plan, bundle = bundle)
     emitExterns(sink = sink, bundle = bundle, module = module)
     emitConstants(sink = sink, extra = extra, bundle = bundle)
+    var result = EmitResult()
+    result.detail = "llvm"
+    result.gaps = bundle.gaps
+    if len(bundle.gaps) > 0:
+        result.failed = true
+        return result
+    result.text = sinkText(sink = sink)
+    result.lines = sinkCount(sink = sink)
+    return result
+
+; 名单判定：空表表示不限，非空只认表内。
+hasOwned|func(names: Array<String>, name: String,) -> (Bool,):
+    var i = 0
+    while i < len(names):
+        if names[i] == name:
+            return true
+        i = i + 1
+    return false
+
+; 声明段：非本包但有体的函数各出一行，供本包跨包调用。
+emitDeclares|func(sink: LineSink, module: IrModule, owned: Array<String>,) -> ():
+    var i = 0
+    while i < len(module.functions):
+        let fn = module.functions[i]
+        if needsBody(fn = fn) && !hasOwned(names = owned, name = fn.name):
+            appendLine(sink = sink, text = llvmSignature(pool = module.types, fn = fn, isDefine = false))
+        i = i + 1
+    return
+
+; 胶水行改 linkonce_odr：同一类型在多份包里各出一份，链接时任取其一。
+partitionGlues|func(module: IrModule,) -> (Array<String>,):
+    let lines = llvmReleaseGlues(module = module)
+    var out: Array<String> = []
+    var i = 0
+    while i < len(lines):
+        var one: String = lines[i]
+        if one.indexOf("define void @") == 0:
+            one = "define linkonce_odr void @" + one.slice(one.indexOf("@"), len(one))
+        out = out.append(one)
+        i = i + 1
+    return out
+
+; 分区发射：只出 owned 名单内的定义，其余有体函数出声明；胶水带 linkonce 以便分份链接。
+emitPartition|func(entry: BackendEntry, target: TargetProfile, module: IrModule, owned: Array<String>,) -> (EmitResult,):
+    if backendOutputCode(entry.output) != backendOutputNativeCode():
+        return failedEmit(detail = "LLVM 后端不接受档次 " + backendOutputName(entry.output))
+    let duplicate = duplicateDefinition(module = module)
+    if len(duplicate) > 0:
+        return failedEmit(detail = "同名函数重复定义：" + duplicate)
+    var sink = LineSink()
+    let head = llvmHeader(entry = entry, target = target)
+    var i = 0
+    while i < len(head):
+        appendLine(sink = sink, text = head[i])
+        i = i + 1
+    let 类型行 = llvmTypeDecls(module = module)
+    i = 0
+    while i < len(类型行):
+        appendLine(sink = sink, text = 类型行[i])
+        i = i + 1
+    let 环境行 = closureEnvDecls(module = module)
+    i = 0
+    while i < len(环境行):
+        appendLine(sink = sink, text = 环境行[i])
+        i = i + 1
+    let 数据行 = externDataDecls(module = module)
+    i = 0
+    while i < len(数据行):
+        appendLine(sink = sink, text = 数据行[i])
+        i = i + 1
+    if countNodes(module = module, kind = tagOfName(name = "readLine")) > 0:
+        appendLine(sink = sink, text = "@__stdinp = external global ptr")
+    var bundle = EmitPass()
+    let 胶水 = partitionGlues(module = module)
+    if len(胶水) > 0:
+        useExtern(use = bundle.externs, name = "bk_str_release")
+        useExtern(use = bundle.externs, name = "bk_handle_release")
+        useExtern(use = bundle.externs, name = "bk_nominal_release")
+    i = 0
+    while i < len(胶水):
+        appendLine(sink = sink, text = 胶水[i])
+        i = i + 1
+    emitFunctions(sink = sink, module = module, entry = entry, target = target, testMode = false, bundle = bundle, owned = owned, onlyOwned = true)
+    emitDeclares(sink = sink, module = module, owned = owned)
+    emitTaskBodies(sink = sink, bundle = bundle)
+    emitGivenDefs(sink = sink, bundle = bundle)
+    emitLazyWrappers(sink = sink, bundle = bundle)
+    emitExterns(sink = sink, bundle = bundle, module = module)
+    emitConstants(sink = sink, extra = [], bundle = bundle)
     var result = EmitResult()
     result.detail = "llvm"
     result.gaps = bundle.gaps

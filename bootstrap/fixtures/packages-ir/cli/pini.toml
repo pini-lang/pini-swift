@@ -1,0 +1,9 @@
+[package]
+name = "cli"
+
+[require]
+app = "*"
+
+[lib]
+name = "cli"
+entry = "src/api.pini"

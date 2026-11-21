@@ -186,3 +186,26 @@ writeInterfaces|func(root: String, stdlib: StdlibOption,) -> (InterfacesWrite,):
     out.ok = true
     out.packages = len(records)
     return out
+
+; 接口读取：按记录打印每包摘要与快照文本，供下游工具读导出面而不重算公开面。
+printInterfaceLedger|func(root: String,) -> ():
+    let plan = planWorkspace(root)
+    if !plan.isOK():
+        print("interfaces-plan-failed", plan.errorCount())
+        return
+    let ledger = readInterfaceLedger(root = root, profile = plan.profile)
+    if !ledger.ok:
+        print("interfaces-read-failed", ledger.path)
+        return
+    print("interfaces-read", len(ledger.entries))
+    var i = 0
+    while i < len(ledger.entries):
+        let one = ledger.entries[i]
+        let path = root + "/" + one.path
+        print("interface", one.name, one.hash)
+        if exists(path):
+            print(readFile(path))
+        else:
+            print("interface-missing", one.name, one.path)
+        i = i + 1
+    return

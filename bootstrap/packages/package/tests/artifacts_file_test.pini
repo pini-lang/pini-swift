@@ -1,0 +1,60 @@
+; 助手：一条产物依赖摘要。
+产物造依赖|func(name: String, hash: String,) -> (InterfaceDep,):
+    var out = InterfaceDep()
+    out.name = name
+    out.hash = hash
+    return out
+
+; 助手：一条产物条目；路径按产物路径函数拼，摘要用短串。
+产物造条目|func(name: String, hash: String, deps: Array<InterfaceDep>,) -> (ArtifactEntry,):
+    var out = ArtifactEntry()
+    out.name = name
+    out.path = artifactPath(root = "", profile = "debug", name = name)
+    out.hash = hash
+    out.deps = deps
+    return out
+
+; 助手：一份产物记录；profile 固定 debug。
+产物造记录|func(entries: Array<ArtifactEntry>,) -> (ArtifactLedger,):
+    var out = ArtifactLedger()
+    out.profile = "debug"
+    out.entries = entries
+    return out
+
+; 助手：空依赖表；直接写空数组字面量会被推成 I32 元素。
+产物空依赖|func() -> (Array<InterfaceDep>,):
+    var out: Array<InterfaceDep> = []
+    return out
+
+; 往返：渲染再解析，包名、路径、摘要与依赖串都还原；输入乱序时渲染仍按包名排。
+产物记录往返|test() -> ():
+    let 记录 = 产物造记录(entries = [产物造条目(name = "app", hash = "aa", deps = [产物造依赖(name = "support", hash = "bb")]), 产物造条目(name = "support", hash = "bb", deps = 产物空依赖())])
+    let 文本 = artifactLedgerText(记录)
+    let 读回 = parseArtifactLedger(text = 文本, path = "artifacts.toml")
+    assert(len(读回.errors) == 0, "应能读回：" + 文本)
+    assert(len(读回.entries) == 2, "两条")
+    assert(读回.entries[0].name == "app", "按包名排序")
+    assert(读回.entries[0].path == "/.build/debug/packages/app/app.ll", "路径往返")
+    assert(读回.entries[0].deps[0].name == "support" && 读回.entries[0].deps[0].hash == "bb", "依赖往返")
+    assert(len(读回.entries[1].deps) == 0, "空依赖读回空表")
+    assert(artifactLedgerText(读回) == 文本 && 文本 == artifactLedgerText(记录), "两次渲染逐字相同")
+    return
+
+; 重复包名：同一条目出现两次，解析报一条重复键错误，条目只收第一份。
+产物重复包名|test() -> ():
+    let 记录 = 产物造记录(entries = [产物造条目(name = "app", hash = "aa", deps = 产物空依赖()), 产物造条目(name = "app", hash = "bb", deps = 产物空依赖())])
+    let 读回 = parseArtifactLedger(text = artifactLedgerText(记录), path = "artifacts.toml")
+    assert(len(读回.errors) == 1, "应报一条重复包名")
+    assert(manifestErrorKindName(_kind = 读回.errors[0].kind) == "同一表内重复键", "错误类别是重复键")
+    assert(len(读回.entries) == 1, "条目只收第一份")
+    return
+
+; 坏依赖串与头部不符：坏项记一条错误但好包照收；头部不符时整体不可用。
+产物坏依赖串|test() -> ():
+    let 坏 = parseArtifactLedger(text = "[artifacts]\nversion = 1\nprofile = \"debug\"\n\n[[artifact]]\npackage = \"app\"\ndeps = \"脏\"\n", path = "bad.toml")
+    assert(len(坏.errors) == 1, "坏项报一条")
+    assert(len(坏.entries) == 1, "好包照收")
+    let 过时 = parseArtifactLedger(text = "[artifacts]\nversion = 0\nprofile = \"debug\"\n", path = "stale.toml")
+    assert(len(过时.errors) == 1, "头部不符报一条")
+    assert(len(过时.entries) == 0, "头部不符不答条目")
+    return
