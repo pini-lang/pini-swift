@@ -109,3 +109,14 @@ packageIndex|func(plan: BuildPlan, name: String,) -> (I32,):
     assert(hasSource, "应包含生产源码")
     assert(hasTest, "应包含测试源码")
     return
+
+; 单文件装载：一个文件自成一组，单元路径就是调用方给的写法，诊断因此与输入一致。
+; 组名取文件名去后缀，包图里只有一个包，import 别的包不成立。
+单文件自成一组|test() -> ():
+    let 路径 = "./fixtures/build-script/pkg/src/api/main.pini"
+    let ws = loadFileGrouped(path = 路径, stdlib = stdlibOff())
+    assert(len(ws.packages) == 1, "单文件只出一组")
+    assert(ws.packages[0].name == "main", "组名取文件名去后缀")
+    assert(len(ws.packages[0].units) == 1, "一个文件一个单元")
+    assert(ws.packages[0].units[0].path == 路径, "单元路径与输入一致")
+    return

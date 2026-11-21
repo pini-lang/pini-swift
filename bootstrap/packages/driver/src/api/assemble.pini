@@ -17,14 +17,16 @@ typed: I32 = 0
 units: WorkspaceUnits = WorkspaceUnits()
 
 ; 装配并降载：一条链走到底，诊断只打规划错误；结构违约由调用方读 check。
+; 入口由 loadEntry 收口：目录走包图，单文件走单文件通道，二者共用这一次降载。
 降载工作区|func(root: String, stdlib: StdlibOption,) -> (降载产物,):
     var out = 降载产物()
-    let plan = planEntry(root)
-    if !plan.isOK():
-        print("workspace-plan-failed", plan.errorCount())
+    let entry = loadEntry(root = root, stdlib = stdlib)
+    if len(entry.plan.errors) > 0 || !entry.ok:
+        print("workspace-plan-failed", len(entry.plan.errors) + len(entry.units.errors))
         return out
-    let ws = loadWorkspaceGrouped(plan, stdlib = stdlib)
-    out.units = ws
+    out.units = entry.units
+    out.packages = entry.packages
+    let ws = entry.units
     let units = collectWorkspaceUnits(ws)
     let build = buildWorld(units = units, packages = ws.packages)
     let 填 = fillExprTypes(world = build.world, units = units)
@@ -42,7 +44,6 @@ units: WorkspaceUnits = WorkspaceUnits()
     input.layouts = layoutAll(shapes = shapes, pool = 世界.types.pool)
     out.module = lowerWorkspace(input = input)
     out.check = validateModule(module = out.module)
-    out.packages = plan.packageCount()
     out.typed = typedExprCount(table = 填.types)
     return out
 
@@ -50,12 +51,12 @@ units: WorkspaceUnits = WorkspaceUnits()
 ; 默认路径不走它：降载工作区 仍一次走完全链，两处共用同一批函数与同一次序。
 降载工作区至|func(root: String, stage: I32, stdlib: StdlibOption,) -> (降载产物,):
     var out = 降载产物()
-    let plan = planEntry(root)
-    if !plan.isOK():
-        print("workspace-plan-failed", plan.errorCount())
+    let entry = loadEntry(root = root, stdlib = stdlib)
+    if len(entry.plan.errors) > 0 || !entry.ok:
+        print("workspace-plan-failed", len(entry.plan.errors) + len(entry.units.errors))
         return out
-    out.packages = plan.packageCount()
-    let ws = loadWorkspaceGrouped(plan, stdlib = stdlib)
+    out.packages = entry.packages
+    let ws = entry.units
     out.units = ws
     let units = collectWorkspaceUnits(ws)
     print("stage-load", len(units))

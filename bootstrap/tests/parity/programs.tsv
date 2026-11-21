@@ -1,6 +1,6 @@
 # 程序表：examples 逐个过 check / lower / emit。归因按首条诊断的域段，不按措辞。
 # 失败归因：E1/E2 语法、E3/E4/E5 语义、lower 腿降载、emit 腿发射；无码记待核。
-# 「目录」形态原样拷入，单文件形态包成单包工作区——自举只认带 [workspace] 的根。
+# 入口即示例路径本身：单文件与目录都由编译器直接收，脚本不包工作区、不复制源码。
 # 由 bootstrap/tools/parity.py --full 生成，勿手改；只许缩小。
 程序	形态	check	lower	emit	归因	首条诊断	摘要
 access	单文件	ok	ok	ok	通过	-	-

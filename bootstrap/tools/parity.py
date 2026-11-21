@@ -5,7 +5,7 @@ WHY THIS EXISTS
 ---------------
 「对齐宿主完整功能」的起点是一张差集表，不是印象。本脚本把四张表固定成可重生成的产物，
 每张表的取值都来自一次真实读取或一次真实运行：命令表读两侧分派代码，通道表读宿主能力矩阵
-与自举节点普查，诊断表读权威 TOML 与自举源码里的发码点，程序表把每个示例包成单包工作区
+与自举节点普查，诊断表读权威 TOML 与自举源码里的发码点，程序表把示例路径直接交给编译器
 跑三条腿。表里出现「无」「异」即待办，不会被静默忽略。
 
 WHAT IT WRITES
@@ -24,7 +24,6 @@ import argparse
 import importlib.util
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tomllib
@@ -32,7 +31,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "bootstrap" / "tests" / "parity"
-WORK = ROOT / "bootstrap" / ".build" / "tests" / "parity"
 HOST_MAIN = ROOT / "Sources" / "PiniCLI" / "main.swift"
 SELF_MAIN = ROOT / "bootstrap" / "packages" / "driver" / "src" / "api" / "main.pini"
 DIAG_TOML = ROOT / "Sources" / "PiniSemantics" / "Resources" / "Diagnostics.zh.toml"
@@ -248,18 +246,6 @@ def diagnostics_table():
 
 # ---------------------------------------------------------------- 程序表
 
-def wrap_single(source, dest):
-    """单文件包成单包工作区：根工作区 + 一个 bin target。"""
-    pkg = dest / "pkg"
-    (pkg / "src").mkdir(parents=True, exist_ok=True)
-    (dest / "pini.toml").write_text(
-        '[workspace]\nmembers = ["pkg"]\nprofile = "debug"\n', encoding="utf-8")
-    (pkg / "pini.toml").write_text(
-        '[package]\nname = "probe"\n\n[[bin]]\nname = "probe"\nentry = "src/main.pini"\n',
-        encoding="utf-8")
-    shutil.copyfile(source, pkg / "src" / "main.pini")
-
-
 DIAG_LOCATED = re.compile(r":(\d+):(\d+): .*?\[(E[0-9]-[0-9]{3})\] ?(.*)")
 DIAG_PLAIN = re.compile(r"\[(E[0-9]-[0-9]{3})\] ?(.*)")
 
@@ -291,9 +277,6 @@ def attribute(leg, code):
 
 def programs_table():
     binary = bootstrap_binary()
-    if WORK.exists():
-        shutil.rmtree(WORK)
-    WORK.mkdir(parents=True, exist_ok=True)
     entries = []
     for path in sorted(EXAMPLES.iterdir()):
         if path.name in ("golden", "README.md", "gate-baseline.tsv"):
@@ -304,17 +287,11 @@ def programs_table():
             entries.append((path.name, path, "目录"))
     lines = ["# 程序表：examples 逐个过 check / lower / emit。归因按首条诊断的域段，不按措辞。",
              "# 失败归因：E1/E2 语法、E3/E4/E5 语义、lower 腿降载、emit 腿发射；无码记待核。",
-             "# 「目录」形态原样拷入，单文件形态包成单包工作区——自举只认带 [workspace] 的根。",
+             "# 入口即示例路径本身：单文件与目录都由编译器直接收，脚本不包工作区、不复制源码。",
              "# 由 bootstrap/tools/parity.py --full 生成，勿手改；只许缩小。",
              "程序\t形态\tcheck\tlower\temit\t归因\t首条诊断\t摘要"]
     for name, path, shape in entries:
-        dest = WORK / name
-        if shape == "单文件":
-            wrap_single(path, dest)
-            root = dest
-        else:
-            shutil.copytree(path, dest)
-            root = dest
+        root = str(path.relative_to(ROOT))
         legs = {}
         where = "-"
         summary = "-"

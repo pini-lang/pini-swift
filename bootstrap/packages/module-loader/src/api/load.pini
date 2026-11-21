@@ -222,6 +222,24 @@ units: Array<CompilationUnit> = []
 packages: Array<PackageUnits> = []
 errors: Array<LoadError> = []
 
+; 单文件装载：一个入口文件自成一组，单元路径按调用方给的写法记，诊断里与输入一致。
+; 没有包图，import 别的包因此不成立——「单文件即独立程序」正是这个意思。
+loadFileGrouped|func(path: String, stdlib: StdlibOption,) -> (WorkspaceUnits,):
+    var out = WorkspaceUnits()
+    let loaded = loadUnitFile(absPath = path, unitPath = path)
+    if loaded.failed:
+        out.errors = out.errors.append(loaded.error)
+        return out
+    var group = PackageUnits()
+    group.name = sourceNameOf(baseNameOf(path))
+    group.rootPath = "."
+    group.units = group.units.append(loaded.unit)
+    out.packages = out.packages.append(group)
+    if stdlib.enabled:
+        let roots = stdlibSourcePaths(option = stdlib, workspaceRoot = parentOf(path = path))
+        out = assembleStdlib(ws = out, paths = roots)
+    return out
+
 ; 装载整个工作区并保留包分组：单元归属与声明依赖随分组一起交出去。
 ; 计划文件读一次，逐包按脚本步骤并入生成模块；未声明构建面的包不受影响。
 ; 装载完成后按选项装配标准库：整个工作区只装一份，装不上记一条装载错误。
