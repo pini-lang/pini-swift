@@ -70,4 +70,7 @@ public enum TypeError: Error, Equatable {
     case unexpectedArgumentLabel(callee: String, param: String, location: SourceLocation)
     /// 同一个形参收到两个标签实参：标签按名对位，重复即为调用点写错。
     case duplicateArgumentLabel(callee: String, param: String, location: SourceLocation)
+    /// 析构声明不合格：形状不是零形参零返回、挂在非对象类型上，或同一类型声明了两次。
+    /// 放行的后果是释放胶水按错的原型调用它，比拒绝更难看懂。
+    case lifecycleShapeInvalid(reason: String, location: SourceLocation)
 }

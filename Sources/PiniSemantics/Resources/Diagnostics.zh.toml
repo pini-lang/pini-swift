@@ -217,6 +217,10 @@ suggestion = "每个形参只给一个实参；去掉重复的那个"
 message = "外部数据符号 '{name}' 标为只读（`readonly` 或 `macro`），不能赋值"
 suggestion = "只读符号的值由 C 侧给出；要在 Pini 侧改状态，改用可写的数据符号或在 C 侧提供 setter"
 
+[E4-040]
+message = "析构声明无效：{reason}"
+suggestion = "析构写成 `deinit|self() -> ()`，只挂在对象类型上，每个类型一个"
+
 [E5-001]
 message = "未定义变量 '{name}'"
 suggestion = "你是想说 '{closest}' 吗？"

@@ -199,6 +199,7 @@ public struct DiagnosticPublisher {
         case .missingArgumentLabel(_, _, _, _, _, let loc): return loc
         case .unexpectedArgumentLabel(_, _, let loc): return loc
         case .duplicateArgumentLabel(_, _, let loc): return loc
+        case .lifecycleShapeInvalid(_, let loc): return loc
         }
     }
 }

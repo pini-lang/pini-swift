@@ -4158,6 +4158,13 @@ public final class IREmitter {
         return value
     }
 
+    /// 该对象类型的析构符号（已 mangle），没声明答 nil。方法在 IR 里的名字是 `<方法>__<类型>`，
+    /// 语义层已保证每个类型至多一个且零形参零返回，故这里只按名取一次。
+    private func deinitFunctionName(for typeName: String) -> String? {
+        let symbol = Self.mangle("deinit__\(typeName)")
+        return moduleFunctions[symbol] == nil ? nil : symbol
+    }
+
     /// 逐类型合成的释放胶水 `define void @__release_<kind>_<mangled>(ptr %box)`：先 `bk_nominal_release`
     /// 减头格，返回 1 表示归零，只有归零才进 sweep 逐字段释放并 `free`。
     /// 自引用类型靠「名字先占位」防合成期无限递归；枚举按 tag 分派，未选中 case 的载荷槽不碰。
@@ -4188,6 +4195,13 @@ public final class IREmitter {
                 let aggregate = type.nominalAggregateSpelling
             else {
                 fatalError("IREmitter: release glue for unregistered nominal (IRLowerer guarantees)")
+            }
+            // 析构先跑：此刻字段还活着，清扫在它之后；类型没声明析构就不出这一行。
+            // 实参先 bitcast 成具名类型：常量表达式里不能引用函数内的 `%box`。
+            if let deinitSymbol = deinitFunctionName(for: name) {
+                let selfPtr = builder.freshTemp()
+                bodyIR += " \(selfPtr) = bitcast ptr %box to \(aggregate)*\n"
+                bodyIR += " call void @\(deinitSymbol)(\(aggregate)* \(selfPtr))\n"
             }
             for (index, field) in decl.fields.enumerated() {
                 guard let callee = releaseCallee(for: field.type) else { continue }

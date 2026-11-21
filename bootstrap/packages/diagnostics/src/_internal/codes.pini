@@ -3,7 +3,7 @@
 
 ; 已登记的诊断码数量，供门禁核对表规模。
 diagnosticCodeCount|func() -> (I32,):
-    return 113
+    return 114
 
 ; 码的消息模板；未登记答空串。占位符由调用方按诊断负载填充。
 diagnosticMessage|func(_code: String,) -> (String,):
@@ -159,6 +159,8 @@ diagnosticMessage|func(_code: String,) -> (String,):
         return "调用 '{callee}' 重复写了形参 '{param}' 的标签"
     if _code == "E4-039":
         return "外部数据符号 '{name}' 标为只读（`readonly` 或 `macro`），不能赋值"
+    if _code == "E4-040":
+        return "析构声明无效：{reason}"
     if _code == "E5-001":
         return "未定义变量 '{name}'"
     if _code == "E5-002":
@@ -293,6 +295,8 @@ diagnosticSuggestion|func(_code: String,) -> (String,):
         return "每个形参只给一个实参；去掉重复的那个"
     if _code == "E4-039":
         return "只读符号的值由 C 侧给出；要在 Pini 侧改状态，改用可写的数据符号或在 C 侧提供 setter"
+    if _code == "E4-040":
+        return "析构写成 `deinit|self() -> ()`，只挂在对象类型上，每个类型一个"
     if _code == "E5-001":
         return "你是想说 '{closest}' 吗？"
     if _code == "E5-019":
