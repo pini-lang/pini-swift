@@ -19,7 +19,7 @@ units: WorkspaceUnits = WorkspaceUnits()
 ; 装配并降载：一条链走到底，诊断只打规划错误；结构违约由调用方读 check。
 降载工作区|func(root: String, stdlib: StdlibOption,) -> (降载产物,):
     var out = 降载产物()
-    let plan = planWorkspace(root)
+    let plan = planEntry(root)
     if !plan.isOK():
         print("workspace-plan-failed", plan.errorCount())
         return out
@@ -50,7 +50,7 @@ units: WorkspaceUnits = WorkspaceUnits()
 ; 默认路径不走它：降载工作区 仍一次走完全链，两处共用同一批函数与同一次序。
 降载工作区至|func(root: String, stage: I32, stdlib: StdlibOption,) -> (降载产物,):
     var out = 降载产物()
-    let plan = planWorkspace(root)
+    let plan = planEntry(root)
     if !plan.isOK():
         print("workspace-plan-failed", plan.errorCount())
         return out

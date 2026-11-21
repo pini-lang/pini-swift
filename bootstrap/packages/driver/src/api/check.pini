@@ -389,7 +389,7 @@ buildWorld|func(units: Array<CompilationUnit>, packages: Array<PackageUnits>,) -
 
 ; 检查入口：清单不可用时只报清单错；语法有错就短路，其余阶段按同一张包图接。
 checkWorkspace|func(root: String, stdlib: StdlibOption,) -> (WorkspaceReport,):
-    let plan = planWorkspace(root)
+    let plan = planEntry(root)
     if !plan.isOK():
         return finishReport(root = root, packages = 0, diagnostics = planDiagnostics(plan), units = [])
     let ws = loadWorkspaceGrouped(plan, stdlib = stdlib)

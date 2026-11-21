@@ -189,6 +189,128 @@ planWorkspace|func(_root: String,) -> (BuildPlan,):
         parses = parses.append(parse)
     return assemblePlan(workspace = workspace, parses = parses)
 
+; 隐式模块：裸包根没声明 target 时，整目录的 .pini 就是一个库；只在入口通道收下。
+; 工作区成员仍按规范要求显式 target，这条宽松只对「直接进包目录」生效。
+acceptImplicitModule|func(parse: PackageParse,) -> (PackageParse,):
+    if len(parse.errors) == 0:
+        return parse
+    var i = 0
+    while i < len(parse.errors):
+        if !isErrorKind(e = parse.errors[i], kind = .errorMissingTargets):
+            return parse
+        i = i + 1
+    var out = parse
+    var 空表: Array<ManifestError> = []
+    out.errors = 空表
+    var target = TargetSpec()
+    target.kind = .targetLibrary
+    target.name = parse.manifest.name
+    out.manifest.targets = out.manifest.targets.append(target)
+    return out
+
+; 裸包计划：入口清单只有 [package] 时按单成员装配，成员即根；包根记 "."，路径拼接各处同形。
+; 与宿主同口径：`check <包目录>` 与 `check <工作区根>` 都成立，源码不复制不搬动。
+planPackageRoot|func(entry: String,) -> (BuildPlan,):
+    let path = entry + "/pini.toml"
+    if !exists(path):
+        var plan = BuildPlan()
+        plan.rootPath = entry
+        plan.errors = plan.errors.append(manifestError(kind = .errorManifestMissing, path = path, detail = "pini.toml"))
+        return plan
+    return planFromPackage(entry = entry, parse = parsePackageManifest(text = readFile(path), rootPath = ".", path = path))
+
+; 单包装配：构建脚本并入步骤与错误，隐式模块在此收下，再按 profile 出计划。
+planFromPackage|func(entry: String, parse: PackageParse,) -> (BuildPlan,):
+    var plan = BuildPlan()
+    plan.rootPath = entry
+    var 收下 = parse
+    let script = readBuildScript(packageAbs = entry)
+    收下.steps = script.steps
+    收下.scriptPath = script.path
+    收下.scriptHash = script.hash
+    收下.errors = appendErrors(errors = 收下.errors, extra = script.errors)
+    收下 = acceptImplicitModule(parse = 收下)
+    plan.errors = 收下.errors
+    if len(收下.errors) > 0:
+        return plan
+    let pkg = packagePlan(pkg = 收下.manifest, root = entry, profile = plan.profile, steps = 收下.steps, scriptPath = 收下.scriptPath, scriptHash = 收下.scriptHash)
+    plan.packages = plan.packages.append(pkg)
+    return plan
+
+; 上级目录：最后一个斜杠之前的部分；无斜杠答空串。
+parentDirOf|func(_path: String,) -> (String,):
+    var at = -1
+    var i = 0
+    while i < len(_path):
+        if _path[i] == "/":
+            at = i
+        i = i + 1
+    if at <= 0:
+        return ""
+    return _path.substring(0, at)
+
+; 外层工作区：从入口的上级开始向上找第一份带 [workspace] 的清单，最多八层；找不到答空串。
+enclosingWorkspace|func(entry: String,) -> (String,):
+    var dir = parentDirOf(entry)
+    var depth = 0
+    while depth < 8 && len(dir) > 0:
+        if exists(dir + "/pini.toml") && hasWorkspace(dir):
+            return dir
+        dir = parentDirOf(dir)
+        depth = depth + 1
+    return ""
+
+; 依赖闭包：从入口包沿 requires 逐层收，外包计划按拓扑序只留这些包。
+; 入口不在成员表时答空计划，调用方据此回落到裸包通道。
+closurePlan|func(workspace: String, entryName: String,) -> (BuildPlan,):
+    let full = planWorkspace(workspace)
+    if !full.isOK():
+        return BuildPlan()
+    var keep: Array<String> = [entryName]
+    var 有入口 = false
+    var cursor = 0
+    while cursor < len(keep):
+        let name = keep[cursor]
+        var i = 0
+        while i < len(full.packages):
+            if full.packages[i].name == name:
+                if name == entryName:
+                    有入口 = true
+                var r = 0
+                while r < len(full.packages[i].requires):
+                    let dep = full.packages[i].requires[r]
+                    if !_containsPlanText(items = keep, value = dep):
+                        keep = keep.append(dep)
+                    r = r + 1
+            i = i + 1
+        cursor = cursor + 1
+    if !有入口:
+        return BuildPlan()
+    var out = full
+    var kept: Array<PackagePlan> = []
+    var p = 0
+    while p < len(full.packages):
+        if _containsPlanText(items = keep, value = full.packages[p].name):
+            kept = kept.append(full.packages[p])
+        p = p + 1
+    out.packages = kept
+    return out
+
+; 入口计划：工作区根按工作区装配；包目录先按外层工作区取依赖闭包，取不到再按裸包。
+planEntry|func(_entry: String,) -> (BuildPlan,):
+    let path = _entry + "/pini.toml"
+    if !exists(path):
+        return planPackageRoot(entry = _entry)
+    if hasWorkspace(_entry):
+        return planWorkspace(_entry)
+    let parse = parsePackageManifest(text = readFile(path), rootPath = ".", path = path)
+    let outer = enclosingWorkspace(entry = _entry)
+    if len(outer) > 0 && len(parse.manifest.name) > 0:
+        let 闭包 = closurePlan(workspace = outer, entryName = parse.manifest.name)
+        if 闭包.packageCount() > 0:
+            return 闭包
+    return planFromPackage(entry = _entry, parse = parse)
+
 ; 单包计划：产物目录按 profile 定；翻译步落在包内的 generated 目录，测试目标不默认构建。
 packagePlan|func(pkg: PackageManifest, root: String, profile: String, steps: Array<BuildStep>, scriptPath: String, scriptHash: String,) -> (PackagePlan,):
     var out = PackagePlan()
@@ -224,9 +346,12 @@ packagePlan|func(pkg: PackageManifest, root: String, profile: String, steps: Arr
     return out
 
 ; 源码根：库与可执行从 src 取生产源码，测试目标从入口目录取；扫描规则归装载面。
+; 库目标入口为空＝隐式多文件模块，源码根是包根，整目录的 .pini 同属一个库。
 sourceRootOf|func(_target: TargetSpec,) -> (String,):
     if isTargetKind(kind = _target.kind, expected = .targetTest):
         return _target.entry
+    if len(_target.entry) == 0:
+        return ""
     return "src"
 
 ; 测试目标判定：测试目标不进普通构建产物，装载面据此决定是否并入测试源码。

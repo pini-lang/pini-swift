@@ -156,7 +156,7 @@ interfaceDriftDiagnostics|func(root: String, records: Array<InterfaceRecord>, pl
 ; 包序即计划拓扑序，依赖先于下游，故下游判失效时上游摘要已经就位。
 writeInterfaces|func(root: String, stdlib: StdlibOption,) -> (InterfacesWrite,):
     var out = InterfacesWrite()
-    let plan = planWorkspace(root)
+    let plan = planEntry(root)
     if !plan.isOK():
         print("interfaces-plan-failed", plan.errorCount())
         return out
@@ -210,7 +210,7 @@ writeInterfaces|func(root: String, stdlib: StdlibOption,) -> (InterfacesWrite,):
 
 ; 接口读取：按记录打印每包摘要与快照文本，供下游工具读导出面而不重算公开面。
 printInterfaceLedger|func(root: String,) -> ():
-    let plan = planWorkspace(root)
+    let plan = planEntry(root)
     if !plan.isOK():
         print("interfaces-plan-failed", plan.errorCount())
         return

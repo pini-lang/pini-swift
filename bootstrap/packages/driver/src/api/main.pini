@@ -8,6 +8,15 @@ _backend_dump = "../../../backend-dump"
 _backend_llvm = "../../../backend-llvm"
 _testkit = "../../../testkit"
 
+; 入口路径归一：不以 `/`、`./`、`../` 开头的路径补 `./`。
+; 运行时按程序基准解析裸相对路径，宿主按进程目录解析；补前缀后两侧落到同一处。
+entryPathOf|func(raw: String,) -> (String,):
+    if len(raw) == 0:
+        return raw
+    if raw.indexOf("/") == 0 || raw.indexOf("./") == 0 || raw.indexOf("../") == 0:
+        return raw
+    return "./" + raw
+
 ; 驱动主程序：无参数只装配清单并打印产物行；子命令的根取位置参数，缺省从模块根上溯。
 ; check 跑完整检查，build 落构建计划，plan 打印计划，lower 走降载，dump 出结构转储，emit 出 LLVM 文本。
 ; cases 只列裸名用例位置；降载前先填表达式类型表并把池换成填表后的池；`--no-stdlib` 与 `--stdlib` 先摘出去。
@@ -50,12 +59,12 @@ main|func() -> ():
             if a == "--diagnostics-tsv":
                 结构化 = true
             else:
-                root = a
+                root = entryPathOf(raw = a)
             c = c + 1
     if len(args) > 0 && args[0] == "lower":
         降载 = true
         if len(args) > 1:
-            root = args[1]
+            root = entryPathOf(raw = args[1])
         if len(args) > 2 && args[2].indexOf("--stage=") == 0:
             let 位数 = args[2].slice(8, len(args[2]))
             if len(位数) > 0:
@@ -63,7 +72,7 @@ main|func() -> ():
     if len(args) > 0 && args[0] == "dump":
         转储 = true
         if len(args) > 1:
-            root = args[1]
+            root = entryPathOf(raw = args[1])
     if len(args) > 0 && args[0] == "emit":
         发射 = true
         var e = 1
@@ -76,7 +85,7 @@ main|func() -> ():
             elif len(one) > 12 && one.indexOf("--cache-dir=") == 0:
                 缓存目录 = one.slice(12, len(one))
             else:
-                root = one
+                root = entryPathOf(raw = one)
             e = e + 1
     if len(args) > 0 && args[0] == "test":
         var testRoot = workspaceRootOf(start = moduleRoot())
@@ -102,14 +111,14 @@ main|func() -> ():
                 testListOnly = true
                 cursor = cursor + 1
             else:
-                testRoot = arg
+                testRoot = entryPathOf(raw = arg)
                 cursor = cursor + 1
         runTest(root = testRoot, filter = testFilter, skips = testSkips, listOnly = testListOnly, stdlib = stdlib)
         return
     if len(args) > 0 && args[0] == "cases":
         if len(args) > 1:
-            root = args[1]
-        let plan = planWorkspace(root)
+            root = entryPathOf(raw = args[1])
+        let plan = planEntry(root)
         if !plan.isOK():
             print("workspace-plan-failed", plan.errorCount())
             return
@@ -126,7 +135,7 @@ main|func() -> ():
             if one == "--read":
                 读记录 = true
             else:
-                root = one
+                root = entryPathOf(raw = one)
             icursor = icursor + 1
         if 读记录:
             printInterfaceLedger(root = root)
@@ -139,7 +148,7 @@ main|func() -> ():
         return
     if len(args) > 0 && args[0] == "build":
         if len(args) > 1:
-            root = args[1]
+            root = entryPathOf(raw = args[1])
         runBuild(root = root)
         return
     if len(args) > 0 && args[0] == "plan":
@@ -149,9 +158,9 @@ main|func() -> ():
             if args[pc] == "--waves":
                 分波 = true
             else:
-                root = args[pc]
+                root = entryPathOf(raw = args[pc])
             pc = pc + 1
-        let planned = planWorkspace(root)
+        let planned = planEntry(root)
         if 分波:
             printPlanWaves(planned)
         else:
@@ -237,7 +246,7 @@ main|func() -> ():
         print("emit-backend", entry.name, backendOutputName(entry.output), len(entry.families))
         print(emitted.text)
         return
-    let plan = planWorkspace(root)
+    let plan = planEntry(root)
     if plan.isOK():
         print("workspace-ok", plan.packageCount(), true)
         return
@@ -352,7 +361,7 @@ printBareCases|func(units: Array<CompilationUnit>, world: MemberWorld,) -> ():
 
 ; 执行期：补输入指纹、数缺头文件的步、落计划；自举侧不翻译，生成文本由宿主 bind 产出。
 runBuild|func(root: String,) -> ():
-    let plan = planWorkspace(root)
+    let plan = planEntry(root)
     if !plan.isOK():
         print("build-plan-failed", plan.errorCount())
         var i = 0

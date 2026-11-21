@@ -1,0 +1,35 @@
+; 裸包目录：入口目录没有外层工作区时按单成员装配，隐式库的源码根就是包根。
+; 测试以工作区根为当前目录，故用 `../examples`；examples/multifile 只有 [package]，正属这一类。
+裸包目录可装配|test() -> ():
+    let 计划 = planEntry("../examples/multifile")
+    assert(计划.isOK(), "裸包不应有错误：" + planText(计划))
+    assert(计划.packageCount() == 1, "裸包只出一个成员")
+    assert(计划.packageAt(0).name == "demo", "包名取自清单")
+    assert(计划.packageAt(0).rootPath == ".", "包根即入口")
+    assert(len(计划.packageAt(0).targets) == 1, "无 target 时合成一个库")
+    assert(计划.packageAt(0).targets[0].sourceRoot == "", "隐式模块的源码根是包根")
+    return
+
+; 工作区根仍走工作区通道：成员路径保留，入口不把成员压成当前目录。
+工作区根仍按工作区|test() -> ():
+    let 计划 = planEntry("./fixtures/build-script")
+    assert(计划.packageCount() == 1, "该夹具只有一个成员")
+    assert(计划.packageAt(0).rootPath == "pkg", "成员路径保留")
+    return
+
+; 包目录取其依赖闭包：外层工作区里只留入口包与它逐层 requires 的包。
+包目录取依赖闭包|test() -> ():
+    let 计划 = planEntry("./packages/package")
+    assert(计划.isOK(), "闭包不应有错误：" + planText(计划))
+    var 有语法 = false
+    var 有驱动 = false
+    var i = 0
+    while i < len(计划.packages):
+        if 计划.packageAt(i).name == "syntax":
+            有语法 = true
+        if 计划.packageAt(i).name == "driver":
+            有驱动 = true
+        i = i + 1
+    assert(有语法, "语法包是清单包的依赖")
+    assert(!有驱动, "驱动包不在闭包里")
+    return

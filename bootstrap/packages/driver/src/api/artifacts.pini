@@ -104,7 +104,7 @@ withoutArtifactName|func(entries: Array<ArtifactEntry>, name: String,) -> (Array
 ; onlyName 非空时只发该包，记录里其余包条目保留；cacheDir 非空时按输入指纹共享产物。
 writeArtifacts|func(root: String, stdlib: StdlibOption, onlyName: String, cacheDir: String,) -> (ArtifactWrite,):
     var out = ArtifactWrite()
-    let plan = planWorkspace(root)
+    let plan = planEntry(root)
     if !plan.isOK():
         print("workspace-plan-failed", plan.errorCount())
         return out
