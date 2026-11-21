@@ -17,6 +17,12 @@ if ! python3 "$root/bootstrap/tools/capability-reach.py" --check > /dev/null; th
     exit 1
 fi
 
+# 差异普查：命令、通道、诊断三张静态表必须与盘上一致；程序表要跑全部示例，不在此列。
+if ! python3 "$root/bootstrap/tools/parity.py" --check > /dev/null; then
+    echo " 行不通  [测试自检] 差异普查表已过期，重跑 bootstrap/tools/parity.py" >&2
+    exit 1
+fi
+
 pini="${PINI_BOOTSTRAP_BIN:-$root/bootstrap/.build/debug/bin/pini-bootstrap}"
 clang_bin="$(command -v clang || true)"
 if [ ! -x "$pini" ] || [ -z "$clang_bin" ]; then
