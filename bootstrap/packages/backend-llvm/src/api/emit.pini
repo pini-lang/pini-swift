@@ -292,14 +292,33 @@ emitModule|func(entry: BackendEntry, target: TargetProfile, module: IrModule,) -
         appendLine(sink = sink, text = "@__stdinp = external global ptr")
     var bundle = EmitPass()
     let 胶水 = llvmReleaseGlues(module = module)
+    let 拷贝胶水 = llvmCopyGlues(module = module)
+    let 元素钩子 = llvmAggHooks(module = module)
     if len(胶水) > 0:
-        ; 胶水体自己要用三条归还入口，登记一次，免得只在胶水里出现的符号漏声明。
+        ; 胶水体自己要用三条归还入口与 free，登记一次，免得只在胶水里出现的符号漏声明。
         useExtern(use = bundle.externs, name = "bk_str_release")
         useExtern(use = bundle.externs, name = "bk_handle_release")
         useExtern(use = bundle.externs, name = "bk_nominal_release")
+        useExtern(use = bundle.externs, name = "free")
+    if len(拷贝胶水) > 0:
+        ; 拷贝胶水另要分配与三条留份入口。
+        useExtern(use = bundle.externs, name = "bk_nominal_alloc")
+        useExtern(use = bundle.externs, name = "bk_str_retain")
+        useExtern(use = bundle.externs, name = "bk_handle_retain")
+        useExtern(use = bundle.externs, name = "bk_nominal_retain")
+    if len(元素钩子) > 0:
+        useExtern(use = bundle.externs, name = "bk_nominal_retain")
     i = 0
     while i < len(胶水):
         appendLine(sink = sink, text = 胶水[i])
+        i = i + 1
+    i = 0
+    while i < len(拷贝胶水):
+        appendLine(sink = sink, text = 拷贝胶水[i])
+        i = i + 1
+    i = 0
+    while i < len(元素钩子):
+        appendLine(sink = sink, text = 元素钩子[i])
         i = i + 1
     emitFunctions(sink = sink, module = module, entry = entry, target = target, testMode = false, bundle = bundle, owned = [], onlyOwned = false)
     emitTaskBodies(sink = sink, bundle = bundle)
@@ -356,13 +375,31 @@ emitTestModule|func(entry: BackendEntry, target: TargetProfile, module: IrModule
         appendLine(sink = sink, text = "@__stdinp = external global ptr")
     var bundle = EmitPass()
     let 胶水 = llvmReleaseGlues(module = module)
+    let 拷贝胶水 = llvmCopyGlues(module = module)
+    let 元素钩子 = llvmAggHooks(module = module)
     if len(胶水) > 0:
         useExtern(use = bundle.externs, name = "bk_str_release")
         useExtern(use = bundle.externs, name = "bk_handle_release")
         useExtern(use = bundle.externs, name = "bk_nominal_release")
+        useExtern(use = bundle.externs, name = "free")
+    if len(拷贝胶水) > 0:
+        useExtern(use = bundle.externs, name = "bk_nominal_alloc")
+        useExtern(use = bundle.externs, name = "bk_str_retain")
+        useExtern(use = bundle.externs, name = "bk_handle_retain")
+        useExtern(use = bundle.externs, name = "bk_nominal_retain")
+    if len(元素钩子) > 0:
+        useExtern(use = bundle.externs, name = "bk_nominal_retain")
     i = 0
     while i < len(胶水):
         appendLine(sink = sink, text = 胶水[i])
+        i = i + 1
+    i = 0
+    while i < len(拷贝胶水):
+        appendLine(sink = sink, text = 拷贝胶水[i])
+        i = i + 1
+    i = 0
+    while i < len(元素钩子):
+        appendLine(sink = sink, text = 元素钩子[i])
         i = i + 1
     emitFunctions(sink = sink, module = module, entry = entry, target = target, testMode = true, bundle = bundle, owned = [], onlyOwned = false)
     emitLazyWrappers(sink = sink, bundle = bundle)
@@ -402,13 +439,25 @@ emitDeclares|func(sink: LineSink, module: IrModule, owned: Array<String>,) -> ()
 
 ; 胶水行改 linkonce_odr：同一类型在多份包里各出一份，链接时任取其一。
 partitionGlues|func(module: IrModule,) -> (Array<String>,):
-    let lines = llvmReleaseGlues(module = module)
+    var lines = llvmReleaseGlues(module = module)
+    let 拷贝胶水 = llvmCopyGlues(module = module)
+    var c = 0
+    while c < len(拷贝胶水):
+        lines = lines.append(拷贝胶水[c])
+        c = c + 1
+    let 元素钩子 = llvmAggHooks(module = module)
+    c = 0
+    while c < len(元素钩子):
+        lines = lines.append(元素钩子[c])
+        c = c + 1
     var out: Array<String> = []
     var i = 0
     while i < len(lines):
         var one: String = lines[i]
         if one.indexOf("define void @") == 0:
             one = "define linkonce_odr void @" + one.slice(one.indexOf("@"), len(one))
+        if one.indexOf("define ptr @") == 0:
+            one = "define linkonce_odr ptr @" + one.slice(one.indexOf("@"), len(one))
         out = out.append(one)
         i = i + 1
     return out
@@ -449,6 +498,14 @@ emitPartition|func(entry: BackendEntry, target: TargetProfile, module: IrModule,
         useExtern(use = bundle.externs, name = "bk_str_release")
         useExtern(use = bundle.externs, name = "bk_handle_release")
         useExtern(use = bundle.externs, name = "bk_nominal_release")
+        useExtern(use = bundle.externs, name = "free")
+    if len(llvmCopyGlues(module = module)) > 0:
+        useExtern(use = bundle.externs, name = "bk_nominal_alloc")
+        useExtern(use = bundle.externs, name = "bk_str_retain")
+        useExtern(use = bundle.externs, name = "bk_handle_retain")
+        useExtern(use = bundle.externs, name = "bk_nominal_retain")
+    if len(llvmAggHooks(module = module)) > 0:
+        useExtern(use = bundle.externs, name = "bk_nominal_retain")
     i = 0
     while i < len(胶水):
         appendLine(sink = sink, text = 胶水[i])

@@ -146,6 +146,15 @@ elementTag|func(pool: IrTypePool, typeId: I32,) -> (I32,):
         return 6
     return -1
 
+; 数组元素标签：名义箱按聚合登记成员钩子，其余交给通用表。
+;  注意  与字典分开：字典还没有成员钩子，按聚合记账会只搬字节不还成员。
+arrayElementTag|func(pool: IrTypePool, typeId: I32,) -> (I32,):
+    if typeId >= 0 && typeId < irTypeCount(pool):
+        let tag = irTypeTag(irTypeAt(pool = pool, id = typeId).kind)
+        if tag == 14 || tag == 15:
+            return 8
+    return elementTag(pool = pool, typeId = typeId)
+
 ; 类型声明：结构、对象、枚举三族各出聚合；无声明条目的类型跳过，取值点会自行报缺口。
 llvmTypeDecls|func(module: IrModule,) -> (Array<String>,):
     var lines: Array<String> = []

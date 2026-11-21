@@ -330,8 +330,8 @@ _backend_kit = "../../backend-kit"
         assert(false, "缺口：" + result.gaps[0])
     assert(发射含子串(text = result.text, needle = "%t0 = call ptr @bk_array_create(i32 0)"), "空字面量应建零长句柄")
     assert(发射含子串(text = result.text, needle = "store i32 7, ptr %ebox, align 4"), "元素应先落装箱台")
-    assert(发射含子串(text = result.text, needle = "call ptr @bk_array_append(ptr %t1, ptr %ebox, i32 4, i32 0)"), "追加应带宽度与标签")
-    assert(发射含子串(text = result.text, needle = "call i32 @bk_array_len(ptr %t3)"), "数组长度应走数组族符号")
+    assert(发射含子串(text = result.text, needle = "call ptr @bk_array_append(ptr %t2, ptr %ebox, i32 4, i32 0)"), "追加应带宽度与标签")
+    assert(发射含子串(text = result.text, needle = "call i32 @bk_array_len(ptr %t4)"), "数组长度应走数组族符号")
     assert(发射含子串(text = result.text, needle = "declare ptr @bk_array_append(ptr, ptr, i32, i32)"), "追加符号应出声明")
     assert(发射含子串(text = result.text, needle = "declare i32 @bk_array_len(ptr)"), "长度符号应出声明")
     assert(发射含子串(text = result.text, needle = "%ebox = alloca [8 x i8], align 8"), "装箱台应在函数入口分配")
@@ -520,9 +520,9 @@ _backend_kit = "../../backend-kit"
     assert(发射含子串(text = result.text, needle = "getelementptr %struct.Point, ptr null, i32 1"), "箱尺寸应取过尾指针")
     assert(发射含子串(text = result.text, needle = "getelementptr %struct.Point, ptr %t2, i32 0, i32 4"), "字段应先清零")
     assert(发射含子串(text = result.text, needle = "store i32 0, ptr %t3"), "清零应写零值")
-    assert(发射含子串(text = result.text, needle = "getelementptr %struct.Point, ptr %t4, i32 0, i32 4"), "字段写应落在第 4 槽")
-    assert(发射含子串(text = result.text, needle = "store i32 7, ptr %t5"), "字段写应存值")
-    assert(发射含子串(text = result.text, needle = "load i32, ptr %t7"), "字段读应按字段类型读")
+    assert(发射含子串(text = result.text, needle = "getelementptr %struct.Point, ptr %t5, i32 0, i32 4"), "字段写应落在第 4 槽")
+    assert(发射含子串(text = result.text, needle = "store i32 7, ptr %t6"), "字段写应存值")
+    assert(发射含子串(text = result.text, needle = "load i32, ptr %t8"), "字段读应按字段类型读")
     assert(发射含子串(text = result.text, needle = "declare ptr @bk_nominal_alloc(i64, i32)"), "分配符号应出声明")
     return
 
@@ -622,8 +622,8 @@ _backend_kit = "../../backend-kit"
     assert(发射含子串(text = result.text, needle = "getelementptr %enum.Color, ptr %t2, i32 0, i32 4"), "标签应写第 4 槽")
     assert(发射含子串(text = result.text, needle = "getelementptr %enum.Color, ptr %t2, i32 0, i32 5"), "载荷应写第 5 槽")
     assert(发射含子串(text = result.text, needle = "store i32 0, ptr %t3"), "标签应写声明序")
-    assert(发射含子串(text = result.text, needle = "load i32, ptr %t6"), "标签应按 i32 读")
-    assert(发射含子串(text = result.text, needle = "load i32, ptr %t9"), "载荷应按自身类型读")
+    assert(发射含子串(text = result.text, needle = "load i32, ptr %t7"), "标签应按 i32 读")
+    assert(发射含子串(text = result.text, needle = "load i32, ptr %t10"), "载荷应按自身类型读")
     return
 
 ; 字符串模块：字串常量两个，contains 与 indexOf 各一次；宿主查询三条。
@@ -858,9 +858,9 @@ _backend_kit = "../../backend-kit"
     let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
     if result.failed:
         assert(false, "缺口：" + result.gaps[0])
-    assert(发射含子串(text = result.text, needle = "call i32 @bk_array_len(ptr %t1)"), "负下标应先取长度")
-    assert(发射含子串(text = result.text, needle = "select i1 %t3, i32 %t4, i32 -1"), "负下标应按尾计数换算")
-    assert(发射含子串(text = result.text, needle = "call ptr @bk_array_get(ptr %t1, i32 %t5)"), "下标读应取元素地址")
+    assert(发射含子串(text = result.text, needle = "call i32 @bk_array_len(ptr %t2)"), "负下标应先取长度")
+    assert(发射含子串(text = result.text, needle = "select i1 %t4, i32 %t5, i32 -1"), "负下标应按尾计数换算")
+    assert(发射含子串(text = result.text, needle = "call ptr @bk_array_get(ptr %t2, i32 %t6)"), "下标读应取元素地址")
     assert(发射含子串(text = result.text, needle = "call ptr @bk_array_create(i32 %t"), "切片应先建新句柄")
     assert(发射含子串(text = result.text, needle = "call ptr @bk_array_set(ptr"), "切片应逐元素写新句柄")
     assert(发射含子串(text = result.text, needle = "br label %slice.cond.0"), "切片应进循环")
@@ -1278,4 +1278,60 @@ _backend_kit = "../../backend-kit"
     assert(!result.failed, "等待模块应发得出来")
     assert(发射含子串(text = result.text, needle = "call i32 @bk_task_join(ptr "), "等待应走运行时段入口")
     assert(发射含子串(text = result.text, needle = "insertvalue { i64, i32, i64 }"), "结算值按三槽拼回")
+    return
+
+; 值语义拷贝：从变量读出的别名落进绑定槽时要拷出独立的一箱，对象类型不拷。
+; 判据落在两处：胶水定义与绑定点的调用；对象那一格只验「没有胶水」。
+拷贝胶水在绑定点生效|test() -> ():
+    var module = IrModule()
+    var pool = IrTypePool()
+    let intType = irScalarTypeOfCode(pool = pool, code = 1, name = "i32")
+    pool = intType.pool
+    let boxType = irNominalType(pool = pool, name = "节点", isObject = false)
+    pool = boxType.pool
+    let refType = irNominalType(pool = pool, name = "句柄", isObject = true)
+    module.types = refType.pool
+    module.slots.headSlots = 4
+    var boxDecl = IrDecl()
+    boxDecl.typeId = boxType.id
+    boxDecl.name = "节点"
+    var field = IrField()
+    field.name = "值"
+    field.typeId = intType.id
+    boxDecl.fields = [field]
+    module.decls.entries = module.decls.entries.append(boxDecl)
+    var nodes = IrNodePool()
+    var made = irMakeNode(kind = irExprTag(.irConstruct), typeId = boxType.id)
+    let placedMade = irAppendNode(pool = nodes, node = made)
+    nodes = placedMade.pool
+    var bind = irMakeNode(kind = irStmtTag(.irAllocVar), typeId = boxType.id)
+    bind.intValue = 0
+    bind.adopt = irAdoptTag(.irAdoptTake)
+    bind.kids = [placedMade.id]
+    let placedBind = irAppendNode(pool = nodes, node = bind)
+    nodes = placedBind.pool
+    var read = irMakeNode(kind = irExprTag(.irLoad), typeId = boxType.id)
+    read.intValue = 0
+    let placedRead = irAppendNode(pool = nodes, node = read)
+    nodes = placedRead.pool
+    var alias = irMakeNode(kind = irStmtTag(.irAllocVar), typeId = boxType.id)
+    alias.intValue = 1
+    alias.adopt = irAdoptTag(.irAdoptCopyStruct)
+    alias.kids = [placedRead.id]
+    let placedAlias = irAppendNode(pool = nodes, node = alias)
+    nodes = placedAlias.pool
+    var ret = irMakeNode(kind = irStmtTag(.irReturnStmt), typeId = -1)
+    let placedRet = irAppendNode(pool = nodes, node = ret)
+    nodes = placedRet.pool
+    module.nodes = nodes
+    var fn = IrFunction()
+    fn.name = "main"
+    fn.returnType = -1
+    fn.body = [placedBind.id, placedAlias.id, placedRet.id]
+    module.functions = module.functions.append(fn)
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    assert(!result.failed, "别名绑定模块应发得出来")
+    assert(发射含子串(text = result.text, needle = "define ptr @__copy_box_" + countText(boxType.id) + "(ptr %src)"), "值语义结构体应出拷贝胶水")
+    assert(发射含子串(text = result.text, needle = "call ptr @__copy_box_" + countText(boxType.id) + "(ptr "), "别名落槽要走拷贝")
+    assert(!发射含子串(text = result.text, needle = "__copy_box_" + countText(refType.id)), "对象是引用语义，不出拷贝胶水")
     return

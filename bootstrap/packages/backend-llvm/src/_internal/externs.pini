@@ -44,6 +44,11 @@ externSignature|func(name: String,) -> (String,):
         return "declare void @bk_nominal_retain(ptr)"
     if name == "bk_nominal_release":
         return "declare i32 @bk_nominal_release(ptr)"
+    ; 数组元素钩子：聚合元素的留份与归还由发射层合成，运行时段在分裂与销毁时回调。
+    if name == "bk_array_set_element_hooks":
+        return "declare void @bk_array_set_element_hooks(ptr, ptr, ptr)"
+    if name == "free":
+        return "declare void @free(ptr)"
     if name == "bk_array_create":
         return "declare ptr @bk_array_create(i32)"
     if name == "bk_array_len":

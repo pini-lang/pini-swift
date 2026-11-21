@@ -665,6 +665,8 @@ lowerMatchStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map
     anchor.text = placedTemp.id
     anchor.intValue = done.frame.nextSlot as I64
     anchor.kids = [subject.id]
+    ; 主语先落槽再逐支复读：接收动作照存储点同一套填，别名才不会与槽共用一份。
+    anchor = fillStore(node = anchor, pool = map.pool, nodes = done.pool, targetTypeId = subjectType, valueId = subject.id, sharingStructs = false, covers = false)
     let insertedAnchor = irAppendNode(pool = done.pool, node = anchor)
     done.texts = placedTemp.texts
     done.pool = insertedAnchor.pool
