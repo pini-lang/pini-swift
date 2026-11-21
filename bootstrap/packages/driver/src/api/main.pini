@@ -40,6 +40,8 @@ main|func() -> ():
     var 转储 = false
     var 发射 = false
     var 分包 = false
+    var 单包 = ""
+    var 缓存目录 = ""
     if len(args) > 0 && args[0] == "check":
         全量 = true
         var c = 1
@@ -69,6 +71,10 @@ main|func() -> ():
             let one: String = args[e]
             if one == "--packages":
                 分包 = true
+            elif len(one) > 10 && one.indexOf("--package=") == 0:
+                单包 = one.slice(10, len(one))
+            elif len(one) > 12 && one.indexOf("--cache-dir=") == 0:
+                缓存目录 = one.slice(12, len(one))
             else:
                 root = one
             e = e + 1
@@ -137,9 +143,19 @@ main|func() -> ():
         runBuild(root = root)
         return
     if len(args) > 0 && args[0] == "plan":
-        if len(args) > 1:
-            root = args[1]
-        print(planText(planWorkspace(root)))
+        var 分波 = false
+        var pc = 1
+        while pc < len(args):
+            if args[pc] == "--waves":
+                分波 = true
+            else:
+                root = args[pc]
+            pc = pc + 1
+        let planned = planWorkspace(root)
+        if 分波:
+            printPlanWaves(planned)
+        else:
+            print(planText(planned))
         return
     if 全量:
         let report = checkWorkspace(root = root, stdlib = stdlib)
@@ -196,7 +212,7 @@ main|func() -> ():
         return
     if 发射:
         if 分包:
-            let written = writeArtifacts(root = root, stdlib = stdlib)
+            let written = writeArtifacts(root = root, stdlib = stdlib, onlyName = 单包, cacheDir = 缓存目录)
             if written.ok:
                 print("emit-packages-ok", written.packages, written.emitted, written.reused, written.bytes)
             else:

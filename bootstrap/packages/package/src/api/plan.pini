@@ -433,3 +433,30 @@ appendErrors|func(errors: Array<ManifestError>, extra: Array<ManifestError>,) ->
         out = out.append(extra[i])
         i = i + 1
     return out
+
+; 依赖分波：按依赖深度分层，空依赖落第 0 波，供外部步骤并行调度。
+; 计划已按拓扑序排好，算某包时它的依赖必已算过，故一趟即可。
+planWaveOf|func(_plan: BuildPlan,) -> (Array<I32>,):
+    var out: Array<I32> = []
+    var i = 0
+    while i < len(_plan.packages):
+        let one = _plan.packages[i]
+        var depth = 0
+        var r = 0
+        while r < len(one.requires):
+            let at = findPlanPackage(_plan, name = one.requires[r])
+            if at >= 0 && out[at] + 1 > depth:
+                depth = out[at] + 1
+            r = r + 1
+        out = out.append(depth)
+        i = i + 1
+    return out
+
+; 计划内按包名查位：分波时用，缺项答 -1。
+findPlanPackage|func(_plan: BuildPlan, name: String,) -> (I32,):
+    var i = 0
+    while i < len(_plan.packages):
+        if _plan.packages[i].name == name:
+            return i
+        i = i + 1
+    return -1

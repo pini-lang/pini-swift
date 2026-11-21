@@ -16,6 +16,7 @@ files: I32 = 0
 bytes: I32 = 0
 emitted: I32 = 0
 reused: I32 = 0
+cached: I32 = 0
 
 ; 包归属：单元路径形如 `<包名>/<相对源根路径>`，首段即包名；空路径答空串。
 packageOfUnitPath|func(unitPath: String,) -> (String,):
@@ -89,8 +90,19 @@ readInterfaceLedger|func(root: String, profile: String,) -> (InterfaceUse,):
     out.entries = parsed.entries
     return out
 
+; 记录合并：单包发射只换本包条目，其余包的原条目原样留住。
+withoutArtifactName|func(entries: Array<ArtifactEntry>, name: String,) -> (Array<ArtifactEntry>,):
+    var out: Array<ArtifactEntry> = []
+    var i = 0
+    while i < len(entries):
+        if entries[i].name != name:
+            out = out.append(entries[i])
+        i = i + 1
+    return out
+
 ; 发射产物：接口记录先在，缺记录不发射；按计划拓扑序逐包判输入指纹，命中不发射。
-writeArtifacts|func(root: String, stdlib: StdlibOption,) -> (ArtifactWrite,):
+; onlyName 非空时只发该包，记录里其余包条目保留；cacheDir 非空时按输入指纹共享产物。
+writeArtifacts|func(root: String, stdlib: StdlibOption, onlyName: String, cacheDir: String,) -> (ArtifactWrite,):
     var out = ArtifactWrite()
     let plan = planWorkspace(root)
     if !plan.isOK():
@@ -112,9 +124,14 @@ writeArtifacts|func(root: String, stdlib: StdlibOption,) -> (ArtifactWrite,):
     let entry = makeBackendOf(name = "llvm", outputCode = backendOutputNativeCode(), families = llvmFamilies(), entry = 2)
     var record = ArtifactLedger()
     record.profile = profile
+    if len(onlyName) > 0:
+        record.entries = withoutArtifactName(entries = old.entries, name = onlyName)
     var p = 0
     while p < len(plan.packages):
         let planned = plan.packages[p]
+        if len(onlyName) > 0 && planned.name != onlyName:
+            p = p + 1
+            continue
         let dir = root + "/.build/" + profile + "/packages/" + planned.name
         if !isDir(dir):
             print("emit-packages-failed", planned.name, "缺产物目录", dir)
@@ -124,9 +141,20 @@ writeArtifacts|func(root: String, stdlib: StdlibOption,) -> (ArtifactWrite,):
         let deps = packageDeps(entries = ledger.entries, requires = planned.requires)
         let input = packageInputDigest(source = source, deps = deps)
         let seen = findArtifactName(entries = old.entries, name = planned.name)
+        let cachePath = cacheDir + "/" + input + "/" + planned.name + ".ll"
         var one = ArtifactEntry()
         var text = ""
-        if seen >= 0 && exists(path) && artifactReusable(recordedInput = old.entries[seen].input, recordedHash = old.entries[seen].hash, currentInput = input, artifactText = readFile(path)):
+        if len(cacheDir) > 0 && exists(cachePath):
+            text = readFile(cachePath)
+            if !exists(path) || readFile(path) != text:
+                writeFile(path, text)
+            one.name = planned.name
+            one.path = ".build/" + profile + "/packages/" + planned.name + "/" + planned.name + ".ll"
+            one.hash = sha256Hex(text)
+            one.input = input
+            one.deps = deps
+            out.cached = out.cached + 1
+        elif seen >= 0 && exists(path) && artifactReusable(recordedInput = old.entries[seen].input, recordedHash = old.entries[seen].hash, currentInput = input, artifactText = readFile(path)):
             one = old.entries[seen]
             text = readFile(path)
             out.reused = out.reused + 1
@@ -137,6 +165,12 @@ writeArtifacts|func(root: String, stdlib: StdlibOption,) -> (ArtifactWrite,):
                 print("emit-packages-gaps", planned.name, emitGapCount(result = emitted), emitted.detail)
                 return out
             text = emitted.text
+            if len(cacheDir) > 0:
+                let cacheHome = cacheDir + "/" + input
+                if !isDir(cacheHome):
+                    print("emit-packages-cache-missing", cacheHome)
+                    return out
+                writeFile(cachePath, text)
             if !exists(path) || readFile(path) != text:
                 writeFile(path, text)
             one.name = planned.name
@@ -153,3 +187,25 @@ writeArtifacts|func(root: String, stdlib: StdlibOption,) -> (ArtifactWrite,):
     writeFile(artifactLedgerPath(root = root, profile = profile), artifactLedgerText(record))
     out.ok = true
     return out
+
+; 分波读数：每波一行，包名按计划序，供外部步骤并行调度。
+printPlanWaves|func(_plan: BuildPlan,) -> ():
+    let depth = planWaveOf(_plan)
+    var maxDepth = -1
+    var i = 0
+    while i < len(depth):
+        if depth[i] > maxDepth:
+            maxDepth = depth[i]
+        i = i + 1
+    var w = 0
+    while w <= maxDepth:
+        var names = ""
+        i = 0
+        while i < len(depth):
+            if depth[i] == w:
+                if len(names) > 0:
+                    names = names + " "
+                names = names + _plan.packages[i].name
+            i = i + 1
+        print("wave", w, names)
+        w = w + 1

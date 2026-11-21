@@ -423,8 +423,55 @@ EOF
 pkg_expect "内部改动应只重算支持包" "interfaces-ok 3 1 2" "$("$pini" interfaces "$pkg_fixture" --no-stdlib 2>&1)"
 pkg_expect "内部改动应只重发支持包" "emit-packages-ok 3 1 2 " "$("$pini" emit "$pkg_fixture" --packages --no-stdlib 2>&1)"
 pkg_expect "逐包记录后检查应通过" "workspace-ok" "$("$pini" check "$pkg_fixture" --no-stdlib 2>&1)"
+
+# 分波与共享缓存：分波出依赖深度，单包发射只换本包记录，缓存按输入指纹跨构建复用。
+wave_expect() {
+    local label="$1"
+    local want="$2"
+    local got="$3"
+    case "$got" in
+        *"$want"*) : ;;
+        *)
+            echo " 行不通  [测试自检] $label ：$got" >&2
+            fail=1
+            ;;
+    esac
+}
+
+cache_dir="$work/packages-cache"
+rm -rf "$cache_dir"
+wave_expect "分波应出第一波" "wave 0 support" "$("$pini" plan "$pkg_fixture" --waves 2>&1)"
+wave_expect "第二波应是应用包" "wave 1 app" "$("$pini" plan "$pkg_fixture" --waves 2>&1)"
+wave_expect "第三波应是命令行包" "wave 2 cli" "$("$pini" plan "$pkg_fixture" --waves 2>&1)"
+printf '%s\n' "; 缓存探针追加一行" >> "$pkg_fixture/app/src/api.pini"
+wave_expect "单包发射只换本包" "emit-packages-ok 1 1 0 " "$("$pini" emit "$pkg_fixture" --packages --package=app --no-stdlib 2>&1)"
+if [ "$(grep -c 'package = ' "$pkg_fixture/.build/debug/artifacts.toml")" != "3" ]; then
+    echo " 行不通  [测试自检] 单包发射不该丢其余包记录" >&2
+    fail=1
+fi
+rm -f "$pkg_fixture/.build/debug/packages/app/app.ll"
+missing_cache="$("$pini" emit "$pkg_fixture" --packages --package=app --no-stdlib --cache-dir="$cache_dir" 2>&1)"
+wave_expect "缓存目录缺失应定向报" "emit-packages-cache-missing" "$missing_cache"
+cache_home="$(echo "$missing_cache" | grep -o "$cache_dir/[0-9a-f]*" | head -1)"
+if [ -z "$cache_home" ]; then
+    echo " 行不通  [测试自检] 缓存诊断未给出目录" >&2
+    fail=1
+else
+    mkdir -p "$cache_home"
+    wave_expect "缓存未命中应发射一份" "emit-packages-ok 1 1 0 " "$("$pini" emit "$pkg_fixture" --packages --package=app --no-stdlib --cache-dir="$cache_dir" 2>&1)"
+    if [ ! -f "$cache_home/app.ll" ]; then
+        echo " 行不通  [测试自检] 缓存未落盘" >&2
+        fail=1
+    fi
+    rm -f "$pkg_fixture/.build/debug/packages/app/app.ll"
+    wave_expect "删产物后应从缓存恢复" "emit-packages-ok 1 0 0 " "$("$pini" emit "$pkg_fixture" --packages --package=app --no-stdlib --cache-dir="$cache_dir" 2>&1)"
+    if ! cmp -s "$pkg_fixture/.build/debug/packages/app/app.ll" "$cache_home/app.ll"; then
+        echo " 行不通  [测试自检] 缓存恢复内容应与缓存逐字节相同" >&2
+        fail=1
+    fi
+fi
 if [ "$fail" -ne 0 ]; then
     exit 1
 fi
-echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入，浮点常量走位模式，接口缓存按记录判失效，逐包产物按包发射且合并可链接，缓存按拓扑与内容判复用"
+echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入，浮点常量走位模式，接口缓存按记录判失效，逐包产物按包发射且合并可链接，缓存按拓扑与内容判复用，分波按依赖深度，共享缓存按指纹复用"
 exit 0
