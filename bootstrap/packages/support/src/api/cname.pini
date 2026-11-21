@@ -1,0 +1,109 @@
+; C 边界的标识符转写：ASCII 字母数字与下划线原样保留，其余码位写成 `_u` 加 6 位大写十六进制。
+; 6 位定宽保证可解码；与字面 `_uXXXXXX` 同形的名字由导出判据拒绝，不靠转义消歧。
+
+; 是否原样保留：ASCII 字母、数字与下划线。
+isCNamePlain|func(_code: I32,) -> (Bool,):
+    if _code >= 48 && _code <= 57:
+        return true
+    if _code >= 65 && _code <= 90:
+        return true
+    if _code >= 97 && _code <= 122:
+        return true
+    return _code == 95
+
+; 单个十六进制位：0 到 15 折成大写字符码。
+cNameHexDigit|func(_value: I32,) -> (I32,):
+    if _value < 10:
+        return 48 + _value
+    return 55 + _value
+
+; 6 位大写十六进制：低位在前攒够六位，再倒序拼出。
+cNameHex6|func(_code: I32,) -> (String,):
+    var digits: Array<I32> = []
+    var value = _code
+    var i = 0
+    while i < 6:
+        digits = digits.append(value % 16)
+        value = value / 16
+        i = i + 1
+    var out = ""
+    var j = 5
+    while j >= 0:
+        out = out + "\(chr(cNameHexDigit(digits[j])))"
+        j = j - 1
+    return out
+
+; 转义：逐字符判一次，非 C 字符按码位定宽展开。
+cNameEscape|func(_name: String,) -> (String,):
+    let symbols = chars(_name)
+    var out = ""
+    var i = 0
+    while i < len(symbols):
+        let code = ord(symbols[i])
+        if isCNamePlain(code):
+            out = out + "\(chr(code))"
+        else:
+            out = out + "_u" + cNameHex6(code)
+        i = i + 1
+    return out
+
+; 是否十六进制字符：转义撞名判定用。
+isCNameHexChar|func(_code: I32,) -> (Bool,):
+    if _code >= 48 && _code <= 57:
+        return true
+    if _code >= 65 && _code <= 70:
+        return true
+    return _code >= 97 && _code <= 102
+
+; 与转义输出同形：名字里含 `_u` 加 6 位十六进制，解码时分不清是哪一种。
+cNameCollidesWithEscape|func(_name: String,) -> (Bool,):
+    let symbols = chars(_name)
+    if len(symbols) < 8:
+        return false
+    var i = 0
+    while i + 7 < len(symbols):
+        if ord(symbols[i]) == 95 && ord(symbols[i + 1]) == 117:
+            var all = true
+            var k = 2
+            while k < 8:
+                if !isCNameHexChar(ord(symbols[i + k])):
+                    all = false
+                k = k + 1
+            if all:
+                return true
+        i = i + 1
+    return false
+
+; C 保留给实现的标识符：`__` 开头，或 `_` 加一个大写字母开头。
+cNameIsReserved|func(_name: String,) -> (Bool,):
+    let symbols = chars(_name)
+    if len(symbols) < 2:
+        return false
+    if ord(symbols[0]) != 95:
+        return false
+    let second = ord(symbols[1])
+    if second == 95:
+        return true
+    return second >= 65 && second <= 90
+
+; C 标识符首字符：ASCII 字母或下划线；文件名转写后须过这一条。
+cNameIsIdentifierStart|func(_code: I32,) -> (Bool,):
+    if _code == 95:
+        return true
+    if _code >= 65 && _code <= 90:
+        return true
+    return _code >= 97 && _code <= 122
+
+; 整串是否合法 C 标识符：首字符与后续字符同一套判据。
+cNameIsIdentifier|func(_name: String,) -> (Bool,):
+    let symbols = chars(_name)
+    if len(symbols) == 0:
+        return false
+    if !cNameIsIdentifierStart(ord(symbols[0])):
+        return false
+    var i = 1
+    while i < len(symbols):
+        if !isCNamePlain(ord(symbols[i])):
+            return false
+        i = i + 1
+    return true

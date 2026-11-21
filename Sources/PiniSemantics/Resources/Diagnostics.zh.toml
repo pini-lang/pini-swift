@@ -163,6 +163,9 @@ message = "枚举用例 '{caseName}' 的构造为位置式，不允许具名实�
 [E4-015]
 message = "给定块类型名 '{typeName}' 不能直接当值 —— 默认实例须经**取用参数**取得：在签名里写 `using 名: {typeName}`，体内用 `名.字段`（ADR-001）"
 
+[E4-026]
+message = "导出面无效：{reason}"
+
 [E4-027]
 message = "错误码无效：{reason}"
 

@@ -133,6 +133,11 @@ externSignature|func(name: String,) -> (String,):
     ; 默认实例族：槽、初始化函数与字节数三件交给运行时段，返回程序级那一个盒。
     if name == "bk_given_get":
         return "declare ptr @bk_given_get(ptr, ptr, i64)"
+    ; 导出面：串形参复制一份，失败码从错误字上取。
+    if name == "bk_str_dup":
+        return "declare ptr @bk_str_dup(ptr)"
+    if name == "bk_error_code":
+        return "declare i32 @bk_error_code(i64)"
     if name == "memcpy":
         return "declare void @memcpy(ptr, ptr, i64)"
     ; 名义箱族：头四格由运行时段写，尺寸与类型标识由发射层给。

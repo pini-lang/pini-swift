@@ -636,6 +636,9 @@ isExportBlockCode|func(_code: I32,) -> (Bool,):
 isExportEntryCode|func(_code: I32,) -> (Bool,):
     return _code == declKindTag(.declExportEntry)
 
+isExportTargetCode|func(_code: I32,) -> (Bool,):
+    return _code == declKindTag(.declExportTarget)
+
 isGivenDeclCode|func(_code: I32,) -> (Bool,):
     return _code == declKindTag(.declGiven)
 

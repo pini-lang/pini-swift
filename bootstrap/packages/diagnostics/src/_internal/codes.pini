@@ -3,7 +3,7 @@
 
 ; 已登记的诊断码数量，供门禁核对表规模。
 diagnosticCodeCount|func() -> (I32,):
-    return 112
+    return 113
 
 ; 码的消息模板；未登记答空串。占位符由调用方按诊断负载填充。
 diagnosticMessage|func(_code: String,) -> (String,):
@@ -131,6 +131,8 @@ diagnosticMessage|func(_code: String,) -> (String,):
         return "枚举用例 '{caseName}' 的构造为位置式，不允许具名实参 '{label}:'（请改为位置实参，如 `{caseName}(值)`）"
     if _code == "E4-015":
         return "给定块类型名 '{typeName}' 不能直接当值 —— 默认实例须经**取用参数**取得：在签名里写 `using 名: {typeName}`，体内用 `名.字段`（ADR-001）"
+    if _code == "E4-026":
+        return "导出面无效：{reason}"
     if _code == "E4-027":
         return "错误码无效：{reason}"
     if _code == "E4-028":

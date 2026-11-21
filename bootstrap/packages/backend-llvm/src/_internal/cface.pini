@@ -1,0 +1,228 @@
+[cface|import]
+_semantics = "../../../semantics"
+_ir = "../../../ir"
+_backend_kit = "../../../backend-kit"
+
+; 导出面发射：按 IR 导出表出 C 入口、给定块取址函数与两个生命周期符号。
+; 转发层只搬参：`^T` 走状态码加出参，借出的串在入口复制一份、调用一返回就放。
+; 名字取 IR 表里的 C 拼写，这里不再改名；内部函数按编码名调用。
+
+; C 入口拼写：函数值写成裸 ptr，其余与值拼写一致。
+cEntrySpelling|func(pool: IrTypePool, typeId: I32,) -> (String,):
+    if typeId < 0:
+        return "void"
+    let entry = irTypeAt(pool = pool, id = typeId)
+    ; 函数值类别码 20，与 types.pini 的拼写表同源。
+    if irTypeTag(entry.kind) == 20:
+        return "ptr"
+    return llvmTypeName(pool = pool, typeId = typeId)
+
+; 是否借出的串形参：C 给的是 const char*，Pini 侧要自己持有一份。
+isBorrowedString|func(pool: IrTypePool, typeId: I32,) -> (Bool,):
+    if typeId < 0:
+        return false
+    ; 串类别码 8；与值拼写同一张表。
+    return irTypeTag(irTypeAt(pool = pool, id = typeId).kind) == 8
+
+; 是否 `^T` 返回：只有返回位是结果类型才走状态码。
+isStatusReturn|func(pool: IrTypePool, typeId: I32,) -> (Bool,):
+    if typeId < 0:
+        return false
+    ; 结果类别码 10。
+    return irTypeTag(irTypeAt(pool = pool, id = typeId).kind) == 10
+
+; 形参表：取用位不进 C 原型，由转发层在边界内填默认实例。
+cParamList|func(module: IrModule, item: IrExportFunction,) -> (Array<String>,):
+    var out: Array<String> = []
+    var slot = 0
+    var p = 0
+    while p < len(item.params):
+        if !item.params[p].isUsing:
+            out = out.append(cEntrySpelling(pool = module.types, typeId = item.params[p].typeId) + " %a" + countText(slot))
+            slot = slot + 1
+        p = p + 1
+    return out
+
+; 调用实参：串形参先复制一份，其余原样转交。
+callArgList|func(module: IrModule, item: IrExportFunction,) -> (Array<String>,):
+    var out: Array<String> = []
+    var slot = 0
+    var p = 0
+    while p < len(item.params):
+        let param = item.params[p]
+        if !param.isUsing:
+            if isBorrowedString(pool = module.types, typeId = param.typeId):
+                out = out.append("ptr %s" + countText(slot))
+            else:
+                out = out.append(cEntrySpelling(pool = module.types, typeId = param.typeId) + " %a" + countText(slot))
+            slot = slot + 1
+        p = p + 1
+    return out
+
+; 借出串的槽位：入口复制与出口归还各走一遍，两份清单同源。
+borrowSlots|func(module: IrModule, item: IrExportFunction,) -> (Array<I32>,):
+    var out: Array<I32> = []
+    var slot = 0
+    var p = 0
+    while p < len(item.params):
+        let param = item.params[p]
+        if !param.isUsing:
+            if isBorrowedString(pool = module.types, typeId = param.typeId):
+                out = out.append(slot)
+            slot = slot + 1
+        p = p + 1
+    return out
+
+; 逗号拼接：空表答空串。
+joinText|func(_parts: Array<String>,) -> (String,):
+    var out = ""
+    var i = 0
+    while i < len(_parts):
+        if i > 0:
+            out = out + ", "
+        out = out + _parts[i]
+        i = i + 1
+    return out
+
+; 一个导出函数的转发体：三条出口 —— 状态码、有值、空返回。
+exportFunctionText|func(module: IrModule, item: IrExportFunction, use: ExternUse,) -> (String,):
+    var cParams = cParamList(module = module, item = item)
+    let borrows = borrowSlots(module = module, item = item)
+    let status = isStatusReturn(pool = module.types, typeId = item.returnType)
+    let payload = resultPayload(pool = module.types, typeId = item.returnType)
+    if status && payload >= 0:
+        cParams = cParams.append("ptr %out")
+    let retSpelling = llvmTypeName(pool = module.types, typeId = item.returnType)
+    var head = "define "
+    if status:
+        head = head + "i32 @"
+    else:
+        head = head + retSpelling + " @"
+    var body = head + item.cName + "(" + joinText(cParams) + ") {\n"
+    var b = 0
+    while b < len(borrows):
+        useExtern(use = use, name = "bk_str_dup")
+        body = body + " %s" + countText(borrows[b]) + " = call ptr @bk_str_dup(ptr %a" + countText(borrows[b]) + ")\n"
+        b = b + 1
+    let args = joinText(callArgList(module = module, item = item))
+    let callee = "@" + mangleName(name = item.pinName) + "(" + args + ")"
+    if status:
+        body = body + " %r = call " + retSpelling + " " + callee + "\n"
+        b = 0
+        while b < len(borrows):
+            useExtern(use = use, name = "bk_str_release")
+            body = body + " call void @bk_str_release(ptr %s" + countText(borrows[b]) + ")\n"
+            b = b + 1
+        useExtern(use = use, name = "bk_error_code")
+        body = body + " %tag = extractvalue " + retSpelling + " %r, 0\n"
+        body = body + " %ok = icmp eq i64 %tag, 0\n"
+        body = body + " br i1 %ok, label %export.ok, label %export.err\n"
+        body = body + "export.ok:\n"
+        if payload >= 0:
+            body = body + " %value = extractvalue " + retSpelling + " %r, 1\n"
+            body = body + " store " + llvmTypeName(pool = module.types, typeId = payload) + " %value, ptr %out\n"
+        body = body + " br label %export.done\n"
+        body = body + "export.err:\n"
+        body = body + " %errWord = extractvalue " + retSpelling + " %r, 2\n"
+        body = body + " %errCode = call i32 @bk_error_code(i64 %errWord)\n"
+        body = body + " br label %export.done\n"
+        body = body + "export.done:\n"
+        body = body + " %code = phi i32 [ 0, %export.ok ], [ %errCode, %export.err ]\n"
+        body = body + " ret i32 %code\n"
+    elif item.returnType >= 0:
+        body = body + " %r = call " + retSpelling + " " + callee + "\n"
+        b = 0
+        while b < len(borrows):
+            useExtern(use = use, name = "bk_str_release")
+            body = body + " call void @bk_str_release(ptr %s" + countText(borrows[b]) + ")\n"
+            b = b + 1
+        body = body + " ret " + retSpelling + " %r\n"
+    else:
+        body = body + " call void " + callee + "\n"
+        b = 0
+        while b < len(borrows):
+            useExtern(use = use, name = "bk_str_release")
+            body = body + " call void @bk_str_release(ptr %s" + countText(borrows[b]) + ")\n"
+            b = b + 1
+        body = body + " ret void\n"
+    return body + "}\n\n"
+
+; 结果载荷：空元组按无载荷处理，C 侧只剩状态码，不留出参。
+resultPayload|func(pool: IrTypePool, typeId: I32,) -> (I32,):
+    if typeId < 0:
+        return -1
+    let entry = irTypeAt(pool = pool, id = typeId)
+    if len(entry.kids) == 0:
+        return -1
+    let kid = entry.kids[0]
+    let payloadEntry = irTypeAt(pool = pool, id = kid)
+    ; 元组类别码 19：零分量的元组就是 `()`，它在 IR 里仍占一格。
+    if irTypeTag(payloadEntry.kind) == 19 && len(payloadEntry.kids) == 0:
+        return -1
+    return kid
+
+; 按名字找名义类型：取第一个同名且带聚合名的；未命中答 -1。
+findTypeByName|func(pool: IrTypePool, name: String,) -> (I32,):
+    var i = 0
+    while i < irTypeCount(pool):
+        let entry = irTypeAt(pool = pool, id = i)
+        if entry.name == name && len(llvmAggregateName(pool = pool, typeId = i)) > 0:
+            return i
+        i = i + 1
+    return -1
+
+; 给定块取址：物化交给运行时段，返回的是箱的字段区首地址。
+exportGetterText|func(module: IrModule, storage: IrExportStorage,) -> (String,):
+    let typeId = findTypeByName(pool = module.types, name = storage.typeName)
+    if typeId < 0:
+        return ""
+    let agg = llvmAggregateName(pool = module.types, typeId = typeId)
+    var body = "define ptr @" + storage.getterName + "() {\n"
+    body = body + " %sizeEnd = getelementptr " + agg + ", ptr null, i32 1\n"
+    body = body + " %size = ptrtoint ptr %sizeEnd to i64\n"
+    body = body + " %box = call ptr @bk_given_get(ptr @" + givenSlotName(typeName = storage.typeName) + ", ptr @" + givenInitName(typeName = storage.typeName) + ", i64 %size)\n"
+    body = body + " %payload = getelementptr " + agg + ", ptr %box, i32 0, i32 " + countText(module.slots.headSlots) + "\n"
+    body = body + " ret ptr %payload\n}\n\n"
+    return body
+
+; 生命周期：`init` 把每个导出给定块物化一遍，`shutdown` 空实现但符号要留。
+exportLifecycleText|func(module: IrModule, block: IrExportBlock,) -> (String,):
+    var body = "define void @" + block.initName + "() {\n"
+    var i = 0
+    while i < len(block.storages):
+        let typeId = findTypeByName(pool = module.types, name = block.storages[i].typeName)
+        if typeId >= 0:
+            let agg = llvmAggregateName(pool = module.types, typeId = typeId)
+            body = body + " %initSizeEnd" + countText(i) + " = getelementptr " + agg + ", ptr null, i32 1\n"
+            body = body + " %initSize" + countText(i) + " = ptrtoint ptr %initSizeEnd" + countText(i) + " to i64\n"
+            body = body + " %initBox" + countText(i) + " = call ptr @bk_given_get(ptr @" + givenSlotName(typeName = block.storages[i].typeName) + ", ptr @" + givenInitName(typeName = block.storages[i].typeName) + ", i64 %initSize" + countText(i) + ")\n"
+        i = i + 1
+    body = body + " ret void\n}\n\n"
+    body = body + "define void @" + block.shutdownName + "() {\n ret void\n}\n\n"
+    return body
+
+; 预登记：给定块适配函数与槽必须在 `emitGivenDefs` 之前进表，否则取址点指向未声明的符号。
+prepareExportGivens|func(module: IrModule, bundle: EmitPass,) -> ():
+    var i = 0
+    while i < len(module.cSurface.storages):
+        let typeId = findTypeByName(pool = module.types, name = module.cSurface.storages[i].typeName)
+        if typeId >= 0:
+            bundle.givenDefs = ensureGivenDefs(defs = bundle.givenDefs, module = module, typeId = typeId, use = bundle.externs)
+        i = i + 1
+    return
+
+; 导出入片段：函数项、取址项与生命周期按表序出；没有 C 面就整段不出现。
+emitExportStubs|func(sink: LineSink, module: IrModule, bundle: EmitPass,) -> ():
+    if !hasExportBlock(block = module.cSurface):
+        return
+    var i = 0
+    while i < len(module.cSurface.functions):
+        appendLine(sink = sink, text = exportFunctionText(module = module, item = module.cSurface.functions[i], use = bundle.externs))
+        i = i + 1
+    i = 0
+    while i < len(module.cSurface.storages):
+        useExtern(use = bundle.externs, name = "bk_given_get")
+        appendLine(sink = sink, text = exportGetterText(module = module, storage = module.cSurface.storages[i]))
+        i = i + 1
+    appendLine(sink = sink, text = exportLifecycleText(module = module, block = module.cSurface))
+    return

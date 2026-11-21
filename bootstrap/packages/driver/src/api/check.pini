@@ -165,6 +165,19 @@ foreignDiagnostics|func(_check: ForeignTypeCheck,) -> (Array<Diagnostic>,):
         i = i + 1
     return out
 
+; 导出面诊断：`|c` 条目不可发布、名字撞车与类型不合格，码取导出面自己的表。
+exportDiagnostics|func(_check: ExportCheck,) -> (Array<Diagnostic>,):
+    var out: Array<Diagnostic> = []
+    var i = 0
+    while i < len(_check.errors):
+        let error = _check.errors[i]
+        var message = exportErrorName(error.kind) + "：" + error.name
+        if len(error.detail) > 0:
+            message = message + "（" + error.detail + "）"
+        out = out.append(makeCheckDiagnostic(file = error.file, category = semanticCategory(), code = exportErrorCode(error.kind), message = message, offset = error.offset))
+        i = i + 1
+    return out
+
 ; 边界诊断：三类共用 E3-005，靠类别名区分；别名与目标都进消息。
 boundaryDiagnostics|func(_check: BoundaryCheck,) -> (Array<Diagnostic>,):
     var out: Array<Diagnostic> = []
@@ -448,6 +461,11 @@ checkUnits|func(root: String, ws: WorkspaceUnits, packages: I32, plan: BuildPlan
         diagnostics = diagnostics.append(typed[i])
         i = i + 1
     let world = build.world
+    var exported = exportDiagnostics(checkExportSurface(world = world))
+    i = 0
+    while i < len(exported):
+        diagnostics = diagnostics.append(exported[i])
+        i = i + 1
     var foreignErrors = foreignDiagnostics(checkForeignPackage(units = units, types = build.types))
     i = 0
     while i < len(foreignErrors):

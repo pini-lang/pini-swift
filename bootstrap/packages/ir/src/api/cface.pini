@@ -1,0 +1,140 @@
+[cface|import]
+_support = "../../../support"
+_syntax = "../../../syntax"
+_semantics = "../../../semantics"
+_module_loader = "../../../module-loader"
+
+; 导出表：`[文件|export]` 的 `|c` 条目在 IR 里的落地形态。
+; C 名已转写，后端不再改名；函数项只记形参与返回的 IR 类型，判型已在语义层定死。
+; 给定块只镜像字段区；箱头在指针之前，C 侧不需要知道它多宽。
+
+; 导出形参：类型下标与取用位；取用位不进 C 原型，由转发层在边界内填默认实例。
+(IrExportParam)
+typeId: I32 = -1
+isUsing: Bool = false
+
+; 导出函数：C 名、Pini 名、形参表与返回类型；返回 -1 表示空返回。
+(IrExportFunction)
+cName: String = ""
+pinName: String = ""
+params: Array<IrExportParam> = []
+returnType: I32 = -1
+
+; 导出字段：名字已转写为 C 标识符。
+(IrExportField)
+name: String = ""
+typeId: I32 = -1
+
+; 导出给定块：C 结构体名、类型名、字段表与取址函数名。
+(IrExportStorage)
+cName: String = ""
+typeName: String = ""
+fields: Array<IrExportField> = []
+getterName: String = ""
+
+; 导出块：块名、函数项、给定块项与两个生命周期符号；块名取文件名。
+(IrExportBlock)
+name: String = ""
+functions: Array<IrExportFunction> = []
+storages: Array<IrExportStorage> = []
+initName: String = ""
+shutdownName: String = ""
+
+; 是否带 C 面：块名为空即没有。
+hasExportBlock|func(block: IrExportBlock,) -> (Bool,):
+    return len(block.name) > 0
+
+; 函数项按名字查：未命中答 -1。
+findExportFunction|func(block: IrExportBlock, pinName: String,) -> (I32,):
+    var i = 0
+    while i < len(block.functions):
+        if block.functions[i].pinName == pinName:
+            return i
+        i = i + 1
+    return -1
+
+; 给定块的声明：按类型名在声明表里线性查，未命中答 -1。
+findDeclByName|func(table: IrDeclTable, name: String,) -> (I32,):
+    var i = 0
+    while i < len(table.entries):
+        if table.entries[i].name == name:
+            return i
+        i = i + 1
+    return -1
+
+; 条目：右端是自由函数就出函数项，是给定块就出取址项；其余在语义层已拒，这里跳过。
+makeExportEntry|func(block: IrExportBlock, unit: CompilationUnit, bytes: Array<U8>, functions: Array<IrFunction>, decls: IrDeclTable, entry: DeclNode,) -> (IrExportBlock,):
+    var out = block
+    let cName = cNameEscape(decodeSpelling(bytes = bytes, start = entry.nameStart, end = entry.nameEnd))
+    if len(entry.kids) == 0:
+        return out
+    let target = unit.ast.exprAt(entry.kids[0])
+    let symbolName = decodeSpelling(bytes = bytes, start = target.nameStart, end = target.nameEnd)
+    var f = 0
+    while f < len(functions):
+        if functions[f].name == symbolName:
+            var item = IrExportFunction()
+            item.cName = cName
+            item.pinName = symbolName
+            item.returnType = functions[f].returnType
+            var p = 0
+            while p < len(functions[f].params):
+                var param = IrExportParam()
+                param.typeId = functions[f].params[p].typeId
+                param.isUsing = functions[f].params[p].isUsing
+                item.params = item.params.append(param)
+                p = p + 1
+            out.functions = out.functions.append(item)
+            return out
+        f = f + 1
+    let at = findDeclByName(table = decls, name = symbolName)
+    if at >= 0:
+        var storage = IrExportStorage()
+        storage.cName = cName
+        storage.typeName = symbolName
+        storage.getterName = cName + "_get"
+        var i = 0
+        while i < len(decls.entries[at].fields):
+            var field = IrExportField()
+            field.name = cNameEscape(decls.entries[at].fields[i].name)
+            field.typeId = decls.entries[at].fields[i].typeId
+            storage.fields = storage.fields.append(field)
+            i = i + 1
+        out.storages = out.storages.append(storage)
+    return out
+
+; 导出块：挑出带 `|c` 条目的那一块；一个模块只认第一块。
+makeExportBlock|func(world: MemberWorld, functions: Array<IrFunction>, decls: IrDeclTable,) -> (IrExportBlock,):
+    var out = IrExportBlock()
+    var u = 0
+    while u < len(world.units):
+        let unit = world.units[u]
+        let bytes = unitBytes(unit)
+        var i = 0
+        while i < len(unit.ast.items):
+            let decl = unit.ast.decls[unit.ast.items[i]]
+            if isExportBlockCode(decl.kind) && len(out.name) == 0:
+                var chosen: Array<I32> = []
+                var k = 0
+                while k < len(decl.kids):
+                    let entry = unit.ast.decls[decl.kids[k]]
+                    if isExportEntryCode(entry.kind) && len(entry.kids) > 1:
+                        let target = unit.ast.decls[entry.kids[1]]
+                        if isExportTargetCode(target.kind):
+                            let text = decodeSpelling(bytes = bytes, start = target.nameStart, end = target.nameEnd)
+                            if text == "c":
+                                chosen = chosen.append(decl.kids[k])
+                    k = k + 1
+                if len(chosen) > 0:
+                    out.name = decodeSpelling(bytes = bytes, start = decl.nameStart, end = decl.nameEnd)
+                    let blockName = cNameEscape(out.name)
+                    out.initName = blockName + "_init"
+                    out.shutdownName = blockName + "_shutdown"
+                    var e = 0
+                    while e < len(chosen):
+                        out = makeExportEntry(block = out, unit = unit, bytes = bytes, functions = functions, decls = decls, entry = unit.ast.decls[chosen[e]])
+                        e = e + 1
+                    return out
+            i = i + 1
+        u = u + 1
+    return out

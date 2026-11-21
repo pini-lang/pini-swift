@@ -163,6 +163,9 @@ message = "enum case '{caseName}' is constructed positionally; named argument '{
 [E4-015]
 message = "the given block type name '{typeName}' cannot be used as a value -- take its default instance through a `using` parameter instead"
 
+[E4-026]
+message = "invalid C export surface: {reason}"
+
 [E4-027]
 message = "invalid error code: {reason}"
 
