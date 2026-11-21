@@ -10,5 +10,9 @@ check-bad-name	check	在	1	1	E3-001@3:11	E3-001@3:11	1/1	同同异	异:文
 check-bad-syntax	check	在	1	1	E2-001@4:5	E2-001@4:5	1/1	同同异	异:文
 check-bad-indent	check	在	1	1	E2-006@4:1	E2-006@4:5	2/3	同异异	异:码,文
 check-missing	check	在	1	1	-	E3-011	0/1	同异异	异:码,文
-version	version	缺	-	-	-	-	-	---	缺:命令
-tokens	tokens	缺	-	-	-	-	-	---	缺:命令
+build-file	build	在	0	0	-	-	0/0	同同异	异:文
+version	version	在	0	0	-	-	0/0	同同同	同
+tokens	tokens	在	0	0	-	-	0/0	同同同	同
+tokens-escapes	tokens	在	0	0	-	-	0/0	同同异	异:文
+backends	backends	在	0	0	-	-	0/0	同同异	异:文
+backends-tsv	backends	在	0	0	-	-	0/0	同同异	异:文

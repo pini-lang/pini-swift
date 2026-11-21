@@ -10,5 +10,9 @@ check-bad-name	check	bootstrap/fixtures/cli-parity/inputs/undefined.pini	在	同
 check-bad-syntax	check	bootstrap/fixtures/cli-parity/inputs/unclosed.pini	在	同同异	语法错误 E2-001，码与区间相同
 check-bad-indent	check	bootstrap/fixtures/cli-parity/inputs/indent.pini	在	同异异	语法错误 E2-006，区间与级联不同
 check-missing	check	bootstrap/fixtures/cli-parity/inputs/nope.pini	在	同异异	缺件：宿主只报路径不存在
-version	version	-	缺	---	自举无此命令
-tokens	tokens	examples/hello.pini	缺	---	自举无此命令
+build-file	build	examples/hello.pini	在	同同异	单文件只检查、不落产物，输出与 check 同腿
+version	version	-	在	同同同	版本串与宿主逐字相同
+tokens	tokens	examples/hello.pini	在	同同同	记号清单逐行相同
+tokens-escapes	tokens	bootstrap/fixtures/cli-parity/inputs/escapes.pini	在	同同异	转义与空串：宿主按解码值打印、空串归插值串
+backends	backends	-	在	同同异	族表同形，自举只有两条通道
+backends-tsv	backends	--tsv	在	同同异	同上，多一行输出档次

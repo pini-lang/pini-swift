@@ -1,0 +1,301 @@
+[inspect|import]
+_support = "../../../support"
+_syntax = "../../../syntax"
+_diagnostics = "../../../diagnostics"
+_semantics = "../../../semantics"
+_unicode = "../../../unicode"
+_backend_kit = "../../../backend-kit"
+_backend_llvm = "../../../backend-llvm"
+
+; 只读命令的文本面：版本、记号清单、后端矩阵。三处都与宿主同形，逐字对照由夹具钉住。
+; 记号类别名取宿主 typeName 的拼写，不沿用自举内部的枚举名——对外文本只有一个来源。
+; 版本号与宿主 PiniVersion.current 同值：任何一侧改动都会让对照夹具变红。
+
+; 版本串：只给号，不带前缀，前缀由调用方拼。
+piniVersion|func() -> (String,):
+    return "0.56.0"
+
+; 记号类别：一字不差地映射到宿主 typeName；`|` 在宿主叫 pipe，`=>` 叫 doubleArrow。
+tokenHostName|func(_kind: TokenKind,) -> (String,):
+    match _kind:
+        case unknown:
+            return "unknown"
+        case identifier:
+            return "identifier"
+        case integer:
+            return "int"
+        case float:
+            return "float"
+        case string:
+            return "string"
+        case interpolatedString:
+            return "interpolatedString"
+        case trueLiteral:
+            return "bool"
+        case falseLiteral:
+            return "bool"
+        case kwVar:
+            return "keyword"
+        case kwLet:
+            return "keyword"
+        case kwFunc:
+            return "keyword"
+        case kwEnum:
+            return "keyword"
+        case kwObject:
+            return "keyword"
+        case kwIf:
+            return "keyword"
+        case kwElif:
+            return "keyword"
+        case kwElse:
+            return "keyword"
+        case kwMatch:
+            return "keyword"
+        case kwCase:
+            return "keyword"
+        case kwWhile:
+            return "keyword"
+        case kwStep:
+            return "keyword"
+        case kwFor:
+            return "keyword"
+        case kwIn:
+            return "keyword"
+        case kwTry:
+            return "keyword"
+        case kwReturn:
+            return "keyword"
+        case kwBreak:
+            return "keyword"
+        case kwContinue:
+            return "keyword"
+        case kwSelf:
+            return "keyword"
+        case kwOwn:
+            return "keyword"
+        case kwDefer:
+            return "keyword"
+        case kwImport:
+            return "keyword"
+        case kwExport:
+            return "keyword"
+        case kwNil:
+            return "keyword"
+        case kwCapture:
+            return "keyword"
+        case kwAwait:
+            return "keyword"
+        case kwWait:
+            return "keyword"
+        case kwUnsafe:
+            return "keyword"
+        case kwTest:
+            return "keyword"
+        case kwForeign:
+            return "keyword"
+        case kwDetach:
+            return "keyword"
+        case kwPass:
+            return "keyword"
+        case kwUsing:
+            return "keyword"
+        case kwUnroll:
+            return "keyword"
+        case opAdd:
+            return "plus"
+        case opSub:
+            return "minus"
+        case opMul:
+            return "star"
+        case opDiv:
+            return "slash"
+        case opMod:
+            return "percent"
+        case opInc:
+            return "increment"
+        case opDec:
+            return "decrement"
+        case opAnd:
+            return "logicalAnd"
+        case opOr:
+            return "logicalOr"
+        case opNot:
+            return "logicalNot"
+        case opEq:
+            return "equal"
+        case opNe:
+            return "notEqual"
+        case opLe:
+            return "lessThanOrEqual"
+        case opGe:
+            return "greaterThanOrEqual"
+        case opLt:
+            return "lessThan"
+        case opGt:
+            return "greaterThan"
+        case opBitAnd:
+            return "bitwiseAnd"
+        case opBitOr:
+            return "pipe"
+        case opBitXor:
+            return "bitwiseXor"
+        case opBitNot:
+            return "bitwiseNot"
+        case opShl:
+            return "leftShift"
+        case opShr:
+            return "rightShift"
+        case opAssign:
+            return "assign"
+        case opAssignAdd:
+            return "plusAssign"
+        case opAssignSub:
+            return "minusAssign"
+        case opAssignMul:
+            return "multiplyAssign"
+        case opAssignDiv:
+            return "divideAssign"
+        case opAssignMod:
+            return "moduloAssign"
+        case opAssignBitAnd:
+            return "andAssign"
+        case opAssignBitOr:
+            return "orAssign"
+        case opAssignBitXor:
+            return "xorAssign"
+        case opAssignShl:
+            return "leftShiftAssign"
+        case opAssignShr:
+            return "rightShiftAssign"
+        case leftParen:
+            return "leftParen"
+        case rightParen:
+            return "rightParen"
+        case leftBracket:
+            return "leftBracket"
+        case rightBracket:
+            return "rightBracket"
+        case leftBrace:
+            return "leftBrace"
+        case rightBrace:
+            return "rightBrace"
+        case colon:
+            return "colon"
+        case comma:
+            return "comma"
+        case arrow:
+            return "arrow"
+        case fatArrow:
+            return "doubleArrow"
+        case dot:
+            return "dot"
+        case question:
+            return "questionMark"
+        case atSign:
+            return "at"
+        case newline:
+            return "newline"
+        case indent:
+            return "indent"
+        case dedent:
+            return "dedent"
+        case eof:
+            return "eof"
+    return "unknown"
+
+; 记号原文：布局记号用宿主那套显形写法，其余按源内字节区间逐标量取回。
+; 非法 UTF-8 在装载期已被拒，这里遇到零长标量即停，不会空转。
+tokenLexeme|func(source: SourceText, token: Token,) -> (String,):
+    match token.kind:
+        case newline:
+            return "\\n"
+        case indent:
+            return "→"
+        case dedent:
+            return "←"
+        case eof:
+            return ""
+        case _:
+            return sourceLexeme(source = source, token = token)
+
+; 源内原文：按字节区间逐标量取回；非法 UTF-8 在装载期已被拒，零长标量即停。
+sourceLexeme|func(source: SourceText, token: Token,) -> (String,):
+    var out = ""
+    var at = token.start
+    while at < token.end:
+        let unit = decodeScalarAt(bytes = source.bytes, offset = at)
+        if unit.length == 0:
+            return out
+        out = out + chr(unit.code)
+        at = at + unit.length
+    return out
+
+; 记号清单：每行「行:列 类别 原文」，与宿主 tokens 同形；行列为标量计数，多字节不占额外列。
+; 缩进记号由宿主锚在行首，自举词法把它记在首个子记号处，这里统一按行首打印。
+runTokens|func(path: String,) -> ():
+    if !exists(path) || isDir(path):
+        print("Error: 源文件不存在：" + path)
+        assert(false, "记号清单未生成")
+        return
+    let source = makeSourceText(readFile(path))
+    let lexed = lexSource(source)
+    var i = 0
+    while i < len(lexed.tokens):
+        let token = lexed.tokens[i]
+        let at = locationOf(text = source, offset = token.start)
+        var column = at.column
+        match token.kind:
+            case indent:
+                column = 1
+            case dedent:
+                column = 1
+            case _:
+                column = at.column
+        print(countText(at.line) + ":" + countText(column) + " " + tokenHostName(token.kind) + " " + tokenLexeme(source = source, token = token))
+        i = i + 1
+    return
+
+; 输出档次对外名：宿主叫 machineCode / structuralDump / bytecode，内部枚举名不外泄。
+hostOutputName|func(_output: BackendOutput,) -> (String,):
+    match _output:
+        case backendOutputNative:
+            return "machineCode"
+        case backendOutputBytecode:
+            return "bytecode"
+        case backendOutputDump:
+            return "structuralDump"
+    return "unknown"
+
+; 后端矩阵：首列族，其后每后端一列；`--tsv` 多一行输出档次，与宿主同序。
+; 自举只有 llvm 与 dump 两条通道，列数少于宿主；格式一致，内容差异由夹具登记。
+printBackendMatrix|func(tsv: Bool,) -> ():
+    let llvm = makeBackendOf(name = "llvm", outputCode = backendOutputNativeCode(), families = llvmFamilies(), entry = 2)
+    let dump = makeBackendOf(name = "dump", outputCode = backendOutputDumpCode(), families = backendFamilyCodes(), entry = 1)
+    var entries: Array<BackendEntry> = [llvm, dump]
+    var header = "family"
+    var c = 0
+    while c < len(entries):
+        header = header + "\t" + entries[c].name
+        c = c + 1
+    print(header)
+    if tsv:
+        var outputs = "output"
+        var o = 0
+        while o < len(entries):
+            outputs = outputs + "\t" + hostOutputName(entries[o].output)
+            o = o + 1
+        print(outputs)
+    var f = 0
+    while f < backendFamilyCount():
+        var row = backendFamilyName(code = f)
+        var k = 0
+        while k < len(entries):
+            if supportsFamily(entry = entries[k], family = f):
+                row = row + "\tyes"
+            else:
+                row = row + "\tno"
+            k = k + 1
+        print(row)
+        f = f + 1
+    return

@@ -1,0 +1,16 @@
+family	llvm	dump
+output	machineCode	structuralDump
+controlFlow	yes	yes
+scalars	yes	yes
+variablesAndOperators	yes	yes
+calls	yes	yes
+resultAndOptional	yes	yes
+collections	yes	yes
+nominals	yes	yes
+pointers	yes	yes
+fileIO	yes	yes
+catchableIO	yes	yes
+strings	yes	yes
+lazyRef	yes	yes
+concurrency	yes	yes
+givenInstances	yes	yes

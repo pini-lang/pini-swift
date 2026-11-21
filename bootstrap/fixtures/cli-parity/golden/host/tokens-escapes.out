@@ -1,0 +1,31 @@
+2:1 identifier main
+2:5 pipe |
+2:6 keyword func
+2:10 leftParen (
+2:11 rightParen )
+2:13 arrow ->
+2:16 leftParen (
+2:17 rightParen )
+2:18 colon :
+2:19 newline \n
+3:1 indent →
+3:5 identifier print
+3:10 leftParen (
+3:11 string "a
+b	c"
+3:20 rightParen )
+3:21 newline \n
+4:5 identifier print
+4:10 leftParen (
+4:11 interpolatedString ""
+4:13 rightParen )
+4:14 newline \n
+5:5 identifier print
+5:10 leftParen (
+5:11 interpolatedString "前\(1)后"
+5:19 rightParen )
+5:20 newline \n
+6:5 keyword return
+6:11 newline \n
+7:1 dedent ←
+7:1 eof 

@@ -146,10 +146,29 @@ main|func() -> ():
         else:
             assert(false, "接口缓存未写入")
         return
+    if len(args) > 0 && (args[0] == "version" || args[0] == "--version" || args[0] == "-v"):
+        print("Pini " + piniVersion())
+        return
+    if len(args) > 0 && args[0] == "tokens":
+        if len(args) < 2:
+            print("Error: tokens command requires a file path")
+            assert(false, "记号清单缺路径")
+            return
+        runTokens(path = entryPathOf(raw = args[1]))
+        return
+    if len(args) > 0 && args[0] == "backends":
+        var tsv = false
+        var b = 1
+        while b < len(args):
+            if args[b] == "--tsv":
+                tsv = true
+            b = b + 1
+        printBackendMatrix(tsv = tsv)
+        return
     if len(args) > 0 && args[0] == "build":
         if len(args) > 1:
             root = entryPathOf(raw = args[1])
-        runBuild(root = root)
+        runBuild(root = root, stdlib = stdlib)
         return
     if len(args) > 0 && args[0] == "plan":
         var 分波 = false
@@ -245,6 +264,10 @@ main|func() -> ():
         print("emit-ok", 产物.packages, emitted.lines, len(emitted.text))
         print("emit-backend", entry.name, backendOutputName(entry.output), len(entry.families))
         print(emitted.text)
+        return
+    if len(args) > 0 && !isKnownCommand(name = args[0]):
+        print("Error: Unknown command '" + args[0] + "'")
+        assert(false, "未知命令")
         return
     let plan = planEntry(root)
     if plan.isOK():
@@ -359,8 +382,31 @@ printBareCases|func(units: Array<CompilationUnit>, world: MemberWorld,) -> ():
         u = u + 1
     print("cases-ok", total, files)
 
+; 子命令白名单：未知首参不再落到默认装配，免得打错命令名时静默检查编译器自身模块根。
+isKnownCommand|func(name: String,) -> (Bool,):
+    if name == "check" || name == "lower" || name == "dump" || name == "emit":
+        return true
+    if name == "test" || name == "cases" || name == "interfaces" || name == "build":
+        return true
+    if name == "plan" || name == "version" || name == "--version" || name == "-v":
+        return true
+    if name == "tokens" || name == "backends":
+        return true
+    return false
+
 ; 执行期：补输入指纹、数缺头文件的步、落计划；自举侧不翻译，生成文本由宿主 bind 产出。
-runBuild|func(root: String,) -> ():
+; 单文件入口与宿主同口径：只做检查、不落产物，输出与 `check` 那条腿一致。
+runBuild|func(root: String, stdlib: StdlibOption,) -> ():
+    if exists(root) && !isDir(root):
+        let report = checkWorkspace(root = root, stdlib = stdlib)
+        if len(report.text) > 0:
+            print(report.text)
+        if report.errorCount > 0 || report.exitCode != 0:
+            print("workspace-check-failed", report.errorCount)
+            assert(false, "工作区检查未通过")
+            return
+        print("workspace-ok", report.packages, true)
+        return
     let plan = planEntry(root)
     if !plan.isOK():
         print("build-plan-failed", plan.errorCount())

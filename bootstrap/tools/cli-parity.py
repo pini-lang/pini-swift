@@ -251,7 +251,7 @@ def gather(cases, host, mine_binary):
 def self_commands():
     """驱动分派里认得的子命令：`args[0] == "…"` 是唯一写法。"""
     text = SELF_MAIN.read_text(encoding="utf-8")
-    return set(re.findall(r'args\[0\] == "([a-z-]+)"', text))
+    return set(re.findall(r'args\[0\] == "([A-Za-z]+)"', text))
 
 
 def check_declared(rows):
