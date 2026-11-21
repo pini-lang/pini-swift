@@ -116,3 +116,25 @@ sliceBytes|func(bytes: Array<U8>, start: I32, end: I32,) -> (String,):
         out = out + chr(unit.code)
         at = at + unit.length
     return out
+
+; 退役不变量：死节点是新建的空壳，名字区间、kids 与处理器块都不带。
+; 原地清理式退役会留下这些字段，语义层全池扫描就会摸到，读成真名字。
+退役节点是空壳|test() -> ():
+    let text = "main|func() -> ():\n    unroll (编号, 标签,) in [(2, \"甲\",), (4, \"乙\",)]:\n        print(编号)\n        print(标签)\n    return\n"
+    let expanded = expandUnrolls(ast = parseFile(text = text, file = "t.pini").ast, bytes = tempUtf8Bytes(text))
+    assert(len(expanded.errors) == 0, "展开不应报错")
+    var i = 0
+    while i < expanded.ast.exprCount():
+        let node = expanded.ast.exprAt(i)
+        if node.kind == exprKindTag(.exprNil):
+            assert(node.nameStart < 0 && node.nameEnd < 0, "死表达式不应带名字区间")
+            assert(len(node.kids) == 0, "死表达式不应留 kids")
+            assert(node.body < 0, "死表达式不应留处理器块")
+        i = i + 1
+    var s = 0
+    while s < expanded.ast.stmtCount():
+        let stmt = expanded.ast.stmtAt(s)
+        if stmt.kind == stmtKindTag(.stmtPass):
+            assert(len(stmt.kids) == 0, "死语句不应留 kids")
+        s = s + 1
+    return
