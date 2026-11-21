@@ -136,7 +136,7 @@ releaseSymbolOf|func(kind: I32,) -> (String,):
     return ""
 
 ; 留入口名：与还入口同族配对；名义箱的保留不带返回值。
-retainSymbolOf|func(kind: I32,) -> (String,):
+retainSymbolOf|func(kind: I32,) -> (String,): ; 入参是族码：0 答空串即静默不动作，误传类型下标就是这后果
     if kind == 1:
         return "bk_str_retain"
     if kind == 3 || kind == 4 || kind == 5 || kind == 8:
@@ -147,10 +147,10 @@ retainSymbolOf|func(kind: I32,) -> (String,):
 
 ; 留份族码：值语义箱按名义族算（细分码 6），其余用细分码。
 ;  注意  细分码只覆盖计数族，值语义箱的细分码是 0；直接查会把它当成不需要留份。
-retainKindOf|func(pool: IrTypePool, typeId: I32,) -> (I32,):
+retainKindOf|func(pool: IrTypePool, typeId: I32,) -> (I32,): ; 答族码：值语义箱折成 6，其余是细分码；0 即不动作
     if irShareClassOf(pool = pool, typeId = typeId) == 3:
         return 6
-    return irShareKindOf(pool = pool, typeId = typeId)
+    return irShareKindOf(pool = pool, typeId = typeId) ; 细分码只对计数族有值，值语义箱已在上一步接住
 
 ; 归还一个已具名的值：名义箱先走逐类型胶水，归还其字段后再还箱本身。
 ;  注意  值语义箱的细分码是 0，须按份额类别认；只看细分码会把它整族漏掉。
@@ -159,7 +159,7 @@ releaseValue|func(ctx: BodyCtx, module: IrModule, name: String, typeId: I32,) ->
     if len(name) == 0:
         return out
     let classTag = irShareClassOf(pool = module.types, typeId = typeId)
-    let kind = irShareKindOf(pool = module.types, typeId = typeId)
+    let kind = irShareKindOf(pool = module.types, typeId = typeId) ; 值语义箱在此答 0；少了上一行的类别判定就漏还整族
     if classTag == 3 || kind == 6 || kind == 7:
         ; 没有声明条目的名义类型发不出胶水，退回只还箱体：漏字段，但不会引用未定义符号。
         if releaseGlueExists(module = module, typeId = typeId):
@@ -216,7 +216,7 @@ adoptValue|func(ctx: BodyCtx, module: IrModule, name: String, typeId: I32, adopt
     var out = ctx
     if adopt == 0 || len(name) == 0:
         return out
-    let kind = retainKindOf(pool = module.types, typeId = typeId)
+    let kind = retainKindOf(pool = module.types, typeId = typeId) ; 已把值语义箱折进名义族；直查细分码则它从不留份
     if kind == 2:
         return out
     if adopt == 1 && isHeld(ctx = out, name = name):
@@ -2641,7 +2641,7 @@ releaseGlueName|func(typeId: I32,) -> (String,):
 appendReleaseCall|func(lines: Array<String>, module: IrModule, name: String, typeId: I32,) -> (Array<String>,):
     var out = lines
     let classTag = irShareClassOf(pool = module.types, typeId = typeId)
-    let kind = irShareKindOf(pool = module.types, typeId = typeId)
+    let kind = irShareKindOf(pool = module.types, typeId = typeId) ; 值语义箱在此答 0；少了上一行的类别判定就漏还整族
     if classTag == 3 || kind == 6 || kind == 7:
         if releaseGlueExists(module = module, typeId = typeId):
             return out.append("  call void @" + releaseGlueName(typeId = typeId) + "(ptr " + name + ")")
@@ -2809,7 +2809,7 @@ appendCopyField|func(lines: Array<String>, module: IrModule, agg: String, fieldT
     if classTag == 3 && kept == "%sv" + countText(index):
         out = out.append("  call void @bk_nominal_retain(ptr %sv" + countText(index) + ")")
     if classTag == 4:
-        let kind = irShareKindOf(pool = module.types, typeId = fieldType)
+        let kind = irShareKindOf(pool = module.types, typeId = fieldType) ; 已确认类别 4 才查细分；对着别的族查会拷成共享
         if kind == 6 || kind == 7:
             out = out.append("  call void @bk_nominal_retain(ptr %sv" + countText(index) + ")")
         if kind == 1:

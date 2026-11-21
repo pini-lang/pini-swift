@@ -108,7 +108,7 @@ irAdoptName|func(code: I32,) -> (String,):
 
 ; 类别判定：按类型池条目逐类表态，不留兜底；新增类型必须在这里选一族。
 ; 不参与含标量、外部指针、任务句柄与 C 串句柄；整块含结果、可选、元组与函数值。
-irShareClassOf|func(pool: IrTypePool, typeId: I32,) -> (I32,):
+irShareClassOf|func(pool: IrTypePool, typeId: I32,) -> (I32,): ; 四族唯一判据：1 不参与 2 整块 3 值语义 4 计数
     if typeId < 0 || typeId >= irTypeCount(pool):
         return 1
     let entry = irTypeAt(pool = pool, id = typeId)
@@ -130,9 +130,9 @@ irShareClassOf|func(pool: IrTypePool, typeId: I32,) -> (I32,):
     return 1
 
 ; 细分判定：只有计数族有细分，其余答 0。
-irShareKindOf|func(pool: IrTypePool, typeId: I32,) -> (I32,):
+irShareKindOf|func(pool: IrTypePool, typeId: I32,) -> (I32,): ; 只对计数族有值，其余族答 0；拿它判握份额会整族漏份额
     if irShareClassOf(pool = pool, typeId = typeId) != 4:
-        return 0
+        return 0 ; 非计数族到这里一律答 0，调用点据此静默不动作，份额就漏了
     let entry = irTypeAt(pool = pool, id = typeId)
     let tag = irTypeTag(entry.kind)
     if tag == irTypeTag(.irTypeString):
@@ -168,7 +168,7 @@ irAggregateHoldsShare|func(pool: IrTypePool, typeId: I32,) -> (Bool,):
     return false
 
 ; 槽是否握份额：覆盖它之前要先还旧值；不参与与空名单整块答否。
-irHoldsShare|func(pool: IrTypePool, typeId: I32,) -> (Bool,):
+irHoldsShare|func(pool: IrTypePool, typeId: I32,) -> (Bool,): ; 值语义箱也握份额，判它一律走这里；按细分码判会整族漏份额
     let classTag = irShareClassOf(pool = pool, typeId = typeId)
     if classTag == 3 || classTag == 4:
         return true
@@ -232,7 +232,7 @@ irShareEffectOf|func(pool: IrTypePool, nodes: IrNodePool, nodeId: I32,) -> (I32,
 
 ; 下标读的效果：数组元素是借用；字符串下标当场造一个字符，那是新份额。
 subscriptEffect|func(pool: IrTypePool, nodes: IrNodePool, node: IrNode,) -> (I32,):
-    if irShareKindOf(pool = pool, typeId = node.typeId) != 2:
+    if irShareKindOf(pool = pool, typeId = node.typeId) != 2: ; 判类型身份（字符）；按握份额判会让每次字符读都多留一份
         return 2
     if len(node.kids) == 0:
         return 2
