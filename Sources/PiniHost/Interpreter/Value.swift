@@ -414,10 +414,22 @@ public final class ObjectReference {
     public var fields: [String: Value]
     public var refCount: Int
 
+    /// 归零投递口：只有类型声明了 `deinit` 才会被装上，没有析构的对象照原生方式释放、不产生任何记录。
+    /// 弱持有：引擎先于对象消失时（进程收尾、宿主提前释放执行器）只是跑不了析构，不该把执行器拖住不放。
+    weak var deinitQueue: DeinitQueue?
+
     public init(typeName: String, fields: [String: Value] = [:]) {
         self.typeName = typeName
         self.fields = fields
         self.refCount = 1
+    }
+
+    /// 最后一份强引用消失的那一刻：把字段交割给释放队列，等引擎在安全点跑完析构再随替身一起释放。
+    /// 这里只做交接，不调用解释器 —— 对象已在销毁途中，此时重入求值会让 `self` 在被使用时失效。
+    ///  注意  没有投递口就没有析构：环与全局持有都和编译侧一样到不了归零点，区别只在那边也不跑。
+    deinit {
+        guard let deinitQueue else { return }
+        deinitQueue.enqueue(PendingDestruction(typeName: typeName, fields: fields))
     }
 }
 

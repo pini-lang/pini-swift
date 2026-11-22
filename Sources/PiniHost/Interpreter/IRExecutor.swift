@@ -127,6 +127,13 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
     private var methods: [String: IRFunction] = [:]
 
     private var types: [String: IRTypeDecl] = [:]
+    /// 声明了析构的类型名（未经 mangle 的名字，与 `types` 同键）。
+    /// 构造时据此决定要不要装归零投递口：绝大多数对象没有析构，不该为它们在释放路径上多留一条记录。
+    private var destructorTypes: Set<String> = []
+    /// 归零投递的去处。跨线程投递、本线程消费；它是规范里那条「延迟释放队列」的落点。
+    private let deinitQueue = DeinitQueue()
+    /// 本线程是否已在执行析构：析构体会执行语句，语句边界又会来问一次，不设闸就会在析构里递归解析构。
+    private let drainingStorage = ThreadLocal<Bool>()
     /// 默认实例的**记忆表**（类型名 → 物化好的实例）。
     /// 首次取用物化并记住，之后直接返回缓存值；与发射层「槽位 + 两级锁」同语义。
     /// 异步体的取用可能落在工作者线程，故用可重入锁包住「查—造—存」整段，保证恰一次。
@@ -259,6 +266,13 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
             types[decl.name] = decl
             for method in decl.methods { methods[method.name] = method }
         }
+        destructorTypes = Set(
+            module.types
+                .filter { decl in
+                    decl.methods.contains { $0.name == IRExecutor.destructorKey(decl.name) }
+                }
+                .map(\.name))
+        deinitQueue.removeAll()
         for decl in module.enums { enums[decl.name] = decl }
         // One name maps to one declaration. A name declared in two blocks
         // would be ambiguous and the semantic layer already rejects that; were
@@ -1435,6 +1449,12 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
         return canYield
     }
 
+    /// 析构在方法表里的键：与降载器拼实例方法名同规（`mangle(方法)__mangle(类型)`）。
+    /// 不在这里另写一套转写 —— 两边拼出同一个符号，析构才找得到自己的方法。
+    static func destructorKey(_ typeName: String) -> String {
+        "deinit__" + IRName.mangle(typeName)
+    }
+
     private func constructValue(_ type: IRType) throws -> Value {
         guard case .nominal(let name, let isObject) = type else {
             throw RuntimeError.invalidOperation(
@@ -1453,7 +1473,9 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
             }
         }
         if isObject || types[name]?.isObject == true {
-            return .objectReference(ObjectReference(typeName: name, fields: fieldValues))
+            let object = ObjectReference(typeName: name, fields: fieldValues)
+            if destructorTypes.contains(name) { object.deinitQueue = deinitQueue }
+            return .objectReference(object)
         }
         return .structInstance(StructInstance(typeName: name, fields: fieldValues))
     }
@@ -1752,6 +1774,20 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
 
     // MARK: - Statements
 
+    /// 跑到期的析构：从队列逐条取出，交一份带同样字段的替身给 `deinit__<类型>`，按普通方法调用跑。
+    /// 替身不装投递口，否则它的死会再触发一次析构；字段随替身释放逐层交接，故「A → 字段 B → B」在同一轮里
+    /// 按链式顺序发生，不递归不积栈。本线程已在析构中直接返回，外层那一轮会取到新投递的记录。
+    private func drainDestructors() throws {
+        guard drainingStorage.value != true else { return }
+        drainingStorage.value = true
+        defer { drainingStorage.value = false }
+        while let record = deinitQueue.takeOne() {
+            guard let method = methods[IRExecutor.destructorKey(record.typeName)] else { continue }
+            let standIn = ObjectReference(typeName: record.typeName, fields: record.fields)
+            _ = try call(method, args: [.objectReference(standIn)])
+        }
+    }
+
     /// Runs a statement list in order, yielding the value of the last expression statement (`.null` when there is none).
     /// The interpreter's `lastValue` rule, so control-flow and function bodies share one runner; others discard it.
     /// Also the pause site: a block with no position is skipped, never stopped at an invented line.
@@ -1767,6 +1803,8 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
             } else {
                 try execute(statement)
             }
+            /// 语句边界是一个安全点：这一句之前死掉的对象在这里跑析构，输出次序与源码里的语句对齐。
+            try drainDestructors()
         }
         return lastValue
     }
@@ -2406,8 +2444,20 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
         args: [Value],
         name: String
     ) throws -> Value {
-        switch try invokeBodyStep(callable, parent: parent, args: args, name: name) {
+        let step: IRBodyStep
+        do {
+            step = try invokeBodyStep(callable, parent: parent, args: args, name: name)
+        } catch {
+            /// 抛出去的那条路也放掉这一帧的对象：帧的局部在 `invokeBodyStep` 退出时就没了，
+            /// 故此刻队列里已经有它们的记录，只是没人再往下走到语句边界。
+            try? drainDestructors()
+            throw error
+        }
+        switch step {
         case .finished(let value):
+            /// 帧收尾就是这一层局部变量的死点：它们在里面已无引用，析构在这里落地，
+            /// 而不是攒到调用方的下一条语句 —— 编译侧同样在帧退出时释放。
+            try drainDestructors()
             return value
         case .givenUp:
             throw RuntimeError.invalidOperation(
@@ -2619,6 +2669,8 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
             } else {
                 try execute(statement)
             }
+            /// 与 `executeStatements` 同一处安全点：函数体是长跑的那一类语句序列，析构不该攒到调用方。
+            try drainDestructors()
             position += 1
         }
         return .finished(last)
