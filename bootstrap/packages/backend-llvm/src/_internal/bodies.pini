@@ -670,6 +670,8 @@ emitExprCore|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
         return out
     if node.kind == 15:
         return emitResultConstruct(out = out, module = module, node = node)
+    if node.kind == 16:
+        return emitOptionalConstruct(out = out, module = module, node = node)
     if node.kind == 52:
         return emitTaskJoin(out = out, module = module, node = node)
     if node.kind == 53:
@@ -1619,6 +1621,11 @@ printValue|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (BodyCtx,):
     var out = one.ctx
     let node = irNodeAt(pool = module.nodes, id = nodeId)
     let ty = llvmTypeName(pool = module.types, typeId = node.typeId)
+    ; 枚举与可选没有逐值打印通道：按整数兜底会印出标签而非用例名，故记缺口不出假值。
+    let valueTag = typeTagAt(module = module, typeId = node.typeId)
+    if valueTag == 15 || valueTag == 13:
+        out = addGap(ctx = out, gap = "打印带标签值 类别码 " + countText(valueTag))
+        return out
     if ty == "i1":
         let id = out.temp
         out.temp = id + 1
@@ -1947,6 +1954,41 @@ emitEnumPayloadGet|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprO
         done.text = name
         return done
     done.ctx = addGap(ctx = done.ctx, gap = "载荷读的操作数不是带标签值 类别码 " + countText(tag))
+    return done
+
+; 可选构造：两槽聚合（标签 · 载荷），标签 some 记 0、none 记 1，与匹配面的固定标签同源。
+; 载荷按自身类型入槽，并按求值效果移交份额：聚合持有它，别名先留一份。
+emitOptionalConstruct|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut,):
+    var done = out
+    let agg = llvmTypeName(pool = module.types, typeId = node.typeId)
+    if node.op != 0:
+        let tagId = done.ctx.temp
+        done.ctx.temp = tagId + 1
+        let tagged = tempName(index = tagId)
+        appendLine(sink = done.ctx.lines, text = "  " + tagged + " = insertvalue " + agg + " zeroinitializer, i64 1, 0")
+        done.text = tagged
+        return done
+    if len(node.kids) == 0:
+        done.ctx = addGap(ctx = done.ctx, gap = "可选构造缺载荷")
+        return done
+    let one = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[0])
+    done.ctx = one.ctx
+    let tagId = done.ctx.temp
+    done.ctx.temp = tagId + 1
+    let tagged = tempName(index = tagId)
+    appendLine(sink = done.ctx.lines, text = "  " + tagged + " = insertvalue " + agg + " zeroinitializer, i64 0, 0")
+    let payloadType = irNodeAt(pool = module.nodes, id = node.kids[0]).typeId
+    let payloadSpelling = llvmTypeName(pool = module.types, typeId = payloadType)
+    let effect = irShareEffectOf(pool = module.types, nodes = module.nodes, nodeId = node.kids[0])
+    var adopt = 3
+    if effect == 1:
+        adopt = 1
+    done.ctx = adoptValue(ctx = done.ctx, module = module, name = one.text, typeId = payloadType, adopt = adopt)
+    let id = done.ctx.temp
+    done.ctx.temp = id + 1
+    let name = tempName(index = id)
+    appendLine(sink = done.ctx.lines, text = "  " + name + " = insertvalue " + agg + " " + tagged + ", " + payloadSpelling + " " + one.text + ", 1")
+    done.text = name
     return done
 
 ; 负下标尾计数：取长度后加上下标，从尾部数；越界由运行时陷阱，本层不夹界。

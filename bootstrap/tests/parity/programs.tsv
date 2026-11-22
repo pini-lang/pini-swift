@@ -26,9 +26,9 @@ control-while	单文件	ok	ok	ok	通过	通过	-	-	-
 cow	单文件	ok	fail	-	降载	降载缺口	-	-	1 字典字面量 尚未降载 ./examples/cow.pini:654
 defer	单文件	ok	fail	-	降载	降载缺口	-	-	1 该语句类别尚未降载 ./examples/defer.pini:344
 dict-set	单文件	ok	fail	-	降载	降载缺口	-	-	1 字典字面量 尚未降载 ./examples/dict-set.pini:447
-enum-dot-case	单文件	ok	fail	-	降载	降载缺口	-	-	1 被调表达式 尚未降载 ./examples/enum-dot-case.pini:715
-enum-named	单文件	ok	fail	-	降载	降载缺口	-	-	1 裸名用例 plus 须写成 .plus（候选枚举 1 个） ./examples/enum-
-enum-namespacing	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 标识符 形状 ./examples/enum-namespacing.pin
+enum-dot-case	单文件	ok	ok	fail	发射	发射缺口	-	-	打印带标签值 类别码 15
+enum-named	单文件	ok	ok	ok	通过	通过	-	-	-
+enum-namespacing	单文件	ok	ok	fail	发射	发射缺口	-	-	打印带标签值 类别码 15
 enum	单文件	ok	ok	ok	通过	通过	-	-	-
 ffi-handle	单文件	ok	ok	ok	通过	通过	-	-	-
 ffi-handwritten	单文件	ok	ok	ok	通过	通过	-	-	-
@@ -38,7 +38,7 @@ ffi	单文件	ok	ok	ok	通过	通过	-	-	-
 ffi_generated	目录	fail	-	-	语义	待核	夹具未就绪：需先 build	E3-011	构建计划不存在：请先运行 build
 ffi_module	目录	ok	ok	ok	通过	通过	-	-	-
 for	单文件	ok	fail	-	降载	降载缺口	-	-	1 该语句类别尚未降载 ./examples/for.pini:446
-generic-func	单文件	ok	fail	-	降载	降载缺口	-	-	1 泛型实例调用带标签实参 尚未降载 ./examples/generic-func.pini:
+generic-func	单文件	ok	ok	ok	通过	通过	-	-	-
 generic	单文件	fail	-	-	语义	缺符号	类型参数注册	E3-003@5:5	类型未声明：T
 hello	单文件	ok	ok	ok	通过	通过	-	-	-
 higher-order	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 标识符 加倍 ./examples/higher-order.pini:48
@@ -52,13 +52,13 @@ multidim	单文件	ok	fail	-	降载	降载缺口	-	-	1 成员被调 get 尚未�
 multifile	目录	ok	ok	ok	通过	通过	-	-	-
 object	单文件	ok	ok	ok	通过	通过	-	-	-
 operators	单文件	ok	ok	ok	通过	通过	-	-	-
-optional-sugar	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 标识符 Optional ./examples/optional-sugar
-optional	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 标识符 Optional ./examples/optional.pini:
+optional-sugar	单文件	ok	ok	ok	通过	通过	-	-	-
+optional	单文件	ok	ok	ok	通过	通过	-	-	-
 own-method	单文件	ok	ok	ok	通过	通过	-	-	-
 package-demo	目录	ok	ok	ok	通过	通过	-	-	-
 pointer-address	单文件	ok	ok	ok	通过	通过	-	-	-
 recursion	单文件	ok	ok	ok	通过	通过	-	-	-
-slice	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 标识符 Optional ./examples/slice.pini:519
+slice	单文件	ok	fail	-	降载	降载缺口	-	-	1 成员被调 get 尚未降载 ./examples/slice.pini:793
 stdlib-container-ops	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 标识符 isEven ./examples/stdlib-container
 stdlib-container	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 标识符 double ./examples/stdlib-container
 stdlib-equality	单文件	ok	ok	ok	通过	通过	-	-	-
@@ -72,4 +72,4 @@ trait	单文件	ok	ok	ok	通过	通过	-	-	-
 try	单文件	ok	fail	-	降载	降载缺口	-	-	1 错误处理 尚未降载 ./examples/try.pini:309
 tuple	单文件	ok	fail	-	降载	降载缺口	-	-	1 元组 尚未降载 ./examples/tuple.pini:385
 unroll	单文件	ok	ok	ok	通过	通过	-	-	-
-validated-match	单文件	ok	fail	-	降载	降载缺口	-	-	1 裸名用例 北 须写成 .北（候选枚举 1 个） ./examples/validated-m
+validated-match	单文件	ok	ok	ok	通过	通过	-	-	-

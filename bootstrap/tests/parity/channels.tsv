@@ -6,7 +6,7 @@ llvm	machineCode	controlFlow	yes	1	13	有
 llvm	machineCode	scalars	yes	1	4	有
 llvm	machineCode	variablesAndOperators	yes	1	4	有
 llvm	machineCode	calls	yes	1	6	有
-llvm	machineCode	resultAndOptional	yes	1	3	有
+llvm	machineCode	resultAndOptional	yes	1	4	有
 llvm	machineCode	collections	yes	1	4	有
 llvm	machineCode	nominals	yes	1	3	有
 llvm	machineCode	pointers	yes	1	4	有

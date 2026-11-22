@@ -1375,3 +1375,99 @@ _backend_kit = "../../backend-kit"
     assert(发射含子串(text = result.text, needle = "call ptr @__copy_box_\(boxType.id)(ptr "), "别名落槽要走拷贝")
     assert(!发射含子串(text = result.text, needle = "__copy_box_\(refType.id)"), "对象是引用语义，不出拷贝胶水")
     return
+
+; 可选构造：两槽聚合，标签 some 记 0 / none 记 1，载荷按自身类型进第二槽。
+可选构造发射|test() -> ():
+    var module = IrModule()
+    var pool = IrTypePool()
+    let intType = irScalarTypeOfCode(pool = pool, code = 1, name = "i32")
+    pool = intType.pool
+    let optional = irInternType(pool = pool, kind = irTypeClassOf(code = 13), name = "", kids = [0], ret = -1, uses = [], flags = 0)
+    module.types = optional.pool
+    var nodes = IrNodePool()
+    var fortyTwo = irMakeNode(kind = tagOfName(name = "intConst"), typeId = 0)
+    fortyTwo.intValue = 42
+    let placedValue = irAppendNode(pool = nodes, node = fortyTwo)
+    nodes = placedValue.pool
+    var some = irMakeNode(kind = tagOfName(name = "optionalConstruct"), typeId = optional.id)
+    some.op = 0
+    some.kids = [placedValue.id]
+    let placedSome = irAppendNode(pool = nodes, node = some)
+    nodes = placedSome.pool
+    var none = irMakeNode(kind = tagOfName(name = "optionalConstruct"), typeId = optional.id)
+    none.op = 1
+    let placedNone = irAppendNode(pool = nodes, node = none)
+    nodes = placedNone.pool
+    var backSome = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    backSome.kids = [placedSome.id]
+    let placedBackSome = irAppendNode(pool = nodes, node = backSome)
+    nodes = placedBackSome.pool
+    var backNone = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    backNone.kids = [placedNone.id]
+    let placedBackNone = irAppendNode(pool = nodes, node = backNone)
+    nodes = placedBackNone.pool
+    var fnSome = IrFunction()
+    fnSome.name = "甲"
+    fnSome.returnType = optional.id
+    fnSome.body = [placedBackSome.id]
+    module.functions = module.functions.append(fnSome)
+    var fnNone = IrFunction()
+    fnNone.name = "乙"
+    fnNone.returnType = optional.id
+    fnNone.body = [placedBackNone.id]
+    module.functions = module.functions.append(fnNone)
+    module.nodes = nodes
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    assert(!result.failed, "可选构造应发得出来")
+    assert(发射含子串(text = result.text, needle = "insertvalue { i64, i32 } zeroinitializer, i64 0, 0"), "some 标签记 0")
+    assert(发射含子串(text = result.text, needle = "insertvalue { i64, i32 }"), "载荷进聚合")
+    assert(发射含子串(text = result.text, needle = ", i32 42, 1"), "载荷按自身类型进第二槽")
+    assert(发射含子串(text = result.text, needle = "insertvalue { i64, i32 } zeroinitializer, i64 1, 0"), "none 标签记 1")
+    return
+
+; 带标签值的打印：枚举与可选没有逐值打印通道，按整数兜底会印出标签，须记缺口。
+打印带标签值记缺口|test() -> ():
+    var module = IrModule()
+    var pool = IrTypePool()
+    let intType = irScalarTypeOfCode(pool = pool, code = 1, name = "i32")
+    pool = intType.pool
+    let optional = irInternType(pool = pool, kind = irTypeClassOf(code = 13), name = "", kids = [0], ret = -1, uses = [], flags = 0)
+    module.types = optional.pool
+    var nodes = IrNodePool()
+    var fortyTwo = irMakeNode(kind = tagOfName(name = "intConst"), typeId = 0)
+    fortyTwo.intValue = 42
+    let placedValue = irAppendNode(pool = nodes, node = fortyTwo)
+    nodes = placedValue.pool
+    var some = irMakeNode(kind = tagOfName(name = "optionalConstruct"), typeId = optional.id)
+    some.op = 0
+    some.kids = [placedValue.id]
+    let placedSome = irAppendNode(pool = nodes, node = some)
+    nodes = placedSome.pool
+    var show = irMakeNode(kind = tagOfName(name = "printCall"), typeId = -1)
+    show.kids = [placedSome.id]
+    let placedShow = irAppendNode(pool = nodes, node = show)
+    nodes = placedShow.pool
+    var stmt = irMakeNode(kind = tagOfName(name = "exprStmt"), typeId = -1)
+    stmt.kids = [placedShow.id]
+    let placedStmt = irAppendNode(pool = nodes, node = stmt)
+    nodes = placedStmt.pool
+    var back = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    back.kids = [placedSome.id]
+    let placedBack = irAppendNode(pool = nodes, node = back)
+    nodes = placedBack.pool
+    var fn = IrFunction()
+    fn.name = "main"
+    fn.returnType = optional.id
+    fn.body = [placedStmt.id, placedBack.id]
+    module.functions = module.functions.append(fn)
+    module.nodes = nodes
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    assert(result.failed, "打印带标签值应记缺口")
+    var hit = false
+    var i = 0
+    while i < len(result.gaps):
+        if 发射含子串(text = result.gaps[i], needle = "打印带标签值"):
+            hit = true
+        i = i + 1
+    assert(hit, "缺口不是打印面")
+    return

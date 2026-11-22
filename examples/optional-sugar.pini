@@ -2,13 +2,13 @@
 ; 运行 pini run examples/optional-sugar.pini
 ; 预期输出（逐行）：none / none / matched-nil / none / q-none / q-assign
 main|func() -> ():
-    ; nil 等价于 Optional.none（表达式位置）
-    var a = Optional.none
+    ; nil 等价于 Optional.none（表达式位置）；载荷类型靠标注定
+    var a: ?I32 = Optional.none
     match a:
         case none:
             print("none")
     ; Optional.none 等价于 nil（match 模式位置可用 case nil:）
-    var b = Optional.none
+    var b: ?I32 = Optional.none
     match b:
         case none:
             print("none")

@@ -122,6 +122,24 @@ caseOwnerFor|func(world: MemberWorld, name: String, expected: Expectation,) -> (
                     return named
     return uniqueCaseOwner(index = world.symbols, name = name)
 
+; 可选限定名：`Optional` 是内建类型名，只在值的限定位出现（`Optional.some` / `Optional.none`）。
+; 与检查面同规，判名不判位；单独写出的 `Optional` 也认，留给检查面报未定义。
+isOptionalQualifier|func(unit: CompilationUnit, bytes: Array<U8>, node: I32,) -> (Bool,):
+    if !unit.ast.isIdentifierExpr(node):
+        return false
+    let expr = unit.ast.exprAt(node)
+    return decodeRange(bytes = bytes, start = expr.nameStart, end = expr.nameEnd) == "Optional"
+
+; 期望里的可选类型：期望缺席或不是可选答 -1，调用方据此留未定。
+expectedOptional|func(pool: TypePool, expected: Expectation,) -> (I32,):
+    if !expected.hasExpected:
+        return -1
+    if expected.typeId < 0 || expected.typeId >= len(pool.entries):
+        return -1
+    if !isTypeClass(kind = pool.entries[expected.typeId].kind, expected = .typeClassOptional):
+        return -1
+    return expected.typeId
+
 ; 推一个表达式节点：缺位与已定型都直接返回；推不出不拦，后续语句照走。
 inferAtNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, state: WalkState, expected: Expectation,) -> (WalkState,):
     var out = state
@@ -408,6 +426,13 @@ inferNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
     if unit.ast.isCaseExpr(node):
         let expr = unit.ast.exprAt(node)
         let name = decodeRange(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
+        ; `.none` 不是枚举用例：期望是可选就取期望，可选没有声明序可查。
+        if name == "none":
+            let wanted = expectedOptional(pool = out.pool, expected = expected)
+            if wanted >= 0:
+                out.typeId = wanted
+                out.types = writeExprType(table = out.types, unit = unitIndex, node = node, typeId = wanted)
+                return out
         let owner = caseOwnerFor(world = world, name = name, expected = expected)
         if len(owner) > 0:
             out.typeId = nominalTypeId(world = world, name = owner)
@@ -434,7 +459,7 @@ inferNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
             out.types = writeExprType(table = out.types, unit = unitIndex, node = node, typeId = out.typeId)
         return out
     if unit.ast.isMemberExpr(node):
-        return inferMember(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out, bytes = bytes)
+        return inferMember(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out, bytes = bytes, expected = expected)
     if unit.ast.isCallExpr(node):
         return inferCall(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out, bytes = bytes, expected = expected)
     if unit.ast.isJoinExpr(node):
@@ -544,12 +569,32 @@ inferFunction|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, no
     return done
 
 ; 成员：接收者先推；类型已知才问成员面，成员不存在答未写。
-inferMember|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, out: InferResult, bytes: Array<U8>,) -> (InferResult,):
+inferMember|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, out: InferResult, bytes: Array<U8>, expected: Expectation,) -> (InferResult,):
     let receiver = unit.ast.childOf(id = node, index = 0)
     let inner = inferNode(world = world, unit = unit, unitIndex = unitIndex, node = receiver, names = names, pool = out.pool, types = out.types, bytes = bytes, expected = noExpectation())
     var done = out
     done.pool = inner.pool
     done.types = inner.types
+    ; `Optional.none`：接收者是内建类型名不是值，结果取期望的可选；无期望留未定。
+    if isOptionalQualifier(unit = unit, bytes = bytes, node = receiver):
+        let memberExpr = unit.ast.exprAt(node)
+        let qualifiedName = decodeRange(bytes = bytes, start = memberExpr.nameStart, end = memberExpr.nameEnd)
+        if qualifiedName == "none":
+            let wanted = expectedOptional(pool = done.pool, expected = expected)
+            if wanted >= 0:
+                done.typeId = wanted
+                done.types = writeExprType(table = done.types, unit = unitIndex, node = node, typeId = wanted)
+        return done
+    ; 限定用例值：`枚举.用例` 的接收者是类型名不是值，结果类型就是该枚举。
+    if unit.ast.isIdentifierExpr(receiver):
+        let recvExpr = unit.ast.exprAt(receiver)
+        let recvName = decodeRange(bytes = bytes, start = recvExpr.nameStart, end = recvExpr.nameEnd)
+        if lookupNameType(table = names, name = recvName) < 0:
+            let nominal = nominalTypeId(world = world, name = recvName)
+            if nominal >= 0:
+                done.typeId = nominal
+                done.types = writeExprType(table = done.types, unit = unitIndex, node = node, typeId = nominal)
+                return done
     if inner.typeId < 0:
         return done
     let member = unit.ast.exprAt(node)
@@ -638,6 +683,27 @@ inferCall|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
         return done
     if unit.ast.isMemberExpr(callee):
         return inferMemberCall(world = world, unit = unit, unitIndex = unitIndex, node = node, callee = callee, names = names, out = done, bytes = bytes)
+    if unit.ast.isCaseExpr(callee):
+        ; 前导点用例被调：`.some(v)` 的载荷即实参类型，结果 `Optional<载荷>`；枚举用例交回实参推。
+        let calleeExpr = unit.ast.exprAt(callee)
+        let caseName = decodeRange(bytes = bytes, start = calleeExpr.nameStart, end = calleeExpr.nameEnd)
+        done = inferActuals(world = world, unit = unit, unitIndex = unitIndex, node = node, params = [], names = names, out = done, bytes = bytes)
+        if caseName == "some" && len(expr.kids) == 2:
+            let argument = exprTypeAt(table = done.types, unit = unitIndex, node = expr.kids[1])
+            if argument >= 0:
+                let wrapped = optionalType(pool = done.pool, wrapped = argument)
+                done.pool = wrapped.pool
+                done.typeId = wrapped.id
+                done.types = writeExprType(table = done.types, unit = unitIndex, node = node, typeId = done.typeId)
+            return done
+        ; 其余前导点用例是枚举构造：归属按期望类型定，期望缺席退回唯一候选。
+        let owner = caseOwnerFor(world = world, name = caseName, expected = expected)
+        if len(owner) > 0:
+            let nominal = nominalTypeId(world = world, name = owner)
+            if nominal >= 0:
+                done.typeId = nominal
+                done.types = writeExprType(table = done.types, unit = unitIndex, node = node, typeId = done.typeId)
+        return done
     if !unit.ast.isIdentifierExpr(callee):
         return inferActuals(world = world, unit = unit, unitIndex = unitIndex, node = node, params = [], names = names, out = done, bytes = bytes)
     let calleeExpr = unit.ast.exprAt(callee)
@@ -816,6 +882,19 @@ inferMemberCall|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, 
     if len(member.kids) < 1:
         return inferActuals(world = world, unit = unit, unitIndex = unitIndex, node = node, params = [], names = names, out = done, bytes = bytes)
     let recvNode: I32 = member.kids[0]
+    ; `Optional.some(v)`：接收者是内建类型名不是值，载荷取实参类型，结果 `Optional<载荷>`。
+    if isOptionalQualifier(unit = unit, bytes = bytes, node = recvNode):
+        var qualified = inferActuals(world = world, unit = unit, unitIndex = unitIndex, node = node, params = [], names = names, out = out, bytes = bytes)
+        let call = unit.ast.exprAt(node)
+        let qualifiedName = decodeRange(bytes = bytes, start = member.nameStart, end = member.nameEnd)
+        if qualifiedName == "some" && len(call.kids) == 2:
+            let argument = exprTypeAt(table = qualified.types, unit = unitIndex, node = call.kids[1])
+            if argument >= 0:
+                let wrapped = optionalType(pool = qualified.pool, wrapped = argument)
+                qualified.pool = wrapped.pool
+                qualified.typeId = wrapped.id
+                qualified.types = writeExprType(table = qualified.types, unit = unitIndex, node = node, typeId = qualified.typeId)
+        return qualified
     var receiverType = -1
     var isTypeName = false
     if unit.ast.isIdentifierExpr(recvNode):

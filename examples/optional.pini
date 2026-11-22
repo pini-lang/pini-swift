@@ -8,7 +8,7 @@ main|func() -> ():
             print(v)
         case none:
             print("none")
-    var b = Optional.none
+    var b: Optional<I32> = Optional.none
     match b:
         case some(v,):
             print(v)

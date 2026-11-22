@@ -407,7 +407,7 @@ module: IrModule = IrModule()
 
 ; 泛型实例：模板不进函数表，实例按类型实参取名，调用点文本指向实例。
 泛型实例发射|test() -> ():
-    let 样例 = 造样例("id|func<T>(value: T,) -> (T,):\n    return value\n\nuse|func() -> (I32,):\n    return id<I32>(1)\n")
+    let 样例 = 造样例("id|func<T>(value: T,) -> (T,):\n    return value\n\nuse|func() -> (I32,):\n    return id<I32>(value = 1)\n")
     assert(len(样例.module.errors) == 0, "泛型实例应降载成功")
     assert(取函数(样例 = 样例, name = "id__I32") >= 0, "I32 实例应进函数表")
     assert(取函数(样例 = 样例, name = "id") < 0, "模板不应进函数表")
@@ -483,4 +483,38 @@ module: IrModule = IrModule()
     assert(解 >= 0, "成员访问前应插解引用节点")
     let 解节点 = irNodeAt(pool = 样例.module.nodes, id = 解)
     assert(irTypeTag(irTypeAt(pool = 样例.module.types, id = 解节点.typeId).kind) == irTypeTag(.irTypeNominal), "解引用结果应是名义类型")
+    return
+
+; 可选构造：`.some(值)` 与 `.none` 都发可选构造节点，标签 some 0 / none 1；
+; 限定写法 `Optional.some` / `Optional.none` 与 nil 字面量同路。
+可选构造降载|test() -> ():
+    let 样例 = 造样例("f|func() -> ():\n    let 甲: ?I32 = .some(42)\n    let 乙: ?I32 = nil\n    let 丙: ?I32 = Optional.none\n    let 丁 = Optional.some(7)\n    print(甲)\n    return\n")
+    assert(len(样例.module.errors) == 0, "可选构造应降载成功")
+    assert(取节点按操作(样例 = 样例, kind = irExprTag(.irOptionalConstruct), op = 0) >= 0, "应发 some 标签 0 的构造")
+    assert(取节点按操作(样例 = 样例, kind = irExprTag(.irOptionalConstruct), op = 1) >= 0, "应发 none 标签 1 的构造")
+    let 一 = 取节点按操作(样例 = 样例, kind = irExprTag(.irOptionalConstruct), op = 0)
+    let 一节点 = irNodeAt(pool = 样例.module.nodes, id = 一)
+    assert(len(一节点.kids) == 1, "some 构造带一个载荷子节点")
+    let 二 = 取节点按操作(样例 = 样例, kind = irExprTag(.irOptionalConstruct), op = 1)
+    let 二节点 = irNodeAt(pool = 样例.module.nodes, id = 二)
+    assert(len(二节点.kids) == 0, "none 构造不带子节点")
+    return
+
+; 限定用例：`枚举.用例` 与 `枚举.用例(载荷)` 都按声明序取标签，接收者不降成值。
+限定用例降载|test() -> ():
+    let 样例 = 造样例("[记号]\n加\n数(I32,)\n\nf|func() -> ():\n    let 甲: 记号 = 记号.加\n    let 乙: 记号 = 记号.数(3)\n    print(甲)\n    return\n")
+    assert(len(样例.module.errors) == 0, "限定用例应降载成功")
+    assert(取节点(样例 = 样例, kind = irExprTag(.irEnumConstruct), text = "加") >= 0, "应发用例 加 的构造")
+    let 数 = 取节点(样例 = 样例, kind = irExprTag(.irEnumConstruct), text = "数")
+    assert(数 >= 0, "应发用例 数 的构造")
+    assert(irNodeAt(pool = 样例.module.nodes, id = 数).op == 1, "标签按声明序")
+    return
+
+; 泛型实例调用：标签实参按模板形参归位，符号取实例名，实参不留源序。
+泛型实例带标签降载|test() -> ():
+    let 样例 = 造样例("身份|func<T>(x: T,) -> (T,):\n    return x\n\nf|func() -> ():\n    print(身份<I32>(x = 100))\n    return\n")
+    assert(len(样例.module.errors) == 0, "泛型实例调用应降载成功")
+    let 调 = 取节点(样例 = 样例, kind = irExprTag(.irCall), text = "身份__I32")
+    assert(调 >= 0, "调用符号应取实例名")
+    assert(len(irNodeAt(pool = 样例.module.nodes, id = 调).kids) == 1, "实参按形参归位后只留一个")
     return
