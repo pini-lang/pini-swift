@@ -466,6 +466,13 @@ public final class TypeEnvironment {
         return enumCases[name] != nil
     }
 
+    /// 某枚举登记的全部用例名；未登记返回 nil。`match` 穷尽性判定据此认「无兜底也完整」。
+    public func caseNames(of enumName: String) -> [String]? {
+        if let nonGeneric = enumCases[enumName] { return Array(nonGeneric.keys) }
+        if let template = genericEnums[enumName] { return Array(template.cases.keys) }
+        return nil
+    }
+
     public func lookupEnumCase(enumName: String, caseName: String) -> [(name: String?, type: TypeAnnotation)]? {
         return enumCases[enumName]?[caseName]
     }

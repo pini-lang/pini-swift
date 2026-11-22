@@ -73,4 +73,7 @@ public enum TypeError: Error, Equatable {
     /// 析构声明不合格：形状不是零形参零返回、挂在非对象类型上，或同一类型声明了两次。
     /// 放行的后果是释放胶水按错的原型调用它，比拒绝更难看懂。
     case lifecycleShapeInvalid(reason: String, location: SourceLocation)
+    /// 值返回体的出口不完整：有路径既没 `return`，末句也不是交出值的表达式语句。
+    /// 放行的后果是编译侧读到未定义值、解释侧读到 null，两条通道给出两个答案。
+    case missingReturn(function: String, location: SourceLocation)
 }
