@@ -1,2 +1,0 @@
-[libc|foreign]
-malloc: (I64,) -> (*I8,)

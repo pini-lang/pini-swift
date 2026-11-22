@@ -1,8 +1,0 @@
-; 意图：文件整份读入 —— 判据只有一条，就是没有上限。
-; 规模刻意取探针尺寸的数倍，而不是「恰好等于」：要证明一条不存在的行为只能靠规模。
-; 与 testReadFileRejectsMissingFile 配对：两条一起才把「读全」与「读失败」分开。
-main|func() -> ():
-    let s = readFile("big.txt")
-    print(len(s))
-    print(s.contains("TAIL-MARKER"))
-    return

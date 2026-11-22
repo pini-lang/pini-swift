@@ -1,6 +1,0 @@
-(盒<T>)
-值: Optional<T> = Optional.none
-
-((取值<T>))
-取|self() -> (Optional<T>,):
-    return self.值

@@ -1,6 +1,0 @@
-[package]
-name = "shout"
-
-[lib]
-name = "shout"
-entry = "src/api/main.pini"
