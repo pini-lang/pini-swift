@@ -1623,7 +1623,7 @@ public enum IRLowerer {
         context.foreignConstants = foreignConstants
         context.isAsync = decl.isAsync
         context.isAsyncVoid = decl.isAsync && effectiveReturn == nil
-        let body = try lowerBlock(decl.body!, into: &context)
+        let body = try lowerBlock(decl.body!, into: &context, trailingValue: bodyReturn)
         return IRFunction(
             name: decl.name, params: params, returnType: bodyReturn, body: body,
             isAsync: decl.isAsync,
@@ -2235,16 +2235,23 @@ public enum IRLowerer {
             context.selfTypeNameLowered = selfTypeName
             context.selfIsObjectLowered = selfIsObject
         }
-        let body = try lowerBlock(decl.body!, into: &context)
+        /// 异步方法体不套 Result 形（与自由函数的 `bodyReturn` 不同），故只在同步方法上认尾表达式：
+        /// 给异步方法一个非 Result 的期望类型，会把 `ok(...)` 之外的值也当成可交出的载荷。
+        let body = try lowerBlock(
+            decl.body!, into: &context, trailingValue: decl.isAsync ? nil : effectiveReturn)
         return IRFunction(
             name: irName, params: params, returnType: effectiveReturn, body: body,
             sourceFile: decl.location.fileName, givenReferenceNames: context.givenReferenceNames,
             calledFunctionNames: context.calledFunctionNames, displayName: "\(typeName).\(decl.name)")
     }
 
+    /// 降载一个块。`trailingValue` 只在**函数体、方法体、闭包体**这一层给：值返回的体里，末句若是
+    /// 普通表达式语句，它的值就是返回值（与解释侧的 `lastValue` 同一条规则）。控制流的体一律不给 ——
+    /// 那些块的值没有任何人读。
     private static func lowerBlock(
         _ block: Block,
-        into context: inout FunctionContext
+        into context: inout FunctionContext,
+        trailingValue: IRType? = nil
     ) throws -> IRBlock {
         // 体嵌套深度：体那一层是 1，任何控制流的体都使之上浮一格。与发射层的同名计数含义相同，但两者是
         // 独立实现 —— 必须对同一条规则给出同一个答案，否则就回到两层口径差（见 `allowedAwaitLocation`）。
@@ -2257,8 +2264,13 @@ public enum IRLowerer {
         defer { context.variableTypes = outerVariableTypes }
         var statements: [IRStmt] = []
         var positions: [SourceLocation] = []
-        for statement in block.statements {
+        for (index, statement) in block.statements.enumerated() {
+            if let trailingValue, index == block.statements.count - 1 {
+                context.trailingValueType = trailingValue
+            }
             let lowered = try lowerStatement(statement, into: &context)
+            // 末句不是普通表达式语句时没人消费它，这里兜底清掉，免得漏到后面的语句上。
+            context.trailingValueType = nil
             statements.append(contentsOf: lowered)
             // Every statement this source statement lowered to carries that statement's own position. One `Block`
             // statement can expand into several IR statements (a try-else initializer yields the allocation plus the
@@ -2541,11 +2553,26 @@ public enum IRLowerer {
                     )
                 ]
             }
+            // 尾表达式位：值返回的体末句就是返回值。类型对不上（末句是个 void 调用之类）就退回丢弃，
+            // 与这条规则出现之前一样 —— 缺 return 的诊断属另一件事，不在这里顺手新造。
+            if let trailing = context.trailingValueType {
+                context.trailingValueType = nil
+                let lowered = try lowerExpr(expr, expected: trailing, into: &context)
+                guard lowered.type.isAssignable(to: trailing) else {
+                    return [.exprStmt(lowered.node)]
+                }
+                return [.returnStmt(value: lowered.node, adopt: trailing.adoption(of: lowered.node))]
+            }
             return [.exprStmt(try lowerExpr(expr, expected: nil, into: &context).node)]
 
         case .passStatement:
             // pass is a pure no-op; lower to a side-effect-free constant
             // expression statement so IRStmt stays total without a new case.
+            // 尾位上它就是返回值：解释侧把这一句当普通表达式语句，读数是常量 0，两通道据此同值。
+            if let trailing = context.trailingValueType, IRType.i32.isAssignable(to: trailing) {
+                context.trailingValueType = nil
+                return [.returnStmt(value: .intConst(value: 0, type: .i32), adopt: .none)]
+            }
             return [.exprStmt(.intConst(value: 0, type: .i32))]
 
         case .captureStatement(let name, _):
@@ -4525,7 +4552,7 @@ public enum IRLowerer {
         for capture in captures {
             closureContext.variableTypes[capture.name] = capture.type
         }
-        let body = try lowerBlock(decl.body!, into: &closureContext)
+        let body = try lowerBlock(decl.body!, into: &closureContext, trailingValue: returnType)
         // 闭包与外层共用一个 functionName，故它体内的调用记到外层头上。物化期是否真调到这个闭包不在此判：
         // 静态检测不判可达性，代价是一条可能跑不出来的警告，收益是别把包在闭包里的环漏掉。
         context.calledFunctionNames.formUnion(closureContext.calledFunctionNames)
@@ -6481,6 +6508,10 @@ private struct FunctionContext {
     /// 接收者类型名 → 方法名 → （降载后的 IR 函数名, 返回类型）。由模块级预扫描填
     /// （见 `lower(module:)` 的扩展块分支）；空表即「本模块没有内建扩展」。
     var builtinExtensionMethods: [String: [String: (irName: String, returnType: IRType)]] = [:]
+    /// 尾表达式位：值返回的体，最后一句若是普通表达式语句，那一句的值就是返回值。
+    /// 只由 `lowerBlock` 为末句置位、被 `.exprStmt` 那一支消费；别处读到 nil 即「不是尾位」。
+    /// 取用后立刻清空，故嵌套语句里的表达式不会误继承这个位置。
+    var trailingValueType: IRType?
     /// 外部数据符号的类型表：标识符与 `&` 命中它时走符号地址，不走变量槽。
     /// 空表即「本模块没有外部数据符号」，此时命中不了任何名字。
     var foreignData: [String: IRType] = [:]

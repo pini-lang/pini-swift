@@ -1788,18 +1788,27 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
         }
     }
 
-    /// Runs a statement list in order, yielding the value of the last expression statement (`.null` when there is none).
+    /// 块交出值的那个位置：**末句**是普通表达式语句时就是末句本身，否则 -1（没有值）。
+    /// 与降载侧的尾表达式位同一条规则；更早的表达式语句没人读它的值，当场丢才能让析构落在自己那句的边界上。
+    private static func trailingExprIndex(in block: IRBlock) -> Int {
+        guard let last = block.last, case .exprStmt = last else { return -1 }
+        return block.count - 1
+    }
+
+    /// Runs a statement list in order, yielding the trailing expression statement's value (`.null` otherwise).
     /// The interpreter's `lastValue` rule, so control-flow and function bodies share one runner; others discard it.
     /// Also the pause site: a block with no position is skipped, never stopped at an invented line.
     @discardableResult
     private func executeStatements(_ block: IRBlock) throws -> Value {
         var lastValue: Value = .null
+        let trailingIndex = IRExecutor.trailingExprIndex(in: block)
         for (index, statement) in block.enumerated() {
             if debugHook != nil, let location = block.position(at: index) {
                 try debugPause(at: location)
             }
             if case .exprStmt(let expr) = statement {
-                lastValue = try evaluate(expr)
+                let value = try evaluate(expr)
+                if index == trailingIndex { lastValue = value }
             } else {
                 try execute(statement)
             }
@@ -2608,6 +2617,7 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
         let body = callable.body
         var last = lastValue
         var position = index
+        let trailingIndex = IRExecutor.trailingExprIndex(in: body)
         if let pending = pending {
             if let updated = try pending.resume(pending.value) { last = updated }
             position = index + 1
@@ -2665,7 +2675,8 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
                     if let updated = try finishYield(plan, value: value) { last = updated }
                 }
             } else if case .exprStmt(let expr) = statement {
-                last = try evaluate(expr)
+                let value = try evaluate(expr)
+                if position == trailingIndex { last = value }
             } else {
                 try execute(statement)
             }

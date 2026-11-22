@@ -1502,7 +1502,9 @@ public final class IREmitter {
             if frameMode == .resumable, blockDepth == 1, case .join(let awaited, let type, .awaits) = expr {
                 emitYieldPoint(awaited: awaited, type: type, produce: .discard)
             } else {
-                _ = emitExpr(expr)
+                /// 值丢在这里，份额也丢在这里：本层新造的箱没有持有位置接管，语句尾就是它的消费点。
+                /// 借用值不在账上，`releaseHeldTemporary` 对它是无操作。
+                releaseHeldTemporary(emitExpr(expr))
             }
 
         case .deferStmt(let body):
