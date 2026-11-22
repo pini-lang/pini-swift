@@ -2377,8 +2377,67 @@ public final class TypeChecker {
                     }
                 }
             }
+            // 出口完整性：值返回体的每条路径都要交出值，函数级报一次即可（不看具体哪条缺）。
+            if !bodyDeliversValue(body) {
+                let displayName = funcDecl.name.isEmpty ? "匿名函数" : funcDecl.name
+                try report(TypeError.missingReturn(function: displayName, location: funcDecl.location))
+            }
         }
         typeEnv.popScope()
+    }
+
+    /// 值返回体的出口完整性：任一路径要么 `return`，要么末句是交出值的表达式语句。
+    /// 只认末句的表达式 —— 更早的表达式语句降载时按丢弃处理，不产出返回值。
+    private func bodyDeliversValue(_ block: Block) -> Bool {
+        for (index, stmt) in block.statements.enumerated() {
+            if deliversValue(stmt, isTrailing: index == block.statements.count - 1) { return true }
+        }
+        return false
+    }
+
+    /// 单条语句是否交出值：`return` 恒算；`if` 要每个分支都交；`match` 还要覆盖全部用例。
+    private func deliversValue(_ stmt: Statement, isTrailing: Bool) -> Bool {
+        switch stmt {
+        case .returnStatement:
+            return true
+        case .ifStatement(_, let thenBlock, let elifs, let elseBlock, _, _):
+            guard let elseBlock, bodyDeliversValue(thenBlock) else { return false }
+            for branch in elifs where !bodyDeliversValue(branch.block) { return false }
+            return bodyDeliversValue(elseBlock)
+        case .matchStatement(let value, let cases, _):
+            for c in cases where !bodyDeliversValue(c.block) { return false }
+            return matchCoversAllCases(value, cases: cases)
+        case .scopedBlock(_, let body, _):
+            return bodyDeliversValue(body)
+        case .expressionStmt(let expr, _):
+            // 尾位才是返回值；`print(...)` 这类 void 调用交出的是 ()，仍算缺口。
+            return isTrailing && !isVoidCall(expr)
+        case .passStatement:
+            return isTrailing
+        default:
+            return false
+        }
+    }
+
+    /// `match` 是否覆盖全部来源：有兜底即完整，否则要求枚举用例一个不落。
+    private func matchCoversAllCases(_ value: Expression, cases: [MatchCase]) -> Bool {
+        if cases.contains(where: { if case .wildcard = $0.pattern { return true }; return false }) {
+            return true
+        }
+        var covered: Set<String> = []
+        for c in cases {
+            if case .enumCase(let name) = c.pattern { covered.insert(name) }
+        }
+        guard let subjectType = inference.infer(expression: value) else { return false }
+        // 糖出来的两个内建：`^T` 的 ok/err 与 `?T` 的 some/none，两支写全即穷尽。
+        if case .generic(let name, _, _) = subjectType {
+            if name == "Result" { return covered.contains("ok") && covered.contains("err") }
+            if name == "Optional" { return covered.contains("some") && covered.contains("none") }
+        }
+        guard case .simple(let enumName, _) = subjectType,
+            let all = typeEnv.caseNames(of: enumName)
+        else { return false }
+        return Set(all).isSubset(of: covered)
     }
 
     /// 收集函数体内所有 return 语句的返回信息（是否带值 + 推断类型 + 位置）。

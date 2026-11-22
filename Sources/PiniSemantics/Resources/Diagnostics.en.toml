@@ -221,6 +221,10 @@ suggestion = "the value comes from the C side; keep state on the Pini side, or e
 message = "invalid destructor declaration: {reason}"
 suggestion = "write `deinit|self() -> ()` on an object type, one per type"
 
+[E4-041]
+message = "missing return in a value-returning body: `{function}` has a path that neither returns nor ends in a value"
+suggestion = "add return, or make the last statement deliver the declared type; every if and match branch must deliver a value"
+
 [E5-001]
 message = "undefined variable '{name}'"
 suggestion = "Did you mean '{closest}'?"

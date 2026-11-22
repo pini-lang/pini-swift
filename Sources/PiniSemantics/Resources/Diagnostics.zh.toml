@@ -221,6 +221,10 @@ suggestion = "只读符号的值由 C 侧给出；要在 Pini 侧改状态，改
 message = "析构声明无效：{reason}"
 suggestion = "析构写成 `deinit|self() -> ()`，只挂在对象类型上，每个类型一个"
 
+[E4-041]
+message = "值返回体缺少返回：`{function}` 有路径既没有 return，末句也不是交出值的表达式"
+suggestion = "补 return，或把末句写成能交出返回类型的表达式；if 与 match 要每个分支都交出值"
+
 [E5-001]
 message = "未定义变量 '{name}'"
 suggestion = "你是想说 '{closest}' 吗？"
