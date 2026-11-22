@@ -35,10 +35,10 @@
 
 ### 0.4 计数基线
 
-**58 个表达式节点 + 17 个语句节点 = 75**。表内编号即条目号，与节点数严格相等。
+**60 个表达式节点 + 18 个语句节点 = 78**。表内编号即条目号，与节点数严格相等。
 语句位的两个指针（`tryStmt`、`matchStmt`）不占表达式编号。
 
-## 1. 类型层（IRType，23 case）
+## 1. 类型层（IRType，24 case）
 
 | 类型 | 语义（后端无关） | 实现注记 |
 |---|---|---|
@@ -58,6 +58,7 @@
 | `dict(key:value:)` | 键到值的映射，键唯一 | 不透明句柄（`bk_dict_*` 族） |
 | `set(element:)` | 唯一元素集合 | 不透明句柄（`bk_set_*` 族） |
 | `lazyRef(element:)` | 一次求值、引用拷贝语义的惰性引用 | 不透明句柄（`bk_lazyref_*` 族） |
+| `weakRef(element:)` | 不增加强计数的弱引用；`element` 是目标对象类型。读取得 `Optional<element>`，目标销毁后为 `none` | 不透明句柄（`bk_weak_*` 族）；句柄自身按计数族归还 |
 | `tuple(labels:fieldTypes:)` | 带位置与可选标签的异质定长组 | 按值聚合；标签序即字段序 |
 | `function(params:returnType:usingIndices:)` | 函数是一等值；取用下标集合标出哪些参数位由给定块填。类型标注写不出它，它也不参与类型等价 —— 但随函数值保留，标注不得把它抹掉 | fat pointer `{code, env}`；首参恒为 env 是调用协议；取用位不进运行时表示 |
 | `pointer(element:)` | `*T` 原始指针（FFI） | 不透明指针；load / store 按元素类型解码 |
@@ -223,8 +224,15 @@
 | 57 | `enumTagGet(value:)` | 读带标签值的判别式，结果为 `i32`：枚举答构造时写下的标签，`Optional` 答 `some` / `none`，`Result` 答 `ok` / `err` | `value` 必属这三族之一，其余类型在验证期报形状错。槽位见 §6 |
 | 58 | `enumPayloadGet(value:caseName:index:type:)` | 读该值当前用例的第 `index` 个关联值；`caseName` 是调用方匹配到的用例，`type` 是载荷的静态类型 | 用例名与运行时标签不符即读错了用例，验证期按声明核对载荷数与类型。`Optional` 与 `Result` 各只有一个关联值，序号都是 0，区别只在错误一侧的载荷是类型擦除后的机器字 |
 
+### 2.17 弱引用
 
-## 3. 语句节点（17 条）
+| # | 节点 | 语义 | 注记 |
+|---|---|---|---|
+| 59 | `weakRefConstruct(target:type:)` | 创建指向对象的弱引用，不增加强计数 | `type` 是 `weakRef(T)`；目标必须是对象，验证期核对 |
+| 60 | `weakRefValue(handle:type:)` | 读弱引用：目标存活得 `some`，已销毁得 `none` | `type` 是 `Optional<T>`；载荷在存活时留一份计数，与可选聚合的归还规则一致 |
+
+
+## 3. 语句节点（18 条）
 
 | # | 节点 | 语义 | 注记 |
 |---|---|---|---|
@@ -245,6 +253,7 @@
 | 15 | `fieldStore(base:slot:value:fieldType:adopt:releaseOld:)` | 字段写，`slot` 与 `fieldGet` 同一口径；字段是持有者，`releaseOld` 管旧值 | 对象需越过引用头 |
 | 16 | `captureMarker(name:)` | 闭包体内的 `capture` 标记；捕获在闭包创建点解析，本节点降级为无操作 | 存在意义是让该语句种类在闭包体内被接受 |
 | 17 | `detachStmt(inner:)` | 求值操作数（须为 `Future`），把它从父任务剪枝，父返回时不再取消它 | 剪枝在各后端都没有可观测的输出差异，判据只能是结构级 |
+| 18 | `releaseVar(slot:type:)` | 归还并清空一个函数内槽：释放旧值后写零值 | 供临时局部提前失效（匹配主语用完即弃），避免它拖住计数对象直到函数出口 |
 
 ## 4. 待办与已知偏离
 

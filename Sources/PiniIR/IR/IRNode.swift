@@ -54,6 +54,8 @@ public indirect enum IRType: Equatable {
     /// lazy reference with shared (reference) copy semantics; the element rides
     /// along for the boxing ABI (bytes/tag) and the `.value` load type.
     case lazyRef(element: IRType)
+    /// `WeakRef<T>`：不增加强计数的弱引用句柄；`.value` 读取得 `Optional<T>`。
+    case weakRef(element: IRType)
     /// `Set<T>` (G5): opaque handle `%bk_set*`, ordered unique elements.
     case set(element: IRType)
     /// Labeled tuple (G5 minimal slice): register aggregate `{ ... }`,
@@ -102,6 +104,9 @@ public indirect enum IRType: Equatable {
         case .lazyRef(let element):
             guard let payload = element.typeAnnotation else { return nil }
             return .generic(name: "LazyRef", params: [payload], location: at)
+        case .weakRef(let element):
+            guard let payload = element.typeAnnotation else { return nil }
+            return .generic(name: "WeakRef", params: [payload], location: at)
         case .pointer(let element):
             guard let target = element.typeAnnotation else { return nil }
             return .pointer(element: target, location: at)
@@ -169,6 +174,8 @@ public indirect enum IRType: Equatable {
             return "%bk_set*"
         case .lazyRef:
             return "%bk_lazyref*"
+        case .weakRef:
+            return "%bk_weakref*"
         case .tuple(_, let fieldTypes):
             return "{ " + fieldTypes.map { $0.llvmSpelling }.joined(separator: ", ") + " }"
         case .function:
@@ -212,6 +219,8 @@ public indirect enum IRType: Equatable {
             return "Dictionary<\(key.describe()), \(value.describe())>"
         case .lazyRef(let element):
             return "LazyRef<\(element.describe())>"
+        case .weakRef(let element):
+            return "WeakRef<\(element.describe())>"
         case .set(let element):
             return "Set<\(element.describe())>"
         case .tuple(let labels, let fieldTypes):
@@ -299,7 +308,7 @@ public indirect enum IRType: Equatable {
     public var isNumeric: Bool {
         switch self {
         case .i8, .u8, .i32, .i64, .u64, .f64: return true
-        case .boolean, .string, .char, .result, .future, .array, .optional, .nominal, .enumeration, .dict, .set, .tuple, .function, .cFunction, .lazyRef, .pointer, .stringHandle:
+        case .boolean, .string, .char, .result, .future, .array, .optional, .nominal, .enumeration, .dict, .set, .tuple, .function, .cFunction, .lazyRef, .weakRef, .pointer, .stringHandle:
             return false
         }
     }
@@ -591,6 +600,13 @@ public indirect enum IRExpr: Equatable {
     /// element box; the caller loads the element type out of it.
     case lazyRefValue(handle: IRExpr, type: IRType)
 
+    // MARK: 弱引用
+
+    /// `weak 对象`：建弱引用句柄，不增加对象的强计数。`type` 是 `weakRef(T)`。
+    case weakRefConstruct(target: IRExpr, type: IRType)
+    /// `handle.value`：目标存活得 `some`，已销毁得 `none`；`type` 是 `Optional<T>`。
+    case weakRefValue(handle: IRExpr, type: IRType)
+
     // MARK: G3c — join
 
     /// `await f` / `wait f`: the node the suspension semantics hang off. `future` evaluates to a `Future`;
@@ -653,6 +669,8 @@ extension IRExpr {
         case .indirectCall(_, _, let returnType): return returnType
         case .lazyRefConstruct(_, let type): return type
         case .lazyRefValue(_, let type): return type
+        case .weakRefConstruct(_, let type): return type
+        case .weakRefValue(_, let type): return type
         case .pointerLoad(_, let type): return type
         case .pointerStore: return nil
         case .addressOfVar(_, let type): return .pointer(element: type)

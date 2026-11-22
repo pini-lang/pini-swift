@@ -661,6 +661,7 @@ lowerMatchStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map
     let intType = map.i32Id
     let tempName = "$match" + countText(stmtId)
     let placedTemp = internText(texts = done.texts, value = tempName)
+    let subjectSlot = done.frame.nextSlot
     var anchor = irMakeNode(kind = irStmtTag(.irAllocVar), typeId = subjectType)
     anchor.text = placedTemp.id
     anchor.intValue = done.frame.nextSlot as I64
@@ -807,6 +808,13 @@ lowerMatchStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map
     while m < len(ids):
         allIds = allIds.append(ids[m])
         m = m + 1
+    ; 主语槽用完即弃：否则可选 / 结果里的计数载荷会拖到函数出口，弱引用读到已该销毁的对象。
+    var drop = irMakeNode(kind = irStmtTag(.irReleaseVar), typeId = subjectType)
+    drop.intValue = subjectSlot as I64
+    let insertedDrop = irAppendNode(pool = done.pool, node = drop)
+    done.pool = insertedDrop.pool
+    done.positions = recordPosition(positions = done.positions, node = insertedDrop.id, offset = unit.ast.stmtAt(stmtId).start)
+    allIds = allIds.append(insertedDrop.id)
     done.ids = allIds
     return done
 

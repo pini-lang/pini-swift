@@ -49,11 +49,13 @@ SECTION_FAMILY = {
     "2.15": "variablesAndOperators",
     # 2.16 带标签值的读：读的是枚举 / 可选 / 结果三族的判别式与载荷，拒绝时的族标注也写这个族。
     "2.16": "resultAndOptional",
+    # 2.17 弱引用：与 LazyRef 同为不透明引用句柄，共用一个能力族。
+    "2.17": "lazyRef",
 }
 # 契约按「符号」把小节合并，族却按产物分：§2.14 一节两族，按节点拆开。
 # 取函数地址归 calls（它是给调用准备的地址），取数据符号地址归 pointers（产物就是 `*T`）。
 NODE_FAMILY = {"foreignDataAddress": "pointers"}
-FAMILY_ORDER = ["controlFlow"] + list(SECTION_FAMILY.values())
+FAMILY_ORDER = ["controlFlow"] + list(dict.fromkeys(SECTION_FAMILY.values()))
 ROW = re.compile(r"^\|\s*(\d+)\s*\|\s*`([A-Za-z_][A-Za-z0-9_]*)", re.M)
 HEAD = re.compile(r"^### (2\.\d+)\s+", re.M)
 

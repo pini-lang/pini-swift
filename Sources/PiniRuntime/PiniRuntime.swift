@@ -568,6 +568,78 @@ public func bk_lazyref_destroy(_ h: UnsafeMutableRawPointer?) {
     _bkReleaseShare(h)
 }
 
+// MARK: - 弱引用（WeakRef，LLVM 端：对象头旁表 + 存活标记）
+
+/// 一个对象的弱引用旁表：存活标记由名义箱归零时改写，读取只问这一个布尔。
+/// 表随对象首次被弱引用时建，进程期内不回收 —— 与 LazyRef 句柄同一条边界，回收时机留给运行时替换。
+private final class _BkWeakEntry {
+    let object: UnsafeMutableRawPointer
+    private let lock = NSLock()
+    private var alive = true
+
+    init(object: UnsafeMutableRawPointer) {
+        self.object = object
+    }
+
+    func markDead() {
+        lock.lock()
+        alive = false
+        lock.unlock()
+    }
+
+    func liveObject() -> UnsafeMutableRawPointer? {
+        lock.lock()
+        defer { lock.unlock() }
+        return alive ? object : nil
+    }
+}
+
+/// 安装旁表指针的全局锁：两个线程同时给同一对象建表时只留一份。
+private let _bkWeakTableLock = NSLock()
+
+private final class _BkWeakRefBox: _BkBox {
+    let entry: _BkWeakEntry
+
+    init(entry: _BkWeakEntry) {
+        self.entry = entry
+    }
+}
+
+/// 建弱引用：`bk_weak_create(object)` → 不透明句柄。不增加强计数，只把对象头第三格
+/// （弱引用旁表指针）装上；同一对象的多条弱引用共用一张表。
+@_cdecl("bk_weak_create")
+public func bk_weak_create(_ object: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer {
+    guard let object else { bk_panic("Pini runtime error: weak target is null") }
+    _bkWeakTableLock.lock()
+    let slot = object.advanced(by: 16).assumingMemoryBound(to: UInt.self)
+    var raw = slot.pointee
+    if raw == 0 {
+        let entry = _BkWeakEntry(object: object)
+        raw = UInt(bitPattern: Unmanaged.passRetained(entry).toOpaque())
+        slot.pointee = raw
+    }
+    _bkWeakTableLock.unlock()
+    guard let pointer = UnsafeMutableRawPointer(bitPattern: raw) else {
+        bk_panic("Pini runtime error: weak table pointer is null")
+    }
+    let entry = Unmanaged<_BkWeakEntry>.fromOpaque(pointer).takeUnretainedValue()
+    return _bkRegister(_BkWeakRefBox(entry: entry))
+}
+
+/// 读弱引用：目标存活答对象指针，已销毁答空指针。调用方把非空结果包成 `some` 并留一份计数。
+@_cdecl("bk_weak_value")
+public func bk_weak_value(_ h: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? {
+    guard let h else { return nil }
+    let box = Unmanaged<_BkWeakRefBox>.fromOpaque(h).takeUnretainedValue()
+    return box.entry.liveObject()
+}
+
+/// 释放弱引用句柄的一份 share；旁表本身随对象或进程存活，不在本入口回收。
+@_cdecl("bk_weak_destroy")
+public func bk_weak_destroy(_ h: UnsafeMutableRawPointer?) {
+    _bkReleaseShare(h)
+}
+
 // MARK: - 默认实例取用（契约 §2.46）
 
 /// 「某类型的默认实例」的存放位盒。
@@ -2260,7 +2332,13 @@ public func bk_nominal_release(_ box: UnsafeMutableRawPointer?) -> Int32 {
     guard let box else { return 0 }
     let rc = box.assumingMemoryBound(to: Int32.self)
     rc.pointee -= 1
-    return rc.pointee == 0 ? 1 : 0
+    guard rc.pointee == 0 else { return 0 }
+    // 归零即把旁表标死：此后 weak 读答空，不再看已释放的对象内存。
+    let raw = box.advanced(by: 16).assumingMemoryBound(to: UInt.self).pointee
+    if raw != 0, let pointer = UnsafeMutableRawPointer(bitPattern: raw) {
+        Unmanaged<_BkWeakEntry>.fromOpaque(pointer).takeUnretainedValue().markDead()
+    }
+    return 1
 }
 
 // MARK: - 字符串的**字素簇**通道（IR 契约 §2.9 第 22/23/36/37 条的 LLVM 侧落地）

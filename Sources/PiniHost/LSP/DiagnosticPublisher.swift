@@ -201,6 +201,7 @@ public struct DiagnosticPublisher {
         case .duplicateArgumentLabel(_, _, let loc): return loc
         case .lifecycleShapeInvalid(_, let loc): return loc
         case .missingReturn(_, let loc): return loc
+        case .weakOperandNotObject(_, let loc): return loc
         }
     }
 }

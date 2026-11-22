@@ -134,13 +134,13 @@ containerMinArity|func(_name: String,) -> (I32,):
         return 1
     if _name == "Dictionary":
         return 2
-    if _name == "Result" || _name == "LazyRef" || _name == "Future":
+    if _name == "Result" || _name == "LazyRef" || _name == "Future" || _name == "WeakRef":
         return 1
     return -1
 
 ; 容器实参判定：结果类型允许省略错误实参，其余只认一个数。
 containerAccepts|func(name: String, count: I32,) -> (Bool,):
-    if name == "Array" || name == "Set" || name == "Optional" || name == "LazyRef" || name == "Future":
+    if name == "Array" || name == "Set" || name == "Optional" || name == "LazyRef" || name == "Future" || name == "WeakRef":
         return count == 1
     if name == "Dictionary":
         return count == 2
@@ -154,7 +154,7 @@ containerClass|func(_name: String,) -> (TypeClass,):
         return .typeClassCollection
     if _name == "Optional":
         return .typeClassOptional
-    if _name == "LazyRef" || _name == "Future":
+    if _name == "LazyRef" || _name == "Future" || _name == "WeakRef":
         return .typeClassGeneric
     return .typeClassResult
 

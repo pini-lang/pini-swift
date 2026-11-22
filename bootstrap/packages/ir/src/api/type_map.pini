@@ -236,6 +236,14 @@ mapSemanticType|func(map: TypeMap, pool: TypePool, id: I32,) -> (TypeMap,):
             let inserted = irWrapType(pool = out.pool, kind = .irTypeLazyRef, name = "", inner = element)
             out.pool = inserted.pool
             return setMapped(map = out, semanticId = id, irId = inserted.id)
+        if entry.name == "WeakRef" && len(entry.kids) == 1:
+            out = mapSemanticType(map = out, pool = pool, id = entry.kids[0])
+            let element = irIdOf(map = out, semanticId = entry.kids[0])
+            if element < 0:
+                return out
+            let inserted = irWrapType(pool = out.pool, kind = .irTypeWeakRef, name = "", inner = element)
+            out.pool = inserted.pool
+            return setMapped(map = out, semanticId = id, irId = inserted.id)
         if entry.name == "Future" && len(entry.kids) == 1:
             out = mapSemanticType(map = out, pool = pool, id = entry.kids[0])
             let payload = irIdOf(map = out, semanticId = entry.kids[0])

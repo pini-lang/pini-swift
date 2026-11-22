@@ -3297,6 +3297,23 @@ public final class TypeChecker {
             defer { unsafeContextDepth -= 1 }
             try checkExpression(operand)
 
+        case .weakRef(let operand, let location):
+            // 弱引用只对对象成立：结构、枚举、标量与函数值没有旁表，放行会让降载期无处落表。
+            try checkExpression(operand)
+            if let operandType = inference.infer(expression: operand) {
+                var named: String? = nil
+                switch operandType {
+                case .simple(let name, _): named = name
+                case .generic(let name, _, _): named = name
+                default: break
+                }
+                if let named, !referenceTypeNames.contains(named) {
+                    try report(
+                        TypeError.weakOperandNotObject(
+                            type: operandType.describe(), location: location))
+                }
+            }
+
         case .addressOf(let operand, let location):
             // Phase 2a（FFI 子系统）：`&` 取地址仅在 unsafe 上下文可用。
             guard unsafeContextDepth > 0 else {

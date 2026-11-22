@@ -313,6 +313,8 @@ public enum Desugar {
             return .join(desugar(inner), loc, form)
         case .unsafe(let operand, let loc):
             return .unsafe(operand: desugar(operand), location: loc)
+        case .weakRef(let operand, let loc):
+            return .weakRef(operand: desugar(operand), location: loc)
         case .addressOf(let operand, let loc):
             return .addressOf(operand: desugar(operand), location: loc)
         case .cast(let operand, let target, let loc):

@@ -452,6 +452,18 @@ inferNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
         return out
     if unit.ast.isBinaryExpr(node):
         return inferBinary(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out, bytes = bytes)
+    if unit.ast.isWeakRefExpr(node):
+        ; `weak 对象`：结果类型 `WeakRef<T>`，T 取操作数的对象类型；对象约束由检查面判。
+        let operand = unit.ast.childOf(id = node, index = 0)
+        let inner = inferNode(world = world, unit = unit, unitIndex = unitIndex, node = operand, names = names, pool = out.pool, types = out.types, bytes = bytes, expected = noExpectation())
+        out.pool = inner.pool
+        out.types = inner.types
+        if inner.typeId >= 0:
+            let made = weakRefType(pool = out.pool, element = inner.typeId)
+            out.pool = made.pool
+            out.typeId = made.id
+            out.types = writeExprType(table = out.types, unit = unitIndex, node = node, typeId = out.typeId)
+        return out
     if unit.ast.isUnaryExpr(node):
         return inferUnary(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out, bytes = bytes)
     if unit.ast.isArrayExpr(node) || unit.ast.isSetExpr(node) || unit.ast.isDictionaryExpr(node):
@@ -537,6 +549,15 @@ inferMember|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node
         let element = lazyRefElement(pool = done.pool, id = inner.typeId)
         if element >= 0:
             done.typeId = element
+            done.types = writeExprType(table = done.types, unit = unitIndex, node = node, typeId = done.typeId)
+        return done
+    ; 弱引用的值读：结果是 `Optional<T>`，目标销毁后为 `none`。
+    if memberName == "value" && isWeakRefType(pool = done.pool, id = inner.typeId):
+        let element = weakRefElement(pool = done.pool, id = inner.typeId)
+        if element >= 0:
+            let made = optionalType(pool = done.pool, wrapped = element)
+            done.pool = made.pool
+            done.typeId = made.id
             done.types = writeExprType(table = done.types, unit = unitIndex, node = node, typeId = done.typeId)
         return done
     let access = memberAccess(receiver = inner.typeId, name = memberName, isTypeName = false, owner = names.owner, file = unit.path, offset = member.start)

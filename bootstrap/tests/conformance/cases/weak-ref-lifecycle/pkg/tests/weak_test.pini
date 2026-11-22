@@ -1,0 +1,17 @@
+; 弱引用：对象存活时读得到载荷，强引用换掉后读到空。
+弱引用生命周期|test() -> ():
+    var 强 = 节点()
+    强.值 = 42
+    let 弱 = weak 强
+    match 弱.value:
+        case some(目标,):
+            assert(目标.值 == 42, "存活时应读到载荷")
+        case none:
+            assert(false, "对象存活时不该为空")
+    强 = 节点()
+    match 弱.value:
+        case some(_目标,):
+            assert(false, "对象销毁后不该存活")
+        case none:
+            assert(true, "对象销毁后应为空")
+    return

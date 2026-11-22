@@ -215,6 +215,10 @@ public enum IRPrinter {
             return "LazyRef(\(exprText(closure)))"
         case .lazyRefValue(let handle, _):
             return "\(exprText(handle)).value"
+        case .weakRefConstruct(let target, _):
+            return "weak \(exprText(target))"
+        case .weakRefValue(let handle, _):
+            return "\(exprText(handle)).value"
         case .pointerLoad(let pointer, _):
             return "load(\(exprText(pointer)))"
         case .pointerStore(let pointer, let value, _):

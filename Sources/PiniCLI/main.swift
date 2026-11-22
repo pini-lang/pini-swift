@@ -218,6 +218,8 @@ func describeExpression(_ expr: PiniCore.Expression, indent: String = "") -> Str
         return result
     case .unsafe(let operand, _):
         return "\(indent)unsafe:\n" + describeExpression(operand, indent: indent + " ")
+    case .weakRef(let operand, _):
+        return "\(indent)weakRef(weak):\n" + describeExpression(operand, indent: indent + " ")
     case .addressOf(let operand, _):
         return "\(indent)addressOf(&):\n" + describeExpression(operand, indent: indent + " ")
     case .dotCaseRef(let name, _):

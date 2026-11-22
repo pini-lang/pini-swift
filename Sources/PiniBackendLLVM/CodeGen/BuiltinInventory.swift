@@ -30,7 +30,7 @@ public struct BuiltinSpec: Sendable {
 extension BuiltinSpec {
     /// 与运行时 ABI 契约第 2 节的族同名；族是能力声明与缺口登记的粒度。
     public enum Family: String, CaseIterable, Sendable {
-        case array, dictionary, set, handle, lazyRef, given, pointer, display, runtime
+        case array, dictionary, set, handle, lazyRef, weakRef, given, pointer, display, runtime
         case character, string, nominal, io, task, blocking, yielding, scheduler, error
         /// 字符串句柄：C 侧可持有的串。五个入口里只有 `new` 有发射器调用点。
         case stringHandle
@@ -170,6 +170,20 @@ public enum Builtins {
         BuiltinSpec(
             symbol: "bk_lazyref_value", signature: .init(result: "ptr", parameters: ["ptr"]),
             family: .lazyRef, lowerings: ["lazyRefValue"]
+        ),
+
+        // MARK: weakRef
+        BuiltinSpec(
+            symbol: "bk_weak_create", signature: .init(result: "ptr", parameters: ["ptr"]),
+            family: .weakRef, lowerings: ["weakRefConstruct"]
+        ),
+        BuiltinSpec(
+            symbol: "bk_weak_destroy", signature: .init(result: "void", parameters: ["ptr"]),
+            family: .weakRef, lowerings: ["<cleanup>"]
+        ),
+        BuiltinSpec(
+            symbol: "bk_weak_value", signature: .init(result: "ptr", parameters: ["ptr"]),
+            family: .weakRef, lowerings: ["weakRefValue"]
         ),
 
         // MARK: given

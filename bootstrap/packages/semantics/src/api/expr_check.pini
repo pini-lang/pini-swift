@@ -170,6 +170,9 @@ checkMemberCall|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, 
     ; 惰性引用的 `.value` 是内建读，不在名义成员表里。
     if memberName == "value" && isLazyRefType(pool = world.types.pool, id = receiverType):
         return out
+    ; 弱引用的 `.value` 也是内建读：结果是 `Optional<T>`，不查名义成员表。
+    if memberName == "value" && isWeakRefType(pool = world.types.pool, id = receiverType):
+        return out
     let access = memberAccess(receiver = receiverType, name = memberName, isTypeName = isTypeName, owner = "", file = unit.path, offset = member.start)
     let result = checkMember(world = world, access = access)
     if result.failed:
@@ -321,6 +324,17 @@ containsId|func(items: Array<I32>, value: I32,) -> (Bool,):
         i = i + 1
     return false
 
+; 弱引用：操作数的类型必须是对象；结构、枚举、标量与函数值没有弱引用旁表。
+checkWeakRefNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, types: ExprTypes, node: I32, out: ExprCheck,) -> (ExprCheck,):
+    let operand = unit.ast.childOf(id = node, index = 0)
+    let typeId = exprTypeAt(table = types, unit = unitIndex, node = operand)
+    if typeId < 0 || typeId >= len(world.types.pool.entries):
+        return out
+    let entry = world.types.pool.entries[typeId]
+    if isTypeClass(kind = entry.kind, expected = .typeClassObject):
+        return out
+    return appendExprError(out = out, unit = unit, offset = unit.ast.exprAt(node).start, kind = .exprMemberFailed, name = entry.name, detail = "weak 的操作数必须是对象", code = "E4-042")
+
 ; 单元检查：逐个表达式节点分派；同一节点只走一条分支。
 ; 被调名字由调用节点报（未定义函数是 E3-002），标识符扫描跳过它，免得同一名字报两条。
 checkUnitExprs|func(world: MemberWorld, unitIndex: I32, types: ExprTypes,) -> (ExprCheck,):
@@ -344,6 +358,8 @@ checkUnitExprs|func(world: MemberWorld, unitIndex: I32, types: ExprTypes,) -> (E
             out = checkCallNode(world = world, unit = unit, unitIndex = unitIndex, bytes = bytes, shadow = shadow, types = types, ranges = ranges, node = i, out = out)
         elif unit.ast.isJoinExpr(i):
             out = checkJoinNode(world = world, unit = unit, unitIndex = unitIndex, types = types, node = i, out = out)
+        elif unit.ast.isWeakRefExpr(i):
+            out = checkWeakRefNode(world = world, unit = unit, unitIndex = unitIndex, types = types, node = i, out = out)
         i = i + 1
     out.failed = len(out.errors) > 0
     return out

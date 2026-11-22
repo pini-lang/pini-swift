@@ -21,7 +21,7 @@
 
 ### 0.3 量具口径
 
-**124 = `@_cdecl("bk_…")` 的匹配数**，即导出符号数，不是 `@_cdecl` 的字样出现数。
+**127 = `@_cdecl("bk_…")` 的匹配数**，即导出符号数，不是 `@_cdecl` 的字样出现数。
 两者相差 2：正文有两处注释提到 `@_cdecl` 却不导出符号。数出来差 1 或 2 时，先分清数的是哪一个。
 器械是 `tools/runtime-abi-check.py`。
 
@@ -32,7 +32,7 @@
 - 集合、并发、LazyRef、FFI 共用同一个运行时段，不另设独立 shim。
 - 新增符号同批登记本件，等式「清单数 = 导出数」是它唯一的自检方式。
 
-## 2. 符号清单（124 个）
+## 2. 符号清单（127 个）
 
 | 族 | 符号 | 数 |
 |---|---|---|
@@ -41,6 +41,7 @@
 | 集合 | `bk_set_add` `bk_set_at` `bk_set_create` `bk_set_destroy` `bk_set_len` | 5 |
 | 句柄 / COW | `bk_handle_ensure_unique` `bk_handle_release` `bk_handle_retain` `bk_handle_shares` | 4 |
 | LazyRef | `bk_lazyref_create` `bk_lazyref_destroy` `bk_lazyref_value` | 3 |
+| 弱引用 | `bk_weak_create` `bk_weak_destroy` `bk_weak_value` | 3 |
 | 默认实例 | `bk_given_get` | 1 |
 | 指针 | `bk_ptr_load_f32` `bk_ptr_load_f64` `bk_ptr_load_i32` `bk_ptr_load_i64` `bk_ptr_load_i8` `bk_ptr_store` | 6 |
 | 展示 / 陷阱 | `bk_cstr` `bk_double_bits` `bk_double_to_string` `bk_parse_double` `bk_panic` `bk_print_lock` `bk_print_unlock` | 7 |
@@ -55,7 +56,7 @@
 | 让出族 | `bk_task_await` `bk_task_frame` `bk_task_slot` | 3 |
 | 调度驱动面 | `bk_task_bind_sched` `bk_task_state` | 2 |
 | 错误载荷 | `bk_cancel_error_create` `bk_error_code` `bk_error_create` `bk_error_from_enum` `bk_error_is_cancel` `bk_error_lookup` `bk_error_message` `bk_error_with_code` | 8 |
-| **合计** | | **124** |
+| **合计** | | **127** |
 
 ## 3. 语义约束
 
@@ -116,8 +117,8 @@
 | `bk_str_handle_bytes` `bk_str_handle_len` `bk_str_handle_retain` `bk_str_handle_release` | 4 | C 侧读字节与收账的入口；发射器只发 `bk_str_handle_new` |
 | `bk_double_bits` `bk_parse_double` | 2 | 只由自举编译器在编译期调用，发射器不产出 |
 
-本表与编译器侧清单互补：`BuiltinInventory.swift` 列出已接线的 101 条，本表列出其余 23 条，
-两者合计即第 2 节的 124。互补关系由 `tools/builtin-inventory-check.py` 校验。
+本表与编译器侧清单互补：`BuiltinInventory.swift` 列出已接线的 104 条，本表列出其余 23 条，
+两者合计即第 2 节的 127。互补关系由 `tools/builtin-inventory-check.py` 校验。
 
 ## 5. 维护条款
 

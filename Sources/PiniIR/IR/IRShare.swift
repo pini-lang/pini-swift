@@ -32,6 +32,8 @@ public enum IRShareKind: Equatable, Sendable {
     case enumeration
     /// `LazyRef<T>`：一次性求值的共享句柄。
     case lazyRef
+    /// `WeakRef<T>`：弱引用句柄，本身按份数归还。
+    case weakRef
 }
 
 extension IRType {
@@ -47,6 +49,7 @@ extension IRType {
         case .dict: return .retained(.dict)
         case .set: return .retained(.set)
         case .lazyRef: return .retained(.lazyRef)
+        case .weakRef: return .retained(.weakRef)
         case .nominal(_, let isObject): return isObject ? .retained(.object) : .valueBox
         case .enumeration: return .retained(.enumeration)
         case .result, .optional, .tuple, .function: return .aggregate
@@ -165,7 +168,7 @@ extension IRExpr {
             return type.holdsAShare ? .fresh : .borrowed
         /// 构造出的聚合按成员持有份额：有计数成员就是新份额，否则整块不记账。
         case .resultConstruct(_, _, _, _, _, let type), .optionalConstruct(_, _, let type),
-            .tupleConstruct(_, _, let type):
+            .tupleConstruct(_, _, let type), .weakRefValue(_, let type):
             return type.holdsAShare ? .fresh : .inert
         /// `call` 与 `indirectCall` 的返回一律按新份额：`returnStmt` 的 `adopt` 已在被调方
         /// 安排好 —— 交临时值就是移交，交别名就先保留。故调用方接手的一定是干净的一份。
@@ -175,7 +178,7 @@ extension IRExpr {
         case .arrayLiteral, .dictLiteral, .setLiteral, .sliceCall, .construct, .enumConstruct,
             .stringCase, .stringSubstring, .stringSplit, .stringTrimLeft, .stringTrimRight,
             .arrayJoin, .stringConcat, .interpString, .fileRead, .lazyRefConstruct,
-            .closureLiteral:
+            .weakRefConstruct, .closureLiteral:
             return .fresh
         // 整块聚合里没有计数成员（`Result<I64>` 的写盘家族）：整块不记账。
         case .fileTryWrite, .fileTryAppend:

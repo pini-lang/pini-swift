@@ -1,0 +1,66 @@
+[weakref_test|import]
+_syntax = "../../syntax"
+_module_loader = "../../module-loader"
+
+; 弱引用：`weak 对象` 的结果类型是 `WeakRef<T>`，`.value` 的结果是 `Optional<T>`；
+; 非对象取弱引用由检查面报 E4-042。判据看类型文本与诊断码，不看实现细节。
+(弱引用样例)
+world: MemberWorld = MemberWorld()
+unit: CompilationUnit = CompilationUnit()
+types: ExprTypes = ExprTypes()
+
+; 造弱引用样例：装载、排序、注册、解析类型、建世界。
+造弱引用样例|func(_src: String,) -> (弱引用样例,):
+    let loaded = loadUnit(path = "packages/p/src/api/p.pini", text = _src)
+    assert(!loaded.failed, "样例应可加载")
+    let units = sortedUnits([loaded.unit])
+    let table = registerPackage(units)
+    let types = resolvePackage(units = units, table = table)
+    var out = 弱引用样例()
+    out.world = makeMemberWorld(units = units, table = table, types = types)
+    out.unit = units[0]
+    out.types = makeExprTypes(units)
+    return out
+
+; 首个弱引用前缀：按表达式池序找第一处。
+首个弱引用|func(_unit: CompilationUnit,) -> (I32,):
+    var i = 0
+    while i < _unit.ast.exprCount():
+        if _unit.ast.isWeakRefExpr(i):
+            return i
+        i = i + 1
+    return -1
+
+; 首个弱引用成员读：按池序找第一处。
+首个弱引用成员读|func(_unit: CompilationUnit,) -> (I32,):
+    var i = 0
+    while i < _unit.ast.exprCount():
+        if _unit.ast.isMemberExpr(i):
+            return i
+        i = i + 1
+    return -1
+
+; 前缀与值读的类型：WeakRef<节点> 与 Optional<节点>。
+弱引用类型|test() -> ():
+    let 样例 = 造弱引用样例("{节点}\n值: I32 = 0\n\nf|func() -> ():\n    let n = 节点()\n    let r = weak n\n    print(r.value)\n    return\n")
+    let 推 = inferUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
+    let 前缀 = 首个弱引用(样例.unit)
+    assert(前缀 >= 0, "样例应含弱引用前缀")
+    let 前缀文本 = typeText(pool = 推.pool, id = exprTypeAt(table = 推.types, unit = 0, node = 前缀))
+    assert(前缀文本 == "WeakRef<节点>", "实得 " + 前缀文本)
+    let 读 = 首个弱引用成员读(样例.unit)
+    assert(读 >= 0, "样例应含成员读")
+    let 读文本 = typeText(pool = 推.pool, id = exprTypeAt(table = 推.types, unit = 0, node = 读))
+    assert(读文本 == "节点?", "实得 " + 读文本)
+    let check = checkUnitExprs(world = 样例.world, unitIndex = 0, types = 推.types)
+    assert(len(check.errors) == 0, "合法弱引用不该报，实得 " + "\(len(check.errors))")
+    return
+
+; 非对象取弱引用：结构没有弱引用旁表，检查面报 E4-042。
+弱引用只收对象|test() -> ():
+    let 样例 = 造弱引用样例("(点)\nx: I32 = 0\n\nf|func() -> ():\n    let p = 点()\n    let r = weak p\n    return\n")
+    let 推 = inferUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
+    let check = checkUnitExprs(world = 样例.world, unitIndex = 0, types = 推.types)
+    assert(len(check.errors) == 1, "应报一条，实得 " + "\(len(check.errors))")
+    assert(check.errors[0].code == "E4-042", "实得 " + check.errors[0].code)
+    return

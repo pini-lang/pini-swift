@@ -136,6 +136,8 @@ public final class IREmitter {
     /// 是否用到 `%bk_lazyref` 句柄类型与 `bk_lazyref_*` 这组 C ABI：头声明按需追加，
     /// 从不触碰 LazyRef 的模块其 IR 保持逐字节不变。
     private var usesLazyRef = false
+    /// 是否用到 `%bk_weakref` 句柄与 `bk_weak_*` 这组 C ABI；按需追加，未触碰的模块文本不变。
+    private var usesWeakRef = false
     /// `writeFile`/`readFile` pull in the stdio declares and the
     /// mode-string constants. Conditional for the same golden-IR reason
     /// as the other optional headers.
@@ -471,6 +473,7 @@ public final class IREmitter {
         usesMemCmp = false
         usesStringBuilders = false
         usesLazyRef = false
+        usesWeakRef = false
         usesFileWrite = false
         usesFileAppend = false
         usesFileRead = false
@@ -618,6 +621,12 @@ public final class IREmitter {
             tail += Builtins.declaration(for: "bk_lazyref_create")
             tail += Builtins.declaration(for: "bk_lazyref_value")
             tail += Builtins.declaration(for: "bk_lazyref_destroy")
+        }
+        if usesWeakRef {
+            tail += "%bk_weakref = type { ptr }\n"
+            tail += Builtins.declaration(for: "bk_weak_create")
+            tail += Builtins.declaration(for: "bk_weak_value")
+            tail += Builtins.declaration(for: "bk_weak_destroy")
         }
         // `writeFile` 的 declare，只在实际写入的模块里出现。
         // 落点是运行时 shim 的一次调用 —— 路径解析与写语义都在那一侧，此处不发 libc 写调用。
@@ -1367,6 +1376,7 @@ public final class IREmitter {
         case .retained(.dict): return "bk_dict_destroy"
         case .retained(.set): return "bk_set_destroy"
         case .retained(.lazyRef): return "bk_lazyref_destroy"
+        case .retained(.weakRef): return "bk_weak_destroy"
         case .retained(.string), .retained(.char), .retained(.object), .retained(.enumeration),
             .valueBox, .aggregate, .inert:
             return nil
@@ -3062,6 +3072,12 @@ public final class IREmitter {
         case .lazyRefValue(let handle, let type):
             return emitLazyRefValue(handle: handle, element: type)
 
+        case .weakRefConstruct(let target, let type):
+            return emitWeakRefConstruct(target: target, type: type)
+
+        case .weakRefValue(let handle, let type):
+            return emitWeakRefValue(handle: handle, type: type)
+
         case .pointerLoad(let pointer, let type):
             return emitPointerLoad(pointer: pointer, element: type)
 
@@ -3421,7 +3437,7 @@ public final class IREmitter {
             .nominal:
             return false
         case .result, .future, .array, .optional, .enumeration, .dict,
-            .lazyRef, .set, .tuple, .function, .cFunction, .stringHandle:
+            .lazyRef, .weakRef, .set, .tuple, .function, .cFunction, .stringHandle:
             return true
         }
     }
@@ -3466,6 +3482,45 @@ public final class IREmitter {
         let value = builder.freshTemp()
         bodyIR += " \(value) = load \(spelling), ptr \(box)\n"
         return IRValue(llvmType: spelling, ssaName: value)
+    }
+
+    /// `weak 对象`：只建弱引用旁表项，不碰对象的强计数。句柄与其他容器同用一份 share 计数。
+    private func emitWeakRefConstruct(target: IRExpr, type: IRType) -> IRValue {
+        guard case .weakRef = type else {
+            fatalError("IREmitter: weakRefConstruct type is not a weakRef (IRLowerer guarantees)")
+        }
+        usesWeakRef = true
+        let targetValue = emitExpr(target)
+        let handle = builder.freshTemp()
+        bodyIR += " \(handle) = call ptr @bk_weak_create(ptr \(targetValue.ssaName))\n"
+        let typed = builder.freshTemp()
+        bodyIR += " \(typed) = bitcast ptr \(handle) to %bk_weakref*\n"
+        return IRValue(llvmType: "%bk_weakref*", ssaName: typed)
+    }
+
+    /// `handle.value`：目标存活时留一份计数并包成 `some`，否则包成 `none`。
+    /// 载荷槽在 `none` 时写空指针，SSA 因此不依赖未定义值。
+    private func emitWeakRefValue(handle: IRExpr, type: IRType) -> IRValue {
+        guard case .optional(let element) = type else {
+            fatalError("IREmitter: weakRefValue type is not Optional (IRLowerer guarantees)")
+        }
+        usesWeakRef = true
+        let handleValue = emitExpr(handle)
+        let raw = builder.freshTemp()
+        bodyIR += " \(raw) = bitcast \(handleValue.llvmType) \(handleValue.ssaName) to ptr\n"
+        let object = builder.freshTemp()
+        bodyIR += " \(object) = call ptr @bk_weak_value(ptr \(raw))\n"
+        _ = retainCounted(IRValue(llvmType: "ptr", ssaName: object), type: element)
+        let spelling = type.llvmSpelling
+        let missing = builder.freshTemp()
+        bodyIR += " \(missing) = icmp eq ptr \(object), null\n"
+        let tag = builder.freshTemp()
+        bodyIR += " \(tag) = select i1 \(missing), i64 1, i64 0\n"
+        let withTag = builder.freshTemp()
+        bodyIR += " \(withTag) = insertvalue \(spelling) undef, i64 \(tag), 0\n"
+        let withPayload = builder.freshTemp()
+        bodyIR += " \(withPayload) = insertvalue \(spelling) \(withTag), ptr \(object), 1\n"
+        return IRValue(llvmType: spelling, ssaName: withPayload)
     }
 
     /// LazyRef element boxing ABI (bytes/tag): strings use the raw-ptr tag (4), NOT the array-family
@@ -5035,6 +5090,7 @@ public final class IREmitter {
         case .retained(.object), .retained(.enumeration), .valueBox: return .nominal
         /// `LazyRef` 的句柄与他族同一个 `_BkBox` 计数头 ⇒ 保留走通用入口，释放走自己的符号。
         case .retained(.lazyRef): return .container
+        case .retained(.weakRef): return .container
         case .aggregate, .inert: return nil
         }
     }

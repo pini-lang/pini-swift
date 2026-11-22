@@ -2,7 +2,7 @@
 # 自举没有的通道整列为「无」；embedded_min 按裁定留差异，不进归零判据。
 # 由 bootstrap/tools/parity.py 生成，勿手改；只许缩小。
 通道	产出	族	宿主	自举声明	自举接通	状态
-llvm	machineCode	controlFlow	yes	1	12	有
+llvm	machineCode	controlFlow	yes	1	13	有
 llvm	machineCode	scalars	yes	1	4	有
 llvm	machineCode	variablesAndOperators	yes	1	4	有
 llvm	machineCode	calls	yes	1	6	有
@@ -13,7 +13,7 @@ llvm	machineCode	pointers	yes	1	4	有
 llvm	machineCode	fileIO	yes	1	4	有
 llvm	machineCode	catchableIO	yes	1	3	有
 llvm	machineCode	strings	yes	1	9	有
-llvm	machineCode	lazyRef	yes	1	2	有
+llvm	machineCode	lazyRef	yes	1	4	有
 llvm	machineCode	concurrency	yes	1	1	有
 llvm	machineCode	givenInstances	yes	1	1	有
 c	structuralDump	controlFlow	yes	-	-	无

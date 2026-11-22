@@ -56,6 +56,7 @@ keywordWords|func(_language: KeywordLanguage,) -> (Array<String>,):
             "通过",
             "使用",
             "展开",
+            "弱引用",
         ]
     return [
         "var",
@@ -92,6 +93,7 @@ keywordWords|func(_language: KeywordLanguage,) -> (Array<String>,):
         "pass",
         "using",
         "unroll",
+        "weak",
     ]
 
 ; 关键字表：按语言把词表摊平成一块字节池；第 i 个词落在 starts[i] 起、宽 widths[i] 处。
@@ -130,6 +132,9 @@ keywordKindIn|func(table: KeywordTable, bytes: Array<U8>, start: I32, end: I32,)
     var index = 0
     while index < len(table.widths):
         if matchesTableWord(table = table, index = index, bytes = bytes, start = start, end = end):
+            ; `weak` 排在词表末位，类别码单独留在布局段之后，故不按 8 + 下标推。
+            if index == 34:
+                return .kwWeak
             return kindFromTag(8 + index)
         index = index + 1
     return .identifier

@@ -701,8 +701,8 @@ public enum RuntimeOps {
         case .set(let vs):
             return "{" + vs.enumerated().map { i, v in (i > 0 ? ", " : "") + stringifyValue(v) }.joined() + "}"
         case .weakRef(let box):
-            // G42：WeakRef 引用语义承载——打印为 `WeakRef(目标类型)`（不展开内部状态）。
-            return "WeakRef(\(box.target.typeName))"
+            // WeakRef 引用语义承载——打印为 `WeakRef(目标类型)`（不展开内部状态）；目标已释放时如实标记。
+            return "WeakRef(\(box.target?.typeName ?? "已释放"))"
         case .lazyRef:
             // G40：LazyRef 引用语义承载——打印为 `LazyRef`（不展开内部状态）。
             return "LazyRef"
