@@ -1134,6 +1134,13 @@ parseUnary|self() -> (I32,):
         let id: I32 = self.newExpr(kind = .exprUnsafe, start = start, end = self.previousEnd())
         self.pushExprKid(id = id, kid = operand)
         return id
+    if self.at(.kwWeak):
+        let start: I32 = self.current().start
+        self.advance()
+        let operand: I32 = self.parseUnary()
+        let id: I32 = self.newExpr(kind = .exprWeakRef, start = start, end = self.previousEnd())
+        self.pushExprKid(id = id, kid = operand)
+        return id
     let kind: TokenKind = self.current().kind
     if isUnaryKind(kind):
         let start: I32 = self.current().start

@@ -163,10 +163,12 @@ validateNode|func(module: IrModule, nodeId: I32, file: String, positions: Array<
         out = checkPayloadIndex(module = module, node = node, result = out, file = file, offset = offset)
     if node.kind == irStmtTag(.irAllocVar) && node.typeId < 0:
         out = reportRule(result = out, rule = .irRuleVarType, file = file, offset = offset, detail = "变量声明没有类型")
-    if node.kind == irStmtTag(.irAllocVar) || node.kind == irStmtTag(.irStoreVar) || node.kind == irExprTag(.irLoad):
+    if node.kind == irStmtTag(.irAllocVar) || node.kind == irStmtTag(.irStoreVar) || node.kind == irStmtTag(.irReleaseVar) || node.kind == irExprTag(.irLoad):
         let slot = node.intValue as I32
         if slot < 0:
             out = reportRule(result = out, rule = .irRuleVarSlot, file = file, offset = offset, detail = "节点 " + countText(nodeId) + " 没有槽位")
+    if node.kind == irStmtTag(.irReleaseVar) && node.typeId < 0:
+        out = reportRule(result = out, rule = .irRuleVarType, file = file, offset = offset, detail = "归还语句没有类型")
     k = 0
     while k < len(node.kids):
         let kid = node.kids[k]

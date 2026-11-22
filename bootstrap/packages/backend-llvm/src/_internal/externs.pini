@@ -88,6 +88,12 @@ externSignature|func(name: String,) -> (String,):
         return "declare ptr @bk_lazyref_create(ptr, ptr, ptr, i32, i32)"
     if name == "bk_lazyref_value":
         return "declare ptr @bk_lazyref_value(ptr)"
+    if name == "bk_weak_create":
+        return "declare ptr @bk_weak_create(ptr)"
+    if name == "bk_weak_value":
+        return "declare ptr @bk_weak_value(ptr)"
+    if name == "bk_weak_destroy":
+        return "declare void @bk_weak_destroy(ptr)"
     if name == "malloc":
         return "declare ptr @malloc(i64)"
     if name == "bk_string_contains":

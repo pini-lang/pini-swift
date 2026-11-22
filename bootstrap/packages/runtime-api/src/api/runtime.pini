@@ -60,6 +60,12 @@ bk_lazyref_create: (*U8, *U8, *U8, I32, I32,) -> (*U8,)
 bk_lazyref_destroy: (*U8,) -> ()
 bk_lazyref_value: (*U8,) -> (*U8,)
 
+; 弱引用族：只登记旁表项，不动目标强计数；取值答目标指针或空。
+[weakref|foreign]
+bk_weak_create: (*U8,) -> (*U8,)
+bk_weak_destroy: (*U8,) -> ()
+bk_weak_value: (*U8,) -> (*U8,)
+
 ; 默认实例族：槽位地址与初始化函数同交，首次取用时初始化。
 [given|foreign]
 bk_given_get: (**U8, *U8, I64,) -> (*U8,)

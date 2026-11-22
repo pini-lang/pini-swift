@@ -90,6 +90,7 @@ exprFunction
 exprCast
 exprTry
 exprUnsafe
+exprWeakRef
 exprJoin
 exprDictEntry
 exprGeneric
@@ -204,12 +205,14 @@ exprKindTag|func(_kind: ExprKind,) -> (I32,):
             return 22
         case exprUnsafe:
             return 23
-        case exprJoin:
+        case exprWeakRef:
             return 24
-        case exprDictEntry:
+        case exprJoin:
             return 25
-        case exprGeneric:
+        case exprDictEntry:
             return 26
+        case exprGeneric:
+            return 27
     return 0
 
 ; 表达式类别名：降载与诊断按名报缺口，不暴露类别码。
@@ -258,6 +261,8 @@ exprKindName|func(_code: I32,) -> (String,):
         return "错误处理"
     if _code == exprKindTag(.exprUnsafe):
         return "不安全前缀"
+    if _code == exprKindTag(.exprWeakRef):
+        return "弱引用前缀"
     if _code == exprKindTag(.exprJoin):
         return "等待前缀"
     if _code == exprKindTag(.exprDictEntry):
@@ -505,6 +510,9 @@ isTryExpr|self(_id: I32,) -> (Bool,):
 ; 不安全前缀：操作数是唯一子节点。
 isUnsafeExpr|self(_id: I32,) -> (Bool,):
     return self.exprs[_id].kind == exprKindTag(.exprUnsafe)
+; 弱引用前缀：操作数是唯一子节点。
+isWeakRefExpr|self(_id: I32,) -> (Bool,):
+    return self.exprs[_id].kind == exprKindTag(.exprWeakRef)
 ; 等待前缀：`await` 与 `wait` 同形，`op` 记关键字类别码以区分让出与占用。
 isJoinExpr|self(_id: I32,) -> (Bool,):
     return self.exprs[_id].kind == exprKindTag(.exprJoin)

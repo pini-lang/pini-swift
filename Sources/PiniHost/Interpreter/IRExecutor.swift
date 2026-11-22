@@ -1204,6 +1204,29 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
                 try self.callFunctionValue(function, args: [])
             }
 
+        case .weakRefConstruct(let target, _):
+            // 弱引用不拖住对象：box 里只放 Swift 弱引用，对象销毁后自动归零。
+            guard case .objectReference(let object) = try evaluate(target) else {
+                throw RuntimeError.invalidOperation(
+                    reason: "weakRefConstruct expects an object operand",
+                    location: IRExecutor.noLocation
+                )
+            }
+            return .weakRef(WeakRefBox(target: object))
+
+        case .weakRefValue(let handle, _):
+            // 与 `optionalConstruct` 同一个 Optional 表示：`some` 带目标，`none` 无载荷。
+            guard case .weakRef(let box) = try evaluate(handle) else {
+                throw RuntimeError.invalidOperation(
+                    reason: "weakRefValue expects a WeakRef handle",
+                    location: IRExecutor.noLocation
+                )
+            }
+            guard let target = box.target else {
+                return .enumValue(EnumValue(caseName: "none", associatedValues: []))
+            }
+            return .enumValue(EnumValue(caseName: "some", associatedValues: [.objectReference(target)]))
+
         case .fileWrite(let pathExpr, let contentExpr):
             // Writes in place, truncating an existing file; not an atomic replace.
             // The path resolves against the program base. Failing to open or write
@@ -1857,6 +1880,10 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
             if try !storeVarByAppending(name: name, value: value) {
                 try currentEnv.assign(name: name, value: RuntimeOps.copyIfStruct(try evaluate(value)))
             }
+
+        case .releaseVar(let name, _):
+            // 合成临时局部的提前失效：置空即松手，值语义对象由 ARC 在旧值失去最后一个引用时释放。
+            try currentEnv.clear(name: name)
 
         case .ifStmt(let label, let condition, let thenBody, let elseBody):
             // Each branch is its own defer scope: `elif` chains fold into a nested `ifStmt`, so three branches are three scopes.

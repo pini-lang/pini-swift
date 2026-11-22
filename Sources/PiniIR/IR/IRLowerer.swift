@@ -3394,6 +3394,14 @@ public enum IRLowerer {
                     type: element
                 )
             }
+            /// 弱引用的值读：结果是 `Optional<T>`，目标销毁后为 `none`。
+            if case .weakRef(let element) = loweredBase.type, name == "value" {
+                let optional = IRType.optional(wrapped: element)
+                return LoweredExpr(
+                    node: .weakRefValue(handle: loweredBase.node, type: optional),
+                    type: optional
+                )
+            }
             if case .tuple(let labels, let fieldTypes) = loweredBase.type {
                 guard let index = labels.firstIndex(where: { $0 == name }) else {
                     throw unsupported("tuple has no field '\(name)'", at: location)
@@ -4280,6 +4288,16 @@ public enum IRLowerer {
             // `unsafe (...)` is a parse/check-level marker only: the wrapped expression lowers identically, since the
             // safe-assert subscript channel needs no unsafe distinction at emission.
             return try lowerExpr(operand, expected: expected, into: &context)
+
+        case .weakRef(let operand, let location):
+            let lowered = try lowerExpr(operand, expected: nil, into: &context)
+            guard case .nominal(_, let isObject) = lowered.type, isObject else {
+                throw unsupported("weak 的操作数必须是对象，实得 \(lowered.type)", at: location)
+            }
+            let type = IRType.weakRef(element: lowered.type)
+            return LoweredExpr(
+                node: .weakRefConstruct(target: lowered.node, type: type),
+                type: type)
 
         case .addressOf(let operand, let location):
             // `&x` yields the variable's storage address. Only the identifier form is accepted here; the pointer
@@ -6213,6 +6231,11 @@ extension IRType {
             // element rides along for the boxing ABI / `.value` load.
             if name == "LazyRef", params.count == 1, let element = IRType(from: params[0]) {
                 self = .lazyRef(element: element)
+                return
+            }
+            // `WeakRef<T>`：不增加强计数的弱引用句柄；元素是目标对象类型。
+            if name == "WeakRef", params.count == 1, let element = IRType(from: params[0]) {
+                self = .weakRef(element: element)
                 return
             }
             return nil

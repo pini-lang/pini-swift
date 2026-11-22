@@ -40,6 +40,8 @@ SECTION_FAMILY = {
     "2.15": "variablesAndOperators",
     # 2.16 带标签值的读：读的是枚举 / 可选 / 结果三族的判别式与载荷，拒绝时的族标注也写这个族。
     "2.16": "resultAndOptional",
+    # 2.17 弱引用：与 LazyRef 同为不透明引用句柄，共用一个能力族。
+    "2.17": "lazyRef",
 }
 
 NODE_FAMILY = {"foreignDataAddress": "pointers"}

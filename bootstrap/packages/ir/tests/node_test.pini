@@ -4,9 +4,9 @@
 ; 清单规模：两段条数与总数；总数改了说明契约加了节点，枚举也要同批补。
 契约清单规模|test() -> ():
     let table = contractTable()
-    assert(contractCount(table = table) == 75, "总条数应为 75")
-    assert(contractExprCount(table = table) == 58, "表达式段应为 58")
-    assert(contractStmtCount(table = table) == 17, "语句段应为 17")
+    assert(contractCount(table = table) == 78, "总条数应为 78")
+    assert(contractExprCount(table = table) == 60, "表达式段应为 60")
+    assert(contractStmtCount(table = table) == 18, "语句段应为 18")
     return
 
 ; 码对齐：枚举给出的码与清单表按名字查到的码逐条相同，含无参节点。
@@ -17,7 +17,7 @@
     assert(irExprTag(.irEnumPayloadGet) == contractTagOf(table = table, name = "enumPayloadGet"), "带标签值的读码应一致")
     assert(irExprTag(.irReadLine) == contractTagOf(table = table, name = "readLine"), "无参节点码应一致")
     assert(irStmtTag(.irAllocVar) == 101, "首个语句节点码应为 101")
-    assert(irStmtTag(.irDetachStmt) == 117, "末个语句节点码应为 117")
+    assert(irStmtTag(.irReleaseVar) == 118, "末个语句节点码应为 118")
     return
 
 ; 码段判定：表达式与语句两段互不重叠，段外一律不认。

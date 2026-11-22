@@ -55,6 +55,7 @@ FAMILY = {
     "set": "集合",
     "handle": "句柄 / COW",
     "lazyRef": "LazyRef",
+    "weakRef": "弱引用",
     "given": "默认实例",
     "pointer": "指针",
     "display": "展示 / 陷阱",
@@ -83,7 +84,7 @@ EXPORT = re.compile(r'@_cdecl\("(bk_[A-Za-z0-9_]+)"\)')
 TOKEN = re.compile(r"\b(bk_[a-z0-9_]+[a-z0-9])\b")
 
 # `%bk_array` and friends are the opaque handle type names, not callable symbols.
-TYPE_NAMES = {"bk_array", "bk_dict", "bk_set", "bk_lazyref", "bk_nominal", "bk_handle", "bk_str", "bk_task"}
+TYPE_NAMES = {"bk_array", "bk_dict", "bk_set", "bk_lazyref", "bk_weakref", "bk_nominal", "bk_handle", "bk_str", "bk_task"}
 
 
 def read(path):

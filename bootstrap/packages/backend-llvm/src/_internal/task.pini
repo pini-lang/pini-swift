@@ -227,6 +227,12 @@ emitResultConstruct|func(out: ExprOut, module: IrModule, node: IrNode,) -> (Expr
             let shaped = storeValue(ctx = done.ctx, module = module, text = one.text, fromType = payloadType, toType = entry.kids[0])
             done.ctx = shaped.ctx
             value = shaped.text
+        ; 载荷由结果聚合持有：新份额移交，别名先留一份；否则聚合归还时会多减一次。
+        let effect = irShareEffectOf(pool = module.types, nodes = module.nodes, nodeId = node.kids[0])
+        var adopt = 3
+        if effect == 1:
+            adopt = 1
+        done.ctx = adoptValue(ctx = done.ctx, module = module, name = value, typeId = entry.kids[0], adopt = adopt)
         appendLine(sink = done.ctx.lines, text = "  " + filled + " = insertvalue " + spelling + " " + withTag + ", " + okSpelling + " " + value + ", 1")
     else:
         var word = one.text

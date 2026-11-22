@@ -331,6 +331,19 @@ private struct Walker {
             }
             walk(value, at: location)
 
+        case .releaseVar(let name, let type):
+            /// 槽必须已声明且类型一致：释放错槽等于还掉别人的那一份，出口还要再还一次不存在的份额。
+            if let declared = lookup(name) {
+                if !declared.isAssignable(to: type), !type.isAssignable(to: declared) {
+                    report(
+                        .typeMismatch,
+                        "释放 '\(name)' 的槽类型是 \(type.display)，声明是 \(declared.display)",
+                        at: location)
+                }
+            } else {
+                report(.undeclaredVariable, "释放的目标 '\(name)' 不可见", at: location)
+            }
+
         case .ifStmt(let label, let condition, let thenBody, let elseBody):
             if let conditionType = effectiveType(of: condition), conditionType != .boolean {
                 report(.typeMismatch, "if 的条件是 \(conditionType.display)，不是 Boolean", at: location)
@@ -1090,6 +1103,43 @@ private struct Walker {
             }
             walk(handle, at: location)
 
+        case .weakRefConstruct(let target, let type):
+            if case .weakRef(let element) = type {
+                if let targetType = effectiveType(of: target) {
+                    if !targetType.isAssignable(to: element) {
+                        report(
+                            .typeMismatch,
+                            "弱引用目标的类型是 \(targetType.display)，元素类型是 \(element.display)",
+                            at: location)
+                    }
+                    if case .nominal(_, let isObject) = targetType, !isObject {
+                        report(.nodeShape, "弱引用目标 \(targetType.display) 不是对象", at: location)
+                    }
+                }
+            } else {
+                report(.nodeShape, "弱引用构造的 type 是 \(type.display)，不是 WeakRef", at: location)
+            }
+            walk(target, at: location)
+
+        case .weakRefValue(let handle, let type):
+            if let handleType = effectiveType(of: handle) {
+                if case .weakRef(let element) = handleType {
+                    if case .optional(let wrapped) = type {
+                        if !wrapped.isAssignable(to: element) {
+                            report(
+                                .typeMismatch,
+                                "弱引用读的载荷是 \(wrapped.display)，元素类型是 \(element.display)",
+                                at: location)
+                        }
+                    } else {
+                        report(.nodeShape, "弱引用读的 type 是 \(type.display)，不是 Optional", at: location)
+                    }
+                } else {
+                    report(.nodeShape, "弱引用读的手柄是 \(handleType.display)，不是 WeakRef", at: location)
+                }
+            }
+            walk(handle, at: location)
+
         case .join(let future, let type, let form):
             if type.resultOkType == nil {
                 report(.nodeShape, "等待站点的 type 是 \(type.display)，不是 Result", at: location)
@@ -1221,6 +1271,7 @@ extension IRType {
         case .dict(let key, let value): return "Dict<\(key.display), \(value.display)>"
         case .set(let element): return "Set<\(element.display)>"
         case .lazyRef(let element): return "LazyRef<\(element.display)>"
+        case .weakRef(let element): return "WeakRef<\(element.display)>"
         case .tuple(let labels, let fieldTypes):
             let fields = zip(labels, fieldTypes).map { pair in
                 pair.0.map { "\($0): \(pair.1.display)" } ?? pair.1.display

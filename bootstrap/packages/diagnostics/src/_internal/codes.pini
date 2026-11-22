@@ -3,7 +3,7 @@
 
 ; 已登记的诊断码数量，供门禁核对表规模。
 diagnosticCodeCount|func() -> (I32,):
-    return 115
+    return 116
 
 ; 码的消息模板；未登记答空串。占位符由调用方按诊断负载填充。
 diagnosticMessage|func(_code: String,) -> (String,):
@@ -163,6 +163,8 @@ diagnosticMessage|func(_code: String,) -> (String,):
         return "析构声明无效：{reason}"
     if _code == "E4-041":
         return "值返回体缺少返回：`{function}` 有路径既没有 return，末句也不是交出值的表达式"
+    if _code == "E4-042":
+        return "`weak` 的操作数必须是对象：`{type}` 没有弱引用旁表"
     if _code == "E5-001":
         return "未定义变量 '{name}'"
     if _code == "E5-002":
@@ -301,6 +303,8 @@ diagnosticSuggestion|func(_code: String,) -> (String,):
         return "析构写成 `deinit|self() -> ()`，只挂在对象类型上，每个类型一个"
     if _code == "E4-041":
         return "补 return，或把末句写成能交出返回类型的表达式；if 与 match 要每个分支都交出值"
+    if _code == "E4-042":
+        return "只对对象取弱引用；结构、枚举、标量与函数值按值或按引用共享，不需要弱引用"
     if _code == "E5-001":
         return "你是想说 '{closest}' 吗？"
     if _code == "E5-019":

@@ -307,11 +307,12 @@ module: IrModule = IrModule()
     let at = 取函数(样例 = 样例, name = "f")
     assert(at >= 0, "函数应在表里")
     let body = 样例.module.functions[at].body
-    assert(len(body) == 2, "主体临时局部加一条分支链")
+    assert(len(body) == 3, "主体临时局部、分支链与用完即弃各一条")
     assert(irNodeAt(pool = 样例.module.nodes, id = body[0]).kind == irStmtTag(.irAllocVar), "首条应是主体临时局部")
     let chain = irNodeAt(pool = 样例.module.nodes, id = body[1])
     assert(chain.kind == irStmtTag(.irIfStmt), "次条应是分支链")
     assert(chain.tail == 2, "条件加一条 then 语句")
+    assert(irNodeAt(pool = 样例.module.nodes, id = body[2]).kind == irStmtTag(.irReleaseVar), "末条应是主语槽归还")
     assert(取节点按类别(样例 = 样例, kind = irStmtTag(.irPanicStmt)) < 0, "裸值匹配不补陷阱")
     assert(取节点按类别(样例 = 样例, kind = irExprTag(.irBinary)) >= 0, "条件应是比较")
     return
@@ -453,4 +454,18 @@ module: IrModule = IrModule()
     assert(样例.module.functions[次].closureId == 1, "条目编号与名字同源")
     assert(取节点(样例 = 样例, kind = irExprTag(.irClosureLiteral), text = "__closure_0") >= 0, "首个闭包字面量指向 0")
     assert(取节点(样例 = 样例, kind = irExprTag(.irClosureLiteral), text = "__closure_1") >= 0, "次个闭包字面量指向 1")
+    return
+
+; 弱引用：`weak 对象` 发 59、`.value` 发 60；结果类型分别是 weakRef 与 optional。
+弱引用降载|test() -> ():
+    let 样例 = 造样例("{节点}\n值: I32 = 0\n\nf|func() -> ():\n    let n = 节点()\n    let r = weak n\n    print(r.value)\n    return\n")
+    assert(len(样例.module.errors) == 0, "弱引用应降载成功")
+    let 造 = 取节点按类别(样例 = 样例, kind = irExprTag(.irWeakRefConstruct))
+    assert(造 >= 0, "应发弱引用构造节点")
+    let 造节点 = irNodeAt(pool = 样例.module.nodes, id = 造)
+    assert(irTypeTag(irTypeAt(pool = 样例.module.types, id = 造节点.typeId).kind) == irTypeTag(.irTypeWeakRef), "构造结果应是 WeakRef")
+    let 读 = 取节点按类别(样例 = 样例, kind = irExprTag(.irWeakRefValue))
+    assert(读 >= 0, "应发弱引用取值节点")
+    let 读节点 = irNodeAt(pool = 样例.module.nodes, id = 读)
+    assert(irTypeTag(irTypeAt(pool = 样例.module.types, id = 读节点.typeId).kind) == irTypeTag(.irTypeOptional), "取值结果应是 Optional")
     return

@@ -125,6 +125,36 @@ lazyRefElement|func(pool: TypePool, id: I32,) -> (I32,):
         return -1
     return entry.kids[0]
 
+; 弱引用判定：名字为 WeakRef 的泛型实例；元素类型即目标对象类型。
+isWeakRefType|func(pool: TypePool, id: I32,) -> (Bool,):
+    if id < 0 || id >= len(pool.entries):
+        return false
+    let entry = pool.entries[id]
+    if !isTypeClass(kind = entry.kind, expected = .typeClassGeneric):
+        return false
+    return entry.name == "WeakRef"
+
+; 弱引用元素：非 WeakRef 或实参缺席答 -1。
+weakRefElement|func(pool: TypePool, id: I32,) -> (I32,):
+    if !isWeakRefType(pool = pool, id = id):
+        return -1
+    let entry = pool.entries[id]
+    if len(entry.kids) != 1:
+        return -1
+    return entry.kids[0]
+
+; 弱引用类型：目标对象类型进唯一实参位。
+weakRefType|func(pool: TypePool, element: I32,) -> (TypeInsert,):
+    var kids: Array<I32> = []
+    kids = kids.append(element)
+    return intern(pool = pool, kind = .typeClassGeneric, name = "WeakRef", kids = kids, ret = -1)
+
+; 可选类型：包装类型进唯一实参位；`.value` 的两态结果用它。
+optionalType|func(pool: TypePool, wrapped: I32,) -> (TypeInsert,):
+    var kids: Array<I32> = []
+    kids = kids.append(wrapped)
+    return intern(pool = pool, kind = .typeClassOptional, name = "Optional", kids = kids, ret = -1)
+
 ; 任务句柄判定：名字为 Future 的泛型实例；载荷类型即唯一实参。
 isFutureType|func(pool: TypePool, id: I32,) -> (Bool,):
     if id < 0 || id >= len(pool.entries):

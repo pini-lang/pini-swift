@@ -337,6 +337,9 @@ public enum SignatureSerializer {
         case .unsafe(let operand, _):
             emit("unsafe:", depth: depth, into: &into)
             renderExpression(operand, depth: depth + 1, into: &into)
+        case .weakRef(let operand, _):
+            emit("weakRef:", depth: depth, into: &into)
+            renderExpression(operand, depth: depth + 1, into: &into)
         case .addressOf(let operand, _):
             emit("addressOf:", depth: depth, into: &into)
             renderExpression(operand, depth: depth + 1, into: &into)

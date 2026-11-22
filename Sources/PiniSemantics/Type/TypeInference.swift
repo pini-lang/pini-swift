@@ -289,6 +289,10 @@ public final class TypeInference {
                 if typeName == "LazyRef", name == "value", typeArgs.count == 1 {
                     return typeArgs[0]
                 }
+                /// `WeakRef<T>.value` 是内建读，结果是 `Optional<T>`；对象销毁后读到 `nil`。
+                if typeName == "WeakRef", name == "value", typeArgs.count == 1 {
+                    return .generic(name: "Optional", params: [typeArgs[0]], location: loc)
+                }
                 return env.lookupSpecializedField(
                     typeName: typeName,
                     typeArgs: typeArgs,
@@ -422,6 +426,10 @@ public final class TypeInference {
         case .unsafe(let operand, _):
             // Phase 2a（FFI 子系统）：`unsafe expr` 的类型 = 操作数类型（类型不变，仅加不安全上下文）。
             return infer(expression: operand)
+        case .weakRef(let operand, let loc):
+            // `weak 对象` 的结果是 `WeakRef<T>`，T 取操作数的对象类型；对象约束在检查阶段判。
+            guard let inner = infer(expression: operand) else { return nil }
+            return .generic(name: "WeakRef", params: [inner], location: loc)
         case .addressOf(let operand, let loc):
             // Phase 2a（FFI 子系统）：`&x` 的类型 = `*T`（指向操作数类型的指针）。
             guard let inner = infer(expression: operand) else { return nil }

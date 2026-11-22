@@ -1198,6 +1198,9 @@ public final class SemanticAnalyzer {
         case .unsafe(let operand, _):
             // Phase 2a（FFI 子系统）：不安全消耗点——递归检查操作数。
             try checkExpression(operand)
+        case .weakRef(let operand, _):
+            // 弱引用：操作数递归检查；对象约束与结果类型由类型检查阶段判。
+            try checkExpression(operand)
         case .addressOf(let operand, _):
             // Phase 2a（FFI 子系统）：取地址——递归检查操作数。
             try checkExpression(operand)

@@ -40,6 +40,8 @@ public enum IRPrinter {
             return ["\(pad)\(kw) \(name): \(type.llvmSpelling)\(initPart)"]
         case .storeVar(let name, _, let value, _, _):
             return ["\(pad)\(name) = \(exprText(value))"]
+        case .releaseVar(let name, _):
+            return ["\(pad)release \(name)"]
         case .ifStmt(let label, let condition, let thenBody, let elseBody):
             // 标签 break 定向范围: a labeled `if` prints its label, mirroring the source
             // form `label|if cond:`. An unlabeled `if` prints exactly as
@@ -214,6 +216,10 @@ public enum IRPrinter {
         case .lazyRefConstruct(let closure, _):
             return "LazyRef(\(exprText(closure)))"
         case .lazyRefValue(let handle, _):
+            return "\(exprText(handle)).value"
+        case .weakRefConstruct(let target, _):
+            return "weak \(exprText(target))"
+        case .weakRefValue(let handle, _):
             return "\(exprText(handle)).value"
         case .pointerLoad(let pointer, _):
             return "load(\(exprText(pointer)))"

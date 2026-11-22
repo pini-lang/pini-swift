@@ -550,6 +550,8 @@ extension Printer {
             return tryText(operand: operand, errorVar: errorVar, handler: handler, indent: indent, fileName: fileName, hints: hints)
         case .unsafe(let operand, _):
             return "unsafe " + atom(operand, indent: indent, fileName: fileName, hints: hints)
+        case .weakRef(let operand, _):
+            return "weak " + atom(operand, indent: indent, fileName: fileName, hints: hints)
         case .addressOf(let operand, _):
             return "&" + atom(operand, indent: indent, fileName: fileName, hints: hints)
         case .cast(let operand, let target, _):

@@ -300,6 +300,7 @@ extension TypeError: DiagnosticProviding {
         case .duplicateArgumentLabel: return "\(DiagnosticDomain.type.rawValue)-038"
         case .lifecycleShapeInvalid: return "\(DiagnosticDomain.type.rawValue)-040"
         case .missingReturn: return "\(DiagnosticDomain.type.rawValue)-041"
+        case .weakOperandNotObject: return "\(DiagnosticDomain.type.rawValue)-042"
         }
     }
     public var diagnosticSeverity: DiagnosticSeverity { .error }
@@ -321,7 +322,8 @@ extension TypeError: DiagnosticProviding {
             .givenBlockTypeInValuePosition(_, let loc):
             return loc
         case .exportCInvalid(_, let loc), .errorCodeInvalid(_, let loc),
-            .lifecycleShapeInvalid(_, let loc), .missingReturn(_, let loc):
+            .lifecycleShapeInvalid(_, let loc), .missingReturn(_, let loc),
+            .weakOperandNotObject(_, let loc):
             return loc
         case .foreignTypeNotRepresentable(_, _, let loc), .foreignTypeWidthNotInIR(_, let loc),
             .foreignStringInReturnPosition(let loc), .foreignCallbackNotFreeFunction(_, let loc),

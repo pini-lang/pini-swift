@@ -22,6 +22,7 @@ irShareSet
 irShareObject
 irShareEnumeration
 irShareLazyRef
+irShareWeakRef
 
 ; 求值效果：新份额、借用、不参与。
 [IrShareEffect]
@@ -68,6 +69,8 @@ irShareKindTag|func(_kind: IrShareKind,) -> (I32,):
             return 7
         case irShareLazyRef:
             return 8
+        case irShareWeakRef:
+            return 9
     return 0
 
 ; 效果码：与枚举项序一致，从 1 起。
@@ -119,6 +122,8 @@ irShareClassOf|func(pool: IrTypePool, typeId: I32,) -> (I32,): ; 四族唯一判
         return 4
     if tag == irTypeTag(.irTypeLazyRef) || tag == irTypeTag(.irTypeEnumeration):
         return 4
+    if tag == irTypeTag(.irTypeWeakRef):
+        return 4
     if tag == irTypeTag(.irTypeNominal):
         if entry.flags % 2 == 1:
             return 4
@@ -149,6 +154,8 @@ _irShareKindOf|func(pool: IrTypePool, typeId: I32,) -> (I32,): ; 只对计数族
         return 7
     if tag == irTypeTag(.irTypeLazyRef):
         return 8
+    if tag == irTypeTag(.irTypeWeakRef):
+        return 9
     return 6
 
 ; 留份族码：后端选留份与归还入口的唯一依据，细分码不出包。
@@ -167,7 +174,7 @@ irRetainFamilyOf|func(pool: IrTypePool, typeId: I32,) -> (I32,):
         return 0
     if kind == 6 || kind == 7:
         return 3
-    if kind == 3 || kind == 4 || kind == 5 || kind == 8:
+    if kind == 3 || kind == 4 || kind == 5 || kind == 8 || kind == 9:
         return 2
     return 0
 
@@ -232,6 +239,12 @@ irShareEffectOf|func(pool: IrTypePool, nodes: IrNodePool, nodeId: I32,) -> (I32,
         return 2
     if kind == irExprTag(.irLazyRefValue) || kind == irExprTag(.irFunctionValue):
         return 2
+    if kind == irExprTag(.irWeakRefConstruct):
+        return 1
+    if kind == irExprTag(.irWeakRefValue):
+        if irHoldsShare(pool = pool, typeId = node.typeId):
+            return 1
+        return 3
     if kind == irExprTag(.irCFunctionAddress) || kind == irExprTag(.irGivenInstance):
         return 2
     if kind == irExprTag(.irReadLine):

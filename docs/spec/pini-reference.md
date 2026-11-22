@@ -186,10 +186,10 @@ try return break continue
 self own defer import export
 nil capture await wait
 unsafe test foreign detach
-pass using unroll
+pass using unroll weak
 ```
 
-共 34 个。
+共 35 个。
 
 **拼写来源**：关键字由词表给出，上面这张是默认词表。中文词表（`变量`、`常量`、`函数` …）是同一套类别的另一种拼写，
 只在编译器选定它时生效；未选定时中文拼写按普通标识符扫描。两套拼写不混用。
@@ -1483,7 +1483,7 @@ x >>= 值
 | 6 | `+` `-` | 左 |
 | 7 | `*` `/` `%` | 左 |
 | 8 | `as` | 左 |
-| 9 | 前缀 `await` `wait` `^` `!` `++` `--` `~` `+` `-` `&` `unsafe` | — |
+| 9 | 前缀 `await` `wait` `^` `!` `++` `--` `~` `+` `-` `&` `unsafe` `weak` | — |
 | 10 | 后缀 `()` `.` `[]` `!` | — |
 
 ### 5.4 调用表达式 `[Provisional]`
@@ -1763,6 +1763,29 @@ let w: U8 = x as U8      ; 截断
 ```
 
 **约束**：可转类型对与结果语义见 §3.14；优先级见 §13.3。指针转换需在 `unsafe` 上下文。
+
+### 5.13 弱引用表达式 `[Provisional]`
+
+```
+weak 表达式
+```
+
+**操作数**：必须是对象类型；结构、枚举、标量、可选与函数值一律拒绝。
+
+**结果**：`WeakRef<T>`，`T` 是操作数的对象类型。求值不增加对象的强计数，只登记一条弱引用。
+
+```
+let 快照 = weak 对象
+```
+
+**访问**：`快照.value` 是内建读，不查名义成员表；结果类型是 `Optional<T>`。对象仍存活时得 `some`，
+对象销毁后得 `none`。`WeakRef<T>` 本身没有其它成员。
+
+**断开**：把 `WeakRef<T>` 的持有位置置为 `WeakRef<T>.none`，或让它随作用域退出。
+
+**错误**：操作数不是对象报 `E4-042`；对非 `WeakRef<T>` 的值使用 `.value` 仍按普通成员解析处理。
+
+**优先级**：与其它前缀运算符同层，见 §13.3。
 
 ---
 
@@ -4548,7 +4571,7 @@ factor          ::= cast-expr { ('*' | '/' | '%') cast-expr };
 
 cast-expr       ::= unary-expr { 'as' type-annotation };
 
-unary-expr      ::= ('await' | 'wait' | '^' | '!' | '++' | '--' | '~' | '+' | '-' | '&' | 'unsafe') unary-expr
+unary-expr      ::= ('await' | 'wait' | '^' | '!' | '++' | '--' | '~' | '+' | '-' | '&' | 'unsafe' | 'weak') unary-expr
                   | primary-expr;
 
 primary-expr    ::= primary-atom postfix-suffix*
@@ -4625,7 +4648,7 @@ generic-params  ::= IDENT [':' type-annotation] {',' IDENT [':' type-annotation]
 | 6 | `+` `-` | 左 |
 | 7 | `*` `/` `%` | 左 |
 | 8 | `as` | 左 |
-| 9 | 前缀 `await` `wait` `^` `!` `++` `--` `~` `+` `-` `&` `unsafe` | — |
+| 9 | 前缀 `await` `wait` `^` `!` `++` `--` `~` `+` `-` `&` `unsafe` `weak` | — |
 | 10 | 后缀 `()` `.` `[]` `!` | — |
 
 **注意**：位运算四项同级（`&` `|` `^` `<<` `>>` 无分层），与 C 系不同。

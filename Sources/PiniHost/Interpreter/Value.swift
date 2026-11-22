@@ -382,20 +382,12 @@ public final class LazyRefBox {
 }
 
 /// `WeakRef` 的引用语义承载：独立 class box 而非 `StructInstance`——后者会被 `copyIfStruct` 深拷贝，
-/// 复制出值语义分裂的新包装，且 `weakRetain` 只在构造时调一次、`weakRelease` 无调用点，弱引用表随之泄漏。
-/// 独立 box 让复制共享同一份，`weakRetain`（init）与 `weakRelease`（deinit）由 ARC 保证对称、无泄漏。
+/// 复制出值语义分裂的新包装。`target` 是 Swift 弱引用：box 不拖住对象，对象销毁后自动归零。
 public final class WeakRefBox {
-    public let target: ObjectReference
-    private weak var manager: ARCManager?
+    public weak var target: ObjectReference?
 
-    public init(target: ObjectReference, manager: ARCManager) {
+    public init(target: ObjectReference) {
         self.target = target
-        self.manager = manager
-        manager.weakRetain(target)
-    }
-
-    deinit {
-        manager?.weakRelease(target)
     }
 }
 

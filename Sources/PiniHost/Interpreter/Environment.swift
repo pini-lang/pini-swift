@@ -58,6 +58,21 @@ public class Environment {
         throw RuntimeError.undefinedVariable(name: name, location: SourceLocation(line: 0, column: 0, fileName: ""))
     }
 
+    /// 清空绑定：交出旧值并把槽位置空。降载合成的释放动作不是源码赋值，故不查可变性。
+    public func clear(name: String) throws {
+        for i in (0..<scopes.count).reversed() {
+            if scopes[i][name] != nil {
+                scopes[i][name] = Binding(value: .null, isMutable: false)
+                return
+            }
+        }
+        if let enclosing = enclosing {
+            try enclosing.clear(name: name)
+            return
+        }
+        throw RuntimeError.undefinedVariable(name: name, location: SourceLocation(line: 0, column: 0, fileName: ""))
+    }
+
     /// 取走绑定：交出旧值并把槽位置空，供「读—改—写回同一槽」的形态省掉一次整表复制。
     /// 可变性检查与 `assign` 同规；作用域链里没有该名字时返回 nil，由调用方回退到通用路径。
     public func take(name: String) throws -> Value? {

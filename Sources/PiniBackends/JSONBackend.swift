@@ -72,14 +72,14 @@ public struct JSONBackend: PiniBackend {
         case .matchStmt(_, let cases, _):
             return cases.map(\.body)
         case .allocVar, .storeVar, .returnStmt, .exprStmt, .subscriptStore, .breakStmt,
-            .continueStmt, .panicStmt, .fieldStore, .captureMarker, .detachStmt:
+            .continueStmt, .panicStmt, .fieldStore, .captureMarker, .detachStmt, .releaseVar:
             return []
         }
     }
 
     // MARK: - 节点分派
 
-    /// 一条语句的转储。17 条逐一列出、不留 `default` —— 新增语句节点时这里编不过。
+    /// 一条语句的转储。18 条逐一列出、不留 `default` —— 新增语句节点时这里编不过。
     private func describe(_ statement: IRStmt) -> (kind: String, detail: String) {
         switch statement {
         case .allocVar(let name, let type, let mutable, let initializer, let adopt):
@@ -123,6 +123,8 @@ public struct JSONBackend: PiniBackend {
             return ("captureMarker", name)
         case .detachStmt(let inner):
             return ("detachStmt", "inner=\(exprKind(inner))")
+        case .releaseVar(let name, let type):
+            return ("releaseVar", "\(name): \(spell(type))")
         }
     }
 
@@ -141,7 +143,7 @@ public struct JSONBackend: PiniBackend {
             .fileTryWrite, .fileTryAppend, .fileTryRead, .readLine, .isAsciiDigit,
             .stringCase, .stringContains, .stringSubstring, .stringSplit, .stringTrimLeft,
             .stringTrimRight, .stringIndexOf, .arrayJoin, .stringConcat, .interpString,
-            .lazyRefConstruct, .lazyRefValue, .join, .givenInstance:
+            .lazyRefConstruct, .lazyRefValue, .weakRefConstruct, .weakRefValue, .join, .givenInstance:
             break
         }
         return String(String(describing: expr).prefix(while: { $0 != "(" }))

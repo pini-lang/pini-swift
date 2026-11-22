@@ -225,6 +225,10 @@ suggestion = "析构写成 `deinit|self() -> ()`，只挂在对象类型上，�
 message = "值返回体缺少返回：`{function}` 有路径既没有 return，末句也不是交出值的表达式"
 suggestion = "补 return，或把末句写成能交出返回类型的表达式；if 与 match 要每个分支都交出值"
 
+[E4-042]
+message = "`weak` 的操作数必须是对象：`{type}` 没有弱引用旁表"
+suggestion = "只对对象取弱引用；结构、枚举、标量与函数值按值或按引用共享，不需要弱引用"
+
 [E5-001]
 message = "未定义变量 '{name}'"
 suggestion = "你是想说 '{closest}' 吗？"

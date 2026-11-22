@@ -1,0 +1,5 @@
+[case]
+name = "弱引用生命周期"
+category = "legal"
+kind = "pass"
+spec = "语言参考 7.2 弱引用；IR 契约 2.17"

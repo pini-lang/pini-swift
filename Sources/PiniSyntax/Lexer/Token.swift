@@ -314,4 +314,6 @@ public enum Keyword: String, CaseIterable {
     /// `unroll` 是语句位关键字：`unroll (名, …) in <表>:` 由展开器在类型检查前消掉。
     /// 入表后它不能再作裸标识符；反引号转义照常可用。
     case `unroll` = "unroll"
+    /// `weak` 是前缀表达式关键字：`weak 对象` 求值为 `WeakRef<T>`，不改对象的强计数。
+    case `weak` = "weak"
 }

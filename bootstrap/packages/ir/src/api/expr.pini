@@ -1470,6 +1470,17 @@ irLazyRefElement|func(pool: IrTypePool, id: I32,) -> (I32,):
         return -1
     return entry.kids[0]
 
+; 弱引用元素：非 WeakRef 或实参缺席答 -1。
+irWeakRefElement|func(pool: IrTypePool, id: I32,) -> (I32,):
+    if id < 0 || id >= irTypeCount(pool):
+        return -1
+    let entry = irTypeAt(pool = pool, id = id)
+    if irTypeTag(entry.kind) != irTypeTag(.irTypeWeakRef):
+        return -1
+    if len(entry.kids) != 1:
+        return -1
+    return entry.kids[0]
+
 ; 成员读：接收者一个子节点，字段名驻留进文本池；方法值不走这条。
 lowerMember|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
     let expr = unit.ast.exprAt(id)
@@ -1490,6 +1501,12 @@ lowerMember|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: T
     let element = irLazyRefElement(pool = map.pool, id = receiverType)
     if fieldName == "value" && element >= 0:
         let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irLazyRefValue), typeId = element, op = 0, kids = [one.id])
+        done.pool = inserted.pool
+        done.id = inserted.id
+        return done
+    let weakElement = irWeakRefElement(pool = map.pool, id = receiverType)
+    if fieldName == "value" && weakElement >= 0:
+        let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irWeakRefValue), typeId = typeId, op = 0, kids = [one.id])
         done.pool = inserted.pool
         done.id = inserted.id
         return done
@@ -1803,6 +1820,25 @@ lowerExpr|func(pool: IrNodePool, texts: IrTextPool, map: TypeMap, types: ExprTyp
         if len(unsafeExpr.kids) == 0:
             return missExpr(out = out, unit = unit, id = id, what = "不安全前缀缺操作数")
         return lowerExpr(pool = out.pool, texts = out.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = out.frame, id = unsafeExpr.kids[0])
+    ; 弱引用：目标先降，句柄类型取 `WeakRef<目标类型>`；对象约束在检查面判过。
+    if unit.ast.isWeakRefExpr(id):
+        let weakExpr = unit.ast.exprAt(id)
+        if len(weakExpr.kids) == 0:
+            return missExpr(out = out, unit = unit, id = id, what = "弱引用前缀缺操作数")
+        let one = lowerExpr(pool = out.pool, texts = out.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = out.frame, id = weakExpr.kids[0])
+        if one.failed:
+            return one
+        var done = out
+        done.pool = one.pool
+        done.texts = one.texts
+        done.frame = one.frame
+        let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
+        if typeId < 0:
+            return missType(out = done, unit = unit, id = id, bytes = bytes)
+        let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irWeakRefConstruct), typeId = typeId, op = 0, kids = [one.id])
+        done.pool = inserted.pool
+        done.id = inserted.id
+        return done
     if unit.ast.isIntegerExpr(id):
         let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = frame, bytes = bytes, id = id)
         if typeId < 0:

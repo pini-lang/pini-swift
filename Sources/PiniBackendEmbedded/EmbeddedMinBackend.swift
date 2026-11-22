@@ -259,6 +259,11 @@ private struct Builder {
             throw BackendError(
                 node: "detachStmt", family: .controlFlow,
                 reason: "任务边界属于并发 profile")
+
+        case .releaseVar:
+            throw BackendError(
+                node: "releaseVar", family: .controlFlow,
+                reason: "提前归还属引用计数 profile；本 profile 无计数，也没有合成临时局部")
         }
     }
 
@@ -422,8 +427,8 @@ private struct Builder {
         case .isAsciiDigit, .stringCase, .stringContains, .stringSubstring, .stringSplit,
             .stringTrimLeft, .stringTrimRight, .stringIndexOf, .arrayJoin:
             throw unsupported("字符串内建节点", .strings, "字素级内建由运行时分发表回答")
-        case .lazyRefConstruct, .lazyRefValue:
-            throw unsupported("LazyRef 节点", .lazyRef, "延迟求值句柄不在本 profile")
+        case .lazyRefConstruct, .lazyRefValue, .weakRefConstruct, .weakRefValue:
+            throw unsupported("引用句柄节点", .lazyRef, "弱引用与延迟求值句柄不在本 profile")
         case .join:
             throw unsupported("join", .concurrency, "Future 不在本 profile")
         case .givenInstance:

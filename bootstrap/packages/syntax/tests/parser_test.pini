@@ -498,6 +498,19 @@ try处理器白名单|test() -> ():
     assert(ast.isCallExpr(ast.exprAt(初值).kids[0]), "操作数是调用")
     return
 
+; 弱引用前缀：`weak 对象` 成专用前缀节点，操作数是标识符。
+弱引用前缀|test() -> ():
+    let src = "f|func() -> ():\n    let r = weak 节点\n    return\n"
+    let 结果 = parseText(src)
+    assert(len(结果.diagnostics) == 0, "不应有语法诊断")
+    let ast = 结果.ast
+    let 体 = ast.declAt(ast.itemAt(0)).body
+    let 语句 = ast.stmtAt(体).kids
+    let 初值 = ast.stmtChild(id = 语句[0], index = 1)
+    assert(ast.isWeakRefExpr(初值), "前缀是专用节点")
+    assert(ast.isIdentifierExpr(ast.exprAt(初值).kids[0]), "操作数是标识符")
+    return
+
 ; 声明头泛型：结构、对象、枚举、给定与特征的名字后都可带形参表，一件不落。
 泛型头|test() -> ():
     let src = "(盒<T>)\nx: T\n\n[列<T>]\n无\n\n{物<T>}\nx: T\n\n[给<T>|given]\nx: T = 0\n\n<特<T>>\n取得|self() -> T\n\n<<特<T>>>\n取得|self() -> T:\n    return 0\n"

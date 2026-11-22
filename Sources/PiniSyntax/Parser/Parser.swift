@@ -2794,6 +2794,13 @@ public class Parser {
             return Expression.unsafe(operand: operand, location: loc)
         }
 
+        /// `weak` 弱引用前缀：操作数必须是对象，结果类型 `WeakRef<T>`；不进入 unsafe 上下文。
+        if case .keyword(.weak, _) = currentToken {
+            advance()
+            let operand = try parseUnary()
+            return Expression.weakRef(operand: operand, location: loc)
+        }
+
         // Phase 2a（FFI 子系统）：`&` 不安全取地址前缀（复用 .bitwiseAnd token，
         // 前缀位置与中缀按位与靠语法位置消歧——parseUnary 在操作数起始位消费）。
         if case .bitwiseAnd(_) = currentToken {

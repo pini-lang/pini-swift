@@ -290,6 +290,8 @@ extension UnrollExpander {
                     handler: block(handler, map: map), location: loc)
             case .unsafe(let operand, let loc):
                 return .unsafe(operand: expression(operand, map: map), location: loc)
+            case .weakRef(let operand, let loc):
+                return .weakRef(operand: expression(operand, map: map), location: loc)
             case .addressOf(let operand, let loc):
                 return .addressOf(operand: expression(operand, map: map), location: loc)
             case .cast(let operand, let target, let loc):
@@ -512,7 +514,8 @@ extension UnrollExpander.Worker {
             scan(index, names: names)
         case .genericConstruct(_, _, let arguments, _):
             for item in arguments { scan(item.expression, names: names) }
-        case .join(let inner, _, _), .unsafe(let inner, _), .addressOf(let inner, _):
+        case .join(let inner, _, _), .unsafe(let inner, _), .addressOf(let inner, _),
+            .weakRef(let inner, _):
             scan(inner, names: names)
         case .cast(let operand, _, _):
             scan(operand, names: names)
