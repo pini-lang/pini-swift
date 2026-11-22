@@ -469,3 +469,18 @@ module: IrModule = IrModule()
     let 读节点 = irNodeAt(pool = 样例.module.nodes, id = 读)
     assert(irTypeTag(irTypeAt(pool = 样例.module.types, id = 读节点.typeId).kind) == irTypeTag(.irTypeOptional), "取值结果应是 Optional")
     return
+
+; 无主引用：`unsafe UnownedRef(对象)` 发 61、成员访问前插的解引用发 62；结果类型分别是
+; unownedRef 与元素的名义类型（不再是句柄）。
+无主引用降载|test() -> ():
+    let 样例 = 造样例("{节点}\n值: I32 = 0\n\n{{节点}}\n加|self(_量: I32,) -> (I32,):\n    return self.值 + _量\n\nf|func() -> ():\n    let n = 节点()\n    let u = unsafe UnownedRef(n)\n    print(unsafe u.值)\n    print(unsafe u.加(1))\n    return\n")
+    assert(len(样例.module.errors) == 0, "无主引用应降载成功")
+    let 造 = 取节点按类别(样例 = 样例, kind = irExprTag(.irUnownedRefConstruct))
+    assert(造 >= 0, "应发无主引用构造节点")
+    let 造节点 = irNodeAt(pool = 样例.module.nodes, id = 造)
+    assert(irTypeTag(irTypeAt(pool = 样例.module.types, id = 造节点.typeId).kind) == irTypeTag(.irTypeUnownedRef), "构造结果应是 UnownedRef")
+    let 解 = 取节点按类别(样例 = 样例, kind = irExprTag(.irUnownedRefValue))
+    assert(解 >= 0, "成员访问前应插解引用节点")
+    let 解节点 = irNodeAt(pool = 样例.module.nodes, id = 解)
+    assert(irTypeTag(irTypeAt(pool = 样例.module.types, id = 解节点.typeId).kind) == irTypeTag(.irTypeNominal), "解引用结果应是名义类型")
+    return

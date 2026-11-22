@@ -229,6 +229,10 @@ suggestion = "add return, or make the last statement deliver the declared type; 
 message = "`weak` requires an object operand: `{type}` has no weak-reference side table"
 suggestion = "take a weak reference only to objects; structs, enums, scalars and function values are shared by value or by reference and need none"
 
+[E4-043]
+message = "`UnownedRef` requires an object operand: `{type}` has no object box to borrow"
+suggestion = "take an unowned reference only to objects; structs, enums, scalars and function values have no refcount box and need none"
+
 [E5-001]
 message = "undefined variable '{name}'"
 suggestion = "Did you mean '{closest}'?"

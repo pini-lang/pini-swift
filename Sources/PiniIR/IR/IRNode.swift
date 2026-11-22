@@ -56,6 +56,9 @@ public indirect enum IRType: Equatable {
     case lazyRef(element: IRType)
     /// `WeakRef<T>`：不增加强计数的弱引用句柄；`.value` 读取得 `Optional<T>`。
     case weakRef(element: IRType)
+    /// `UnownedRef<T>`：不计数、不跟踪存活的无主引用，表示就是对象指针（`ptr`）。
+    /// 解引用、调用与字段访问由检查面限定在 unsafe 上下文；它不进旁表，也没有销毁动作。
+    case unownedRef(element: IRType)
     /// `Set<T>` (G5): opaque handle `%bk_set*`, ordered unique elements.
     case set(element: IRType)
     /// Labeled tuple (G5 minimal slice): register aggregate `{ ... }`,
@@ -107,6 +110,9 @@ public indirect enum IRType: Equatable {
         case .weakRef(let element):
             guard let payload = element.typeAnnotation else { return nil }
             return .generic(name: "WeakRef", params: [payload], location: at)
+        case .unownedRef(let element):
+            guard let payload = element.typeAnnotation else { return nil }
+            return .generic(name: "UnownedRef", params: [payload], location: at)
         case .pointer(let element):
             guard let target = element.typeAnnotation else { return nil }
             return .pointer(element: target, location: at)
@@ -176,6 +182,9 @@ public indirect enum IRType: Equatable {
             return "%bk_lazyref*"
         case .weakRef:
             return "%bk_weakref*"
+        case .unownedRef:
+            // 无主引用就是对象指针本身：没有箱、没有旁表，运行时段不认第三种句柄。
+            return "ptr"
         case .tuple(_, let fieldTypes):
             return "{ " + fieldTypes.map { $0.llvmSpelling }.joined(separator: ", ") + " }"
         case .function:
@@ -221,6 +230,8 @@ public indirect enum IRType: Equatable {
             return "LazyRef<\(element.describe())>"
         case .weakRef(let element):
             return "WeakRef<\(element.describe())>"
+        case .unownedRef(let element):
+            return "UnownedRef<\(element.describe())>"
         case .set(let element):
             return "Set<\(element.describe())>"
         case .tuple(let labels, let fieldTypes):
@@ -308,7 +319,7 @@ public indirect enum IRType: Equatable {
     public var isNumeric: Bool {
         switch self {
         case .i8, .u8, .i32, .i64, .u64, .f64: return true
-        case .boolean, .string, .char, .result, .future, .array, .optional, .nominal, .enumeration, .dict, .set, .tuple, .function, .cFunction, .lazyRef, .weakRef, .pointer, .stringHandle:
+        case .boolean, .string, .char, .result, .future, .array, .optional, .nominal, .enumeration, .dict, .set, .tuple, .function, .cFunction, .lazyRef, .weakRef, .unownedRef, .pointer, .stringHandle:
             return false
         }
     }
@@ -606,6 +617,10 @@ public indirect enum IRExpr: Equatable {
     case weakRefConstruct(target: IRExpr, type: IRType)
     /// `handle.value`：目标存活得 `some`，已销毁得 `none`；`type` 是 `Optional<T>`。
     case weakRefValue(handle: IRExpr, type: IRType)
+    /// `UnownedRef(对象)`：建无主引用，不住旁表、不碰计数；`type` 是 `unownedRef(T)`。
+    case unownedRefConstruct(target: IRExpr, type: IRType)
+    /// 解引用：取出无主引用指向的对象，不做存活检查；`type` 是 `T`。
+    case unownedRefValue(handle: IRExpr, type: IRType)
 
     // MARK: G3c — join
 
@@ -671,6 +686,8 @@ extension IRExpr {
         case .lazyRefValue(_, let type): return type
         case .weakRefConstruct(_, let type): return type
         case .weakRefValue(_, let type): return type
+        case .unownedRefConstruct(_, let type): return type
+        case .unownedRefValue(_, let type): return type
         case .pointerLoad(_, let type): return type
         case .pointerStore: return nil
         case .addressOfVar(_, let type): return .pointer(element: type)

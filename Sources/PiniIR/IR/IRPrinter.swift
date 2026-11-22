@@ -221,6 +221,10 @@ public enum IRPrinter {
             return "weak \(exprText(target))"
         case .weakRefValue(let handle, _):
             return "\(exprText(handle)).value"
+        case .unownedRefConstruct(let target, _):
+            return "UnownedRef(\(exprText(target)))"
+        case .unownedRefValue(let handle, _):
+            return "*\(exprText(handle))"
         case .pointerLoad(let pointer, _):
             return "load(\(exprText(pointer)))"
         case .pointerStore(let pointer, let value, _):

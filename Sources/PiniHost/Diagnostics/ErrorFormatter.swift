@@ -351,6 +351,7 @@ public enum ErrorFormatter {
         case .lifecycleShapeInvalid(let reason, _): return "析构声明无效：\(reason)"
         case .missingReturn(let function, _): return "值返回体缺少返回：`\(function)` 有路径既没有 return，末句也不是交出值的表达式"
         case .weakOperandNotObject(let type, _): return "`weak` 的操作数必须是对象：`\(type)` 没有弱引用旁表"
+        case .unownedOperandNotObject(let type, _): return "`UnownedRef` 的操作数必须是对象：`\(type)` 没有可借的对象箱"
         }
     }
 

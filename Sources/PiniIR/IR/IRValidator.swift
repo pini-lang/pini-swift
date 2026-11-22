@@ -1140,6 +1140,39 @@ private struct Walker {
             }
             walk(handle, at: location)
 
+        case .unownedRefConstruct(let target, let type):
+            if case .unownedRef(let element) = type {
+                if let targetType = effectiveType(of: target) {
+                    if !targetType.isAssignable(to: element) {
+                        report(
+                            .typeMismatch,
+                            "无主引用目标的类型是 \(targetType.display)，元素类型是 \(element.display)",
+                            at: location)
+                    }
+                    if case .nominal(_, let isObject) = targetType, !isObject {
+                        report(.nodeShape, "无主引用目标 \(targetType.display) 不是对象", at: location)
+                    }
+                }
+            } else {
+                report(.nodeShape, "无主引用构造的 type 是 \(type.display)，不是 UnownedRef", at: location)
+            }
+            walk(target, at: location)
+
+        case .unownedRefValue(let handle, let type):
+            if let handleType = effectiveType(of: handle) {
+                if case .unownedRef(let element) = handleType {
+                    if !element.isAssignable(to: type) {
+                        report(
+                            .typeMismatch,
+                            "无主引用解出的类型是 \(type.display)，元素类型是 \(element.display)",
+                            at: location)
+                    }
+                } else {
+                    report(.nodeShape, "无主引用解引用的手柄是 \(handleType.display)，不是 UnownedRef", at: location)
+                }
+            }
+            walk(handle, at: location)
+
         case .join(let future, let type, let form):
             if type.resultOkType == nil {
                 report(.nodeShape, "等待站点的 type 是 \(type.display)，不是 Result", at: location)
@@ -1272,6 +1305,7 @@ extension IRType {
         case .set(let element): return "Set<\(element.display)>"
         case .lazyRef(let element): return "LazyRef<\(element.display)>"
         case .weakRef(let element): return "WeakRef<\(element.display)>"
+        case .unownedRef(let element): return "UnownedRef<\(element.display)>"
         case .tuple(let labels, let fieldTypes):
             let fields = zip(labels, fieldTypes).map { pair in
                 pair.0.map { "\($0): \(pair.1.display)" } ?? pair.1.display

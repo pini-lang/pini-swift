@@ -245,6 +245,9 @@ irShareEffectOf|func(pool: IrTypePool, nodes: IrNodePool, nodeId: I32,) -> (I32,
         if irHoldsShare(pool = pool, typeId = node.typeId):
             return 1
         return 3
+    ; 无主引用不记账：构造与解引用都只是同一个指针的搬运。
+    if kind == irExprTag(.irUnownedRefConstruct) || kind == irExprTag(.irUnownedRefValue):
+        return 3
     if kind == irExprTag(.irCFunctionAddress) || kind == irExprTag(.irGivenInstance):
         return 2
     if kind == irExprTag(.irReadLine):

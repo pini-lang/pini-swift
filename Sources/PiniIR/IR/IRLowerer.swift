@@ -1712,6 +1712,16 @@ public enum IRLowerer {
                     let value = resolveAnnotationType(params[1], userTypes: userTypes)
                 else { return nil }
                 return .dict(key: key, value: value)
+            /// 三种引用句柄的元素可以是用户类型，`IRType(from:)` 只认内建元素，故在此逐层重解。
+            case "WeakRef" where params.count == 1:
+                guard let element = resolveAnnotationType(params[0], userTypes: userTypes) else { return nil }
+                return .weakRef(element: element)
+            case "UnownedRef" where params.count == 1:
+                guard let element = resolveAnnotationType(params[0], userTypes: userTypes) else { return nil }
+                return .unownedRef(element: element)
+            case "LazyRef" where params.count == 1:
+                guard let element = resolveAnnotationType(params[0], userTypes: userTypes) else { return nil }
+                return .lazyRef(element: element)
             default:
                 break
             }
@@ -2343,7 +2353,7 @@ public enum IRLowerer {
                 ]
             }
             if case .member(let base, let fieldName) = target {
-                let loweredBase = try lowerExpr(base, expected: nil, into: &context)
+                let loweredBase = unownedUnwrapped(try lowerExpr(base, expected: nil, into: &context))
                 guard case .nominal = loweredBase.type else {
                     throw unsupported(
                         "field store on non-nominal base type '\(loweredBase.type)'",
@@ -3386,42 +3396,44 @@ public enum IRLowerer {
             if name == "message", isErrorFaced(loweredBase.node, context) {
                 return lowerErrorMessage(loweredBase.node, at: location)
             }
+            /// 无主引用透传：解引用后按元素类型的成员继续；unsafe 门禁已由检查面把关。
+            let base = unownedUnwrapped(loweredBase)
             // LazyRef `.value` read (G13 batch 1): `bk_lazyref_value(handle)`
             // returns the cached element box; the caller loads the element.
-            if case .lazyRef(let element) = loweredBase.type, name == "value" {
+            if case .lazyRef(let element) = base.type, name == "value" {
                 return LoweredExpr(
-                    node: .lazyRefValue(handle: loweredBase.node, type: element),
+                    node: .lazyRefValue(handle: base.node, type: element),
                     type: element
                 )
             }
             /// 弱引用的值读：结果是 `Optional<T>`，目标销毁后为 `none`。
-            if case .weakRef(let element) = loweredBase.type, name == "value" {
+            if case .weakRef(let element) = base.type, name == "value" {
                 let optional = IRType.optional(wrapped: element)
                 return LoweredExpr(
-                    node: .weakRefValue(handle: loweredBase.node, type: optional),
+                    node: .weakRefValue(handle: base.node, type: optional),
                     type: optional
                 )
             }
-            if case .tuple(let labels, let fieldTypes) = loweredBase.type {
+            if case .tuple(let labels, let fieldTypes) = base.type {
                 guard let index = labels.firstIndex(where: { $0 == name }) else {
                     throw unsupported("tuple has no field '\(name)'", at: location)
                 }
                 return LoweredExpr(
-                    node: .tupleIndexGet(base: loweredBase.node, index: index, type: fieldTypes[index]),
+                    node: .tupleIndexGet(base: base.node, index: index, type: fieldTypes[index]),
                     type: fieldTypes[index]
                 )
             }
-            guard case .nominal = loweredBase.type else {
+            guard case .nominal = base.type else {
                 throw unsupported("member access '.\(name)' outside the slice", at: location)
             }
-            guard let fieldType = nominalFieldType(of: loweredBase.type, field: name, in: context) else {
-                throw unsupported("no field '\(name)' on '\(loweredBase.type)'", at: location)
+            guard let fieldType = nominalFieldType(of: base.type, field: name, in: context) else {
+                throw unsupported("no field '\(name)' on '\(base.type)'", at: location)
             }
-            guard let fieldSlot = nominalFieldSlot(of: loweredBase.type, field: name, in: context) else {
-                throw unsupported("no field slot for '\(name)' on '\(loweredBase.type)'", at: location)
+            guard let fieldSlot = nominalFieldSlot(of: base.type, field: name, in: context) else {
+                throw unsupported("no field slot for '\(name)' on '\(base.type)'", at: location)
             }
             return LoweredExpr(
-                node: .fieldGet(base: loweredBase.node, slot: fieldSlot, type: fieldType),
+                node: .fieldGet(base: base.node, slot: fieldSlot, type: fieldType),
                 type: fieldType
             )
 
@@ -3461,6 +3473,23 @@ public enum IRLowerer {
                 let type = IRType.lazyRef(element: element)
                 return LoweredExpr(
                     node: .lazyRefConstruct(closure: loweredClosure.node, type: type),
+                    type: type
+                )
+            }
+            // `UnownedRef<T>(对象)`：显式类型实参形态，元素类型由实参表说定。
+            if typeName == "UnownedRef" {
+                guard typeArgs.count == 1,
+                    let element = resolveAnnotationType(typeArgs[0], userTypes: context.userTypes)
+                else {
+                    throw unsupported("UnownedRef requires 1 resolvable type arg", at: location)
+                }
+                guard arguments.count == 1 else {
+                    throw unsupported("UnownedRef expects exactly one object argument", at: location)
+                }
+                let loweredTarget = try lowerExpr(arguments[0].expression, expected: element, into: &context)
+                let type = IRType.unownedRef(element: element)
+                return LoweredExpr(
+                    node: .unownedRefConstruct(target: loweredTarget.node, type: type),
                     type: type
                 )
             }
@@ -3942,6 +3971,17 @@ public enum IRLowerer {
                 let type = IRType.lazyRef(element: element)
                 return LoweredExpr(
                     node: .lazyRefConstruct(closure: loweredArgs[0].node, type: type),
+                    type: type
+                )
+            }
+            // `UnownedRef(对象)`：省略类型实参的形态，元素类型取自实参。
+            if functionName == "UnownedRef" {
+                guard loweredArgs.count == 1 else {
+                    throw unsupported("UnownedRef expects exactly one object argument", at: location)
+                }
+                let type = IRType.unownedRef(element: loweredArgs[0].type)
+                return LoweredExpr(
+                    node: .unownedRefConstruct(target: loweredArgs[0].node, type: type),
                     type: type
                 )
             }
@@ -4996,6 +5036,15 @@ public enum IRLowerer {
         }
     }
 
+    /// 无主引用透传：解引用后按元素类型继续；存活检查按规范不在编译通道做。
+    private static func unownedUnwrapped(_ base: LoweredExpr) -> LoweredExpr {
+        if case .unownedRef(let element) = base.type {
+            return LoweredExpr(
+                node: .unownedRefValue(handle: base.node, type: element), type: element)
+        }
+        return base
+    }
+
     private static func lowerMemberCall(
         object: Expression,
         memberName: String,
@@ -5069,7 +5118,12 @@ public enum IRLowerer {
             )
         }
 
-        let loweredObject = try lowerExpr(object, expected: nil, into: &context)
+        var loweredObject = try lowerExpr(object, expected: nil, into: &context)
+        /// 无主引用透传：接收者先解引用，方法在元素类型上派发；unsafe 门禁由检查面把关。
+        if case .unownedRef(let element) = loweredObject.type {
+            loweredObject = LoweredExpr(
+                node: .unownedRefValue(handle: loweredObject.node, type: element), type: element)
+        }
         let objectType = loweredObject.type
 
         // 三级派发的第一级：内建类型（`String` / `Array`）的用户扩展方法排在语言内标准库（下面按名硬编码的
@@ -5695,7 +5749,7 @@ public enum IRLowerer {
             )
 
         case .member(let base, let fieldName, _):
-            let loweredBase = try lowerExpr(base, expected: nil, into: &context)
+            let loweredBase = unownedUnwrapped(try lowerExpr(base, expected: nil, into: &context))
             guard case .nominal = loweredBase.type,
                 let fieldType = nominalFieldType(
                     of: loweredBase.type, field: fieldName, in: context
@@ -6236,6 +6290,11 @@ extension IRType {
             // `WeakRef<T>`：不增加强计数的弱引用句柄；元素是目标对象类型。
             if name == "WeakRef", params.count == 1, let element = IRType(from: params[0]) {
                 self = .weakRef(element: element)
+                return
+            }
+            // `UnownedRef<T>`：无主引用，表示就是对象指针。
+            if name == "UnownedRef", params.count == 1, let element = IRType(from: params[0]) {
+                self = .unownedRef(element: element)
                 return
             }
             return nil

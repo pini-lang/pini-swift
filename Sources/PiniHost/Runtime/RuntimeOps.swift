@@ -86,6 +86,10 @@ public enum RuntimeOps {
         case (.string(let a), .char(let b), .notEqual): return .bool(!byteEqual(a, b))
         case (.bool(let a), .bool(let b), .equal): return .bool(a == b)
         case (.bool(let a), .bool(let b), .notEqual): return .bool(a != b)
+        /// 无主引用在编译通道就是对象指针：比较的是目标身份，同一目标的两份句柄相等。
+        ///  注意  目标已销毁时比较与编译通道一样落在未定义行为上，不在这里补存活判定。
+        case (.unownedRef(let a), .unownedRef(let b), .equal): return .bool(a.target === b.target)
+        case (.unownedRef(let a), .unownedRef(let b), .notEqual): return .bool(a.target !== b.target)
         case (.bool(let a), .bool(let b), .and): return .bool(a && b)
         case (.bool(let a), .bool(let b), .or): return .bool(a || b)
         case (.int(let a), .int(let b), .bitwiseAnd): return .int(a & b)
@@ -390,6 +394,7 @@ public enum RuntimeOps {
         case .function: return "Function"
         case .future: return "Future"
         case .weakRef: return "WeakRef"
+        case .unownedRef: return "UnownedRef"
         case .lazyRef: return "LazyRef"
         case .rawPointer: return "Pointer"
         case .null: return "Null"
@@ -703,6 +708,9 @@ public enum RuntimeOps {
         case .weakRef(let box):
             // WeakRef 引用语义承载——打印为 `WeakRef(目标类型)`（不展开内部状态）；目标已释放时如实标记。
             return "WeakRef(\(box.target?.typeName ?? "已释放"))"
+        case .unownedRef:
+            // 无主引用不查存活：打印连目标类型都不读——读它就是要目标活着，而「持有与传递」本该安全。
+            return "UnownedRef"
         case .lazyRef:
             // G40：LazyRef 引用语义承载——打印为 `LazyRef`（不展开内部状态）。
             return "LazyRef"

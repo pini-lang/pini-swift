@@ -1227,6 +1227,25 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
             }
             return .enumValue(EnumValue(caseName: "some", associatedValues: [.objectReference(target)]))
 
+        case .unownedRefConstruct(let target, _):
+            // 无主引用不记账：box 里放 Swift `unowned`，目标归零后不自动置空（访问即未定义行为）。
+            guard case .objectReference(let object) = try evaluate(target) else {
+                throw RuntimeError.invalidOperation(
+                    reason: "unownedRefConstruct expects an object operand",
+                    location: IRExecutor.noLocation
+                )
+            }
+            return .unownedRef(UnownedRefBox(target: object))
+
+        case .unownedRefValue(let handle, _):
+            guard case .unownedRef(let box) = try evaluate(handle) else {
+                throw RuntimeError.invalidOperation(
+                    reason: "unownedRefValue expects an UnownedRef handle",
+                    location: IRExecutor.noLocation
+                )
+            }
+            return .objectReference(box.target)
+
         case .fileWrite(let pathExpr, let contentExpr):
             // Writes in place, truncating an existing file; not an atomic replace.
             // The path resolves against the program base. Failing to open or write

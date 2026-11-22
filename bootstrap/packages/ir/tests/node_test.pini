@@ -4,8 +4,8 @@
 ; 清单规模：两段条数与总数；总数改了说明契约加了节点，枚举也要同批补。
 契约清单规模|test() -> ():
     let table = contractTable()
-    assert(contractCount(table = table) == 78, "总条数应为 78")
-    assert(contractExprCount(table = table) == 60, "表达式段应为 60")
+    assert(contractCount(table = table) == 80, "总条数应为 80")
+    assert(contractExprCount(table = table) == 62, "表达式段应为 62")
     assert(contractStmtCount(table = table) == 18, "语句段应为 18")
     return
 
@@ -24,6 +24,7 @@
 码段判定|test() -> ():
     assert(irIsExprTag(1), "1 应属表达式段")
     assert(irIsExprTag(58), "58 应属表达式段")
+    assert(irIsExprTag(62), "62 应属表达式段")
     assert(!irIsExprTag(101), "101 不应属表达式段")
     assert(irIsStmtTag(101), "101 应属语句段")
     assert(irIsStmtTag(117), "117 应属语句段")

@@ -927,12 +927,57 @@ public final class TypeChecker {
         }
     }
 
+    /// 无主引用解包：`UnownedRef<T>` 的成员按 `T` 解析；`viaUnowned` 说这里要不要 unsafe 门禁。
+    private func unwrapUnownedReceiver(_ type: TypeAnnotation) -> (type: TypeAnnotation, viaUnowned: Bool) {
+        if case .generic(let name, let args, _) = type, name == "UnownedRef", args.count == 1 {
+            return (args[0], true)
+        }
+        return (type, false)
+    }
+
+    /// `UnownedRef(x)` 的两条调用形态（省略实参与显式类型实参）共用：unsafe 上下文 + 对象实参。
+    private func checkUnownedConstruction(_ operand: Expression, at location: SourceLocation) throws {
+        if unsafeContextDepth == 0 {
+            try report(
+                TypeError.mismatch(
+                    expected: "unsafe 上下文（`|unsafe` 函数体或 `unsafe (...)` 消耗点）",
+                    got: "UnownedRef 构造在非 unsafe 上下文",
+                    location: location))
+        }
+        if let operandType = inference.infer(expression: operand) {
+            var named: String? = nil
+            switch operandType {
+            case .simple(let name, _): named = name
+            case .generic(let name, _, _): named = name
+            default: break
+            }
+            if let named, !referenceTypeNames.contains(named) {
+                try report(
+                    TypeError.unownedOperandNotObject(
+                        type: operandType.describe(), location: location))
+            }
+        }
+    }
+
+    /// 无主引用的访问门禁：解引用、调用与字段读写都要在 unsafe 上下文；持有、传递与比较不受限。
+    private func enforceUnownedAccess(_ object: Expression, at location: SourceLocation, what: String) throws {
+        guard let raw = inference.infer(expression: object) else { return }
+        guard unwrapUnownedReceiver(raw).viaUnowned else { return }
+        guard unsafeContextDepth == 0 else { return }
+        try report(
+            TypeError.mismatch(
+                expected: "unsafe 上下文（`|unsafe` 函数体或 `unsafe (...)` 消耗点）",
+                got: "无主引用的\(what)在非 unsafe 上下文",
+                location: location))
+    }
+
     /// 对「成员访问 / 字段写」执行 type-private 强制：当且仅当字段名以 `_` 前缀、对象静态类型
     /// 确声明了该字段、且访问者类型不是声明类型时，报 `inaccessibleField`。内建类型 / Any /
     /// 未声明该字段的符号一律跳过（交 unknownMember 或运行时兜底），避免误报。
     private func enforceFieldVisibility(object: Expression, fieldName: String, location: SourceLocation) throws {
         guard fieldName.hasPrefix("_") else { return }
-        guard let objType = inference.infer(expression: object) else { return }
+        guard let raw = inference.infer(expression: object) else { return }
+        let objType = unwrapUnownedReceiver(raw).type
         let declaringType: String?
         switch objType {
         case .simple(let n, _): declaringType = n
@@ -2713,6 +2758,8 @@ public final class TypeChecker {
                     }
                 }
             case .member(let object, let name):
+                // 无主引用的字段写同样要 unsafe：它是解引用的一种，不能靠「持有安全」绕过。
+                try enforceUnownedAccess(object, at: location, what: "字段写")
                 // P4.5：字段写同样受 type-private 约束（与读对称）；写入方须为声明类型自身方法。
                 try enforceFieldVisibility(object: object, fieldName: name, location: location)
                 // P3-3 加固：根是不可变 let 绑定时拒绝字段写。
@@ -2977,6 +3024,19 @@ public final class TypeChecker {
                     }
                     return
                 }
+                if calleeName == "UnownedRef" {
+                    // 类型构造器：一个对象实参、且只在 unsafe 上下文 —— 它声称目标必然存活。
+                    if arguments.count != 1 {
+                        try report(
+                            TypeError.mismatch(
+                                expected: "UnownedRef 的一个对象实参",
+                                got: "\(arguments.count) 个实参",
+                                location: location))
+                        return
+                    }
+                    try checkUnownedConstruction(arguments[0].expression, at: location)
+                    return
+                }
                 if let varType = typeEnv.lookupVariable(name: calleeName),
                     case .function(let params, let returns, _, let usingIndices, _) = varType
                 {
@@ -3115,6 +3175,7 @@ public final class TypeChecker {
                 break
             }
             try checkExpression(object)
+            try enforceUnownedAccess(object, at: location, what: "成员访问")
             // 草稿 A2（批次 1.3，D1）：命名元组 `.名称` 标签访问——object 为元组类型时，
             // name 必须在 labels 中存在，未知标签报 unknownMember；命中则跳过字段可见性检查。
             if let t = inference.infer(expression: object), case .tuple(let labels, _, _) = t {
@@ -3241,6 +3302,21 @@ public final class TypeChecker {
                             expected: typeArgs[0].describe(),
                             got: decl.returnTypes[0].describe(),
                             location: location))
+                }
+            } else if typeName == "UnownedRef" {
+                // 显式类型实参形态：只判个数与实参，元素类型由类型实参说定。
+                if typeArgs.count != 1 {
+                    try report(
+                        TypeError.genericArgumentCountMismatch(
+                            typeName: typeName, expected: 1, got: typeArgs.count, location: location))
+                } else if arguments.count != 1 {
+                    try report(
+                        TypeError.mismatch(
+                            expected: "UnownedRef 的一个对象实参",
+                            got: "\(arguments.count) 个实参",
+                            location: location))
+                } else {
+                    try checkUnownedConstruction(arguments[0].expression, at: location)
                 }
             }
 
@@ -3628,7 +3704,9 @@ public final class TypeChecker {
 
     /// 经接收者表达式推断对象类型，交 `lookupAnyMethod` 分派（泛型模板特化 + 内建容器元素回填）。
     private func lookupMethodSignature(for object: Expression, memberName: String) -> TypeEnvironment.FunctionSignature? {
-        guard let objType = inference.infer(expression: object) else { return nil }
+        guard let raw = inference.infer(expression: object) else { return nil }
+        /// 无主引用透传：方法在元素类型上找；unsafe 门禁由调用点单独把关。
+        let objType = unwrapUnownedReceiver(raw).type
         switch objType {
         case .simple(let typeName, _):
             return typeEnv.lookupAnyMethod(typeName: typeName, typeArgs: nil, methodName: memberName)

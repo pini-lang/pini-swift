@@ -2308,7 +2308,7 @@ let 缓存 = LazyRef<T>(func () -> T:
 
 **引用语义**：复制 `LazyRef<T>` 时共享同一 box，不重复初始化。
 
-### 7.4 无主引用 `[Experimental]`
+### 7.4 无主引用 `[Provisional]`
 
 **类型**：`UnownedRef<T>`
 

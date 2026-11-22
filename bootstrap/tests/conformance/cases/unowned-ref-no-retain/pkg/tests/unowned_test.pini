@@ -1,0 +1,30 @@
+; 无主引用：读、写、调用都通，且不留份 —— 强引用换掉后弱引用读到空。
+无主引用不记账|test() -> ():
+    var 强 = 节点()
+    强.值 = 42
+    let 弱 = weak 强
+    let 无主 = unsafe UnownedRef(强)
+    assert(unsafe 无主.值 == 42, "字段读应看到目标")
+    assert(unsafe 无主.加(1) == 43, "方法调用应打到目标")
+    写(无主, 9)
+    assert(unsafe 无主.值 == 9, "字段写应改到目标")
+    强 = 节点()
+    match 弱.value:
+        case some(_目标,):
+            assert(false, "无主引用不该留份")
+        case none:
+            assert(true, "无主引用未留份")
+    return
+
+; 无主引用比较的是目标：同一目标的两份句柄相等，不同目标不等；比较不读目标内容。
+无主引用可比较|test() -> ():
+    let 强 = 节点()
+    let 另一个 = 节点()
+    let 甲 = unsafe UnownedRef(强)
+    let 丙 = 甲
+    assert(甲 == 丙, "复制出的无主引用应与原句柄相等")
+    let 乙 = unsafe UnownedRef(强)
+    assert(甲 == 乙, "同一目标的两份句柄应相等")
+    let 丁 = unsafe UnownedRef(另一个)
+    assert(甲 != 丁, "不同目标应不等")
+    return

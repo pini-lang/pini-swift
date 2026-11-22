@@ -191,7 +191,11 @@ public final class TypeInference {
             // P2-1.4：成员方法调用返回类型推断（obj.method(args)）。
             // Optional.some / .none 已在上方特判并返回，此处仅处理普通成员方法。
             if case .member(let object, let memberName, _) = callee, let env = environment {
-                let objType = infer(expression: object)
+                /// 无主引用透传：方法与字段按元素类型找，unsafe 门禁在检查面。
+                var objType = infer(expression: object)
+                if case .generic(let name, let args, _)? = objType, name == "UnownedRef", args.count == 1 {
+                    objType = args[0]
+                }
                 switch objType {
                 case .simple(let typeName, _):
                     if let sig = env.lookupAnyMethod(typeName: typeName, typeArgs: nil, methodName: memberName) {
@@ -232,6 +236,12 @@ public final class TypeInference {
                     returns.count == 1
                 {
                     return .generic(name: "LazyRef", params: [returns[0]], location: loc)
+                }
+                /// `UnownedRef(对象)`：元素类型取自实参；它是不加计数的裸指针，类型只为承载 unsafe 门禁。
+                if name == "UnownedRef", arguments.count == 1,
+                    let inner = infer(expression: arguments[0].expression)
+                {
+                    return .generic(name: "UnownedRef", params: [inner], location: loc)
                 }
                 if let sig = env.lookupFunction(name: name) {
                     if sig.returns.count == 1 {
@@ -280,7 +290,11 @@ public final class TypeInference {
             }
             guard let env = environment else { return nil }
             let objType = infer(expression: object)
-            guard let t = objType else { return nil }
+            guard var t = objType else { return nil }
+            /// 无主引用透传：字段按元素类型解析；`UnownedRef` 自己没有字段表。
+            if case .generic(let wrapName, let wrapArgs, _) = t, wrapName == "UnownedRef", wrapArgs.count == 1 {
+                t = wrapArgs[0]
+            }
             switch t {
             case .simple(let typeName, _):
                 return env.lookupField(typeName: typeName, fieldName: name)

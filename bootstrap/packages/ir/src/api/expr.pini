@@ -1142,6 +1142,31 @@ lowerLazyRefConstruct|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U
     done.id = inserted.id
     return done
 
+; 无主引用构造：实参先降，句柄类型取 `UnownedRef<实参类型>`；对象约束在检查面判过。
+lowerUnownedRefConstruct|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32, callee: I32,) -> (LowerExpr,):
+    var done = out
+    let expr = unit.ast.exprAt(id)
+    var argument = expr.kids[0]
+    if callee != id:
+        if len(expr.kids) != 2:
+            return missNeed(out = done, unit = unit, id = id, what = "UnownedRef 需要恰好一个对象实参")
+        argument = expr.kids[1]
+    elif len(expr.kids) != 1:
+        return missNeed(out = done, unit = unit, id = id, what = "UnownedRef 需要恰好一个对象实参")
+    let one = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = argument)
+    done.pool = one.pool
+    done.texts = one.texts
+    done.frame = one.frame
+    if one.failed:
+        return takeFailure(out = done, one = one)
+    let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
+    if typeId < 0:
+        return missType(out = done, unit = unit, id = id, bytes = bytes)
+    let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irUnownedRefConstruct), typeId = typeId, op = 0, kids = [one.id])
+    done.pool = inserted.pool
+    done.id = inserted.id
+    return done
+
 ; 等待：操作数一个子节点，形式记在 `op`（0 = await，1 = wait）；站点类型是结算后的 Result。
 ; 上下文按帧的异步位硬判：`await` 只在异步体，`wait` 只在同步体，闭包帧不继承外层。
 lowerJoin|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
@@ -1261,9 +1286,15 @@ lowerCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: Typ
             if recvOne.failed:
                 return takeFailure(out = done, one = recvOne)
             receiver = recvOne.id
+            ; 无主引用透传：接收者先解引用，方法在元素类型上派发；unsafe 门禁在检查面判过。
+            let recvType = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = recvNode)
+            let unownedRecv = irUnownedRefElement(pool = map.pool, id = recvType)
+            if unownedRecv >= 0:
+                let unwrapped = addIrNode(pool = done.pool, kind = irExprTag(.irUnownedRefValue), typeId = unownedRecv, op = 0, kids = [receiver])
+                done.pool = unwrapped.pool
+                receiver = unwrapped.id
             resolved = calleeOfMethod(frame = done.frame, map = map, pool = done.pool, receiver = receiver, memberName = memberName)
             if !resolved.found:
-                let recvType = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = recvNode)
                 let lazyElement = irLazyRefElement(pool = map.pool, id = recvType)
                 if memberName == "value" && lazyElement >= 0 && len(expr.kids) == 1:
                     let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irLazyRefValue), typeId = lazyElement, op = 0, kids = [receiver])
@@ -1290,6 +1321,8 @@ lowerCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: Typ
         ; 省略类型实参的构造：元素类型取自初值闭包的返回。
         if name == "LazyRef" && len(expr.kids) == 2:
             return lowerLazyRefConstruct(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id, callee = -1)
+        if name == "UnownedRef" && len(expr.kids) == 2:
+            return lowerUnownedRefConstruct(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id, callee = -1)
         ; 局部函数值：名字在帧里且类型是函数，即间接调用。
         let localType = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = callee)
         if (findIrLocal(frame = done.frame, name = name) >= 0 || findOuterLocal(frame = done.frame, name = name) >= 0) && localType >= 0 && localType < irTypeCount(map.pool):
@@ -1481,6 +1514,17 @@ irWeakRefElement|func(pool: IrTypePool, id: I32,) -> (I32,):
         return -1
     return entry.kids[0]
 
+; 无主引用元素：非 UnownedRef 或实参缺席答 -1。
+irUnownedRefElement|func(pool: IrTypePool, id: I32,) -> (I32,):
+    if id < 0 || id >= irTypeCount(pool):
+        return -1
+    let entry = irTypeAt(pool = pool, id = id)
+    if irTypeTag(entry.kind) != irTypeTag(.irTypeUnownedRef):
+        return -1
+    if len(entry.kids) != 1:
+        return -1
+    return entry.kids[0]
+
 ; 成员读：接收者一个子节点，字段名驻留进文本池；方法值不走这条。
 lowerMember|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
     let expr = unit.ast.exprAt(id)
@@ -1510,12 +1554,21 @@ lowerMember|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: T
         done.pool = inserted.pool
         done.id = inserted.id
         return done
-    let slot = fieldSlotOf(table = done.frame.decls, typeId = receiverType, name = fieldName)
+    ; 无主引用透传：解引用后按元素类型的字段继续；unsafe 门禁在检查面判过。
+    var baseId = one.id
+    var baseType = receiverType
+    let unownedElement = irUnownedRefElement(pool = map.pool, id = receiverType)
+    if unownedElement >= 0:
+        let unwrapped = addIrNode(pool = done.pool, kind = irExprTag(.irUnownedRefValue), typeId = unownedElement, op = 0, kids = [one.id])
+        done.pool = unwrapped.pool
+        baseId = unwrapped.id
+        baseType = unownedElement
+    let slot = fieldSlotOf(table = done.frame.decls, typeId = baseType, name = fieldName)
     if slot < 0:
         return missExpr(out = done, unit = unit, id = id, what = "字段 " + fieldName + " 不在声明里")
     var node = irMakeNode(kind = irExprTag(.irFieldGet), typeId = typeId)
     node.op = slot
-    node.kids = [one.id]
+    node.kids = [baseId]
     let inserted = irAppendNode(pool = done.pool, node = node)
     done.pool = inserted.pool
     done.id = inserted.id

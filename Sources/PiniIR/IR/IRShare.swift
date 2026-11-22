@@ -54,7 +54,8 @@ extension IRType {
         case .enumeration: return .retained(.enumeration)
         case .result, .optional, .tuple, .function: return .aggregate
         /// `StringHandle` 也归不握份额：计数由 C 侧那一份说定，Pini 侧既不留也不还。
-        case .future, .pointer, .cFunction, .stringHandle: return .inert
+        /// `UnownedRef` 同理：裸对象指针，复制即复制指针，不碰计数。
+        case .future, .pointer, .cFunction, .stringHandle, .unownedRef: return .inert
         }
     }
 
@@ -149,7 +150,7 @@ extension IRExpr {
         // 常量与标量运算：值不是份额。
         case .intConst, .floatConst, .boolConst, .binary, .shortCircuit, .unary, .lenCall, .isAsciiDigit,
             .stringContains, .stringIndexOf, .pointerLoad, .pointerStore, .addressOfVar,
-            .foreignDataAddress, .enumTagGet,
+            .foreignDataAddress, .enumTagGet, .unownedRefConstruct, .unownedRefValue,
             .printCall, .printMulti, .assertCall, .fileWrite, .fileAppend:
             return .inert
         // 全局常量与变量 / 字段 / 元素槽：份额在别处。
