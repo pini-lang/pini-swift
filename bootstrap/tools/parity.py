@@ -11,8 +11,12 @@ WHY THIS EXISTS
 WHAT IT WRITES
     bootstrap/tests/parity/commands.tsv     宿主每条命令的开关对自举同名项
     bootstrap/tests/parity/channels.tsv     通道 × 族，自举另记接通节点数
-    bootstrap/tests/parity/diagnostics.tsv  宿主码全集对自举已发码
+    bootstrap/tests/parity/diagnostics.tsv  宿主码全集对自举已发码，附缺码依据
     bootstrap/tests/parity/programs.tsv     examples 逐个过 check / lower / emit
+
+人工来源（不生成，只读）：
+    bootstrap/tests/parity/command-disposition.tsv  每个非「有」命令的去向
+    bootstrap/tests/parity/diagnostic-basis.tsv     每条缺码的依据
 
 用法：
   python3 bootstrap/tools/parity.py                # 重取四张表
@@ -37,10 +41,33 @@ DIAG_TOML = ROOT / "Sources" / "PiniSemantics" / "Resources" / "Diagnostics.zh.t
 CODES_PINI = ROOT / "bootstrap" / "packages" / "diagnostics" / "src" / "_internal" / "codes.pini"
 EXAMPLES = ROOT / "examples"
 TIMEOUT = 120
+COMMAND_DISPOSITIONS = OUT / "command-disposition.tsv"
+DIAGNOSTIC_BASIS = OUT / "diagnostic-basis.tsv"
 
 
 def fail(message):
     print(f" 行不通  [普查] {message}", file=sys.stderr)
+
+
+def ledger(path):
+    """读人工来源表：首列作键，返回第二三列。首个非注释行是表头，跳过。
+
+    缺表返回空表，由调用方按「缺行」报出，不静默取默认值。
+    """
+    table = {}
+    if not path.is_file():
+        return table
+    header = True
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line or line.startswith("#"):
+            continue
+        cols = line.split("\t")
+        if header:
+            header = False
+            continue
+        if len(cols) >= 2:
+            table[cols[0]] = (cols[1], cols[2] if len(cols) > 2 else "")
+    return table
 
 
 def host_binary():
@@ -125,22 +152,38 @@ def self_commands():
 
 
 def commands_table():
+    """两个方向都交代：宿主有而自举无记「无」，自举有而宿主无记「自举独有」。
+
+    每条非「有」的行都要有一行处置；缺行即拒生成，避免差项悬空。
+    """
     host = host_commands()
     mine = self_commands()
-    lines = ["# 命令表：宿主每条命令的开关对自举同名项。「无」= 自举没有该命令，「部分」= 有但缺开关。",
+    disposition = ledger(COMMAND_DISPOSITIONS)
+    lines = ["# 命令表：宿主每条命令的开关对自举同名项，另收自举独有命令。",
+             "# 状态：有 = 同名同开关；部分 = 有但缺开关；无 = 自举没有；自举独有 = 宿主没有。",
+             "# 处置：自举内部通道 / 待补齐 / 保留差异 / 待核；已收口记 -。",
              "# 由 bootstrap/tools/parity.py 生成，勿手改；只许缩小，某行转「有」时门禁会红。",
-             "命令\t宿主开关\t自举\t自举缺开关\t状态"]
-    for name in sorted(host):
-        _labels, body = host[name]
-        wanted = switches_in(body)
-        host_switch = ",".join(sorted(wanted)) or "-"
+             "命令\t宿主开关\t自举\t自举缺开关\t状态\t处置"]
+    missing = []
+    for name in sorted(set(host) | set(mine)):
         if name not in mine:
-            lines.append(f"{name}\t{host_switch}\t无\t{host_switch}\t无")
-            continue
-        have = switches_in(mine[name])
-        missing = sorted(wanted - have)
-        state = "部分" if missing else "有"
-        lines.append(f"{name}\t{host_switch}\t有\t{','.join(missing) or '-'}\t{state}")
+            wanted = ",".join(sorted(switches_in(host[name][1]))) or "-"
+            cells = (name, wanted, "无", wanted, "无")
+        elif name not in host:
+            cells = (name, "-", "有", "-", "自举独有")
+        else:
+            wanted = switches_in(host[name][1])
+            have = switches_in(mine[name])
+            short = sorted(wanted - have)
+            cells = (name, ",".join(sorted(wanted)) or "-", "有",
+                     ",".join(short) or "-", "部分" if short else "有")
+        entry = disposition.get(name)
+        if cells[4] != "有" and entry is None:
+            missing.append(name)
+        lines.append("\t".join(cells) + "\t" + (entry[0] if entry else "-"))
+    if missing:
+        fail(f"命令处置表缺行：{', '.join(missing)}")
+        sys.exit(2)
     return "\n".join(lines) + "\n", host, mine
 
 
@@ -227,11 +270,18 @@ def diagnostic_sets():
 
 
 def diagnostics_table():
+    """缺码必须带依据：参考件条款、仅宿主实现或待核。
+
+    依据缺行即拒生成，让「差集为空」这条总判据的每一行都能回答「该不该补」。
+    """
     host_codes, registered, emitted = diagnostic_sets()
+    basis = ledger(DIAGNOSTIC_BASIS)
     lines = ["# 诊断表：宿主码全集（权威 TOML）对自举已发码。「缺」= 自举永不产出该码。",
              "# 登记列与宿主全集应当相等，不等说明码表生成物落后；已发列只数源码里的发码点。",
+             "# 依据：参考件 §节号 / 仅宿主实现 / 待核（说明列写明缺哪一条款）；非缺项记 -。",
              "# 由 bootstrap/tools/parity.py 生成，勿手改；只许缩小。",
-             "码\t宿主\t自举登记\t自举已发\t状态"]
+             "码\t宿主\t自举登记\t自举已发\t状态\t依据"]
+    missing = []
     for code in sorted(host_codes | emitted):
         host_side = "1" if code in host_codes else "0"
         reg = "1" if code in registered else "0"
@@ -240,7 +290,17 @@ def diagnostics_table():
             state = "自举多出"
         else:
             state = "一致" if sent == "1" else "缺"
-        lines.append(f"{code}\t{host_side}\t{reg}\t{sent}\t{state}")
+        cell = "-"
+        if state == "缺":
+            entry = basis.get(code)
+            if entry is None:
+                missing.append(code)
+            else:
+                cell = entry[0]
+        lines.append(f"{code}\t{host_side}\t{reg}\t{sent}\t{state}\t{cell}")
+    if missing:
+        fail(f"诊断依据表缺行：{', '.join(missing)}")
+        sys.exit(2)
     return "\n".join(lines) + "\n"
 
 

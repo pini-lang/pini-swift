@@ -1,24 +1,31 @@
-# 命令表：宿主每条命令的开关对自举同名项。「无」= 自举没有该命令，「部分」= 有但缺开关。
+# 命令表：宿主每条命令的开关对自举同名项，另收自举独有命令。
+# 状态：有 = 同名同开关；部分 = 有但缺开关；无 = 自举没有；自举独有 = 宿主没有。
+# 处置：自举内部通道 / 待补齐 / 保留差异 / 待核；已收口记 -。
 # 由 bootstrap/tools/parity.py 生成，勿手改；只许缩小，某行转「有」时门禁会红。
-命令	宿主开关	自举	自举缺开关	状态
-backends	--tsv	有	-	有
-bind	-	无	-	无
-build	--diagnostics-tsv,--no-stdlib,--print-plan,--shared,-o	有	--diagnostics-tsv,--no-stdlib,--print-plan,--shared,-o	部分
-check	--diagnostics-tsv	有	-	有
-compile	-	无	-	无
-dap	-	无	-	无
-debug	-	无	-	无
-emit	--backend,-o	有	--backend,-o	部分
-expand	-	无	-	无
-fmt	-	无	-	无
-help	-	无	-	无
-lsp	-	无	-	无
-mod	-	无	-	无
-parse	--sig	无	--sig	无
-repl	-	无	-	无
-run	-	无	-	无
-run-llvm	-	无	-	无
-test	-	有	-	有
-test-llvm	-	无	-	无
-tokens	-	有	-	有
-version	-	有	-	有
+命令	宿主开关	自举	自举缺开关	状态	处置
+backends	--tsv	有	-	有	-
+bind	-	无	-	无	待补齐
+build	--diagnostics-tsv,--no-stdlib,--print-plan,--shared,-o	有	--diagnostics-tsv,--no-stdlib,--print-plan,--shared,-o	部分	待补齐
+cases	-	有	-	自举独有	自举内部通道
+check	--diagnostics-tsv	有	-	有	-
+compile	-	无	-	无	待补齐
+dap	-	无	-	无	待补齐
+debug	-	无	-	无	待补齐
+dump	-	有	-	自举独有	自举内部通道
+emit	--backend,-o	有	--backend,-o	部分	待补齐
+expand	-	无	-	无	待补齐
+fmt	-	无	-	无	待补齐
+help	-	无	-	无	待核
+interfaces	-	有	-	自举独有	自举内部通道
+lower	-	有	-	自举独有	自举内部通道
+lsp	-	无	-	无	待补齐
+mod	-	无	-	无	待补齐
+parse	--sig	无	--sig	无	保留差异
+plan	-	有	-	自举独有	自举内部通道
+repl	-	无	-	无	待补齐
+run	-	无	-	无	待补齐
+run-llvm	-	无	-	无	待补齐
+test	-	有	-	有	-
+test-llvm	-	无	-	无	待补齐
+tokens	-	有	-	有	-
+version	-	有	-	有	-
