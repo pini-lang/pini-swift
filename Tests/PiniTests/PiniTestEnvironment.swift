@@ -78,6 +78,34 @@ enum PiniTestEnvironment {
         }
         return false
     }
+
+    /// 一个临时工作目录，用例收尾自己删。
+    static func makeTemporaryDirectory(tag: String) throws -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pini-\(tag)-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// 跑一次命令行产物，取退出码与两路输出。子进程环境走 `childEnvironment()`，
+    /// 故用例与判据看的是同一份工具链解析结果 —— 各读各的就会一个说齐备、一个空跑。
+    static func runCLI(
+        _ cli: String, arguments: [String], cwd: URL
+    ) throws -> (status: Int32, stdout: String, stderr: String) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: cli)
+        process.arguments = arguments
+        process.currentDirectoryURL = cwd
+        process.environment = childEnvironment()
+        let out = Pipe(), err = Pipe()
+        process.standardOutput = out
+        process.standardError = err
+        try process.run()
+        process.waitUntilExit()
+        let stdout = String(data: out.fileHandleForReading.readAllData(), encoding: .utf8) ?? ""
+        let stderr = String(data: err.fileHandleForReading.readAllData(), encoding: .utf8) ?? ""
+        return (process.terminationStatus, stdout, stderr)
+    }
 }
 
 /// 测试面共用的两级入口：源码 → 类型检查后的模块，再 → IR。
