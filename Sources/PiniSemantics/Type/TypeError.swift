@@ -78,4 +78,6 @@ public enum TypeError: Error, Equatable {
     case missingReturn(function: String, location: SourceLocation)
     /// `weak` 的操作数不是对象：结构、枚举、标量与函数值都没有弱引用旁表。
     case weakOperandNotObject(type: String, location: SourceLocation)
+    /// `UnownedRef` 的操作数不是对象：无主引用指向 ARC 对象，结构 / 枚举 / 标量没有可借的箱。
+    case unownedOperandNotObject(type: String, location: SourceLocation)
 }

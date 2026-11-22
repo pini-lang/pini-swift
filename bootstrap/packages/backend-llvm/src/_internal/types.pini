@@ -40,6 +40,9 @@ llvmTypeName|func(pool: IrTypePool, typeId: I32,) -> (String,):
     if tag == 24:
         ; 弱引用同样是不透明句柄；元素类型只决定 `.value` 的载荷拼写。
         return "ptr"
+    if tag == 25:
+        ; 无主引用就是对象指针：没有箱体，也没有旁表。
+        return "ptr"
     if tag == 20:
         ; 函数值：代码指针加捕获环境，调用协议固定为 `{ ptr, ptr }`。
         return "{ ptr, ptr }"

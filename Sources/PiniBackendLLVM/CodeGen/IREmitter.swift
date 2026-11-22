@@ -3131,6 +3131,14 @@ public final class IREmitter {
         case .weakRefValue(let handle, let type):
             return emitWeakRefValue(handle: handle, type: type)
 
+        case .unownedRefConstruct(let target, _):
+            // 无主引用与目标同一个指针：不装箱、不加计数，原样透传。
+            return emitExpr(target)
+
+        case .unownedRefValue(let handle, _):
+            // 解引用也不产生指令：存活检查按规范不在编译通道做（对象已销毁即 UB）。
+            return emitExpr(handle)
+
         case .pointerLoad(let pointer, let type):
             return emitPointerLoad(pointer: pointer, element: type)
 
@@ -3490,7 +3498,7 @@ public final class IREmitter {
             .nominal:
             return false
         case .result, .future, .array, .optional, .enumeration, .dict,
-            .lazyRef, .weakRef, .set, .tuple, .function, .cFunction, .stringHandle:
+            .lazyRef, .weakRef, .unownedRef, .set, .tuple, .function, .cFunction, .stringHandle:
             return true
         }
     }

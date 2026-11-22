@@ -1,0 +1,5 @@
+[case]
+name = "无主引用不记账"
+category = "legal"
+kind = "pass"
+spec = "语言参考 7.4 无主引用；IR 契约 2.18"

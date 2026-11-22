@@ -356,8 +356,12 @@ checkPointerCall|func(out: CallResult, site: CallSite, name: String,) -> (CallRe
         loaded.typeId = entry.kids[0]
         return loaded
     let value = site.args[1]
+    ; `store` 按元素宽度落值，发射期负责收窄；整数之间的写入因此不比 `load` 更严。
+    ;  注意  只放宽整数标量：其余族仍按可赋值判定，免得把指针当整数写进去。
     if value.typeId >= 0 && !isAssignable(pool = out.pool, from = value.typeId, to = entry.kids[0]):
-        return failCall(out = out, site = site, offset = value.offset, kind = .callArgType, expected = typeText(pool = out.pool, id = entry.kids[0]), got = typeText(pool = out.pool, id = value.typeId))
+        let integral = isIntegerType(pool = out.pool, id = entry.kids[0]) && isIntegerType(pool = out.pool, id = value.typeId)
+        if !integral:
+            return failCall(out = out, site = site, offset = value.offset, kind = .callArgType, expected = typeText(pool = out.pool, id = entry.kids[0]), got = typeText(pool = out.pool, id = value.typeId))
     var stored = out
     stored.typeId = -1
     return stored

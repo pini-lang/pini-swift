@@ -114,6 +114,8 @@ contractTable|func() -> (IrContractTable,):
     out.entries = out.entries.append(makeContractEntry(tag = 58, name = "enumPayloadGet", family = 4, section = "2.16"))
     out.entries = out.entries.append(makeContractEntry(tag = 59, name = "weakRefConstruct", family = 11, section = "2.17"))
     out.entries = out.entries.append(makeContractEntry(tag = 60, name = "weakRefValue", family = 11, section = "2.17"))
+    out.entries = out.entries.append(makeContractEntry(tag = 61, name = "unownedRefConstruct", family = 11, section = "2.18"))
+    out.entries = out.entries.append(makeContractEntry(tag = 62, name = "unownedRefValue", family = 11, section = "2.18"))
     out.entries = out.entries.append(makeContractEntry(tag = 101, name = "allocVar", family = 0, section = "3"))
     out.entries = out.entries.append(makeContractEntry(tag = 102, name = "storeVar", family = 0, section = "3"))
     out.entries = out.entries.append(makeContractEntry(tag = 103, name = "ifStmt", family = 0, section = "3"))
@@ -172,7 +174,7 @@ contractTagOf|func(table: IrContractTable, name: String,) -> (I32,):
 
 ; 表达式段条数（常量，供节点枚举对照）。
 contractExprTotal|func() -> (I32,):
-    return 60
+    return 62
 
 ; 语句段条数。
 contractStmtTotal|func() -> (I32,):

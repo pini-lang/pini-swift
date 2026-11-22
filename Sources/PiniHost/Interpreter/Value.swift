@@ -295,6 +295,8 @@ public enum Value {
     case future(FutureValue)
     /// 弱引用包装——引用语义承载（class），复制共享同一 box。
     case weakRef(WeakRefBox)
+    /// 无主引用包装——引用语义承载（class），复制共享同一指针；不增加目标计数。
+    case unownedRef(UnownedRefBox)
     /// 懒加载包装——引用语义承载（class），复制共享同一「锁 + once 标志 + 缓存」。
     case lazyRef(LazyRefBox)
     /// Phase 2a（FFI 子系统）：原始指针 `*T`——引用语义承载（class），复制共享同一地址。
@@ -385,6 +387,16 @@ public final class LazyRefBox {
 /// 复制出值语义分裂的新包装。`target` 是 Swift 弱引用：box 不拖住对象，对象销毁后自动归零。
 public final class WeakRefBox {
     public weak var target: ObjectReference?
+
+    public init(target: ObjectReference) {
+        self.target = target
+    }
+}
+
+/// `UnownedRef` 的引用语义承载：`unowned` 目标既不拖住对象、也不查存活 —— 对象销毁后再解引用
+/// 就是未定义行为，解释器按 Swift 的规则当场停住，不假装读到空值。
+public final class UnownedRefBox {
+    public unowned let target: ObjectReference
 
     public init(target: ObjectReference) {
         self.target = target

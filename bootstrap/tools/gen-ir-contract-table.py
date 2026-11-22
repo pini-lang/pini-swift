@@ -42,6 +42,8 @@ SECTION_FAMILY = {
     "2.16": "resultAndOptional",
     # 2.17 弱引用：与 LazyRef 同为不透明引用句柄，共用一个能力族。
     "2.17": "lazyRef",
+    # 2.18 无主引用：同样是不透明引用句柄，只是不计数、不跟踪存活。
+    "2.18": "lazyRef",
 }
 
 NODE_FAMILY = {"foreignDataAddress": "pointers"}

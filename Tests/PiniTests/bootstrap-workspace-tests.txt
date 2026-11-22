@@ -5,11 +5,11 @@
 包 syntax / syntax-tests（99 个测试，99 通过）
 包 package / package-tests（45 个测试，45 通过）
 包 module_loader / module-loader-tests（31 个测试，31 通过）
-包 semantics / semantics-tests（365 个测试，365 通过）
-包 ir / ir-tests（48 个测试，48 通过）
+包 semantics / semantics-tests（368 个测试，368 通过）
+包 ir / ir-tests（49 个测试，49 通过）
 包 backend_kit / backend-kit-tests（4 个测试，4 通过）
 包 backend_dump / backend-dump-tests（5 个测试，5 通过）
 包 backend_llvm / backend-llvm-tests（27 个测试，27 通过）
 包 testkit / testkit-tests（9 个测试，9 通过）
 包 driver / driver-tests（23 个测试，23 通过）
-结果: 724 通过, 0 失败（用时）
+结果: 728 通过, 0 失败（用时）

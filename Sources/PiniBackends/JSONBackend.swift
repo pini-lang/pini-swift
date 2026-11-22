@@ -143,7 +143,8 @@ public struct JSONBackend: PiniBackend {
             .fileTryWrite, .fileTryAppend, .fileTryRead, .readLine, .isAsciiDigit,
             .stringCase, .stringContains, .stringSubstring, .stringSplit, .stringTrimLeft,
             .stringTrimRight, .stringIndexOf, .arrayJoin, .stringConcat, .interpString,
-            .lazyRefConstruct, .lazyRefValue, .weakRefConstruct, .weakRefValue, .join, .givenInstance:
+            .lazyRefConstruct, .lazyRefValue, .weakRefConstruct, .weakRefValue,
+            .unownedRefConstruct, .unownedRefValue, .join, .givenInstance:
             break
         }
         return String(String(describing: expr).prefix(while: { $0 != "(" }))

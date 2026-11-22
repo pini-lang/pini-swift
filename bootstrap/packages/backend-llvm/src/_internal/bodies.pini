@@ -738,6 +738,9 @@ emitExprCore|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
         return emitWeakRefConstruct(out = out, module = module, node = node)
     if node.kind == 60:
         return emitWeakRefValue(out = out, module = module, node = node)
+    if node.kind == 61 || node.kind == 62:
+        ; 无主引用不产生指令：构造与解引用都只是同一个对象指针的搬运。
+        return emitExpr(ctx = out.ctx, module = module, nodeId = node.kids[0])
     if node.kind == 31:
         return emitAddressOfVar(out = out, node = node)
     if node.kind == 32:

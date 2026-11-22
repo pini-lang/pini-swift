@@ -35,10 +35,10 @@
 
 ### 0.4 计数基线
 
-**60 个表达式节点 + 18 个语句节点 = 78**。表内编号即条目号，与节点数严格相等。
+**62 个表达式节点 + 18 个语句节点 = 80**。表内编号即条目号，与节点数严格相等。
 语句位的两个指针（`tryStmt`、`matchStmt`）不占表达式编号。
 
-## 1. 类型层（IRType，24 case）
+## 1. 类型层（IRType，25 case）
 
 | 类型 | 语义（后端无关） | 实现注记 |
 |---|---|---|
@@ -59,6 +59,7 @@
 | `set(element:)` | 唯一元素集合 | 不透明句柄（`bk_set_*` 族） |
 | `lazyRef(element:)` | 一次求值、引用拷贝语义的惰性引用 | 不透明句柄（`bk_lazyref_*` 族） |
 | `weakRef(element:)` | 不增加强计数的弱引用；`element` 是目标对象类型。读取得 `Optional<element>`，目标销毁后为 `none` | 不透明句柄（`bk_weak_*` 族）；句柄自身按计数族归还 |
+| `unownedRef(element:)` | 不计数、不跟踪存活的无主引用；`element` 是目标对象类型。解引用、调用与字段访问限定在 unsafe 上下文 | 表示就是对象指针（`ptr`）；不进旁表，也没有销毁动作 |
 | `tuple(labels:fieldTypes:)` | 带位置与可选标签的异质定长组 | 按值聚合；标签序即字段序 |
 | `function(params:returnType:usingIndices:)` | 函数是一等值；取用下标集合标出哪些参数位由给定块填。类型标注写不出它，它也不参与类型等价 —— 但随函数值保留，标注不得把它抹掉 | fat pointer `{code, env}`；首参恒为 env 是调用协议；取用位不进运行时表示 |
 | `pointer(element:)` | `*T` 原始指针（FFI） | 不透明指针；load / store 按元素类型解码 |
@@ -231,6 +232,12 @@
 | 59 | `weakRefConstruct(target:type:)` | 创建指向对象的弱引用，不增加强计数 | `type` 是 `weakRef(T)`；目标必须是对象，验证期核对 |
 | 60 | `weakRefValue(handle:type:)` | 读弱引用：目标存活得 `some`，已销毁得 `none` | `type` 是 `Optional<T>`；载荷在存活时留一份计数，与可选聚合的归还规则一致 |
 
+### 2.18 无主引用
+
+| # | 节点 | 语义 | 注记 |
+|---|---|---|---|
+| 61 | `unownedRefConstruct(target:type:)` | 创建指向对象的无主引用，不增加计数、不登记旁表 | `type` 是 `unownedRef(T)`；目标必须是对象，验证期核对 |
+| 62 | `unownedRefValue(handle:type:)` | 解引用：取出指向的对象，不做存活检查 | `type` 是 `T`；对象已销毁时读取是未定义行为，读侧不补偿 |
 
 ## 3. 语句节点（18 条）
 

@@ -355,10 +355,9 @@ public final class SemanticAnalyzer {
     /// 按 spec enforce 可见性（private/internal 跨文件不可见 → `inaccessibleSymbol`）。
     /// 单文件模式下 `packageContext` 为 nil，行为与原 `symbolTable.resolve` 判定完全一致。
     private func requireDefined(_ name: String, _ location: SourceLocation, isFunction: Bool) throws {
-        // 内建 Optional 枚举类型标识符（裸 Optional / Optional.none 引用），静态层无需注册即可解析，
-        // 与解释器对 Optional.some/Optional.none 的特判对齐（闭合 B2 静态缺口）。
-        // `LazyRef` 同理：它是类型构造器而不是用户函数，省略类型实参的写法没有声明可查。
-        if name == "Optional" || name == "LazyRef" { return }
+        // 内建类型名静态层无需注册：裸 `Optional` / `Optional.none` 与解释器特判对齐；
+        // `LazyRef`、`UnownedRef` 是类型构造器而不是用户函数，省略类型实参的写法没有声明可查。
+        if name == "Optional" || name == "LazyRef" || name == "UnownedRef" { return }
         if let hit = symbolTable.resolveWithScope(name) {
             // H-1①：匿名函数体内引用外层局部变量，其 capture 声明须先于本使用出现
             if let ctx = captureContexts.last,

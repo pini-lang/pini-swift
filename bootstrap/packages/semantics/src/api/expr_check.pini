@@ -213,6 +213,8 @@ checkCallNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, by
     ; `LazyRef` 是类型构造器，名字不在顶层符号表；形状由降载面判。
     if name == "LazyRef":
         return out
+    if name == "UnownedRef":
+        return checkUnownedRefCall(world = world, unit = unit, unitIndex = unitIndex, types = types, ranges = ranges, node = node, callee = callee, out = out)
     ; `ok` / `err` 是结果构造内建，名字不进符号表；只判恰好一个实参。
     if name == "ok" || name == "err":
         if len(unit.ast.exprAt(node).kids) != 2:
@@ -324,6 +326,34 @@ containsId|func(items: Array<I32>, value: I32,) -> (Bool,):
         i = i + 1
     return false
 
+; 无主引用构造：一个对象实参，且只在 unsafe 区间内 —— 它声称目标必然存活。
+checkUnownedRefCall|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, types: ExprTypes, ranges: UnsafeRanges, node: I32, callee: I32, out: ExprCheck,) -> (ExprCheck,):
+    let expr = unit.ast.exprAt(node)
+    let calleeExpr = unit.ast.exprAt(callee)
+    if len(expr.kids) != 2:
+        return appendExprError(out = out, unit = unit, offset = calleeExpr.start, kind = .exprCallFailed, name = "UnownedRef", detail = "UnownedRef 只要一个对象实参", code = "E4-001")
+    if !inUnsafeRange(ranges = ranges, offset = calleeExpr.start):
+        return appendExprError(out = out, unit = unit, offset = calleeExpr.start, kind = .exprCallFailed, name = "UnownedRef", detail = "UnownedRef 构造需要 unsafe 上下文", code = "E4-001")
+    let typeId = exprTypeAt(table = types, unit = unitIndex, node = expr.kids[1])
+    if typeId < 0 || typeId >= len(world.types.pool.entries):
+        return out
+    let entry = world.types.pool.entries[typeId]
+    if isTypeClass(kind = entry.kind, expected = .typeClassObject):
+        return out
+    return appendExprError(out = out, unit = unit, offset = calleeExpr.start, kind = .exprMemberFailed, name = entry.name, detail = "UnownedRef 的操作数必须是对象", code = "E4-043")
+
+; 无主引用的成员访问：读、写、调用同此一处判；解引用要在 unsafe 区间内。
+checkUnownedAccessNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, types: ExprTypes, ranges: UnsafeRanges, node: I32, out: ExprCheck,) -> (ExprCheck,):
+    let member = unit.ast.exprAt(node)
+    if len(member.kids) < 1:
+        return out
+    let receiverType = exprTypeAt(table = types, unit = unitIndex, node = member.kids[0])
+    if unownedRefElement(pool = world.types.pool, id = receiverType) < 0:
+        return out
+    if inUnsafeRange(ranges = ranges, offset = member.start):
+        return out
+    return appendExprError(out = out, unit = unit, offset = member.start, kind = .exprMemberFailed, name = "无主引用", detail = "无主引用的成员访问需要 unsafe 上下文", code = "E4-001")
+
 ; 弱引用：操作数的类型必须是对象；结构、枚举、标量与函数值没有弱引用旁表。
 checkWeakRefNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, types: ExprTypes, node: I32, out: ExprCheck,) -> (ExprCheck,):
     let operand = unit.ast.childOf(id = node, index = 0)
@@ -354,6 +384,7 @@ checkUnitExprs|func(world: MemberWorld, unitIndex: I32, types: ExprTypes,) -> (E
                 out = checkIdentifierNode(world = world, unit = unit, bytes = bytes, locals = known, node = i, out = out)
         elif unit.ast.isMemberExpr(i):
             out = checkMemberNode(world = world, unit = unit, bytes = bytes, shadow = shadow, node = i, out = out)
+            out = checkUnownedAccessNode(world = world, unit = unit, unitIndex = unitIndex, types = types, ranges = ranges, node = i, out = out)
         elif unit.ast.isCallExpr(i):
             out = checkCallNode(world = world, unit = unit, unitIndex = unitIndex, bytes = bytes, shadow = shadow, types = types, ranges = ranges, node = i, out = out)
         elif unit.ast.isJoinExpr(i):

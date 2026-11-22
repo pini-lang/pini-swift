@@ -64,6 +64,8 @@ irEnumTagGet
 irEnumPayloadGet
 irWeakRefConstruct
 irWeakRefValue
+irUnownedRefConstruct
+irUnownedRefValue
 
 ; 语句节点类别：项序即类别码，码段从 101 起，与表达式段分开。
 [IrStmtKind]
@@ -113,6 +115,7 @@ irTypePointer
 irTypeCFunction
 irTypeStringHandle
 irTypeWeakRef
+irTypeUnownedRef
 
 ; 类型条目：类别、名义拼写、分量与返回；`uses` 只给函数类型记取用参数位，`flags` 位 0 表示对象。
 (IrTypeEntry)
@@ -272,6 +275,10 @@ irExprTag|func(_kind: IrExprKind,) -> (I32,):
             return 59
         case irWeakRefValue:
             return 60
+        case irUnownedRefConstruct:
+            return 61
+        case irUnownedRefValue:
+            return 62
     return 0
 
 ; 语句类别码：与枚举项序一致，码段从 101 起。
@@ -381,6 +388,8 @@ irTypeTag|func(_kind: IrTypeClass,) -> (I32,):
             return 23
         case irTypeWeakRef:
             return 24
+        case irTypeUnownedRef:
+            return 25
     return 0
 
 ; 类型类别反查：跨包不能引用枚举项，按码取类别；未登记按 i32 兜底。
@@ -431,6 +440,8 @@ irTypeClassOf|func(code: I32,) -> (IrTypeClass,):
         return .irTypeStringHandle
     if code == 24:
         return .irTypeWeakRef
+    if code == 25:
+        return .irTypeUnownedRef
     return .irTypeI32
 
 ; 按码造标量：测试与工具跨包建类型，不起前导点。

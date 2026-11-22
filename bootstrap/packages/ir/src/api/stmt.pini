@@ -234,12 +234,21 @@ writeField|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: Ty
     if rhs.failed:
         return takeStmtFailure(out = done, detail = rhs.detail, offset = rhs.offset)
     let fieldName = decodeSpelling(bytes = bytes, start = member.nameStart, end = member.nameEnd)
-    let slot = fieldSlotInFrame(frame = done.frame, receiverTypeId = irNodeAt(pool = done.pool, id = recvOne.id).typeId, name = fieldName)
+    ; 无主引用透传：接收者先解引用，字段按元素类型找；unsafe 门禁在检查面判过。
+    var receiverId = recvOne.id
+    var receiverType = irNodeAt(pool = done.pool, id = receiverId).typeId
+    let unownedReceiver = irUnownedRefElement(pool = map.pool, id = receiverType)
+    if unownedReceiver >= 0:
+        let unwrapped = addIrNode(pool = done.pool, kind = irExprTag(.irUnownedRefValue), typeId = unownedReceiver, op = 0, kids = [receiverId])
+        done.pool = unwrapped.pool
+        receiverId = unwrapped.id
+        receiverType = unownedReceiver
+    let slot = fieldSlotInFrame(frame = done.frame, receiverTypeId = receiverType, name = fieldName)
     if slot < 0:
         return missStmt(out = done, unit = unit, stmtId = stmtId, what = "字段 " + fieldName + " 不在声明里")
     var node = irMakeNode(kind = irStmtTag(.irFieldStore), typeId = typeId)
     node.op = slot
-    node.kids = [recvOne.id, rhs.id]
+    node.kids = [receiverId, rhs.id]
     node = fillStore(node = node, pool = map.pool, nodes = done.pool, targetTypeId = typeId, valueId = rhs.id, sharingStructs = false, covers = true)
     return appendStmtNode(out = done, node = node, offset = unit.ast.stmtAt(stmtId).start)
 

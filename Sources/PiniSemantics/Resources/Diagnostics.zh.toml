@@ -229,6 +229,10 @@ suggestion = "补 return，或把末句写成能交出返回类型的表达式�
 message = "`weak` 的操作数必须是对象：`{type}` 没有弱引用旁表"
 suggestion = "只对对象取弱引用；结构、枚举、标量与函数值按值或按引用共享，不需要弱引用"
 
+[E4-043]
+message = "`UnownedRef` 的操作数必须是对象：`{type}` 没有可借的对象箱"
+suggestion = "只对对象取无主引用；结构、枚举、标量与函数值没有计数箱，按值或按引用共享即可"
+
 [E5-001]
 message = "未定义变量 '{name}'"
 suggestion = "你是想说 '{closest}' 吗？"

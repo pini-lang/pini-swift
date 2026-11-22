@@ -202,6 +202,7 @@ public struct DiagnosticPublisher {
         case .lifecycleShapeInvalid(_, let loc): return loc
         case .missingReturn(_, let loc): return loc
         case .weakOperandNotObject(_, let loc): return loc
+        case .unownedOperandNotObject(_, let loc): return loc
         }
     }
 }
