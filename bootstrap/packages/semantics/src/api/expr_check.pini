@@ -67,7 +67,12 @@ hasName|func(items: Array<String>, value: String,) -> (Bool,):
         i = i + 1
     return false
 
-; 已知名字：自身与占位符、文件绑定名、顶层符号、导入别名、内建函数五处。
+; 值位限定名：内建类型名只在限定位置出现（`Optional.some` / `Optional.none`）。
+; 本层判名不判位，单独写出的名字也放过；这是名字检查的已知漏报。
+isValueQualifierName|func(name: String,) -> (Bool,):
+    return name == "Optional"
+
+; 已知名字：自身与占位符、文件绑定名、顶层符号、导入别名、类型限定名、内建函数六处。
 knownName|func(world: MemberWorld, unit: CompilationUnit, locals: Array<String>, name: String,) -> (Bool,):
     if len(name) == 0 || name == "_" || name == "self":
         return true
@@ -76,6 +81,8 @@ knownName|func(world: MemberWorld, unit: CompilationUnit, locals: Array<String>,
     if lookupTopByName(index = world.symbols, name = name) >= 0:
         return true
     if world.table.importIndex(file = unit.path, key = keyOfText(name)) >= 0:
+        return true
+    if isValueQualifierName(name = name):
         return true
     return findBuiltinFunction(functions = world.functions, name = name) >= 0
 

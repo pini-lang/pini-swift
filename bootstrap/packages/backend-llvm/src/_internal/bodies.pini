@@ -1074,7 +1074,7 @@ emitElementAppend|func(ctx: BodyCtx, module: IrModule, receiverText: String, val
     out.text = name
     return out
 
-; 单参直呼：实参按自身类型传，结果按节点类型出；字符与字节桥共用这一形。
+; 单参直呼：实参按自身类型传，结果按节点类型出；空返回不取临时值。
 emitDirectCall|func(ctx: BodyCtx, module: IrModule, node: IrNode, symbol: String,) -> (ExprOut,):
     var out = ExprOut()
     let argId = node.kids[0]
@@ -1083,6 +1083,10 @@ emitDirectCall|func(ctx: BodyCtx, module: IrModule, node: IrNode, symbol: String
     useExtern(use = out.ctx.externs, name = symbol)
     let argType = llvmTypeName(pool = module.types, typeId = irNodeAt(pool = module.nodes, id = argId).typeId)
     let retType = llvmTypeName(pool = module.types, typeId = node.typeId)
+    if retType == "void":
+        appendLine(sink = out.ctx.lines, text = "  call void @" + symbol + "(" + argType + " " + arg.text + ")")
+        out.text = ""
+        return out
     let id = out.ctx.temp
     out.ctx.temp = id + 1
     let name = tempName(index = id)

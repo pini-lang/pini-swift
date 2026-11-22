@@ -275,8 +275,90 @@ def attribute(leg, code):
     return "降载" if leg == "lower" else "发射"
 
 
+# 归因按修复落点判：解析器不认的写法无论报在语法期还是语义期，都归缺语法构造。
+SYMBOL_CODES = ("E3-001", "E3-002", "E3-003")
+
+SITES = (
+    ("无效的顶级声明", "缺语法构造", "顶级声明分派"),
+    ("缺少参数名", "缺语法构造", "形参位：self / own"),
+    ("实际得到?", "缺语法构造", "类型注解的前置 ?"),
+    ("实际得到=", "缺语法构造", "元组元素的标签位"),
+    ("未定义名字：outer", "缺语法构造", "标签控制流：标签位未进解析面"),
+    ("未定义名字：Optional", "缺符号", "值位内建名：类型名作限定构造"),
+    ("未定义名字：Error", "缺符号", "值位内建名：内建错误构造器"),
+    ("未定义名字：joinAll", "缺符号", "值位内建名：并发自由函数"),
+    ("未定义名字：joinWithin", "缺符号", "值位内建名：并发自由函数"),
+    ("类型未声明：T", "缺符号", "类型参数注册"),
+    ("未定义名字：句柄", "缺判定", "对象字段裸名"),
+    ("跳出或继续", "缺判定", "控制流判定"),
+    ("成员不存在", "缺判定", "成员查找"),
+    ("实参类型不匹配", "缺判定", "函数类型可赋值性"),
+    ("空返回带值", "缺判定", "跨文件签名装配"),
+    ("缺少实参标签", "缺判定", "标签面：声明补 `_` 前缀"),
+)
+
+
+def attribute_kind(leg, code, summary):
+    """三类归因按修复落点判，不按诊断码域段。
+
+    夹具未就绪单列待核，不让它混进语言缺口。
+    """
+    if leg == "lower":
+        return ("降载缺口", "-")
+    if leg == "emit":
+        return ("发射缺口", "-")
+    if not code:
+        return ("待核", "无结构化诊断")
+    if code == "E3-011":
+        return ("待核", "夹具未就绪：需先 build")
+    for key, kind, site in SITES:
+        if key in summary:
+            return (kind, site)
+    if code[:2] in ("E1", "E2"):
+        return ("缺语法构造", "解析器")
+    if code in SYMBOL_CODES:
+        return ("缺符号", "符号注册面")
+    return ("缺判定", "检查规则")
+
+
+EXCEPTIONS = OUT / "attribution-exceptions.tsv"
+
+
+def attribution_exceptions():
+    """人工复核的归因例外：只记与规则推断不同的项，条目必须仍在失败集。"""
+    table = {}
+    if not EXCEPTIONS.is_file():
+        return table
+    for line in EXCEPTIONS.read_text(encoding="utf-8").splitlines():
+        if not line or line.startswith("#"):
+            continue
+        cols = line.split("\t")
+        if len(cols) >= 3:
+            table[cols[0]] = (cols[1], cols[2])
+    return table
+
+
+def first_gap(text):
+    """取首条缺口：驱动以「缺口」开头逐条列出，取第一条作摘要。"""
+    for line in text.splitlines():
+        if line.startswith("缺口 "):
+            return line[3:].strip()
+    return ""
+
+
+def lower_errors(text):
+    """降载错误数：驱动打 `lower-ok 函数数 错误数 空体数 类型错数`，第二个数即错误数。"""
+    for line in text.splitlines():
+        if line.startswith("lower-ok "):
+            cols = line.split()
+            if len(cols) >= 3 and cols[2].isdigit():
+                return int(cols[2])
+    return 0
+
+
 def programs_table():
     binary = bootstrap_binary()
+    overrides = attribution_exceptions()
     entries = []
     for path in sorted(EXAMPLES.iterdir()):
         if path.name in ("golden", "README.md", "gate-baseline.tsv"):
@@ -286,33 +368,67 @@ def programs_table():
         elif path.is_dir() and (path / "pini.toml").is_file():
             entries.append((path.name, path, "目录"))
     lines = ["# 程序表：examples 逐个过 check / lower / emit。归因按首条诊断的域段，不按措辞。",
-             "# 失败归因：E1/E2 语法、E3/E4/E5 语义、lower 腿降载、emit 腿发射；无码记待核。",
+             "# 归因列按域段：E1/E2 语法、E3/E4/E5 语义、lower 腿降载、emit 腿发射；无码记待核。",
+             "# 归因类列按修复落点：缺符号进注册面，缺判定进检查规则，缺语法构造进解析器。",
+             "# 示例违规与夹具未就绪单列，不进三类；例外见 attribution-exceptions.tsv。",
              "# 入口即示例路径本身：单文件与目录都由编译器直接收，脚本不包工作区、不复制源码。",
              "# 由 bootstrap/tools/parity.py --full 生成，勿手改；只许缩小。",
-             "程序\t形态\tcheck\tlower\temit\t归因\t首条诊断\t摘要"]
+             "程序\t形态\tcheck\tlower\temit\t归因\t归因类\t修复落点\t首条诊断\t摘要"]
     for name, path, shape in entries:
         root = str(path.relative_to(ROOT))
         legs = {}
         where = "-"
         summary = "-"
         reason = "通过"
+        kind = ("通过", "-")
         for leg in ("check", "lower", "emit"):
             status, out, err = run([binary, leg, root])
-            # 腿的失败有两种显式信号：退出码非零，或驱动打出的 plan / check 失败行。
+            # 四条失败信号：退出码、驱动的 plan / check 失败行、降载错误数、发射缺口。
             failed = status != 0 or "workspace-check-failed" in out or "workspace-plan-failed" in out
+            if leg == "lower" and lower_errors(out) > 0:
+                failed = True
+            if leg == "emit" and "emit-gaps" in out:
+                failed = True
             legs[leg] = "fail" if failed else "ok"
             if failed:
                 code, line, col, message = first_diagnostic(out + err)
+                if leg == "lower" or leg == "emit":
+                    message = first_gap(out) or message
                 reason = attribute(leg, code)
                 where = (f"{code}@{line}:{col}" if line else code) or "-"
                 summary = message[:48] or "-"
+                kind = attribute_kind(leg, code, summary)
+                if name in overrides:
+                    kind = overrides[name]
                 break
         for leg in ("check", "lower", "emit"):
             legs.setdefault(leg, "-")
         lines.append(
-            f"{name}\t{shape}\t{legs['check']}\t{legs['lower']}\t{legs['emit']}\t{reason}\t{where}\t{summary}"
+            f"{name}\t{shape}\t{legs['check']}\t{legs['lower']}\t{legs['emit']}\t{reason}"
+            f"\t{kind[0]}\t{kind[1]}\t{where}\t{summary}"
         )
     return "\n".join(lines) + "\n"
+
+
+def failed_names_from_table(text):
+    """从程序表取失败集：归因类不是「通过」的行。"""
+    names = set()
+    for line in text.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        cols = line.split("\t")
+        if len(cols) >= 7 and cols[6] != "通过":
+            names.add(cols[0])
+    return names
+
+
+def check_exceptions(failed):
+    """例外表只许缩小：条目必须仍在失败集，某条转绿即红并提示删行。"""
+    stale = sorted(name for name in attribution_exceptions() if name not in failed)
+    if stale:
+        fail(f"归因例外已失效：{', '.join(stale)}；删掉 attribution-exceptions.tsv 对应行")
+        return False
+    return True
 
 
 # ---------------------------------------------------------------- 入口
@@ -342,6 +458,10 @@ def main():
                 stale.append(name)
         if stale:
             fail(f"表已过期：{', '.join(stale)}；重跑 python3 bootstrap/tools/parity.py")
+            return 1
+        table = OUT / "programs.tsv"
+        failed = failed_names_from_table(table.read_text(encoding="utf-8")) if table.is_file() else set()
+        if not check_exceptions(failed):
             return 1
         print(f"差异普查通过：{len(produced)} 张表与盘上一致")
         return 0

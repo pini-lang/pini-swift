@@ -580,7 +580,7 @@ try处理器白名单|test() -> ():
     assert(len(结构.generic) == 1, "一个形参")
     return
 
-; 标签控制流：`名|if` / `名|while` / `名|for` 把标签记在语句上，跳出与继续各带标签。
+; 标签控制流：`名|if` / `名|while` / `名|for` 把标签记在语句上，跳出与继续同样记语句名位。
 标签控制流|test() -> ():
     let src = "f|func(表: Array<I32>,) -> ():\n    外层|while 真值:\n        内层|for (项,) in 表:\n            break 内层\n        continue 外层\n    return\n"
     let 结果 = parseText(src)
@@ -601,12 +601,10 @@ try处理器白名单|test() -> ():
     let 内层体 = ast.stmtAt(内层循环).kids[2]
     let 跳出 = ast.stmtAt(内层体).kids[0]
     assert(ast.isBreakStmt(跳出), "跳出语句")
-    let 跳出名 = ast.stmtChild(id = 跳出, index = 0)
-    assert(ast.isIdentifierExpr(跳出名), "跳出带标签")
+    assert(ast.stmtAt(跳出).nameEnd - ast.stmtAt(跳出).nameStart == 6, "跳出带标签：内层")
     let 继续 = ast.stmtAt(内层).kids[1]
     assert(ast.isContinueStmt(继续), "继续语句")
-    let 继续名 = ast.stmtChild(id = 继续, index = 0)
-    assert(ast.isIdentifierExpr(继续名), "继续带标签")
+    assert(ast.stmtAt(继续).nameEnd - ast.stmtAt(继续).nameStart == 6, "继续带标签：外层")
     return
 
 ; capture：函数字面量体里逐行捕获，名字落区间。
@@ -842,4 +840,41 @@ defer单行|test() -> ():
     let 结果 = parseText("((盒))\n取|self<T>(a: T,) -> (T,):\n    return a\n")
     assert(len(结果.diagnostics) > 0, "应报诊断")
     assert(结果.diagnostics[0].code == "E2-001", "错误码 E2-001")
+    return
+
+; 前置可选：`?T` 与后缀 `T?` 同义，两种写法都产出可选类型。
+前置可选|test() -> ():
+    let 结果 = parseText("f|func() -> ():\n    var e: ?I32 = nil\n")
+    assert(len(结果.diagnostics) == 0, "不应有语法诊断")
+    let ast = 结果.ast
+    let 声明 = ast.declAt(ast.itemAt(0))
+    let 块 = ast.stmtAt(声明.body)
+    let 语句 = ast.stmtAt(块.kids[0])
+    assert(语句.kind == stmtKindTag(.stmtVariable), "变量声明")
+    assert(ast.typeAt(语句.typeId).kind == typeKindTag(.typeOptional), "类型位是可选")
+    let 内层 = ast.typeAt(语句.typeId).kids[0]
+    assert(ast.typeAt(内层).kind == typeKindTag(.typeNamed), "内层是具名")
+    return
+
+; 裸函数：顶级 `名(...)` 不写修饰符也是函数声明，名字区间照旧。
+裸函数声明|test() -> ():
+    let 结果 = parseText("main() -> ():\n    return\n")
+    assert(len(结果.diagnostics) == 0, "不应有语法诊断")
+    let ast = 结果.ast
+    assert(ast.itemCount() == 1, "一条顶层声明")
+    assert(ast.isDecl(id = ast.itemAt(0), kind = .declFunction), "函数声明")
+    assert(ast.declAt(ast.itemAt(0)).nameEnd == 4, "名字区间是 main")
+    return
+
+; 特征形参自身：`self` 在参数位是名字，不被当作修饰符先行吃掉。
+特征形参自身|test() -> ():
+    let 结果 = parseText("<可描述>\n描述(self,) -> (String,):\n    return \"默认描述\"\n")
+    assert(len(结果.diagnostics) == 0, "不应有语法诊断")
+    let ast = 结果.ast
+    assert(ast.isDecl(id = ast.itemAt(0), kind = .declTrait), "特征声明")
+    let 特征 = ast.declAt(ast.itemAt(0))
+    let 方法 = ast.declAt(特征.kids[0])
+    assert(len(方法.kids) == 1, "一个形参")
+    let 形参 = ast.declAt(方法.kids[0])
+    assert(形参.nameEnd - 形参.nameStart == 4, "形参名是 self")
     return

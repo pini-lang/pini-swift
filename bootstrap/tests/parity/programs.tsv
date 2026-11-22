@@ -1,73 +1,75 @@
 # 程序表：examples 逐个过 check / lower / emit。归因按首条诊断的域段，不按措辞。
-# 失败归因：E1/E2 语法、E3/E4/E5 语义、lower 腿降载、emit 腿发射；无码记待核。
+# 归因列按域段：E1/E2 语法、E3/E4/E5 语义、lower 腿降载、emit 腿发射；无码记待核。
+# 归因类列按修复落点：缺符号进注册面，缺判定进检查规则，缺语法构造进解析器。
+# 示例违规与夹具未就绪单列，不进三类；例外见 attribution-exceptions.tsv。
 # 入口即示例路径本身：单文件与目录都由编译器直接收，脚本不包工作区、不复制源码。
 # 由 bootstrap/tools/parity.py --full 生成，勿手改；只许缩小。
-程序	形态	check	lower	emit	归因	首条诊断	摘要
-access	单文件	ok	ok	ok	通过	-	-
-array-basic	单文件	fail	-	-	语义	E4-004@25:13	跳出或继续不在循环内（期望 循环内，实得 循环外）
-closures	单文件	fail	-	-	语义	E4-001@27:11	调用不成立：应用（实参类型不匹配）
-collections	单文件	fail	-	-	语法	E2-001@20:20	期望`)`，实际得到=
-comments	单文件	ok	ok	ok	通过	-	-
-composition	单文件	fail	-	-	语义	E4-009@27:5	成员不存在：增加（接收者上没有该成员）
-compound-assign	单文件	ok	ok	ok	通过	-	-
-concurrency-arrow-dual	单文件	ok	ok	ok	通过	-	-
-concurrency-async-contagion-end	单文件	ok	ok	ok	通过	-	-
-concurrency-async-decl	单文件	fail	-	-	语义	E3-002@7:20	未定义名字：Error（文件内没有这个函数）
-concurrency-await	单文件	ok	ok	ok	通过	-	-
-concurrency-cancel	单文件	fail	-	-	语义	E3-002@15:13	未定义名字：joinWithin（文件内没有这个函数）
-concurrency-future-handle	单文件	fail	-	-	语义	E4-009@12:5	成员不存在：cancel（接收者上没有该成员）
-concurrency-joinall-var	单文件	fail	-	-	语义	E3-002@12:15	未定义名字：joinAll（文件内没有这个函数）
-concurrency-joinall	单文件	fail	-	-	语义	E3-002@11:15	未定义名字：joinAll（文件内没有这个函数）
-concurrency	单文件	fail	-	-	语义	E3-002@23:20	未定义名字：Error（文件内没有这个函数）
-control-if	单文件	ok	ok	ok	通过	-	-
-control-while	单文件	fail	-	-	语义	E3-001@23:23	未定义名字：outer（文件内没有这个名字）
-cow	单文件	ok	ok	ok	通过	-	-
-defer	单文件	ok	ok	ok	通过	-	-
-dict-set	单文件	ok	ok	ok	通过	-	-
-enum-dot-case	单文件	ok	ok	ok	通过	-	-
-enum-named	单文件	ok	ok	ok	通过	-	-
-enum-namespacing	单文件	ok	ok	ok	通过	-	-
-enum	单文件	ok	ok	ok	通过	-	-
-ffi-handle	单文件	fail	-	-	语义	E3-001@22:40	未定义名字：句柄（文件内没有这个名字）
-ffi-handwritten	单文件	ok	ok	ok	通过	-	-
-ffi-string-callback	单文件	ok	ok	ok	通过	-	-
-ffi-varargs-handle	单文件	ok	ok	ok	通过	-	-
-ffi	单文件	ok	ok	ok	通过	-	-
-ffi_generated	目录	fail	-	-	语义	E3-011	构建计划不存在：请先运行 build
-ffi_module	目录	ok	ok	ok	通过	-	-
-for	单文件	fail	-	-	语义	E3-001@37:19	未定义名字：outer（文件内没有这个名字）
-generic-func	单文件	ok	ok	ok	通过	-	-
-generic	单文件	fail	-	-	语义	E3-003@5:5	类型未声明：T
-hello	单文件	ok	ok	ok	通过	-	-
-higher-order	单文件	ok	ok	ok	通过	-	-
-io	单文件	ok	ok	ok	通过	-	-
-lambda-typed	单文件	fail	-	-	语义	E4-001@9:11	调用不成立：应用（实参类型不匹配）
-lambda	单文件	ok	ok	ok	通过	-	-
-lazyref	单文件	ok	ok	ok	通过	-	-
-lexical	单文件	ok	ok	ok	通过	-	-
-match	单文件	ok	ok	ok	通过	-	-
-multidim	单文件	ok	ok	ok	通过	-	-
-multifile	目录	ok	ok	ok	通过	-	-
-object	单文件	ok	ok	ok	通过	-	-
-operators	单文件	ok	ok	ok	通过	-	-
-optional-sugar	单文件	fail	-	-	语法	E2-006@26:12	无效的表达式，实际得到?
-optional	单文件	fail	-	-	语义	E3-001@5:13	未定义名字：Optional（文件内没有这个名字）
-own-method	单文件	ok	ok	ok	通过	-	-
-package-demo	目录	fail	-	-	语义	E4-001@8:5	空返回带值（期望 ()，实得 <未定>）
-pointer-address	单文件	ok	ok	ok	通过	-	-
-recursion	单文件	ok	ok	ok	通过	-	-
-slice	单文件	fail	-	-	语义	E3-001@7:19	未定义名字：Optional（文件内没有这个名字）
-stdlib-container-ops	单文件	ok	ok	ok	通过	-	-
-stdlib-container	单文件	ok	ok	ok	通过	-	-
-stdlib-equality	单文件	ok	ok	ok	通过	-	-
-stdlib-probe	单文件	ok	ok	ok	通过	-	-
-stdlib-strings	单文件	fail	-	-	语义	E4-036@7:11	调用不成立：count（缺少实参标签）
-stdlib	单文件	fail	-	-	语义	E4-036@12:11	调用不成立：startsWith（缺少实参标签）
-step	单文件	ok	ok	ok	通过	-	-
-struct	单文件	ok	ok	ok	通过	-	-
-test	单文件	fail	-	-	语法	E2-005@20:1	无效的顶级声明
-trait	单文件	fail	-	-	语法	E2-012@5:8	缺少参数名
-try	单文件	ok	ok	ok	通过	-	-
-tuple	单文件	ok	ok	ok	通过	-	-
-unroll	单文件	ok	ok	ok	通过	-	-
-validated-match	单文件	ok	ok	ok	通过	-	-
+程序	形态	check	lower	emit	归因	归因类	修复落点	首条诊断	摘要
+access	单文件	ok	ok	ok	通过	通过	-	-	-
+array-basic	单文件	fail	-	-	语义	示例违规	match 分支内 break 无外层循环，参考件 6.6 只认循环标签	E4-004@25:13	跳出或继续不在循环内（期望 循环内，实得 循环外）
+closures	单文件	fail	-	-	语义	缺判定	函数类型可赋值性	E4-001@27:11	调用不成立：应用（实参类型不匹配）
+collections	单文件	fail	-	-	语法	缺语法构造	元组元素的标签位	E2-001@20:20	期望`)`，实际得到=
+comments	单文件	ok	ok	ok	通过	通过	-	-	-
+composition	单文件	fail	-	-	语义	缺判定	成员查找	E4-009@27:5	成员不存在：增加（接收者上没有该成员）
+compound-assign	单文件	ok	ok	ok	通过	通过	-	-	-
+concurrency-arrow-dual	单文件	ok	ok	ok	通过	通过	-	-	-
+concurrency-async-contagion-end	单文件	ok	ok	ok	通过	通过	-	-	-
+concurrency-async-decl	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 调用 ./examples/concurrency-async-decl.p
+concurrency-await	单文件	ok	ok	ok	通过	通过	-	-	-
+concurrency-cancel	单文件	fail	-	-	语义	缺判定	成员查找	E4-009@26:5	成员不存在：cancel（接收者上没有该成员）
+concurrency-future-handle	单文件	fail	-	-	语义	缺判定	成员查找	E4-009@12:5	成员不存在：cancel（接收者上没有该成员）
+concurrency-joinall-var	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 调用 ./examples/concurrency-joinall-var.
+concurrency-joinall	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 调用 ./examples/concurrency-joinall.pini
+concurrency	单文件	ok	fail	-	降载	降载缺口	-	-	2 异步函数需带载荷返回 ./examples/concurrency.pini:481
+control-if	单文件	ok	ok	ok	通过	通过	-	-	-
+control-while	单文件	ok	ok	ok	通过	通过	-	-	-
+cow	单文件	ok	fail	-	降载	降载缺口	-	-	1 字典字面量 尚未降载 ./examples/cow.pini:654
+defer	单文件	ok	fail	-	降载	降载缺口	-	-	1 该语句类别尚未降载 ./examples/defer.pini:344
+dict-set	单文件	ok	fail	-	降载	降载缺口	-	-	1 字典字面量 尚未降载 ./examples/dict-set.pini:447
+enum-dot-case	单文件	ok	fail	-	降载	降载缺口	-	-	1 被调表达式 尚未降载 ./examples/enum-dot-case.pini:715
+enum-named	单文件	ok	fail	-	降载	降载缺口	-	-	1 裸名用例 plus 须写成 .plus（候选枚举 1 个） ./examples/enum-
+enum-namespacing	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 标识符 形状 ./examples/enum-namespacing.pin
+enum	单文件	ok	ok	ok	通过	通过	-	-	-
+ffi-handle	单文件	fail	-	-	语义	缺判定	对象字段裸名	E3-001@22:40	未定义名字：句柄（文件内没有这个名字）
+ffi-handwritten	单文件	ok	ok	ok	通过	通过	-	-	-
+ffi-string-callback	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 标识符 比较字节 ./examples/ffi-string-callbac
+ffi-varargs-handle	单文件	ok	ok	ok	通过	通过	-	-	-
+ffi	单文件	ok	ok	ok	通过	通过	-	-	-
+ffi_generated	目录	fail	-	-	语义	待核	夹具未就绪：需先 build	E3-011	构建计划不存在：请先运行 build
+ffi_module	目录	ok	ok	ok	通过	通过	-	-	-
+for	单文件	ok	fail	-	降载	降载缺口	-	-	1 该语句类别尚未降载 ./examples/for.pini:446
+generic-func	单文件	ok	fail	-	降载	降载缺口	-	-	1 泛型实例调用带标签实参 尚未降载 ./examples/generic-func.pini:
+generic	单文件	fail	-	-	语义	缺符号	类型参数注册	E3-003@5:5	类型未声明：T
+hello	单文件	ok	ok	ok	通过	通过	-	-	-
+higher-order	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 标识符 加倍 ./examples/higher-order.pini:48
+io	单文件	ok	ok	ok	通过	通过	-	-	-
+lambda-typed	单文件	fail	-	-	语义	缺判定	函数类型可赋值性	E4-001@9:11	调用不成立：应用（实参类型不匹配）
+lambda	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 函数字面量 ./examples/lambda.pini:165
+lazyref	单文件	ok	ok	ok	通过	通过	-	-	-
+lexical	单文件	ok	ok	fail	发射	发射缺口	-	-	插值段 类别码 12
+match	单文件	ok	ok	ok	通过	通过	-	-	-
+multidim	单文件	ok	fail	-	降载	降载缺口	-	-	1 成员被调 get 尚未降载 ./examples/multidim.pini:485
+multifile	目录	ok	ok	ok	通过	通过	-	-	-
+object	单文件	ok	ok	ok	通过	通过	-	-	-
+operators	单文件	ok	ok	ok	通过	通过	-	-	-
+optional-sugar	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 标识符 Optional ./examples/optional-sugar
+optional	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 标识符 Optional ./examples/optional.pini:
+own-method	单文件	ok	ok	ok	通过	通过	-	-	-
+package-demo	目录	fail	-	-	语义	缺判定	跨文件签名装配	E4-001@8:5	空返回带值（期望 ()，实得 <未定>）
+pointer-address	单文件	ok	ok	ok	通过	通过	-	-	-
+recursion	单文件	ok	ok	ok	通过	通过	-	-	-
+slice	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 标识符 Optional ./examples/slice.pini:519
+stdlib-container-ops	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 标识符 isEven ./examples/stdlib-container
+stdlib-container	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 标识符 double ./examples/stdlib-container
+stdlib-equality	单文件	ok	ok	ok	通过	通过	-	-	-
+stdlib-probe	单文件	ok	ok	ok	通过	通过	-	-	-
+stdlib-strings	单文件	fail	-	-	语义	缺判定	标签面：声明补 `_` 前缀	E4-036@7:11	调用不成立：count（缺少实参标签）
+stdlib	单文件	fail	-	-	语义	缺判定	标签面：声明补 `_` 前缀	E4-036@12:11	调用不成立：startsWith（缺少实参标签）
+step	单文件	ok	fail	-	降载	降载缺口	-	-	1 带 step 的循环 ./examples/step.pini:437
+struct	单文件	ok	ok	fail	发射	发射缺口	-	-	外部调用 sqrt
+test	单文件	ok	ok	ok	通过	通过	-	-	-
+trait	单文件	fail	-	-	语义	缺判定	对象字段裸名：方法内裸名引用本对象字段，字段名不入规则关键词	E3-001@14:12	未定义名字：名字（文件内没有这个名字）
+try	单文件	ok	fail	-	降载	降载缺口	-	-	1 错误处理 尚未降载 ./examples/try.pini:309
+tuple	单文件	ok	fail	-	降载	降载缺口	-	-	1 元组 尚未降载 ./examples/tuple.pini:385
+unroll	单文件	ok	ok	ok	通过	通过	-	-	-
+validated-match	单文件	ok	fail	-	降载	降载缺口	-	-	1 裸名用例 北 须写成 .北（候选枚举 1 个） ./examples/validated-m

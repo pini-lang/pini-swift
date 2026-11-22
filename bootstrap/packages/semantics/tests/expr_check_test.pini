@@ -61,6 +61,36 @@ types: ExprTypes = ExprTypes()
     assert(isExprError(error = check.errors[0], kind = .exprCallFailed), "实得 " + exprErrorName(check.errors[0].kind))
     return
 
+; 跳出标签：标签记在语句名位，不进表达式池，表达式检查不按名字判它。
+跳出标签不进池|test() -> ():
+    let 样例 = 造表达式样例(files = ["packages/p/src/api/p.pini"], texts = ["f|func() -> ():\n    outer|while true:\n        break outer\n"])
+    let check = checkUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
+    assert(len(check.errors) == 0, "标签不该按名字判，实得 " + exprError串(check))
+    return
+
+; 错误与并发内建名：五个内建名在值位可解析，不再按未定义名字或未定义函数报。
+错误与并发内建名|test() -> ():
+    let 样例 = 造表达式样例(files = ["packages/p/src/api/p.pini"], texts = ["f|func() -> ():\n    var e = Error(\"x\")\n    var c = CancelError(\"y\")\n    var k = isCancel(e)\n    var a = joinAll([e])\n    var b = joinWithin(a, 10)\n"])
+    let check = checkUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
+    assert(len(check.errors) == 0, "内建名不该报，实得 " + exprError串(check))
+    return
+
+; 可选限定名：`Optional` 是内建类型名，限定构造不按未定义名字报。
+可选限定名|test() -> ():
+    let 样例 = 造表达式样例(files = ["packages/p/src/api/p.pini"], texts = ["f|func() -> ():\n    var a = Optional.some(1)\n    var b = Optional.none\n"])
+    let check = checkUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
+    assert(len(check.errors) == 0, "Optional 限定构造不该报，实得 " + exprError串(check))
+    return
+
+; 内建名按签名判个数：返回未定也先对实参个数，签名表不能空转。
+内建名按签名判个数|test() -> ():
+    let 样例 = 造表达式样例(files = ["packages/p/src/api/p.pini"], texts = ["f|func() -> ():\n    var e = Error()\n    var b = joinWithin(1)\n"])
+    let check = checkUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
+    assert(len(check.errors) == 2, "应报两条，实得 " + exprError串(check))
+    assert(check.errors[0].code == "E4-005", "实得 " + check.errors[0].code)
+    assert(check.errors[1].code == "E4-005", "实得 " + check.errors[1].code)
+    return
+
 ; 收齐错误串：测试断言失败时给出可读内容。
 exprError串|func(_check: ExprCheck,) -> (String,):
     var out = ""

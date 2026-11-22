@@ -1,8 +1,8 @@
 ; 内建签名表：`String`、`Array`、`Dictionary` 的成员面与全部内建函数，全语言唯一来源。
 ; 形状描述形参与返回落在哪类类型上；占位按接收者实参回填，Any 表示不限（调用侧跳过比对）。
-; 指针、并发与 `ok`/`err` 构造器走专属路径，不在本表。
+; 指针、`ok`/`err` 与 `LazyRef`/`UnownedRef` 构造走专属路径，不在本表；并发自由函数只在此登记签名。
 
-; 形状：固定标量、容器、可选、元组、结果与指针各一类；Any 只用于形参。
+; 形状：固定标量、容器、可选、元组、结果、错误与指针各一类；Any 只用于形参。
 [BuiltinShape]
 builtinAny
 builtinVoid
@@ -26,6 +26,8 @@ builtinDictValue
 builtinOptionalValue
 builtinResultString
 builtinResultVoid
+builtinError
+builtinCancelError
 builtinPointerU8
 
 ; 内建形参：名字服务标签与诊断，形状决定类型；sized 表示实参须是可取长的类型。
@@ -95,6 +97,10 @@ builtinShapeName|func(_shape: BuiltinShape,) -> (String,):
             return "字符串结果"
         case builtinResultVoid:
             return "空结果"
+        case builtinError:
+            return "错误"
+        case builtinCancelError:
+            return "取消错误"
         case builtinPointerU8:
             return "字节指针"
     return "未知形状"
@@ -191,6 +197,9 @@ builtinFunctionTable|func() -> (Array<BuiltinFunction>,):
     out = out.append(makeFunction(name = "print", params = oneParam(name = "value", shape = .builtinAny), ret = .builtinVoid, variadic = true))
     out = out.append(makeFunction(name = "assert", params = twoParams(first = "条件", firstShape = .builtinBool, second = "消息", secondShape = .builtinString), ret = .builtinVoid, variadic = true))
     out = out.append(makeFunction(name = "F64", params = oneParam(name = "value", shape = .builtinAny), ret = .builtinF64, variadic = false))
+    ; 错误构造：消息串进、错误值出；取消错误与业务错误并列，判别只经 `isCancel`。
+    out = out.append(makeFunction(name = "Error", params = oneParam(name = "message", shape = .builtinString), ret = .builtinError, variadic = false))
+    out = out.append(makeFunction(name = "CancelError", params = oneParam(name = "message", shape = .builtinString), ret = .builtinCancelError, variadic = false))
     out = out.append(makeFunction(name = "is_letter", params = oneParam(name = "value", shape = .builtinChar), ret = .builtinBool, variadic = false))
     out = out.append(makeFunction(name = "is_ascii_digit", params = oneParam(name = "value", shape = .builtinChar), ret = .builtinBool, variadic = false))
     out = out.append(makeFunction(name = "is_number", params = oneParam(name = "value", shape = .builtinChar), ret = .builtinBool, variadic = false))
@@ -220,6 +229,10 @@ builtinFunctionTable|func() -> (Array<BuiltinFunction>,):
     out = out.append(makeFunction(name = "cos", params = oneParam(name = "x", shape = .builtinF64), ret = .builtinF64, variadic = false))
     out = out.append(makeFunction(name = "tan", params = oneParam(name = "x", shape = .builtinF64), ret = .builtinF64, variadic = false))
     out = out.append(makeFunction(name = "sleep", params = oneParam(name = "ms", shape = .builtinI32), ret = .builtinVoid, variadic = false))
+    ; 并发自由函数：返回形状待定（任务句柄与结果都由降载面给），此处只锁名字与个数。
+    out = out.append(makeFunction(name = "isCancel", params = oneParam(name = "e", shape = .builtinError), ret = .builtinBool, variadic = false))
+    out = out.append(makeFunction(name = "joinAll", params = oneParam(name = "futures", shape = .builtinAny), ret = .builtinAny, variadic = false))
+    out = out.append(makeFunction(name = "joinWithin", params = twoParams(first = "future", firstShape = .builtinAny, second = "ms", secondShape = .builtinI32), ret = .builtinAny, variadic = false))
     out = out.append(makeFunction(name = "fromCString", params = oneParam(name = "p", shape = .builtinPointerU8), ret = .builtinString, variadic = false))
     return out
 
@@ -360,6 +373,10 @@ builtinShapeType|func(pool: TypePool, shape: BuiltinShape, kids: Array<I32>,) ->
         return resultType(pool = text.pool, elem = text.id)
     if isBuiltinShape(shape = shape, expected = .builtinResultVoid):
         return resultVoid(pool)
+    if isBuiltinShape(shape = shape, expected = .builtinError):
+        return scalarType(pool = pool, name = "Error")
+    if isBuiltinShape(shape = shape, expected = .builtinCancelError):
+        return scalarType(pool = pool, name = "CancelError")
     if isBuiltinShape(shape = shape, expected = .builtinPointerU8):
         return pointerU8(pool)
     return hitType(pool = pool, id = -1)

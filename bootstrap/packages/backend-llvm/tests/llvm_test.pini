@@ -434,6 +434,46 @@ _backend_kit = "../../backend-kit"
     assert(发射含子串(text = result.text, needle = "declare ptr @bk_temp_utf8_bytes(ptr)"), "字节桥声明应与调用同形")
     return
 
+; 睡眠模块：main 里一条睡眠调用、一条返回；调用节点无类型即空返回。
+发射造睡眠模块|func() -> (IrModule,):
+    var module = IrModule()
+    module.types = 发射造类型池()
+    module.texts = module.texts.append("sleep")
+    var nodes = IrNodePool()
+    var span = irMakeNode(kind = tagOfName(name = "intConst"), typeId = 0)
+    span.intValue = 5
+    let placedSpan = irAppendNode(pool = nodes, node = span)
+    nodes = placedSpan.pool
+    var nap = irMakeNode(kind = tagOfName(name = "call"), typeId = -1)
+    nap.text = 0
+    nap.kids = [placedSpan.id]
+    let placedNap = irAppendNode(pool = nodes, node = nap)
+    nodes = placedNap.pool
+    var statement = irMakeNode(kind = tagOfName(name = "exprStmt"), typeId = -1)
+    statement.kids = [placedNap.id]
+    let placedStatement = irAppendNode(pool = nodes, node = statement)
+    nodes = placedStatement.pool
+    var back = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    let placedBack = irAppendNode(pool = nodes, node = back)
+    nodes = placedBack.pool
+    module.nodes = nodes
+    var fn = IrFunction()
+    fn.name = "main"
+    fn.returnType = -1
+    fn.body = [placedStatement.id, placedBack.id]
+    module.functions = module.functions.append(fn)
+    return module
+
+; 睡眠直呼：空返回的单参内建不出临时值，声明与调用同形。
+睡眠直呼|test() -> ():
+    let module = 发射造睡眠模块()
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    if result.failed:
+        assert(false, "缺口：" + result.gaps[0])
+    assert(发射含子串(text = result.text, needle = "call void @bk_sleep(i32 5)"), "睡眠应按空返回直呼")
+    assert(发射含子串(text = result.text, needle = "declare void @bk_sleep(i32)"), "睡眠声明应与调用同形")
+    return
+
 ; 名义模块的类型池：i32 与值语义名义类型 Point；对象位为零。
 发射造名义类型池|func() -> (IrTypePool,):
     var pool = IrTypePool()
