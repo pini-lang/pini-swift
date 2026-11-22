@@ -30,7 +30,7 @@ enum-dot-case	单文件	ok	fail	-	降载	降载缺口	-	-	1 被调表达式 尚�
 enum-named	单文件	ok	fail	-	降载	降载缺口	-	-	1 裸名用例 plus 须写成 .plus（候选枚举 1 个） ./examples/enum-
 enum-namespacing	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 标识符 形状 ./examples/enum-namespacing.pin
 enum	单文件	ok	ok	ok	通过	通过	-	-	-
-ffi-handle	单文件	fail	-	-	语义	缺判定	对象字段裸名	E3-001@22:40	未定义名字：句柄（文件内没有这个名字）
+ffi-handle	单文件	ok	ok	ok	通过	通过	-	-	-
 ffi-handwritten	单文件	ok	ok	ok	通过	通过	-	-	-
 ffi-string-callback	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 标识符 比较字节 ./examples/ffi-string-callbac
 ffi-varargs-handle	单文件	ok	ok	ok	通过	通过	-	-	-
@@ -63,12 +63,12 @@ stdlib-container-ops	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类�
 stdlib-container	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 标识符 double ./examples/stdlib-container
 stdlib-equality	单文件	ok	ok	ok	通过	通过	-	-	-
 stdlib-probe	单文件	ok	ok	ok	通过	通过	-	-	-
-stdlib-strings	单文件	fail	-	-	语义	缺判定	标签面：声明补 `_` 前缀	E4-036@7:11	调用不成立：count（缺少实参标签）
-stdlib	单文件	fail	-	-	语义	缺判定	标签面：声明补 `_` 前缀	E4-036@12:11	调用不成立：startsWith（缺少实参标签）
+stdlib-strings	单文件	ok	ok	ok	通过	通过	-	-	-
+stdlib	单文件	ok	ok	fail	发射	发射缺口	-	-	外部调用 abs
 step	单文件	ok	fail	-	降载	降载缺口	-	-	1 带 step 的循环 ./examples/step.pini:437
 struct	单文件	ok	ok	fail	发射	发射缺口	-	-	外部调用 sqrt
 test	单文件	ok	ok	ok	通过	通过	-	-	-
-trait	单文件	fail	-	-	语义	缺判定	对象字段裸名：方法内裸名引用本对象字段，字段名不入规则关键词	E3-001@14:12	未定义名字：名字（文件内没有这个名字）
+trait	单文件	ok	ok	ok	通过	通过	-	-	-
 try	单文件	ok	fail	-	降载	降载缺口	-	-	1 错误处理 尚未降载 ./examples/try.pini:309
 tuple	单文件	ok	fail	-	降载	降载缺口	-	-	1 元组 尚未降载 ./examples/tuple.pini:385
 unroll	单文件	ok	ok	ok	通过	通过	-	-	-

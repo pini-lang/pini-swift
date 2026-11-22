@@ -19,9 +19,9 @@ free: (*U8,) -> ()
 
 [[文件]]
 读|self(缓冲: *U8, 大小: U64,) -> (U64,):
-        return unsafe fread(缓冲, 1, 大小, 句柄)
+        return unsafe fread(缓冲, 1, 大小, self.句柄)
 关闭|self() -> (I32,):
-        return unsafe fclose(句柄)
+        return unsafe fclose(self.句柄)
 
 main|func() -> ():
     var 缓冲 = unsafe malloc(8)
