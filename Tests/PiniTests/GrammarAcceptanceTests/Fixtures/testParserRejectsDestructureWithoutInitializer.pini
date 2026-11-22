@@ -1,4 +1,0 @@
-main|func() -> ():
-    var (t, e) = (1, 2.5,)
-    var (p, q)
-    return

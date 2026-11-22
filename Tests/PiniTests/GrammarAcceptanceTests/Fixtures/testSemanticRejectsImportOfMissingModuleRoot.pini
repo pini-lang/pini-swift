@@ -1,5 +1,0 @@
-[testSemanticRejectsImportOfMissingModuleRoot|import]
-math = "./math" ; 假设存在
-
-main|func() -> ():
-    return

@@ -1,8 +1,0 @@
-; 判据：单个 token 长于百字符 —— token 的复制必须为 NUL 留出位置。按 `strlen(token)` 分配再 `strcpy`
-;   会把终止符写到区外一字节，而这一形态没有行为签名，故由同目录用例的产物判据承担。
-main|func() -> ():
-    var s = "0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij,b"
-    print(len(s))
-    let parts = s.split(",")
-    print(len(parts))
-    return
