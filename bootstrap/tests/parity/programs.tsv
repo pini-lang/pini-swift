@@ -55,7 +55,7 @@ operators	单文件	ok	ok	ok	通过	通过	-	-	-
 optional-sugar	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 标识符 Optional ./examples/optional-sugar
 optional	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 标识符 Optional ./examples/optional.pini:
 own-method	单文件	ok	ok	ok	通过	通过	-	-	-
-package-demo	目录	fail	-	-	语义	缺判定	跨文件签名装配	E4-001@8:5	空返回带值（期望 ()，实得 <未定>）
+package-demo	目录	ok	ok	ok	通过	通过	-	-	-
 pointer-address	单文件	ok	ok	ok	通过	通过	-	-	-
 recursion	单文件	ok	ok	ok	通过	通过	-	-	-
 slice	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 标识符 Optional ./examples/slice.pini:519

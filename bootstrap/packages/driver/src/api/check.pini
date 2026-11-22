@@ -252,8 +252,12 @@ bodyDiagnostics|func(_check: BodyCheck,) -> (Array<Diagnostic>,):
         var message = bodyErrorName(error.kind)
         if len(error.name) > 0:
             message = message + "：" + error.name
-        if len(error.expected) > 0 || len(error.got) > 0:
+        if len(error.expected) > 0 && len(error.got) > 0:
             message = message + "（期望 " + error.expected + "，实得 " + error.got + "）"
+        elif len(error.expected) > 0:
+            message = message + "（期望 " + error.expected + "）"
+        elif len(error.got) > 0:
+            message = message + "（实得 " + error.got + "）"
         out = out.append(makeCheckDiagnostic(file = error.file, category = typeCategory(), code = bodyErrorCode(error.kind), message = message, offset = error.offset))
         i = i + 1
     return out
@@ -267,8 +271,12 @@ storeDiagnostics|func(_check: StoreCheck,) -> (Array<Diagnostic>,):
         var message = storeErrorName(error.kind)
         if len(error.name) > 0:
             message = message + "：" + error.name
-        if len(error.expected) > 0 || len(error.got) > 0:
+        if len(error.expected) > 0 && len(error.got) > 0:
             message = message + "（期望 " + error.expected + "，实得 " + error.got + "）"
+        elif len(error.expected) > 0:
+            message = message + "（期望 " + error.expected + "）"
+        elif len(error.got) > 0:
+            message = message + "（实得 " + error.got + "）"
         out = out.append(makeCheckDiagnostic(file = error.file, category = typeCategory(), code = storeErrorCode(error.kind), message = message, offset = error.offset))
         i = i + 1
     return out
