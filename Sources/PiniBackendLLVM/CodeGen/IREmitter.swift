@@ -592,6 +592,8 @@ public final class IREmitter {
         }
 
         var tail = ""
+        // 进程入口的收尾钩子：`main` 的每条返回前都要调，故与函数数量无关，一律声明。
+        tail += Builtins.declaration(for: "bk_runtime_cleanup")
         // 测试模式的两个模块级插槽（ 行不通  不是运行时段符号，见 `testFailedGlobal` 那条注释）。
         // `internal` 而非 `private`：驱动器与各测试函数都在本模块内，两者都要读写它们。
         if testMode {
@@ -909,6 +911,9 @@ public final class IREmitter {
             // 根帧的清理已在块尾执行完；`return` 也在自己的 `ret` 前发过一份副本，
             // 两条路径不会都跑。此标签只剩返回。
             if currentIsMain {
+                // 收尾必须在进程还在入口函数里时做：JIT 在 `main` 返回后即销毁，
+                // 那时再清会去调已失效的发射层钩子。两次调用幂等，先到的那次生效。
+                bodyIR += " call void @bk_runtime_cleanup()\n"
                 bodyIR += " ret i32 0\n"
             } else if let returnType = function.returnType {
                 bodyIR += " ret \(returnType.llvmSpelling) undef\n"
@@ -1127,6 +1132,8 @@ public final class IREmitter {
         d += " \(driverResult) = call i32 @\(Self.testDriverName)()\n"
         d += " \(nonZero) = icmp ne i32 \(driverResult), 0\n"
         d += " \(code) = select i1 \(nonZero), i32 1, i32 0\n"
+        // 测试模式的入口同样是进程收尾点：先清运行时，再把退出码交回 C。
+        d += " call void @bk_runtime_cleanup()\n"
         d += " ret i32 \(code)\n"
         d += "}\n\n"
         return d
@@ -1489,6 +1496,8 @@ public final class IREmitter {
             if let returnedValue {
                 bodyIR += " ret \(returnedValue.llvmType) \(returnedValue.ssaName)\n"
             } else if currentIsMain {
+                // 同 `exit_block` 那条：入口内的显式 `return` 也要在 JIT 仍有效时收尾。
+                bodyIR += " call void @bk_runtime_cleanup()\n"
                 bodyIR += " ret i32 0\n"
             } else {
                 bodyIR += " ret void\n"

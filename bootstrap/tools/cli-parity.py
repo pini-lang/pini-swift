@@ -68,7 +68,11 @@ def newest_mtime(paths):
 
 def ensure_fresh(host, mine):
     """产物必须新于源码：旧二进制会把上一批的行为钉成期望。"""
-    host_sources = list((ROOT / "Sources").rglob("*.swift")) + [ROOT / "Package.swift"]
+    host_sources = [
+        path for path in (ROOT / "Sources").rglob("*.swift")
+        # 运行时库不是宿主二进制的链接输入（CLI 只经 dlopen 加载它），不算它落后。
+        if path.relative_to(ROOT / "Sources").parts[0] != "PiniRuntime"
+    ] + [ROOT / "Package.swift"]
     mine_sources = [path for path in (ROOT / "bootstrap" / "packages").rglob("*.pini")
                     if "src" in path.parts]
     if newest_mtime(host_sources) > host.stat().st_mtime + 1:

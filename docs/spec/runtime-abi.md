@@ -112,7 +112,7 @@
 |---|---|---|
 | `bk_ptr_*` | 6 | 保留。LLVM FFI 的预留面，删掉后接 FFI 时无处接线 |
 | `bk_task_is_cancelled` `bk_capabilities` `bk_task_yield` `bk_task_state` | 4 | 解释器与宿主观测面，发射器不产出 |
-| `bk_str_alloc` `bk_str_header_bytes` `bk_str_refcount` `bk_str_table_min_cap` `bk_handle_shares` `bk_scope_close` `bk_runtime_cleanup` | 7 | 只被 ABI 测试或宿主直接调用；`bk_str_alloc` 的拼接调用点已并入 `bk_str_concat` |
+| `bk_str_alloc` `bk_str_header_bytes` `bk_str_refcount` `bk_str_table_min_cap` `bk_handle_shares` `bk_scope_close` | 6 | 只被 ABI 测试或宿主直接调用；`bk_str_alloc` 的拼接调用点已并入 `bk_str_concat` |
 | `bk_str_handle_bytes` `bk_str_handle_len` `bk_str_handle_retain` `bk_str_handle_release` | 4 | C 侧读字节与收账的入口；发射器只发 `bk_str_handle_new` |
 | `bk_double_bits` `bk_parse_double` | 2 | 只由自举编译器在编译期调用，发射器不产出 |
 

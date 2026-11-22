@@ -461,6 +461,12 @@ public enum Builtins {
             family: .scheduler, lowerings: ["<entry>"]
         ),
 
+        // MARK: runtime
+        BuiltinSpec(
+            symbol: "bk_runtime_cleanup", signature: .init(result: "void", parameters: []),
+            family: .runtime, lowerings: ["<cleanup>"]
+        ),
+
         // MARK: error
         BuiltinSpec(
             symbol: "bk_cancel_error_create", signature: .init(result: "i64", parameters: ["ptr"]),

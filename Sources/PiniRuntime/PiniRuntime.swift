@@ -625,16 +625,48 @@ public func bk_given_get(
     return buf
 }
 
-/// 进程退出时释放所有活动句柄（数组 / 字典 / 集合），避免句柄泄漏（D0 阶段护栏；
-/// D4.2.3 收紧为作用域精确销毁后本函数退化为兜底）。
+/// 任务侧的活动区间：任务体与调度循环都会执行发射层代码，退出清理必须等它们离场。
+/// 计数不区分线程来源；等不到静止就整批跳过（进程随即回收内存，泄漏无害）。
+nonisolated(unsafe) private var _bkTaskSideBusy = 0
+private let _bkTaskSideCond = NSCondition()
+nonisolated(unsafe) private var _bkRuntimeCleaned = false
+
+private func _bkTaskSideEnter() {
+    _bkTaskSideCond.lock()
+    _bkTaskSideBusy += 1
+    _bkTaskSideCond.unlock()
+}
+
+private func _bkTaskSideLeave() {
+    _bkTaskSideCond.lock()
+    _bkTaskSideBusy -= 1
+    _bkTaskSideCond.broadcast()
+    _bkTaskSideCond.unlock()
+}
+
+/// 等任务侧离场；返回是否真的静止。超时即放弃等待 —— 死等会让「有未决任务的程序」退不出。
+private func _bkWaitTaskSideQuiescent(milliseconds: Int) -> Bool {
+    _bkTaskSideCond.lock()
+    let deadline = Date().addingTimeInterval(Double(milliseconds) / 1000)
+    while _bkTaskSideBusy > 0 {
+        if !_bkTaskSideCond.wait(until: deadline) { break }
+    }
+    let quiet = _bkTaskSideBusy == 0
+    _bkTaskSideCond.unlock()
+    return quiet
+}
+
+/// 进程收尾时清空活动句柄表（数组 / 字典 / 集合）。只清表、不逐个释放：表里同时有容器与它的
+/// 元素，退出期无从定序（元素账在外层 deinit 里），逐个释放会让外层二次访问已回收的元素。
+/// 幂等：程序入口与退出钩子都会调，先到的那次生效。内存随进程结束由系统回收。
 @_cdecl("bk_runtime_cleanup")
 public func bk_runtime_cleanup() {
-    // deinit 会递归修改 `_liveHandles`（释放嵌套句柄的 share），故先整体摘出再逐个 release。
+    if _bkRuntimeCleaned { return }
+    guard _bkWaitTaskSideQuiescent(milliseconds: 500) else { return }
+    _bkRuntimeCleaned = true
     _liveHandlesLock.lock()
-    let all = Array(_liveHandles.values)
     _liveHandles.removeAll()
     _liveHandlesLock.unlock()
-    for u in all { u.release() }
 }
 
 /// 进程退出钩子：先打让出观测汇总，再统一回收活动句柄。
@@ -2880,8 +2912,12 @@ private func _bkSpawnTaskThread(_ h: UnsafeMutableRawPointer) {
 ///  注意  让出时不决出 `future` —— 那是续跑方的责任；本层只让这件事可观测（`box.suspended`）并计数。
 private func _bkTaskRunBody(_ h: UnsafeMutableRawPointer) {
     guard let box = _bkTaskBox(h), let wrapper = box.wrapper else { return }
+    _bkTaskSideEnter()
     let restore = _bkTaskEnter(h)
-    defer { restore() }
+    defer {
+        restore()
+        _bkTaskSideLeave()
+    }
     box.cond.lock()
     //  行不通  这道闸从 L0 的「体已跑过就返回」放开为「**让出态允许续跑**」。
     // 不放开，续跑会被这里**静默吞掉**，而症状是「等待方永久阻塞」——不是崩溃，所以更需要闸本身
@@ -3473,6 +3509,7 @@ private func _bkTaskPick() -> _BkReadyTake {
 
 /// 驱动循环：**问策略要一个 ⇒ 推进它一次**，直到策略说没有下一个。
 private func _bkTaskDrain() {
+    _bkTaskSideEnter()
     _bkReadyLock.lock()
     _bkReadyScheduled = false
     _bkReadyDraining = true
@@ -3522,6 +3559,7 @@ private func _bkTaskDrain() {
     if again {
         DispatchQueue.global().async { _bkTaskDrain() }
     }
+    _bkTaskSideLeave()
 }
 
 /// 策略层坏了 —— 响亮说， 行不通  不静默降级成「没有下一个」。
