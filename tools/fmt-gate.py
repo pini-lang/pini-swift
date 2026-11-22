@@ -51,7 +51,9 @@ def binary():
     if not os.path.isfile(path) or not os.access(path, os.X_OK):
         fail(f"格式门禁：找不到可执行的 pini（{path}）。先 swift build，或设 PINI_BIN。", 2)
     newest_source = os.path.getmtime(os.path.join(ROOT, "Package.swift"))
-    for base, _, files in os.walk(os.path.join(ROOT, "Sources")):
+    for base, dirs, files in os.walk(os.path.join(ROOT, "Sources")):
+        # 运行时库不是 pini 的链接输入（CLI 只经 dlopen 加载它）⇒ 它的改动不算产物落后。
+        dirs[:] = [d for d in dirs if d != "PiniRuntime"]
         for name in files:
             if name.endswith(".swift"):
                 newest_source = max(newest_source, os.path.getmtime(os.path.join(base, name)))
