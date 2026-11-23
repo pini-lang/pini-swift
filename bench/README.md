@@ -17,8 +17,8 @@
 ## 用法
 
 ```bash
-# 先构建（本机需 --disable-sandbox）
-cd Pini && swift build --disable-sandbox
+# 先构建 release 宿主（本机需 --disable-sandbox）
+cd Pini && swift build -c release --disable-sandbox
 
 # 运行基准（默认每个命令重复 3 次取中位数）
 python3 bench/run_benchmarks.py

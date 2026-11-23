@@ -13,6 +13,6 @@ pini_runtime_lib() {
             return 0
         fi
     done
-    echo " 行不通  [运行时段] 缺 $dir/libPiniRuntime.{dylib,so}；先 swift build -c release --product PiniRuntime" >&2
+    echo " 行不通  [运行时段] 缺 $dir/libPiniRuntime.{dylib,so}；先 swift build -c release --disable-sandbox --product PiniRuntime" >&2
     return 1
 }

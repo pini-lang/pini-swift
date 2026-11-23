@@ -131,6 +131,11 @@ PINI_RG=/path/to/rg git commit -m "..."
 3. 执行 `git config user.name / user.email` 设为规范值。
 4. 从 `main` 切出特性分支，按 §3 / §4 工作。
 5. 完成后合回 `main` 并（若有远程）推送。
+6. 宿主只构建 release：`swift build -c release --disable-sandbox`。门禁、钩子与 CI 只认
+   `.build/release/pini`；`tools/host-profile-check.py` 会拦下脚本与命令里写回的 debug 二进制。
+
+> 注意 缺 release 产物时门禁直接拒绝并打印构建命令，不静默回退 debug：两份产物的读数不可比，
+> 且 debug 下整套门禁慢数倍。
 
 > 注意 **开工前先 `git status -sb` 确认所在分支**：本仓库主干为 `main`，改动一律走特性分支（§3）。
 

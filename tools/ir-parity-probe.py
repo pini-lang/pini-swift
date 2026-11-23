@@ -56,13 +56,13 @@ multi-file fixtures still resolve.
 
 WHICH BINARY
 ------------
-The CLI under test is located by asking SwiftPM (`swift build --show-bin-path`,
-with `--scratch-path` when the caller passes one) rather than by naming a
-layout. It used to be a literal path, and a literal path into a build layout is
-a fact with an expiry date: once the layout changed, the probe either refused to
-start -- or, the worse of the two, swept a binary that still happened to sit
-there from an earlier build, reporting a whole table of numbers about code that
-no longer existed. `PINI_SWEEP_BIN` overrides the lookup; that is what a
+The CLI under test is located by asking SwiftPM (`swift build -c release
+--show-bin-path`, with `--scratch-path` when the caller passes one) rather than
+naming a layout. It used to be a literal path, and a literal path into a build
+layout is a fact with an expiry date: once the layout changed, the probe either
+refused to start -- or, the worse of the two, swept a binary that still happened
+to sit there from an earlier build, reporting a whole table of numbers about
+code that no longer existed. `PINI_SWEEP_BIN` overrides the lookup; that is what a
 frozen-artifact flow wants, and it stays.
 
 VERDICTS
@@ -335,7 +335,7 @@ _reaped = []
 
 def _show_bin_path(scratch_path):
     """SwiftPM's answer to "where is the product", or "" if it cannot say."""
-    cmd = ["swift", "build", "--disable-sandbox", "--show-bin-path"]
+    cmd = ["swift", "build", "-c", "release", "--disable-sandbox", "--show-bin-path"]
     if scratch_path:
         cmd += ["--scratch-path", scratch_path]
     try:
@@ -358,7 +358,7 @@ def resolve_bin(scratch_path=None):
 
 def build_hint(scratch_path=None):
     """The one command that lands a CLI exactly where `resolve_bin` reads."""
-    cmd = "swift build --disable-sandbox --product pini"
+    cmd = "swift build -c release --disable-sandbox --product pini"
     if scratch_path:
         cmd += " --scratch-path " + scratch_path
     return cmd
@@ -837,7 +837,7 @@ def main():
                     help="known-gap TSV: a blocker not listed fails the sweep, "
                          "and a listed one that turns clean fails it too (shrink-only)")
     ap.add_argument("--scratch-path", default=None,
-                    help="where the CLI was built: passed to `swift build "
+                    help="where the CLI was built: passed to `swift build -c release "
                          "--show-bin-path` so the probe reads that build, and "
                          "repeated in the hint below when it is missing")
     args = ap.parse_args()

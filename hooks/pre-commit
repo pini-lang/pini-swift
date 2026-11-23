@@ -20,13 +20,17 @@ fi
 
 bash hooks/comment-lint.sh || exit 1
 
+# 宿主口径：脚本、钩子与 CI 只认 release；再写回 debug 二进制在这里先红。
+python3 tools/host-profile-check.py || exit 1
+
 # 格式门禁：产物须与源码同批，旧产物会把新打印器的判据读成绿。
 # 切分支会刷新源码时间戳而产物不动，故本地允许门禁删产物重链；CI 里仍只读拒绝。
-if [ ! -x "$root/.build/debug/pini" ]; then
-    echo " 行不通  [格式] 缺 .build/debug/pini；先 swift build 再提交" >&2
+# 宿主只出 release：debug 产物存在也不参与门禁，缺 release 就拒绝提交。
+if [ ! -x "$root/.build/release/pini" ]; then
+    echo " 行不通  [格式] 缺 .build/release/pini；先 swift build -c release --disable-sandbox 再提交" >&2
     exit 1
 fi
-PINI_GATE_REBUILD=1 PINI_BIN="$root/.build/debug/pini" python3 tools/fmt-gate.py || exit 1
+PINI_GATE_REBUILD=1 PINI_BIN="$root/.build/release/pini" python3 tools/fmt-gate.py || exit 1
 
 # 合并提交要把整棵树验一遍：并回主干就是待推送状态，等推送再验已经晚了。
 # PINI_MERGE_GATE 由 pre-merge-commit 置位（那时 MERGE_HEAD 还没写），MERGE_HEAD 覆盖拦下后补的 git commit。

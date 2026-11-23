@@ -48,5 +48,5 @@ python3 bootstrap/tools/conformance.py --filter 名字   # 单例
 python3 bootstrap/tools/conformance.py --update-baseline
 ```
 
-两侧产物都要先备好：宿主 `swift build --disable-sandbox`，自举 `bash bootstrap/tools/build.sh`。
+两侧产物都要先备好：宿主 `swift build -c release --disable-sandbox`，自举 `bash bootstrap/tools/build.sh`。
 两代对照与不动点归 `bootstrap/tools/selfhost.sh`，不进合并流水线。

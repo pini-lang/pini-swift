@@ -46,6 +46,11 @@ run_body() {
     "注释门禁")
         bash hooks/comment-lint.sh
         ;;
+    "宿主口径门禁")
+        # 宿主只认 release：脚本、钩子与 CI 里再出现 debug 二进制即红，历史读数件豁免。
+        python3 tools/host-profile-check.py --self-test
+        python3 tools/host-profile-check.py
+        ;;
     "文档链接门禁")
         bash tools/check-doc-links.sh
         ;;
@@ -92,7 +97,7 @@ run_body() {
     "工作区奠基门禁")
         # 首代产物是后面两段的输入；无论成败都落标记，等它的两段据产物自行报错。
         local rc=0
-        .build/debug/pini build bootstrap || rc=1
+        .build/release/pini build bootstrap || rc=1
         if [ "$rc" -eq 0 ]; then
             local out
             out="$(cd bootstrap && ./.build/debug/bin/pini-bootstrap)" || rc=1
@@ -109,7 +114,7 @@ run_body() {
         ;;
     "工作区测试门禁")
         # `自解析` 已由 syntax 原生门禁执行，解释器那份是重复；跳过规则零命中会直接红。
-        .build/debug/pini test bootstrap --skip 自解析
+        .build/release/pini test bootstrap --skip 自解析
         ;;
     "自举测试入口自检")
         # 失败夹具必须红、筛选与跳过必须绿、零命中必须非零：入口自身的判据先开火。
@@ -122,43 +127,43 @@ run_body() {
         python3 bootstrap/tools/conformance.py
         ;;
     "support 原生测试门禁")
-        .build/debug/pini test-llvm bootstrap/packages/support
+        .build/release/pini test-llvm bootstrap/packages/support
         ;;
     "unicode 原生测试门禁")
-        .build/debug/pini test-llvm bootstrap/packages/unicode
+        .build/release/pini test-llvm bootstrap/packages/unicode
         ;;
     "diagnostics 原生测试门禁")
-        .build/debug/pini test-llvm bootstrap/packages/diagnostics
+        .build/release/pini test-llvm bootstrap/packages/diagnostics
         ;;
     "syntax 原生测试门禁")
-        .build/debug/pini test-llvm bootstrap/packages/syntax
+        .build/release/pini test-llvm bootstrap/packages/syntax
         ;;
     "module-loader 原生测试门禁")
-        .build/debug/pini test-llvm bootstrap/packages/module-loader
+        .build/release/pini test-llvm bootstrap/packages/module-loader
         ;;
     "semantics 原生测试门禁")
-        .build/debug/pini test-llvm bootstrap/packages/semantics
+        .build/release/pini test-llvm bootstrap/packages/semantics
         ;;
     "driver 原生测试门禁")
-        .build/debug/pini test-llvm bootstrap/packages/driver
+        .build/release/pini test-llvm bootstrap/packages/driver
         ;;
     "ir 原生测试门禁")
-        .build/debug/pini test-llvm bootstrap/packages/ir
+        .build/release/pini test-llvm bootstrap/packages/ir
         ;;
     "格式门禁")
         # 语料已是规范形；豁免表在 tools/fmt-exempt.tsv，拒绝态与语法标本两类都受检，过期即红。
-        PINI_BIN="$PWD/.build/debug/pini" python3 tools/fmt-gate.py
+        PINI_BIN="$PWD/.build/release/pini" python3 tools/fmt-gate.py
         ;;
     "示例门禁")
         # 三腿：check / run / run-llvm。已知失败在 examples/gate-baseline.tsv，只许缩小。
-        PINI_BIN="$PWD/.build/debug/pini" python3 tools/examples-gate.py
+        PINI_BIN="$PWD/.build/release/pini" python3 tools/examples-gate.py
         ;;
     "差分探针门禁")
         # 判据自检不需要 lli：证明「按设计拒绝」那一格会开火，也不会吞掉真缺口。
         python3 tools/ir-parity-probe.py --self-test
         # 镜像没有 lli 时明确跳过并说出原因：跳过不等于通过，故这一行必须打出来。
         if [ -n "${PINI_LLVM_BIN:-}" ] || command -v lli >/dev/null 2>&1; then
-            PINI_SWEEP_BIN="$PWD/.build/debug/pini" python3 tools/ir-parity-probe.py \
+            PINI_SWEEP_BIN="$PWD/.build/release/pini" python3 tools/ir-parity-probe.py \
                 --root examples --baseline tools/ir-parity-baseline.tsv
         else
             echo "  跳过：镜像里没有 lli（未设 PINI_LLVM_BIN，PATH 里也没有）"
@@ -166,7 +171,7 @@ run_body() {
         ;;
     "测试")
         # `-q` 只留失败条目与汇总：逐条 passing 行把日志推到两千行以上。
-        swift test -q --disable-sandbox
+        swift test -c release -q --disable-sandbox
         ;;
     *)
         echo " 行不通  [流水线] 未登记的阶段 $1" >&2
@@ -248,9 +253,10 @@ fi
 export PINI_REQUIRE_TOOLCHAIN=1
 step_end
 
-step_begin "静态门禁（11 项并发）"
+step_begin "静态门禁（12 项并发）"
 if ! run_pool 6 \
     "注释门禁" \
+    "宿主口径门禁" \
     "文档链接门禁" \
     "诊断表一致性门禁" \
     "IR 契约门禁" \
@@ -267,17 +273,17 @@ if ! run_pool 6 \
 fi
 step_end
 
-step_begin "构建"
-swift build --disable-sandbox
-# 运行时段单建 release：自举产物与宿主 LLVM 通道都链接它，debug 构建实测慢五倍。
-swift build -c release --product PiniRuntime --disable-sandbox
+step_begin "构建（宿主只出 release）"
+# 宿主只出 release：门禁跑的就是交付口径；debug 既慢又不代表它，故不留第二份产物。
+# 运行时段随全量 release 一起出，自举产物与宿主 LLVM 通道都链接它。
+swift build -c release --disable-sandbox
 . "$PWD/bootstrap/tools/runtime-lib.sh"
 runtime="$(pini_runtime_lib "$PWD")" || exit 1
 export PINI_RUNTIME_LIB="$runtime"
-export PINI_CLI_BIN="$PWD/.build/debug/pini"
+export PINI_CLI_BIN="$PWD/.build/release/pini"
 # 增量构建按内容判定：内容未变时不重链，产物时间戳也不动；检出却会刷新源码时间戳。
 # 构建在此成功即产物对应当前源码，故把它对齐到此刻，免下游「产物不早于源码」误判。
-touch "$PWD/.build/debug/pini"
+touch "$PWD/.build/release/pini"
 step_end
 
 step_begin "并流判据（16 项）"

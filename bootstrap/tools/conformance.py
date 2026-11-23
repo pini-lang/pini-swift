@@ -74,7 +74,7 @@ def load_cases():
 
 
 def host_binary():
-    path = Path(os.environ.get("PINI_HOST_BIN") or (ROOT / ".build" / "debug" / "pini"))
+    path = Path(os.environ.get("PINI_HOST_BIN") or (ROOT / ".build" / "release" / "pini"))
     if not path.is_file() or not os.access(path, os.X_OK):
         fail(f"缺宿主可执行文件 {path}；先 swift build")
         sys.exit(2)

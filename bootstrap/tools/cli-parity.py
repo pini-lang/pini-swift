@@ -35,8 +35,8 @@ def fail(message):
 
 
 def host_binary():
-    """宿主可执行文件：显式环境变量优先，否则取默认位置里最新构建的那份。
-    两份并存时固定优先 release，会把另一份的新构建判成落后，红绿取决于谁被挑中。
+    """宿主可执行文件：显式环境变量优先，否则只认 release。
+    宿主口径由 tools/host-profile-check.py 守；两份并存时按修改时间挑，红绿取决于谁被挑中。
     """
     for candidate in (os.environ.get("PINI_HOST_BIN"), os.environ.get("PINI_CLI_BIN")):
         if not candidate:
@@ -46,12 +46,11 @@ def host_binary():
             path = ROOT / path
         if path.is_file():
             return path
-    found = [path for path in (ROOT / ".build/release/pini", ROOT / ".build/debug/pini")
-             if path.is_file()]
-    if not found:
-        fail("缺宿主可执行文件；先 swift build")
+    found = ROOT / ".build/release/pini"
+    if not found.is_file():
+        fail("缺宿主可执行文件；先 swift build -c release --disable-sandbox")
         sys.exit(2)
-    return max(found, key=lambda path: path.stat().st_mtime)
+    return found
 
 
 def self_binary():

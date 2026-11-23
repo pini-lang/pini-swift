@@ -17,8 +17,8 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCAN_ROOTS = ("examples", "Tests", "bench", "Sources", "bootstrap")
 EXEMPT = os.path.join(ROOT, "tools/fmt-exempt.tsv")
-DEFAULT_BIN = os.path.join(ROOT, ".build/debug/pini")
-PRODUCT_BIN = os.path.join(ROOT, ".build/out/Products/Debug/pini")
+DEFAULT_BIN = os.path.join(ROOT, ".build/release/pini")
+PRODUCT_BIN = os.path.join(ROOT, ".build/release/pini")
 REBUILD_ENV = "PINI_GATE_REBUILD"
 KINDS = {"unparseable", "variant"}
 
@@ -37,7 +37,7 @@ def rebuild(path):
     而切分支会刷新源码时间。真落后时构建会重编，对齐只消除「内容没变」的误判。
     """
     proc = subprocess.run(
-        ["swift", "build", "--disable-sandbox"], cwd=ROOT, capture_output=True, text=True)
+        ["swift", "build", "-c", "release", "--disable-sandbox"], cwd=ROOT, capture_output=True, text=True)
     if proc.returncode != 0:
         tail = (proc.stdout + proc.stderr).strip().splitlines()[-15:]
         fail("格式门禁：产物落后，自动重建失败。构建输出如下：\n" + indent(tail), 2)
@@ -51,7 +51,7 @@ def binary():
     """可执行产物，且不早于源码：旧产物会把新打印器的判据读成绿。"""
     path = os.environ.get("PINI_BIN") or DEFAULT_BIN
     if not os.path.isfile(path) or not os.access(path, os.X_OK):
-        fail(f"格式门禁：找不到可执行的 pini（{path}）。先 swift build，或设 PINI_BIN。", 2)
+        fail(f"格式门禁：找不到可执行的 pini（{path}）。先 swift build -c release --disable-sandbox，或设 PINI_BIN。", 2)
     newest_source = os.path.getmtime(os.path.join(ROOT, "Package.swift"))
     for base, dirs, files in os.walk(os.path.join(ROOT, "Sources")):
         # 运行时库不是 pini 的链接输入（CLI 只经 dlopen 加载它）⇒ 它的改动不算产物落后。
@@ -63,9 +63,9 @@ def binary():
         return path
     # 切分支会刷新源码时间戳而产物不动，内容其实没变。本地钩子增量重建并对齐时间，CI 不放行。
     if os.environ.get(REBUILD_ENV) != "1":
-        fail("格式门禁：二进制早于源码，读数不算数。先 swift build，再跑本门禁。", 2)
+        fail("格式门禁：二进制早于源码，读数不算数。先 swift build -c release，再跑本门禁。", 2)
     if os.path.abspath(path) != os.path.abspath(DEFAULT_BIN):
-        fail("格式门禁：二进制早于源码，且 PINI_BIN 不在默认位置；请先 swift build。", 2)
+        fail("格式门禁：二进制早于源码，且 PINI_BIN 不在默认位置；请先 swift build -c release。", 2)
     rebuild(path)
     if newest_source > os.path.getmtime(path):
         fail("格式门禁：自动重建后产物仍早于源码；检查 .build 是否被其他进程占用。", 2)

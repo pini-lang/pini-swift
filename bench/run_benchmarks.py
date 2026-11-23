@@ -27,7 +27,7 @@ import statistics
 import resource
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PINI = os.environ.get("PINI_BIN", os.path.join(REPO, ".build", "debug", "pini"))
+PINI = os.environ.get("PINI_BIN", os.path.join(REPO, ".build", "release", "pini"))
 REPEAT = int(os.environ.get("REPEAT", "3"))
 BENCH_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -91,7 +91,7 @@ def main():
     lli = which("lli")
     clang = which("clang")
     if not os.path.exists(PINI):
-        print(f"[错误] 未找到 pini：{PINI}\n先 swift build 或用 PINI_BIN 指定。", file=sys.stderr)
+        print(f"[错误] 未找到 pini：{PINI}\n先 swift build -c release --disable-sandbox，或用 PINI_BIN 指定。", file=sys.stderr)
         sys.exit(1)
 
     print("=" * 84)
