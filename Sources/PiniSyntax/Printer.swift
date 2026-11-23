@@ -1,8 +1,8 @@
 import Foundation
 
-/// 源码打印器：AST → 源码。`fmt` 与展开出口共用这一条映射，故它只能从 AST 重建，
-/// 不读原文本、不做空白重排。
-/// 版面只做三件事：缩进、空行、行内空白归一；不看列宽、不折行、不做列对齐。
+/// 源码打印器：AST → 源码。`fmt` 与展开出口共用这一条映射：只从 AST 重建，原文本只经 `PrintHints` 取旁路。
+/// 版面三条：缩进落 2 / 4 / 8 三档；块内空行至多一行、块间按原文行数；行内空白归一。
+/// 不看列宽、不折行、不做列对齐。
 public enum Printer {
 
     /// 打印整模块。结论以「重新解析得到同一棵树」验收，不以观感验收。
@@ -100,7 +100,7 @@ public enum Printer {
 extension Printer {
 
     /// 缩进的两套坐标：`column` 是输出列，`source` 是父块首行的源宽度。
-    /// `step` 是本块进入时的增量，无源行的子块沿用它——二格文件里合成的体才不会跳回四格。
+    /// `step` 恒为文件级步长，合成块与跨行字面量都沿用它，同一文件不会有两种步长。
     struct Indent: Equatable {
         var column: Int
         var source: Int
@@ -122,7 +122,7 @@ extension Printer {
         var indent: Indent = .zero
         private var savedIndents: [Indent] = []
         let fileName: String
-        /// 位置旁路：字面量原文与行前导空格，供写出分支按锚点取用。
+        /// 位置旁路：字面量原文、行前导空格、行上空行数与文件步长，供写出分支按锚点取用。
         let hints: PrintHints
         /// 当前锚点。写语句 / 声明 / 块头之前设置，`line` 据此登记；续行不继承。
         var anchor: SourceLocation?
@@ -130,6 +130,7 @@ extension Printer {
         init(fileName: String, hints: PrintHints = .empty) {
             self.fileName = fileName
             self.hints = hints
+            self.indent = Indent(column: 0, source: 0, step: hints.step)
         }
 
         /// 全部行按换行拼接。内联函数字面量与 try 处理器要把自己的行塞回调用方的字符串。
@@ -149,19 +150,19 @@ extension Printer {
             if lines.last?.text != "" { lines.append(Line(text: "", column: 0, anchor: nil)) }
         }
 
-        /// 进入缩进块：增量取「本块首行源宽度 − 父块首行源宽度」，无源行或差值为零时跟随父块步长。
-        /// 差值为零会把体印成与块头同列，解析器读不回块，故不能按零走。
+        /// 连写 n 行空行，不折叠：块间段距要按原文行数还原，去重只对单行 `blank()` 成立。
+        mutating func blankLines(_ n: Int) {
+            for _ in 0..<max(0, n) { lines.append(Line(text: "", column: 0, anchor: nil)) }
+        }
+
+        /// 进入缩进块：增量恒取文件级步长。逐块按源宽度差分会让归一过块头的文件算出两倍步长，
+        /// 例如四格文件的扩展块头归一成顶格后，体就变成八格。`source` 只留给跨行字面量算相对列。
         mutating func enterBlock(sourceLine: Int?) {
             savedIndents.append(indent)
+            let step = hints.step
             let childSource = sourceLine.flatMap { hints.indents[$0] }
-            let delta: Int
-            if let childSource, childSource > indent.source {
-                delta = childSource - indent.source
-            } else {
-                delta = indent.step
-            }
             indent = Indent(
-                column: indent.column + delta, source: childSource ?? indent.source, step: delta)
+                column: indent.column + step, source: childSource ?? indent.source + step, step: step)
         }
 
         mutating func exitBlock() {
@@ -174,9 +175,9 @@ extension Printer {
             return name.hasSuffix(".pini") ? String(name.dropLast(5)) : name
         }
 
-        /// 收尾：先按锚点插回注释，再去掉尾部空行。
+        /// 收尾：先按锚点插回注释，再去掉尾部空行。注释段落上方的空行由旁路还原。
         mutating func finish(comments: CommentTable) -> String {
-            let out = CommentAnchoring.apply(lines: lines, comments: comments)
+            let out = CommentAnchoring.apply(lines: lines, comments: comments, hints: hints)
             var trimmed = out
             while trimmed.last?.text == "" { trimmed.removeLast() }
             guard !trimmed.isEmpty else { return "" }
@@ -201,7 +202,7 @@ extension Printer.SourceWriter {
             }
         }
         for (index, decl) in module.declarations.enumerated() {
-            if index > 0 { blank() }
+            if index > 0 { blankLines(max(1, hints.blanks(at: decl.location.line))) }
             write(decl: decl)
         }
     }
@@ -289,7 +290,8 @@ extension Printer.SourceWriter {
     }
 
     mutating func write(fields: [FieldDecl]) {
-        for field in fields {
+        for (index, field) in fields.enumerated() {
+            if index > 0, hints.blanks(at: field.location.line) > 0 { blank() }
             anchor = field.location
             var text = "\(field.name): \(Printer.type(field.typeAnnotation))"
             if let initializer = field.initializer {
@@ -315,7 +317,10 @@ extension Printer.SourceWriter {
     }
 
     mutating func write(statements list: [Statement]) {
-        for statement in list { write(statement: statement) }
+        for (index, statement) in list.enumerated() {
+            if index > 0, hints.blanks(at: statement.location.line) > 0 { blank() }
+            write(statement: statement)
+        }
     }
 }
 
@@ -611,14 +616,14 @@ extension Printer {
             column: indent.column, trailing: true)
     }
 
-    /// 跨行字面量里元素的落位：首个不在字面量首行的元素定步长，取其源缩进减父块源缩进。
-    /// 差值非正或源缩进未知时跟随父块步长；内层字面量按这个落位再算，收尾括号才不会退回语句列。
+    /// 跨行字面量里元素的落位：首个不在字面量首行的元素定增量，落档后使用。
+    /// 源缩进未知或差值非正时跟随父块步长；内层字面量按这个落位再算，收尾括号才不会退回语句列。
     static func lineBreakIndent(
         _ starts: [SourceLocation], literal: SourceLocation, indent: Indent, hints: PrintHints
     ) -> Indent? {
         guard let first = starts.first(where: { $0.line != literal.line }) else { return nil }
-        let delta = (hints.indents[first.line] ?? (indent.source + indent.step)) - indent.source
-        let step = delta > 0 ? delta : indent.step
+        let observed = (hints.indents[first.line] ?? (indent.source + indent.step)) - indent.source
+        let step = observed > 0 ? PrintHints.quantizedStep(observed) : indent.step
         return Indent(column: indent.column + step, source: indent.source + step, step: step)
     }
 

@@ -12,9 +12,9 @@ enum CommentAnchoring {
 
     /// 三条规则按形态查表：块内挂下一处锚点之前，块尾挂前一处之后，行尾挂同源行末（隔一空格）。
     /// 注释列 = 从前一处锚点向后找第一处「列号不深于注释」的锚点所在列；块首、空块、连续注释因此无需分支。
-    /// 判断只看位置先后，不读原文本空白，故二次打印落在同一不动点。
+    /// 判断只看位置先后；空行只按旁路里的行号还原，故二次打印落在同一不动点。
     static func apply(
-        lines: [Printer.SourceWriter.Line], comments: CommentTable
+        lines: [Printer.SourceWriter.Line], comments: CommentTable, hints: PrintHints
     ) -> [Printer.SourceWriter.Line] {
         guard !comments.isEmpty, !lines.isEmpty else { return lines }
         let anchors = lines.indices.filter { lines[$0].anchor != nil }
@@ -47,27 +47,40 @@ enum CommentAnchoring {
             }
         }
 
+        // 块首行 = 输出列比上一非空行更深的那一行。它上方的空行属于块首，按块内规则丢弃。
+        var blockStarts = Set<Int>()
+        var previousColumn = 0
+        for (index, line) in lines.enumerated() where line.text != "" {
+            if line.column > previousColumn { blockStarts.insert(index) }
+            previousColumn = line.column
+        }
+
         var out: [Printer.SourceWriter.Line] = []
         out.reserveCapacity(lines.count + comments.count)
         for (index, line) in lines.enumerated() {
-            emit(before[index] ?? [], into: &out)
+            emit(
+                before[index] ?? [], hints: hints, dropLeading: blockStarts.contains(index),
+                into: &out)
             var current = line
             if let extra = appended[index] { current.text += extra }
             out.append(current)
-            emit(after[index] ?? [], into: &out)
+            emit(after[index] ?? [], hints: hints, into: &out)
         }
-        emit(tail, into: &out)
+        emit(tail, hints: hints, into: &out)
         return out
     }
 
-    /// 落一组注释。原文相隔空行的两段之间补一行空行：块内空行不保留，但注释段落边界要留，
+    /// 落一组注释。段落边界要留：原文相隔空行的两段之间、以及整段上方的空行都补一行，
     /// 否则两段会连成一块，注释门禁的块长判据随即变红。
     private static func emit(
-        _ slots: [Slot], into out: inout [Printer.SourceWriter.Line]
+        _ slots: [Slot], hints: PrintHints, dropLeading: Bool = false,
+        into out: inout [Printer.SourceWriter.Line]
     ) {
         var previous: Int?
-        for slot in slots {
-            if let previous, slot.line - previous > 1, out.last?.text != "" {
+        for (index, slot) in slots.enumerated() {
+            let pastGap = previous.map { slot.line - $0 > 1 } ?? false
+            let sourceGap = !(index == 0 && dropLeading) && hints.blanks(at: slot.line) > 0
+            if (pastGap || sourceGap), out.last?.text != "" {
                 out.append(.init(text: "", column: 0, anchor: nil))
             }
             out.append(.init(text: indent(slot.column) + slot.text, column: slot.column, anchor: nil))
