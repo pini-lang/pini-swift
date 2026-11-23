@@ -4377,10 +4377,10 @@ KEYWORD      ::= 'var' | 'let' | 'func' | 'enum' | 'object'
                | 'self' | 'own' | 'defer' | 'import' | 'export'
                | 'nil' | 'capture' | 'await' | 'wait'
                | 'unsafe' | 'test' | 'foreign' | 'detach'
-               | 'pass' | 'using' | 'unroll';
+               | 'pass' | 'using' | 'unroll' | 'weak';
 ```
 
-共 34 个。
+共 35 个。
 
 #### 字面量
 

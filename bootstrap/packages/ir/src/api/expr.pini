@@ -14,6 +14,14 @@ lowerClosure|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: 
     let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
     if typeId < 0:
         return missType(out = done, unit = unit, id = id, bytes = bytes)
+    ; 签名先取函数类型：声明无标注的形参由检查面按上下文定型，类型表里只有函数类型带得到。
+    var paramTypes: Array<I32> = []
+    var signatureRet = -1
+    if typeId < irTypeCount(map.pool):
+        let signature = irTypeAt(pool = map.pool, id = typeId)
+        if irTypeTag(signature.kind) == irTypeTag(.irTypeFunction):
+            paramTypes = signature.kids
+            signatureRet = signature.ret
     var closure = LowerFrame()
     closure.world = done.frame.world
     closure.decls = done.frame.decls
@@ -33,10 +41,12 @@ lowerClosure|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: 
             let name = decodeSpelling(bytes = bytes, start = decl.nameStart, end = decl.nameEnd)
             var param = IrParam()
             param.name = name
-            ; 形参类型取声明标注：匿名函数的形参不经过顶层声明面，类型表里查不到。
+            ; 形参类型先取声明标注，缺标注时取函数类型的同位分量：匿名函数不经顶层声明面。
             if decl.typeId >= 0:
                 let resolved = annotationType(world = closure.world, unit = unit, node = decl.typeId, pool = closure.world.types.pool)
                 param.typeId = irIdOf(map = map, semanticId = resolved.id)
+            elif i < len(paramTypes):
+                param.typeId = paramTypes[i]
             param.slot = closure.nextSlot
             params = params.append(param)
             closure = declareIrLocal(frame = closure, name = name, typeId = param.typeId, mutable = true)
@@ -48,6 +58,8 @@ lowerClosure|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: 
             ret = -1
         else:
             ret = irIdOf(map = map, semanticId = resolved.id)
+    else:
+        ret = signatureRet
     if body < 0:
         return missExpr(out = done, unit = unit, id = id, what = "函数字面量缺体块")
     var start = LowerStmt()
@@ -1426,7 +1438,12 @@ lowerCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: Typ
                     done.pool = inserted.pool
                     done.id = inserted.id
                     return done
-                if isArrayMember(memberName = memberName, receiverType = recvType, map = map):
+                if memberName == "cancel" && isFutureHandle(map = map, receiverType = recvType):
+                    ; 取消是句柄上的内建动作：按名字直呼，接收者随首个实参交给运行时。
+                    resolved.name = "cancel"
+                    resolved.found = true
+                    resolved.takesReceiver = true
+                elif isArrayMember(memberName = memberName, receiverType = recvType, map = map):
                     builtinMember = memberName
                     builtinType = recvType
                 elif isStringMember(memberName = memberName, receiverType = recvType, map = map):
@@ -1519,6 +1536,12 @@ lowerCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: Typ
     if resolved.found && resolved.ordered:
         return lowerNamedCall(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id, name = resolved.name, actuals = actuals, params = resolved.params, leading = receiver, ret = resolved.ret)
     return lowerPlainCall(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id, name = resolved.name, actuals = actuals, leading = receiver)
+
+; 任务句柄判定：类型类别为 Future；句柄上的内建动作按名字直呼，发射面查表落运行时段符号。
+isFutureHandle|func(map: TypeMap, receiverType: I32,) -> (Bool,):
+    if receiverType < 0 || receiverType >= irTypeCount(map.pool):
+        return false
+    return irTypeTag(irTypeAt(pool = map.pool, id = receiverType).kind) == irFutureTypeTag()
 
 ; 数组成员判定：名字在两类之内且接收者类型是数组 —— 字串的同名成员归字串批。
 isArrayMember|func(memberName: String, receiverType: I32, map: TypeMap,) -> (Bool,):

@@ -7,17 +7,17 @@
 程序	形态	check	lower	emit	归因	归因类	修复落点	首条诊断	摘要
 access	单文件	ok	ok	ok	通过	通过	-	-	-
 array-basic	单文件	fail	-	-	语义	示例违规	match 分支内 break 无外层循环，参考件 6.6 只认循环标签	E4-004@25:13	跳出或继续不在循环内（期望 循环内，实得 循环外）
-closures	单文件	fail	-	-	语义	缺判定	函数类型可赋值性	E4-001@27:11	调用不成立：应用（实参类型不匹配）
+closures	单文件	ok	ok	ok	通过	通过	-	-	-
 collections	单文件	fail	-	-	语法	缺语法构造	元组元素的标签位	E2-001@20:20	期望`)`，实际得到=
 comments	单文件	ok	ok	ok	通过	通过	-	-	-
-composition	单文件	fail	-	-	语义	缺判定	成员查找	E4-009@27:5	成员不存在：增加（接收者上没有该成员）
+composition	单文件	ok	fail	-	降载	降载缺口	-	-	1 字段 数值 不在声明里 尚未降载 ./examples/composition.pini:4
 compound-assign	单文件	ok	ok	ok	通过	通过	-	-	-
 concurrency-arrow-dual	单文件	ok	ok	ok	通过	通过	-	-	-
 concurrency-async-contagion-end	单文件	ok	ok	ok	通过	通过	-	-	-
 concurrency-async-decl	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 调用 ./examples/concurrency-async-decl.p
 concurrency-await	单文件	ok	ok	ok	通过	通过	-	-	-
-concurrency-cancel	单文件	fail	-	-	语义	缺判定	成员查找	E4-009@26:5	成员不存在：cancel（接收者上没有该成员）
-concurrency-future-handle	单文件	fail	-	-	语义	缺判定	成员查找	E4-009@12:5	成员不存在：cancel（接收者上没有该成员）
+concurrency-cancel	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 调用 ./examples/concurrency-cancel.pini:
+concurrency-future-handle	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 调用 ./examples/concurrency-future-handl
 concurrency-joinall-var	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 调用 ./examples/concurrency-joinall-var.
 concurrency-joinall	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 调用 ./examples/concurrency-joinall.pini
 concurrency	单文件	ok	fail	-	降载	降载缺口	-	-	2 异步函数需带载荷返回 ./examples/concurrency.pini:481
@@ -43,7 +43,7 @@ generic	单文件	fail	-	-	语义	缺符号	类型参数注册	E3-003@5:5	类型
 hello	单文件	ok	ok	ok	通过	通过	-	-	-
 higher-order	单文件	ok	ok	ok	通过	通过	-	-	-
 io	单文件	ok	ok	ok	通过	通过	-	-	-
-lambda-typed	单文件	fail	-	-	语义	缺判定	函数类型可赋值性	E4-001@9:11	调用不成立：应用（实参类型不匹配）
+lambda-typed	单文件	ok	ok	ok	通过	通过	-	-	-
 lambda	单文件	ok	ok	ok	通过	通过	-	-	-
 lazyref	单文件	ok	ok	ok	通过	通过	-	-	-
 lexical	单文件	ok	ok	fail	发射	发射缺口	-	-	插值段 类别码 12

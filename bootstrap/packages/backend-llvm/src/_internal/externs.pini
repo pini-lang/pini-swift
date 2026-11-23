@@ -176,6 +176,8 @@ externSignature|func(name: String,) -> (String,):
         return "declare ptr @bk_module_root()"
     if name == "bk_sleep":
         return "declare void @bk_sleep(i32)"
+    if name == "bk_task_cancel":
+        return "declare void @bk_task_cancel(ptr)"
     if name == "bk_str_from_cstr":
         return "declare ptr @bk_str_from_cstr(ptr)"
     if name == "bk_cstr":

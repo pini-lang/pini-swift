@@ -11,11 +11,11 @@
 
 main|func() -> ():
     ; 1) 闭包绑定 + 直接调用（无捕获）
-    var sq = func (n,) -> (I32,): return n * n
+    var sq = func (n: I32,) -> (I32,): return n * n
     print(sq(6)) ; 36
     ; 2) 捕获：闭包按引用捕获外层变量 base（与解释器 currentEnv 共享语义一致）
     var base = 10
-    var addBase = func (n,) -> (I32,):
+    var addBase = func (n: I32,) -> (I32,):
         capture base
         return n + base
     print(addBase(5)) ; 15

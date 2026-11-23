@@ -440,7 +440,7 @@ inferNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
                 out.types = writeExprType(table = out.types, unit = unitIndex, node = node, typeId = out.typeId)
         return out
     if unit.ast.isFunctionExpr(node):
-        return inferFunction(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out, bytes = bytes)
+        return inferFunction(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out, bytes = bytes, expected = expected)
     if unit.ast.isGenericExpr(node):
         let expr = unit.ast.exprAt(node)
         let resolved = annotationType(world = world, unit = unit, node = expr.typeId, pool = out.pool)
@@ -519,14 +519,19 @@ inferNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
         return out
     return out
 
-; 函数字面量：形参类型取声明标注，返回取 `op`；体在形参入表后走一遍。
-; 无标注形参答 -1，函数类型因此缺分量，降载期按能力缺口报，不猜类型。
-inferFunction|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, out: InferResult, bytes: Array<U8>,) -> (InferResult,):
+; 函数字面量：形参先取声明标注，缺标注时取期望函数类型的同位形参；返回取 `op`。
+; 两处都给不出的形参答 -1，函数类型因此缺分量，降载期按能力缺口报，不猜类型。
+inferFunction|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, out: InferResult, bytes: Array<U8>, expected: Expectation,) -> (InferResult,):
     var done = out
     let expr = unit.ast.exprAt(node)
     var table = names
     var ids: Array<I32> = []
     var body = -1
+    var wanted: Array<I32> = []
+    if expected.hasExpected && expected.typeId >= 0 && expected.typeId < len(done.pool.entries):
+        let expectedEntry = done.pool.entries[expected.typeId]
+        if isTypeClass(kind = expectedEntry.kind, expected = .typeClassFunction):
+            wanted = expectedEntry.kids
     var i = 0
     while i < len(expr.kids):
         let kid = expr.kids[i]
@@ -540,6 +545,8 @@ inferFunction|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, no
                 let resolved = annotationType(world = world, unit = unit, node = decl.typeId, pool = done.pool)
                 done.pool = resolved.pool
                 typeId = resolved.id
+            elif i < len(wanted):
+                typeId = wanted[i]
             ids = ids.append(typeId)
             let name = decodeRange(bytes = bytes, start = decl.nameStart, end = decl.nameEnd)
             if typeId >= 0:

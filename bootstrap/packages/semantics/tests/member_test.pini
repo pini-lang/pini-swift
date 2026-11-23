@@ -197,3 +197,36 @@ id: I32 = -1
     assert(first.typeId == second.typeId, "类型下标应相同")
     assert(typeText(pool = first.pool, id = first.typeId) == typeText(pool = second.pool, id = second.typeId), "文本应相同")
     return
+
+; 组合提升：嵌入父类型的字段与方法在外层类型上可查，命中记录的仍是被查的那个成员。
+组合提升|test() -> ():
+    let src = "(基)\n甲: I32 = 0\n\n((基))\n取甲|self() -> (I32,):\n    return 0\n\n(子)\n基\n乙: I32 = 0\n"
+    let sample = 造成员样例(path = "packages/p/src/api/a.pini", src = src)
+    let child = nominalTypeId(world = sample.world, name = "子")
+    assert(child >= 0, "子类型应已驻留")
+    let field = 查样例(sample = sample, receiver = child, name = "甲", isTypeName = false, owner = "")
+    assert(!field.failed, "嵌入字段应可读")
+    assert(typeText(pool = field.pool, id = field.typeId) == "I32", "实得 " + typeText(pool = field.pool, id = field.typeId))
+    let method = 查样例(sample = sample, receiver = child, name = "取甲", isTypeName = false, owner = "")
+    assert(!method.failed, "嵌入方法应可调")
+    assert(isMemberKind(kind = method.kind, expected = .memberMethod), "应判作方法")
+    let miss = 查样例(sample = sample, receiver = child, name = "无此成员", isTypeName = false, owner = "")
+    assert(miss.failed, "父类型也没有的成员仍应报错")
+    assert(miss.error.typeName == "子", "诊断应指外层类型，实得 " + miss.error.typeName)
+    return
+
+; 任务句柄：取消是内建成员，返回空元组；同类型的其余名字仍报未知。
+任务句柄取消|test() -> ():
+    let sample = 造成员样例(path = "packages/p/src/api/a.pini", src = "f|func() -> ():\n    return\n")
+    var world = sample.world
+    let numberType = intern(pool = world.types.pool, kind = .typeClassScalar, name = "I32", kids = [], ret = -1)
+    world.types.pool = numberType.pool
+    let futureType = intern(pool = world.types.pool, kind = .typeClassGeneric, name = "Future", kids = [numberType.id], ret = -1)
+    world.types.pool = futureType.pool
+    let hit = 查成员(world = world, file = sample.file, receiver = futureType.id, name = "cancel", isTypeName = false, owner = "")
+    assert(!hit.failed, "cancel 应命中")
+    assert(isMemberKind(kind = hit.kind, expected = .memberBuiltin), "应判作内建成员")
+    assert(typeText(pool = hit.pool, id = hit.typeId) == "() -> ()", "实得 " + typeText(pool = hit.pool, id = hit.typeId))
+    let miss = 查成员(world = world, file = sample.file, receiver = futureType.id, name = "无此成员", isTypeName = false, owner = "")
+    assert(miss.failed, "未知成员应报错")
+    return

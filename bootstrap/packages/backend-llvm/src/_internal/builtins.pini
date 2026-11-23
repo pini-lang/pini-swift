@@ -41,7 +41,7 @@ makeBuiltinOf|func(name: String, receiver: I32, symbol: String, shape: I32,) -> 
     out.shape = shape
     return out
 
-; 内建表：一行一条；接收者类别码是类型类别（i32 一、u8 四、字串八、字符九、数组十二、字典十六、集合十七）。
+; 内建表：一行一条；接收者类别码是类型类别（i32 一、u8 四、字串八、字符九、任务十一、数组十二、字典十六、集合十七）。
 ; 零参内建没有接收者，类别记负一，查表按名字与负一双命中。
 builtinTable|func() -> (Array<BuiltinEntry>,):
     var out: Array<BuiltinEntry> = []
@@ -62,6 +62,8 @@ builtinTable|func() -> (Array<BuiltinEntry>,):
     out = out.append(makeBuiltinOf(name = "moduleRoot", receiver = -1, symbol = "bk_module_root", shape = 4))
     ; 片睡：并发内建里唯一降载成普通调用的一个，落点是运行时入口而不是 libc。
     out = out.append(makeBuiltinOf(name = "sleep", receiver = 1, symbol = "bk_sleep", shape = 3))
+    ; 取消：句柄进、无返回；同属并发族，落点也是运行时入口。
+    out = out.append(makeBuiltinOf(name = "cancel", receiver = irFutureTypeTag(), symbol = "bk_task_cancel", shape = 3))
     ; 取回：C 串按 NUL 读成 Pini 串，入参是指针、出参是字串句柄，与单参直呼同形。
     out = out.append(makeBuiltinOf(name = "fromCString", receiver = 21, symbol = "bk_str_from_cstr", shape = 3))
     out = out.append(makeBuiltinOf(name = "Array.append", receiver = 12, symbol = "bk_array_append", shape = 2))
