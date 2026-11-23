@@ -42,8 +42,28 @@ externDataDecls|func(module: IrModule,) -> (Array<String>,):
     return out
 
 ; 无体函数跳过：它是降载缺口，声明出来也只会在链接期报缺符号。
+; 函数值适配器的体由发射期按目标签名拼，故同样算有体。
 needsBody|func(fn: IrFunction,) -> (Bool,):
-    return len(fn.body) > 0
+    return len(fn.body) > 0 || len(fn.adapterTarget) > 0
+
+; 适配器体：env 只占位不读，形参逐个转交；返回按目标声明类型出。
+adapterBody|func(sink: LineSink, pool: IrTypePool, fn: IrFunction,) -> ():
+    let target = "@" + mangleName(name = fn.adapterTarget)
+    let ret = llvmTypeName(pool = pool, typeId = fn.returnType)
+    var args = ""
+    var i = 0
+    while i < len(fn.params):
+        if i > 0:
+            args = args + ", "
+        args = args + llvmTypeName(pool = pool, typeId = fn.params[i].typeId) + " %p" + countText(i)
+        i = i + 1
+    if ret == "void":
+        appendLine(sink = sink, text = "  call void " + target + "(" + args + ")")
+        appendLine(sink = sink, text = "  ret void")
+        return
+    appendLine(sink = sink, text = "  %r = call " + ret + " " + target + "(" + args + ")")
+    appendLine(sink = sink, text = "  ret " + ret + " %r")
+    return
 
 ; 收尾补返回：已收口的不补；main 补零，其余按声明返回类型补零值。
 ;  行不通  一律补 ret void：非空返回的函数会在校验期被判类型不符。
@@ -180,32 +200,35 @@ emitFunctions|func(sink: LineSink, module: IrModule, entry: BackendEntry, target
             bundle.emitted = bundle.emitted.append(fn.name)
             appendLine(sink = sink, text = llvmSignature(pool = module.types, fn = fn, isDefine = true) + " {")
             appendLine(sink = sink, text = "entry:")
-            appendLine(sink = sink, text = "  " + boxName() + " = alloca [8 x i8], align 8")
-            var body = LineSink()
-            var ctx = BodyCtx()
-            ctx.lines = body
-            ctx.fnIndex = i
-            ctx.families = families
-            ctx.declared = entry.families
-            ctx.strings = bundle.strings
-            ctx.externs = bundle.externs
-            ctx.builtins = builtins
-            ctx.pointerBytes = target.pointerWidth
-            ctx.testExit = testMode && fn.isTest
-            ctx.lazyDefs = bundle.lazyDefs
-            ctx.taskDefs = bundle.taskDefs
-            ctx.givenDefs = bundle.givenDefs
-            ctx = seedParams(ctx = ctx, module = module, fn = fn)
-            ctx = emitStmts(ctx = ctx, module = module, ids = fn.body)
-            ctx = closeFunction(ctx = ctx, module = module)
-            bundle.taskDefs = ctx.taskDefs
-            bundle.givenDefs = ctx.givenDefs
-            copyLines(sink = sink, from = ctx.head)
-            copyLines(sink = sink, from = body.lines)
-            var k = 0
-            while k < len(ctx.gaps):
-                bundle.gaps = mergeGap(gaps = bundle.gaps, gap = ctx.gaps[k])
-                k = k + 1
+            if len(fn.adapterTarget) > 0:
+                adapterBody(sink = sink, pool = module.types, fn = fn)
+            else:
+                appendLine(sink = sink, text = "  " + boxName() + " = alloca [8 x i8], align 8")
+                var body = LineSink()
+                var ctx = BodyCtx()
+                ctx.lines = body
+                ctx.fnIndex = i
+                ctx.families = families
+                ctx.declared = entry.families
+                ctx.strings = bundle.strings
+                ctx.externs = bundle.externs
+                ctx.builtins = builtins
+                ctx.pointerBytes = target.pointerWidth
+                ctx.testExit = testMode && fn.isTest
+                ctx.lazyDefs = bundle.lazyDefs
+                ctx.taskDefs = bundle.taskDefs
+                ctx.givenDefs = bundle.givenDefs
+                ctx = seedParams(ctx = ctx, module = module, fn = fn)
+                ctx = emitStmts(ctx = ctx, module = module, ids = fn.body)
+                ctx = closeFunction(ctx = ctx, module = module)
+                bundle.taskDefs = ctx.taskDefs
+                bundle.givenDefs = ctx.givenDefs
+                copyLines(sink = sink, from = ctx.head)
+                copyLines(sink = sink, from = body.lines)
+                var k = 0
+                while k < len(ctx.gaps):
+                    bundle.gaps = mergeGap(gaps = bundle.gaps, gap = ctx.gaps[k])
+                    k = k + 1
             appendLine(sink = sink, text = "}")
         i = i + 1
     return

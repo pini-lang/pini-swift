@@ -32,7 +32,7 @@ enum-namespacing	单文件	ok	ok	fail	发射	发射缺口	-	-	打印带标签值
 enum	单文件	ok	ok	ok	通过	通过	-	-	-
 ffi-handle	单文件	ok	ok	ok	通过	通过	-	-	-
 ffi-handwritten	单文件	ok	ok	ok	通过	通过	-	-	-
-ffi-string-callback	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 标识符 比较字节 ./examples/ffi-string-callbac
+ffi-string-callback	单文件	ok	ok	ok	通过	通过	-	-	-
 ffi-varargs-handle	单文件	ok	ok	ok	通过	通过	-	-	-
 ffi	单文件	ok	ok	ok	通过	通过	-	-	-
 ffi_generated	目录	fail	-	-	语义	待核	夹具未就绪：需先 build	E3-011	构建计划不存在：请先运行 build
@@ -41,10 +41,10 @@ for	单文件	ok	fail	-	降载	降载缺口	-	-	1 该语句类别尚未降载 ./
 generic-func	单文件	ok	ok	ok	通过	通过	-	-	-
 generic	单文件	fail	-	-	语义	缺符号	类型参数注册	E3-003@5:5	类型未声明：T
 hello	单文件	ok	ok	ok	通过	通过	-	-	-
-higher-order	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 标识符 加倍 ./examples/higher-order.pini:48
+higher-order	单文件	ok	ok	ok	通过	通过	-	-	-
 io	单文件	ok	ok	ok	通过	通过	-	-	-
 lambda-typed	单文件	fail	-	-	语义	缺判定	函数类型可赋值性	E4-001@9:11	调用不成立：应用（实参类型不匹配）
-lambda	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 函数字面量 ./examples/lambda.pini:165
+lambda	单文件	ok	ok	ok	通过	通过	-	-	-
 lazyref	单文件	ok	ok	ok	通过	通过	-	-	-
 lexical	单文件	ok	ok	fail	发射	发射缺口	-	-	插值段 类别码 12
 match	单文件	ok	ok	ok	通过	通过	-	-	-
@@ -59,8 +59,8 @@ package-demo	目录	ok	ok	ok	通过	通过	-	-	-
 pointer-address	单文件	ok	ok	ok	通过	通过	-	-	-
 recursion	单文件	ok	ok	ok	通过	通过	-	-	-
 slice	单文件	ok	fail	-	降载	降载缺口	-	-	1 成员被调 get 尚未降载 ./examples/slice.pini:793
-stdlib-container-ops	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 标识符 isEven ./examples/stdlib-container
-stdlib-container	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 标识符 double ./examples/stdlib-container
+stdlib-container-ops	单文件	ok	ok	ok	通过	通过	-	-	-
+stdlib-container	单文件	ok	ok	ok	通过	通过	-	-	-
 stdlib-equality	单文件	ok	ok	ok	通过	通过	-	-	-
 stdlib-probe	单文件	ok	ok	ok	通过	通过	-	-	-
 stdlib-strings	单文件	ok	ok	ok	通过	通过	-	-	-

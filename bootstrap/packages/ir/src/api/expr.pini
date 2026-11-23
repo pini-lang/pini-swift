@@ -394,20 +394,131 @@ takeFailure|func(out: LowerExpr, one: LowerExpr,) -> (LowerExpr,):
     done.offset = one.offset
     return done
 
-; 标识符：局部与顶层符号同形，都降成按名读；槽位由帧给出。
-; 裸标识符：名字表命中即按变量读；未命中但命中用例表，说明写成了裸名用例。
-; 裸名用例不成立：用例是枚举的成员，必须写成前导点或限定形式，故报缺口推动改写。
+; 顶层函数名判定：符号表里有该名字且声明是函数；与语义层的取值同源。
+; 只判声明存在，不看签名 —— 签名能不能映射由类型表独立报。
+isTopFunctionName|func(frame: LowerFrame, name: String,) -> (Bool,):
+    let symbol = lookupTopByName(index = frame.world.symbols, name = name)
+    if symbol < 0:
+        return false
+    let ref = symbolDecl(world = frame.world, symbol = symbol)
+    if ref.unit < 0:
+        return false
+    return isFunctionDeclCode(frame.world.units[ref.unit].ast.decls[ref.decl].kind)
+
+; 按签名在既有类型池里查函数类型：降载期不新增类型，只认已映射出来的条目。
+; 形参与返回逐项相等才算命中，差一项就交回缺口。
+findIrFunctionType|func(pool: IrTypePool, params: Array<I32>, ret: I32,) -> (I32,):
+    var i = 0
+    while i < len(pool.entries):
+        let entry = pool.entries[i]
+        if irTypeTag(entry.kind) == irTypeTag(.irTypeFunction) && entry.ret == ret && len(entry.kids) == len(params):
+            var same = true
+            var k = 0
+            while k < len(params):
+                if entry.kids[k] != params[k]:
+                    same = false
+                k = k + 1
+            if same:
+                return i
+        i = i + 1
+    return -1
+
+; 裸函数名的函数类型：签名逐项映射后在池里找等价条目；找不到答 -1。
+; 语义层不替值位读的函数名定型，故这一步只能在降载面自己做。
+topFunctionIrType|func(frame: LowerFrame, map: TypeMap, name: String,) -> (I32,):
+    let symbol = lookupTopByName(index = frame.world.symbols, name = name)
+    if symbol < 0:
+        return -1
+    let ref = symbolDecl(world = frame.world, symbol = symbol)
+    if ref.unit < 0:
+        return -1
+    let decl = frame.world.units[ref.unit].ast.decls[ref.decl]
+    if !isFunctionDeclCode(decl.kind):
+        return -1
+    var ids: Array<I32> = []
+    let params = declParams(world = frame.world, ref = ref)
+    var i = 0
+    while i < len(params):
+        let one = irIdOf(map = map, semanticId = params[i].typeId)
+        if one < 0:
+            return -1
+        ids = ids.append(one)
+        i = i + 1
+    let ret = irIdOf(map = map, semanticId = frame.world.types.typeOf(unit = ref.unit, decl = ref.decl))
+    return findIrFunctionType(pool = map.pool, params = ids, ret = ret)
+
+; 适配器登记结果：新帧与适配器名；帧必须写回，否则条目到不了模块函数表。
+(AdapterRef)
+frame: LowerFrame = LowerFrame()
+name: String = ""
+
+; 函数值适配器：具名函数没有 env 首参，作值前包一层与闭包同协议的转发体。
+; 同一函数只建一份；体由发射期按 `adapterTarget` 拼，不走语句表。
+functionAdapterFor|func(frame: LowerFrame, map: TypeMap, name: String,) -> (AdapterRef,):
+    var out = AdapterRef()
+    out.frame = frame
+    out.name = "__adapter_" + name
+    var i = 0
+    while i < len(out.frame.closures):
+        if out.frame.closures[i].name == out.name:
+            return out
+        i = i + 1
+    let symbol = lookupTopByName(index = out.frame.world.symbols, name = name)
+    if symbol < 0:
+        return out
+    let ref = symbolDecl(world = out.frame.world, symbol = symbol)
+    if ref.unit < 0:
+        return out
+    var fn = IrFunction()
+    fn.name = out.name
+    fn.isClosure = true
+    fn.adapterTarget = name
+    var params: Array<IrParam> = []
+    let declared = declParams(world = out.frame.world, ref = ref)
+    var s = 0
+    while s < len(declared):
+        var param = IrParam()
+        param.name = declared[s].name
+        param.slot = s
+        param.typeId = irIdOf(map = map, semanticId = declared[s].typeId)
+        params = params.append(param)
+        s = s + 1
+    fn.params = params
+    let ret = out.frame.world.types.typeOf(unit = ref.unit, decl = ref.decl)
+    if !isEmptyTupleType(pool = out.frame.world.types.pool, id = ret):
+        fn.returnType = irIdOf(map = map, semanticId = ret)
+    out.frame.closures = out.frame.closures.append(fn)
+    return out
+
+; 标识符：名字表命中即按变量读，槽位由帧给出；值位读的裸函数名走函数值。
+; 未命中但命中用例表，说明写成了裸名用例：用例必须写成前导点或限定形式。
 lowerIdentifier|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
-    let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = out.frame, bytes = bytes, id = id)
+    var typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = out.frame, bytes = bytes, id = id)
     if typeId < 0:
-        let expr = unit.ast.exprAt(id)
-        let name = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
-        let candidates = caseCandidateCount(index = out.frame.world.symbols, name = name)
+        let missExprNode = unit.ast.exprAt(id)
+        let missName = decodeSpelling(bytes = bytes, start = missExprNode.nameStart, end = missExprNode.nameEnd)
+        let candidates = caseCandidateCount(index = out.frame.world.symbols, name = missName)
         if candidates > 0:
-            return missNeed(out = out, unit = unit, id = id, what = "裸名用例 " + name + " 须写成 ." + name + "（候选枚举 " + countText(candidates) + " 个）")
-        return missType(out = out, unit = unit, id = id, bytes = bytes)
+            return missNeed(out = out, unit = unit, id = id, what = "裸名用例 " + missName + " 须写成 ." + missName + "（候选枚举 " + countText(candidates) + " 个）")
+        ; 值位读的裸函数名：语义层不给它定型，这里按声明签名找回等价函数类型。
+        typeId = topFunctionIrType(frame = out.frame, map = map, name = missName)
+        if typeId < 0:
+            return missType(out = out, unit = unit, id = id, bytes = bytes)
     let expr = unit.ast.exprAt(id)
     let name = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
+    ; 顶层函数名作值：既不在帧里也不是外部数据，发适配器上的函数值节点。
+    if findIrLocal(frame = out.frame, name = name) < 0 && findOuterLocal(frame = out.frame, name = name) < 0 && isTopFunctionName(frame = out.frame, name = name):
+        let adapter = functionAdapterFor(frame = out.frame, map = map, name = name)
+        let placed = internText(texts = out.texts, value = adapter.name)
+        var node = irMakeNode(kind = irExprTag(.irFunctionValue), typeId = typeId)
+        node.text = placed.id
+        let inserted = irAppendNode(pool = out.pool, node = node)
+        var done = out
+        done.frame = adapter.frame
+        done.texts = placed.texts
+        done.pool = inserted.pool
+        done.id = inserted.id
+        return done
     let placed = internText(texts = out.texts, value = name)
     var current = out
     current.frame = ensureIrLocal(frame = current.frame, name = name)
@@ -917,7 +1028,9 @@ noteExternFunction|func(frame: LowerFrame, map: TypeMap, symbol: I32, sigId: I32
     let entry = out.world.table.symbolAt(symbol)
     var row = IrExternFunction()
     row.name = name
-    row.returnType = irIdOf(map = map, semanticId = sig.ret)
+    ; 空返回记无值：C 侧写 void，不按空元组聚合成一个指针。
+    if !isEmptyTupleType(pool = out.world.types.pool, id = sig.ret):
+        row.returnType = irIdOf(map = map, semanticId = sig.ret)
     var i = 0
     while i < len(sig.kids):
         row.params = row.params.append(irIdOf(map = map, semanticId = sig.kids[i]))

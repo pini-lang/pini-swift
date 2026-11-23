@@ -518,3 +518,31 @@ module: IrModule = IrModule()
     assert(调 >= 0, "调用符号应取实例名")
     assert(len(irNodeAt(pool = 样例.module.nodes, id = 调).kids) == 1, "实参按形参归位后只留一个")
     return
+
+; 裸函数名作值：发函数值节点并连带一条转发适配器，符号取适配器名。
+; 适配器记目标函数并按闭包协议收环境位，体由发射期拼。
+函数值降载|test() -> ():
+    let 样例 = 造样例("加倍|func(_n: I32,) -> (I32,):\n    return _n * 2\n\n应用|func(f: (I32,) -> (I32,), x: I32,) -> (I32,):\n    return f(x)\n\nf|func() -> ():\n    print(应用(f = 加倍, x = 5))\n    return\n")
+    assert(len(样例.module.errors) == 0, "函数值应降载成功")
+    let 值 = 取节点按类别(样例 = 样例, kind = irExprTag(.irFunctionValue))
+    assert(值 >= 0, "应发函数值节点")
+    let 符号 = textAt(module = 样例.module, id = irNodeAt(pool = 样例.module.nodes, id = 值).text)
+    assert(符号 == "__adapter_加倍", "函数值应指向适配器，实得 " + 符号)
+    let 适配 = 取函数(样例 = 样例, name = 符号)
+    assert(适配 >= 0, "适配器应进函数表")
+    assert(样例.module.functions[适配].adapterTarget == "加倍", "适配器应记目标函数")
+    assert(样例.module.functions[适配].isClosure, "适配器按闭包协议收环境位")
+    return
+
+; 同一函数在多处作值只建一条适配器；重复条目会让同图两处定义撞名。
+函数值适配器去重|test() -> ():
+    let 样例 = 造样例("加倍|func(_n: I32,) -> (I32,):\n    return _n * 2\n\n应用|func(f: (I32,) -> (I32,), x: I32,) -> (I32,):\n    return f(x)\n\nf|func() -> ():\n    print(应用(f = 加倍, x = 1))\n    print(应用(f = 加倍, x = 2))\n    return\n")
+    assert(len(样例.module.errors) == 0, "两次作值应降载成功")
+    var 数 = 0
+    var i = 0
+    while i < len(样例.module.functions):
+        if 样例.module.functions[i].adapterTarget == "加倍":
+            数 = 数 + 1
+        i = i + 1
+    assert(数 == 1, "适配器应只建一条，实得 " + countText(数))
+    return

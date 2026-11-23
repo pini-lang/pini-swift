@@ -1471,3 +1471,64 @@ _backend_kit = "../../backend-kit"
         i = i + 1
     assert(hit, "缺口不是打印面")
     return
+
+; 函数值：具名函数作值发适配器上的两槽值，适配器体自己转发到真实函数。
+; 环境槽恒空，代码槽取适配器符号；真函数不带环境位，故必须经这一层。
+函数值发射|test() -> ():
+    var module = IrModule()
+    var pool = IrTypePool()
+    let intType = irScalarTypeOfCode(pool = pool, code = 1, name = "i32")
+    pool = intType.pool
+    let fnType = irFunctionType(pool = pool, params = [0], ret = 0, uses = [])
+    module.types = fnType.pool
+    var nodes = IrNodePool()
+    var fortyTwo = irMakeNode(kind = tagOfName(name = "intConst"), typeId = 0)
+    fortyTwo.intValue = 42
+    let placedValue = irAppendNode(pool = nodes, node = fortyTwo)
+    nodes = placedValue.pool
+    var backValue = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    backValue.kids = [placedValue.id]
+    let placedBackValue = irAppendNode(pool = nodes, node = backValue)
+    nodes = placedBackValue.pool
+    var holder = irMakeNode(kind = tagOfName(name = "functionValue"), typeId = fnType.id)
+    holder.text = len(module.texts)
+    module.texts = module.texts.append("__adapter_x")
+    let placedHolder = irAppendNode(pool = nodes, node = holder)
+    nodes = placedHolder.pool
+    var show = irMakeNode(kind = tagOfName(name = "exprStmt"), typeId = -1)
+    show.kids = [placedHolder.id]
+    let placedShow = irAppendNode(pool = nodes, node = show)
+    nodes = placedShow.pool
+    var realParam = IrParam()
+    realParam.name = "n"
+    realParam.typeId = 0
+    realParam.slot = 0
+    var realFn = IrFunction()
+    realFn.name = "x"
+    realFn.params = realFn.params.append(realParam)
+    realFn.returnType = 0
+    realFn.body = realFn.body.append(placedBackValue.id)
+    var adapterParam = IrParam()
+    adapterParam.name = "n"
+    adapterParam.typeId = 0
+    adapterParam.slot = 0
+    var adapter = IrFunction()
+    adapter.name = "__adapter_x"
+    adapter.params = adapter.params.append(adapterParam)
+    adapter.returnType = 0
+    adapter.isClosure = true
+    adapter.adapterTarget = "x"
+    var mainFn = IrFunction()
+    mainFn.name = "main"
+    mainFn.returnType = -1
+    mainFn.body = mainFn.body.append(placedShow.id)
+    module.functions = module.functions.append(realFn)
+    module.functions = module.functions.append(adapter)
+    module.functions = module.functions.append(mainFn)
+    module.nodes = nodes
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    assert(!result.failed, "函数值应发得出来")
+    assert(发射含子串(text = result.text, needle = "define i32 @__adapter_x(ptr %env, i32 %p0)"), "适配器按闭包协议出签名")
+    assert(发射含子串(text = result.text, needle = "%r = call i32 @x(i32 %p0)"), "适配器体转发到真实函数")
+    assert(发射含子串(text = result.text, needle = "{ ptr @__adapter_x, ptr null }"), "代码槽取适配器，环境槽为空")
+    return
