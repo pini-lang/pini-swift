@@ -12,6 +12,7 @@
 import os
 import subprocess
 import sys
+import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCAN_ROOTS = ("examples", "Tests", "bench", "Sources", "bootstrap")
@@ -32,17 +33,18 @@ def indent(lines):
 
 
 def rebuild(path):
-    """删产物再构建：内容不变时 `swift build` 不重链，时间戳也不动。
-    只在本地钩子里走这条；CI 的产物须来自构建步骤，自动重建会掩盖漏构建。
+    """增量构建后把产物时间对齐到此刻：内容不变时 `swift build` 不重链，时间戳也不动，
+    而切分支会刷新源码时间。真落后时构建会重编，对齐只消除「内容没变」的误判。
     """
-    for target in {os.path.realpath(path), os.path.realpath(PRODUCT_BIN)}:
-        if os.path.exists(target):
-            os.remove(target)
     proc = subprocess.run(
         ["swift", "build", "--disable-sandbox"], cwd=ROOT, capture_output=True, text=True)
     if proc.returncode != 0:
         tail = (proc.stdout + proc.stderr).strip().splitlines()[-15:]
         fail("格式门禁：产物落后，自动重建失败。构建输出如下：\n" + indent(tail), 2)
+    now = time.time()
+    for target in {os.path.realpath(path), os.path.realpath(PRODUCT_BIN)}:
+        if os.path.exists(target):
+            os.utime(target, (now, now))
 
 
 def binary():
@@ -59,7 +61,7 @@ def binary():
                 newest_source = max(newest_source, os.path.getmtime(os.path.join(base, name)))
     if newest_source <= os.path.getmtime(path):
         return path
-    # 切分支会刷新源码时间戳而产物不动，内容其实没变。本地钩子删产物重链，CI 不放行。
+    # 切分支会刷新源码时间戳而产物不动，内容其实没变。本地钩子增量重建并对齐时间，CI 不放行。
     if os.environ.get(REBUILD_ENV) != "1":
         fail("格式门禁：二进制早于源码，读数不算数。先 swift build，再跑本门禁。", 2)
     if os.path.abspath(path) != os.path.abspath(DEFAULT_BIN):
@@ -67,7 +69,7 @@ def binary():
     rebuild(path)
     if newest_source > os.path.getmtime(path):
         fail("格式门禁：自动重建后产物仍早于源码；检查 .build 是否被其他进程占用。", 2)
-    print("格式门禁：产物落后于源码，已删产物重链。", file=sys.stderr)
+    print("格式门禁：产物落后于源码，已增量重建并对齐时间。", file=sys.stderr)
     return path
 
 
