@@ -100,6 +100,14 @@ def bootstrap_binary():
     return path
 
 
+def host_binary():
+    path = Path(os.environ.get("PINI_HOST_BIN") or (ROOT / ".build" / "release" / "pini"))
+    if not path.is_file() or not os.access(path, os.X_OK):
+        fail(f"缺宿主产物 {path}；先 swift build -c release --disable-sandbox")
+        sys.exit(2)
+    return path
+
+
 def run(command, cwd=None):
     merged = dict(os.environ)
     try:
@@ -435,6 +443,10 @@ def programs_table():
              "程序\t形态\tcheck\tlower\temit\t归因\t归因类\t修复落点\t首条诊断\t摘要"]
     for name, path, shape in entries:
         root = str(path.relative_to(ROOT))
+        if shape == "目录":
+            # 目录夹具先预备生成模块：翻译归宿主工具，自举只按计划消费生成物。
+            # 这里不判红——build 失败时后续 check 腿会报出缺哪个产物，归因指向真因。
+            run([host_binary(), "build", root])
         legs = {}
         where = "-"
         summary = "-"

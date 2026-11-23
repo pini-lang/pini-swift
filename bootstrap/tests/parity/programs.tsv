@@ -35,7 +35,7 @@ ffi-handwritten	单文件	ok	ok	ok	通过	通过	-	-	-
 ffi-string-callback	单文件	ok	ok	ok	通过	通过	-	-	-
 ffi-varargs-handle	单文件	ok	ok	ok	通过	通过	-	-	-
 ffi	单文件	ok	ok	ok	通过	通过	-	-	-
-ffi_generated	目录	fail	-	-	语义	待核	夹具未就绪：需先 build	E3-011	构建计划不存在：请先运行 build
+ffi_generated	目录	ok	ok	ok	通过	通过	-	-	-
 ffi_module	目录	ok	ok	ok	通过	通过	-	-	-
 for	单文件	ok	ok	ok	通过	通过	-	-	-
 generic-func	单文件	ok	ok	ok	通过	通过	-	-	-
