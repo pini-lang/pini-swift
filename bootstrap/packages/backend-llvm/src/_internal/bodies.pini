@@ -3352,7 +3352,7 @@ appendToBuffer|func(ctx: BodyCtx, slot: String, piece: String,) -> (BodyCtx,):
     appendLine(sink = out.lines, text = "  store ptr " + next + ", ptr " + slot)
     return out
 
-; 插值段：字串直接借出，标量与字符先落成 C 串；聚合与容器没有单行写法，报缺口不猜。
+; 插值段：先求值成节点值，再按类型渲染成 C 串；越界节点只报缺口，不猜类型。
 emitPiece|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
     var out = ExprOut()
     out.ctx = ctx
@@ -3360,17 +3360,23 @@ emitPiece|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
         out.ctx = addGap(ctx = out.ctx, gap = "悬空插值段")
         return out
     let node = irNodeAt(pool = module.nodes, id = nodeId)
-    let tag = typeTagAt(module = module, typeId = node.typeId)
     let value = emitExpr(ctx = out.ctx, module = module, nodeId = nodeId)
-    out.ctx = value.ctx
+    return renderValue(ctx = value.ctx, module = module, text = value.text, typeId = node.typeId)
+
+; 值渲染：串直接借出，布尔与标量就地格式化，数组递归逐元素展开。
+; 未认类别报缺口并留空串，调用方据空串停止拼接，不拿占位文本充数。
+renderValue|func(ctx: BodyCtx, module: IrModule, text: String, typeId: I32,) -> (ExprOut,):
+    var out = ExprOut()
+    out.ctx = ctx
+    let tag = typeTagAt(module = module, typeId = typeId)
     if tag == 8:
-        out.text = value.text
+        out.text = text
         return out
     if tag == 7:
         let id = out.ctx.temp
         out.ctx.temp = id + 1
         let sel = tempName(index = id)
-        appendLine(sink = out.ctx.lines, text = "  " + sel + " = select i1 " + value.text + ", ptr @fmt_bool_true, ptr @fmt_bool_false")
+        appendLine(sink = out.ctx.lines, text = "  " + sel + " = select i1 " + text + ", ptr @fmt_bool_true, ptr @fmt_bool_false")
         out.text = sel
         return out
     if tag == 6:
@@ -3378,7 +3384,7 @@ emitPiece|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
         let id = out.ctx.temp
         out.ctx.temp = id + 1
         let name = tempName(index = id)
-        appendLine(sink = out.ctx.lines, text = "  " + name + " = call ptr @bk_double_to_string(double " + value.text + ")")
+        appendLine(sink = out.ctx.lines, text = "  " + name + " = call ptr @bk_double_to_string(double " + text + ")")
         out.text = name
         return out
     if tag == 9:
@@ -3386,22 +3392,22 @@ emitPiece|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
         let id = out.ctx.temp
         out.ctx.temp = id + 1
         let name = tempName(index = id)
-        appendLine(sink = out.ctx.lines, text = "  " + name + " = call ptr @bk_char_to_heap_string(i64 " + value.text + ")")
+        appendLine(sink = out.ctx.lines, text = "  " + name + " = call ptr @bk_char_to_heap_string(i64 " + text + ")")
         out.text = name
         return out
     if tag == 1 || tag == 2 || tag == 3 || tag == 4 || tag == 5:
-        var wide = value.text
+        var wide = text
         if tag == 2 || tag == 3:
             let wideId = out.ctx.temp
             out.ctx.temp = wideId + 1
             let name = tempName(index = wideId)
-            appendLine(sink = out.ctx.lines, text = "  " + name + " = trunc i64 " + value.text + " to i32")
+            appendLine(sink = out.ctx.lines, text = "  " + name + " = trunc i64 " + text + " to i32")
             wide = name
         if tag == 4 || tag == 5:
             let smallId = out.ctx.temp
             out.ctx.temp = smallId + 1
             let small = tempName(index = smallId)
-            appendLine(sink = out.ctx.lines, text = "  " + small + " = sext i8 " + value.text + " to i32")
+            appendLine(sink = out.ctx.lines, text = "  " + small + " = sext i8 " + text + " to i32")
             wide = small
         let buf = allocSlot(ctx = out.ctx, typeName = "[32 x i8]")
         out.ctx = buf.ctx
@@ -3410,7 +3416,96 @@ emitPiece|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
         appendLine(sink = out.ctx.lines, text = "  call i32 (ptr, i64, ptr, ...) @snprintf(" + args + ")")
         out.text = buf.text
         return out
+    if tag == 12:
+        return renderArray(ctx = out.ctx, module = module, text = text, typeId = typeId)
     out.ctx = addGap(ctx = out.ctx, gap = "插值段 类别码 " + countText(tag))
+    return out
+
+; 数组渲染：`[` 加逐元素递归再加 `]`，首个元素前不补分隔符，空数组得 `[]`。
+; 元素串由拼接按所有权接管，循环内不再单独归还；元素类别未接时沿用同一张缺口表。
+renderArray|func(ctx: BodyCtx, module: IrModule, text: String, typeId: I32,) -> (ExprOut,):
+    var out = ExprOut()
+    out.ctx = ctx
+    var elemType = -1
+    if typeId >= 0 && typeId < irTypeCount(module.types):
+        let entry = irTypeAt(pool = module.types, id = typeId)
+        if len(entry.kids) > 0:
+            elemType = entry.kids[0]
+    let spelling = llvmTypeName(pool = module.types, typeId = elemType)
+    useExtern(use = out.ctx.externs, name = "bk_array_len")
+    useExtern(use = out.ctx.externs, name = "bk_array_get")
+    let slot = allocSlot(ctx = out.ctx, typeName = "ptr")
+    out.ctx = slot.ctx
+    appendLine(sink = out.ctx.lines, text = "  store ptr null, ptr " + slot.text)
+    out.ctx = appendToBuffer(ctx = out.ctx, slot = slot.text, piece = "@fmt_lbracket")
+    let countId = out.ctx.temp
+    out.ctx.temp = countId + 1
+    let count = tempName(index = countId)
+    appendLine(sink = out.ctx.lines, text = "  " + count + " = call i32 @bk_array_len(ptr " + text + ")")
+    let cursor = allocSlot(ctx = out.ctx, typeName = "i32")
+    out.ctx = cursor.ctx
+    appendLine(sink = out.ctx.lines, text = "  store i32 0, ptr " + cursor.text)
+    let at = out.ctx.label
+    out.ctx.label = at + 1
+    let condLabel = labelName(prefix = "arr.cond.", index = at)
+    let bodyLabel = labelName(prefix = "arr.body.", index = at)
+    let sepLabel = labelName(prefix = "arr.sep.", index = at)
+    let elemLabel = labelName(prefix = "arr.elem.", index = at)
+    let incLabel = labelName(prefix = "arr.inc.", index = at)
+    let endLabel = labelName(prefix = "arr.end.", index = at)
+    appendLine(sink = out.ctx.lines, text = "  br label %" + condLabel)
+    appendLine(sink = out.ctx.lines, text = condLabel + ":")
+    let kId = out.ctx.temp
+    out.ctx.temp = kId + 1
+    let k = tempName(index = kId)
+    appendLine(sink = out.ctx.lines, text = "  " + k + " = load i32, ptr " + cursor.text)
+    let inId = out.ctx.temp
+    out.ctx.temp = inId + 1
+    let inside = tempName(index = inId)
+    appendLine(sink = out.ctx.lines, text = "  " + inside + " = icmp slt i32 " + k + ", " + count)
+    appendLine(sink = out.ctx.lines, text = "  br i1 " + inside + ", label %" + bodyLabel + ", label %" + endLabel)
+    appendLine(sink = out.ctx.lines, text = bodyLabel + ":")
+    let firstId = out.ctx.temp
+    out.ctx.temp = firstId + 1
+    let first = tempName(index = firstId)
+    appendLine(sink = out.ctx.lines, text = "  " + first + " = icmp eq i32 " + k + ", 0")
+    appendLine(sink = out.ctx.lines, text = "  br i1 " + first + ", label %" + elemLabel + ", label %" + sepLabel)
+    appendLine(sink = out.ctx.lines, text = sepLabel + ":")
+    out.ctx = appendToBuffer(ctx = out.ctx, slot = slot.text, piece = "@fmt_comma")
+    appendLine(sink = out.ctx.lines, text = "  br label %" + elemLabel)
+    appendLine(sink = out.ctx.lines, text = elemLabel + ":")
+    let boxId = out.ctx.temp
+    out.ctx.temp = boxId + 1
+    let box = tempName(index = boxId)
+    appendLine(sink = out.ctx.lines, text = "  " + box + " = call ptr @bk_array_get(ptr " + text + ", i32 " + k + ")")
+    let elemId = out.ctx.temp
+    out.ctx.temp = elemId + 1
+    let elem = tempName(index = elemId)
+    appendLine(sink = out.ctx.lines, text = "  " + elem + " = load " + spelling + ", ptr " + box)
+    let piece = renderValue(ctx = out.ctx, module = module, text = elem, typeId = elemType)
+    out.ctx = piece.ctx
+    if len(piece.text) == 0:
+        return out
+    out.ctx = appendToBuffer(ctx = out.ctx, slot = slot.text, piece = piece.text)
+    appendLine(sink = out.ctx.lines, text = "  br label %" + incLabel)
+    appendLine(sink = out.ctx.lines, text = incLabel + ":")
+    let stepId = out.ctx.temp
+    out.ctx.temp = stepId + 1
+    let moved = tempName(index = stepId)
+    appendLine(sink = out.ctx.lines, text = "  " + moved + " = load i32, ptr " + cursor.text)
+    let bumpedId = out.ctx.temp
+    out.ctx.temp = bumpedId + 1
+    let bumped = tempName(index = bumpedId)
+    appendLine(sink = out.ctx.lines, text = "  " + bumped + " = add i32 " + moved + ", 1")
+    appendLine(sink = out.ctx.lines, text = "  store i32 " + bumped + ", ptr " + cursor.text)
+    appendLine(sink = out.ctx.lines, text = "  br label %" + condLabel)
+    appendLine(sink = out.ctx.lines, text = endLabel + ":")
+    out.ctx = appendToBuffer(ctx = out.ctx, slot = slot.text, piece = "@fmt_rbracket")
+    let id = out.ctx.temp
+    out.ctx.temp = id + 1
+    let name = tempName(index = id)
+    appendLine(sink = out.ctx.lines, text = "  " + name + " = load ptr, ptr " + slot.text)
+    out.text = name
     return out
 
 ; 插值串：逐段追加进同一条句柄，段间不再各造一次常量；结果按节点类型是串。
