@@ -300,7 +300,7 @@ private struct Walker {
     mutating func walk(_ statement: IRStmt, at location: SourceLocation?) {
         switch statement {
         case .allocVar(let name, let type, _, let initializer, _):
-            /// 登记排在初值求值之后：`var x = x` 的右边取的是外层那个 x，不是刚分配的空槽。
+            // 登记排在初值求值之后：`var x = x` 的右边取的是外层那个 x，不是刚分配的空槽。
             if let initializer {
                 if let valueType = effectiveType(of: initializer), !valueType.isAssignable(to: type) {
                     report(
@@ -332,7 +332,7 @@ private struct Walker {
             walk(value, at: location)
 
         case .releaseVar(let name, let type):
-            /// 槽必须已声明且类型一致：释放错槽等于还掉别人的那一份，出口还要再还一次不存在的份额。
+            // 槽必须已声明且类型一致：释放错槽等于还掉别人的那一份，出口还要再还一次不存在的份额。
             if let declared = lookup(name) {
                 if !declared.isAssignable(to: type), !type.isAssignable(to: declared) {
                     report(
@@ -421,7 +421,7 @@ private struct Walker {
                 report(.nodeShape, "tryStmt 的 type 是 \(type.display)，不是 Result", at: location)
             }
             walk(operand, at: location)
-            /// 错误变量登记在当前帧：发射层在分派前就把它写进作用域，handler 与后续语句都看得见。
+            // 错误变量登记在当前帧：发射层在分派前就把它写进作用域，handler 与后续语句都看得见。
             declare(errorVar, .i64)
             walk(handler, at: location)
             if let okTarget, lookup(okTarget) == nil {
@@ -539,7 +539,7 @@ private struct Walker {
             }
 
         case .result(let ok):
-            /// 分派面与发射层同规：ok 取载荷槽 1（ok 类型），err 取槽 2（类型擦除的错误字）。
+            // 分派面与发射层同规：ok 取载荷槽 1（ok 类型），err 取槽 2（类型擦除的错误字）。
             for matchCase in cases {
                 let bindingType: IRType?
                 switch matchCase.caseName {
@@ -565,7 +565,7 @@ private struct Walker {
             }
 
         default:
-            /// 裸值分支的绑定取判别式本身的类型 —— 与降载同一条规则：分支体引用它时要看得见。
+            // 裸值分支的绑定取判别式本身的类型 —— 与降载同一条规则：分支体引用它时要看得见。
             for matchCase in cases {
                 let payloadTypes = Array(repeating: scrutineeType, count: matchCase.bindings.count)
                 walk(matchCase: matchCase, payloadTypes: payloadTypes, at: location)
@@ -714,7 +714,7 @@ private struct Walker {
                             at: location)
                     }
                 case .string, .char:
-                    /// 字符串的下标单位是字素簇，取出的元素不在容器的槽里而是新建的 `Char`。
+                    // 字符串的下标单位是字素簇，取出的元素不在容器的槽里而是新建的 `Char`。
                     if type != .char, type != .string {
                         report(
                             .typeMismatch,
@@ -745,7 +745,7 @@ private struct Walker {
                             at: location)
                     }
                 case .string, .char:
-                    /// 字符串的下标是字素簇，与数组同一形态，但元素不是容器里的槽。
+                    // 字符串的下标是字素簇，与数组同一形态，但元素不是容器里的槽。
                     if let wrapped = type.optionalWrapped, wrapped != .char, wrapped != .string {
                         report(
                             .typeMismatch,
@@ -753,8 +753,8 @@ private struct Walker {
                             at: location)
                     }
                 case .dict(_, let value):
-                    /// 字典的宽容读与数组同形：命中得 some，缺失键得 none。`get` 走的是先问存在性再取值，
-                    /// 故这里与数组共用同一个节点，没有单独的字典节点。
+                    // 字典的宽容读与数组同形：命中得 some，缺失键得 none。`get` 走的是先问存在性再取值，
+                    // 故这里与数组共用同一个节点，没有单独的字典节点。
                     if type.optionalWrapped.map({ !value.isAssignable(to: $0) }) ?? true {
                         report(
                             .typeMismatch,
@@ -975,8 +975,8 @@ private struct Walker {
             }
 
         case .cFunctionAddress(let name, let type):
-            /// 地址必须是本模块里真的存在的函数：外部声明没有 Pini 函数体，取它的地址应当走
-            /// 外部数据符号那条路，不该在这里冒充一个回调。
+            // 地址必须是本模块里真的存在的函数：外部声明没有 Pini 函数体，取它的地址应当走
+            // 外部数据符号那条路，不该在这里冒充一个回调。
             if !functionNames.contains(name) {
                 report(.closureShape, "C 函数指针引用了未知函数 '\(name)'", at: location)
             }
@@ -1187,7 +1187,7 @@ private struct Walker {
                             at: location)
                     }
                 case .result(let ok):
-                    /// 已在结算值上等待（`wait joinAll(...)` 这类）：发射层原样透传，故站点类型要与它一致。
+                    // 已在结算值上等待（`wait joinAll(...)` 这类）：发射层原样透传，故站点类型要与它一致。
                     if form == .awaits {
                         report(
                             .joinShape,

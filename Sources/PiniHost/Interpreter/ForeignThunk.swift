@@ -23,8 +23,8 @@ enum ForeignThunk {
                     reason: "FFI 裸绑定参数类型不可作为 C 顶层类型：第 \(index + 1) 个（\(name)）",
                     location: location)
             }
-            /// 浮点走向量寄存器，而桩是整数约定：含 F64 的回调在解释器上没有可用的桥。
-            /// 这与「GPR 与浮点混合签名」是同一条既有边界，落点写在报错里。
+            // 浮点走向量寄存器，而桩是整数约定：含 F64 的回调在解释器上没有可用的桥。
+            // 这与「GPR 与浮点混合签名」是同一条既有边界，落点写在报错里。
             if case .callback(let callbackParams, let callbackReturn) = type {
                 if callbackParams.contains(.f64) || callbackReturn == .f64 {
                     throw RuntimeError.invalidOperation(
@@ -78,8 +78,8 @@ enum ForeignThunk {
             for (index, arg) in args.enumerated() {
                 let type = params[index]
                 if case .callback(let callbackParams, let callbackReturn) = type {
-                    /// 回调：占一个桩位，把 C 要的地址放进去。绑定只活到本次调用结束 ——
-                    /// C 把地址存下来在别的调用里用，是文档里写明的不支持。
+                    // 回调：占一个桩位，把 C 要的地址放进去。绑定只活到本次调用结束 ——
+                    // C 把地址存下来在别的调用里用，属于不支持的情形。
                     guard case .function(let function) = arg else {
                         throw RuntimeError.typeMismatch(
                             expected: type.describe(), got: String(describing: arg), location: location)
@@ -107,7 +107,7 @@ enum ForeignThunk {
             }
             while cargs.count < 8 { cargs.append(0) }
             let result = fn(cargs[0], cargs[1], cargs[2], cargs[3], cargs[4], cargs[5], cargs[6], cargs[7])
-            /// 回调里抛出的错误在 C 返回之后浮出来：C 没有错误通道，桥只能先记下来。
+            // 回调里抛出的错误在 C 返回之后浮出来：C 没有错误通道，桥只能先记下来。
             if let error = CallbackBridge.takePendingError() { throw error }
             if let rk = retKind { return try fromUInt64(result, kind: rk, location: location, elemType: retElemType) }
             return .null
@@ -193,7 +193,7 @@ enum ForeignThunk {
             return .pointer(element: inner, location: location)
         case .cString: return nil
         case .callback: return nil
-        /// 句柄不是可解引用的字节地址，没有元素宽度可言。
+        // 句柄不是可解引用的字节地址，没有元素宽度可言。
         case .stringHandle: return nil
         }
     }
@@ -234,8 +234,8 @@ enum ForeignThunk {
         case .pointer: return .ptr
         case .cString: return .cString
         case .callback: return .callback
-        /// 句柄在解释器上没有实现路径：符号只活在运行时段，`pini` 进程里解析不到。
-        /// 调用点（`IRExecutor`）先一步报 E5-020，这里只是把它挡在 thunk 之外。
+        // 句柄在解释器上没有实现路径：符号只活在运行时段，`pini` 进程里解析不到。
+        // 调用点（`IRExecutor`）先一步报 E5-020，这里只是把它挡在 thunk 之外。
         case .stringHandle: return nil
         }
     }

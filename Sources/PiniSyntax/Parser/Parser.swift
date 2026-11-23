@@ -1,7 +1,7 @@
 import Foundation
 
 /// 解析结果：成功产出的 AST 模块 + 收集到的全部解析错误。
-/// 用于『多错误同报』场景（P2-4.1 / P2-4.3），配合 `Parser.parseModuleCollectingErrors()`。
+/// 用于「多错误同报」场景，配合 `Parser.parseModuleCollectingErrors()`。
 public struct ParseResult {
     public let module: Module
     public let errors: [ParserError]
@@ -17,7 +17,7 @@ public class Parser {
     private let fileName: String
     private var position: Int = 0
 
-    // 错误收集模式状态（P2-4.2 panic-mode 恢复）：收集模式下语句级错误就地记录并跳过恢复，
+    // 错误收集模式状态（panic-mode 恢复）：收集模式下语句级错误就地记录并跳过恢复，
     // 而非向上冒泡导致整个声明体丢失并生成伪顶级声明。
     private var collectMode: Bool = false
     /// 多项 import 块里首项之后的余项缓冲，由 parseModuleImpl 逐位排干。
@@ -213,7 +213,7 @@ public class Parser {
         return Desugar.desugar(result.module)
     }
 
-    /// 收集模式入口：不抛出，返回 `(module, errors)`，单文件可一次性报多错（P2-4.1）。
+    /// 收集模式入口：不抛出，返回 `(module, errors)`，单文件可一次性报多错。
     public func parseModuleCollectingErrors() -> ParseResult {
         let result = parseModuleImpl(collectErrors: true)
         return ParseResult(module: Desugar.desugar(result.module), errors: result.errors)
@@ -236,7 +236,7 @@ public class Parser {
                 case .importDecl(let imp):
                     imports.append(imp)
                 case .exportDecl(let exp):
-                    /// 每个文件一张发布表：第二块并进去，不另起一套条目。
+                    // 每个文件一张发布表：第二块并进去，不另起一套条目。
                     guard exports.isEmpty else {
                         throw ParserError.invalidDeclaration(
                             reason: "每个文件最多一个 export 块；把第二个块的条目并进第一个块",
@@ -246,14 +246,14 @@ public class Parser {
                 default:
                     declarations.append(decl)
                 }
-                /// 排干多项 import 块的余项，保持书写顺序进 imports。
+                // 排干多项 import 块的余项，保持书写顺序进 imports。
                 if !pendingImportDecls.isEmpty {
                     imports.append(contentsOf: pendingImportDecls)
                     pendingImportDecls = []
                 }
             } catch let error as ParserError {
                 if !collectErrors {
-                    // 旧语义：遇首个错即抛
+                    // 非收集模式：遇首个错即抛，把已解析的声明连同这条错误一起返回
                     return ParseResult(
                         module: Module(declarations: declarations, location: startLocation),
                         errors: [error])
@@ -285,7 +285,7 @@ public class Parser {
     }
 
     /// 跳到下一源码行的起点，使顶级循环能尝试解析后续声明。
-    /// 保证至少前进一次，避免在同一失败 token 上重试导致死循环（P2-4.1 resync）。
+    /// 保证至少前进一次，避免在同一失败 token 上重试导致死循环。
     private func resyncToNextTopLevelDecl() {
         var advanced = false
         var iterations = 0
@@ -309,9 +309,9 @@ public class Parser {
         return false
     }
 
-    /// 在收集模式下尝试解析一条语句；失败时记录错误并跳过到下一行边界恢复，
-    /// 使单个声明体内也能一次性收集多个语句级错误（P2-4.2 panic-mode 恢复）。
-    /// 非收集模式下任一错误直接向上冒泡——保留『遇错即抛』旧语义，现有调用方零改动。
+    /// 在收集模式下尝试解析一条语句；失败时记录错误并跳到下一行边界恢复，
+    /// 使单个声明体内也能一次性收集多个语句级错误。
+    /// 非收集模式下任一错误直接向上冒泡，保持「遇错即抛」，调用方无需改动。
     private func parseStatementWithRecovery(into statements: inout [Statement]) throws {
         do {
             let stmt = try parseStatement()
@@ -359,7 +359,7 @@ public class Parser {
     private func parseTopLevelDecl() throws -> TopLevelDecl {
         // 顶级导入导出只有块形式：`[当前文件名|import]` / `[当前文件名|export]`。
 
-        // 根据括号类型分派（声明上下文收紧·规则 3.2/3.14：行首 `((`/`{{`/`[[`/`<<` 双定界符 → 扩展块）
+        // 按括号类型分派：行首 `((`/`{{`/`[[`/`<<` 双定界符 → 扩展块
         switch currentToken {
         case .leftParen(_):
             if case .leftParen(_) = peek(offset: 1) {
@@ -375,7 +375,7 @@ public class Parser {
             if case .leftBrace(_) = peek(offset: 1) {
                 return .extensionDecl(try parseExtensionDecl())
             }
-            /// 行首 `{名}` 恒为对象声明糖。
+            // 行首 `{名}` 恒为对象声明糖。
             return .objectDecl(try parseObjectDecl())
         case .lessThan(_):
             // 行首 `<<` → 特征扩展；`<名称>` → 特征声明
@@ -398,9 +398,9 @@ public class Parser {
         }
     }
 
-    // MARK: - import / export 声明解析（P4 模块化，Phase 2 仅解析暂存）
+    // MARK: - import / export 声明解析
 
-    /// 当前文件名（去 `.pini` 后缀）——import/export 块头名的校验基准（D-1）。
+    /// 当前文件名（去 `.pini` 后缀）——import/export 块头名的校验基准。
     private var currentFileBaseName: String {
         let base = (fileName as NSString).lastPathComponent
         return base.hasSuffix(".pini") ? String(base.dropLast(5)) : base
@@ -433,8 +433,8 @@ public class Parser {
         guard let first = items.first else {
             throw ParserError.invalidDeclaration(reason: "import 块至少需要一项 `别名 = \"包路径\"`", location: location)
         }
-        /// 多项 `别名 = "包路径"` 各自成一条 ImportDecl：首项直接返回，余项入 pending
-        /// 缓冲，由 parseModuleImpl 在本声明位排干（保持声明顺序）。
+        // 多项 `别名 = "包路径"` 各自成一条 ImportDecl：首项直接返回，余项入 pending
+        // 缓冲，由 parseModuleImpl 在本声明位排干（保持声明顺序）。
         pendingImportDecls.append(
             contentsOf: items.dropFirst().map {
                 ImportDecl(alias: $0.alias, packagePath: $0.path, location: $0.location)
@@ -461,7 +461,7 @@ public class Parser {
                 advance()
                 advance()
             case .pipe(_):
-                /// `名|目标 = 符号` 才是条目；`main|func(...)` 这类下一顶级声明在这里闭合。
+                // `名|目标 = 符号` 才是条目；`main|func(...)` 这类下一顶级声明在这里闭合。
                 guard case .assign(_) = peek(offset: 3) else { break entryLoop }
                 advance()
                 advance()
@@ -525,23 +525,23 @@ public class Parser {
             } else if checkKeyword(.enum) {
                 advance()
             } else if case .identifier("given", _) = currentToken {
-                /// `[名称|given]`。`given` **不入关键字表**——它只出现在 `|` 右侧的修饰符位，
-                /// 与 `|foreign` / `|import` / `|export` 同走标识符白名单路径。
-                /// 判据：全仓语料零处把 `given` 用作标识符，且这些修饰符都不是关键字。
+                // `[名称|given]`。`given` 不入关键字表——它只出现在 `|` 右侧的修饰符位，
+                // 与 `|foreign` / `|import` / `|export` 同走标识符白名单路径。
+                // 判据：全仓语料零处把 `given` 用作标识符，且这些修饰符都不是关键字。
                 advance()
                 isGiven = true
             } else if checkKeyword(.foreign) {
-                // Phase 2a（FFI 子系统， foreign-decl）：`[名称|foreign]` 外部 C 函数声明块。
+                // `[名称|foreign]`：外部 C 函数声明块。
                 advance()
                 _ = try expect(.rightBracket(loc))
                 return .foreignDecl(try parseForeignDecl(name: name, location: loc))
             } else if checkKeyword(.import) {
-                /// `[当前文件名|import]` 块——引入外部模块。
+                // `[当前文件名|import]` 块——引入外部模块。
                 advance()
                 _ = try expect(.rightBracket(loc))
                 return .importDecl(try parseImportBlock(headerName: name, location: loc))
             } else if checkKeyword(.export) {
-                /// `[当前文件名|export]` 块——显式导出表。
+                // `[当前文件名|export]` 块——显式导出表。
                 advance()
                 _ = try expect(.rightBracket(loc))
                 return .exportDecl(try parseExportBlock(headerName: name, location: loc))
@@ -568,7 +568,7 @@ public class Parser {
         }
     }
 
-    // MARK: - foreign 块解析（Phase 2a FFI 子系统， foreign-decl）
+    // MARK: - foreign 块解析
 
     /// 解析 foreign 块内容（`[名称|foreign]` 的 `]` 已被消费）：块内是一张外部符号表。
     /// 条目只有一形 `名{|标志}: 类型`，类型为函数类型即外部函数。
@@ -627,8 +627,8 @@ public class Parser {
         advance()
         let annotation = try parseTypeAnnotation()
         let symbol = ForeignSymbol(name: symbolName, annotation: annotation, flags: flags, location: loc)
-        /// 标志各有归属：`readonly` / `macro` 只对数据符号成立，`|varargs` 只对函数成立。
-        /// 数据标志落在函数上由这一层挡（读不到存储）；变参落在数据上由语义层报 E4-033。
+        // 标志各有归属：`readonly` / `macro` 只对数据符号成立，`|varargs` 只对函数成立。
+        // 数据标志落在函数上由这一层挡（读不到存储）；变参落在数据上由语义层报 E4-033。
         if symbol.isFunction, let misplaced = flags.first(where: { $0 != "varargs" }) {
             throw ParserError.invalidStatement(
                 reason: "`|\(misplaced)` 只适用于数据符号，函数类型条目不可带它：`\(symbolName)`",
@@ -638,7 +638,7 @@ public class Parser {
         return symbol
     }
 
-    /// Phase 2a（FFI 子系统）：判断当前裸函数签名后是否紧跟缩进体（= 带 body 的**函数定义**）。
+    /// 判断当前裸函数签名后是否紧跟缩进体（= 带 body 的**函数定义**）。
     /// 用于 foreign 块循环区分「纯外部签名」与「顶层函数定义」——二者同为 `IDENT(...) -> (...)` 形态。
     private func isBareFunctionWithBodyStart() -> Bool {
         guard case .identifier = currentToken else { return false }
@@ -684,11 +684,11 @@ public class Parser {
                 }
             }
         }
-        // 跳过换行与块引导冒号（H-4），看是否 indent（函数体）
+        // 跳过换行与块引导冒号，看是否 indent（函数体）
         while offset < tokens.count {
             let tok = peek(offset: offset)
             if case .newline(_) = tok { offset += 1; continue }
-            // H-4：带执行块的函数以 `:` 开块，前瞻须容忍它，否则
+            // 带执行块的函数以 `:` 开块，前瞻须容忍它，否则
             // foreign 块等依赖本判定的循环无法识别「下一个是带体函数」而退出。
             if case .colon(_) = tok { offset += 1; continue }
             if case .indent(_) = tok { return true }
@@ -697,7 +697,7 @@ public class Parser {
         return false
     }
 
-    /// Phase 2a（FFI 子系统）：foreign 块的结束标记——类型/扩展块/import 等非签名声明头。
+    /// foreign 块的结束标记：类型 / 扩展块 / import 等非签名声明头。
     /// 裸函数签名（foreign 签名本身）不是结束标记。
     private func isForeignBlockEndMarker() -> Bool {
         switch currentToken {
@@ -710,7 +710,7 @@ public class Parser {
         }
     }
 
-    // MARK: - 扩展块解析（声明上下文收紧·规则 3.2/3.14， extension-decl）
+    // MARK: - 扩展块解析
 
     /// 解析扩展块 `((T))` / `{{T}}` / `[[T]]` / `<<T>>`：行首双定界符由 Lexer 拆成 token 对送达，
     /// 特征扩展的 `<<` 需在此再消歧。数据与逻辑分离——类型体只含字段/用例，方法必须写在本文件
@@ -753,8 +753,8 @@ public class Parser {
         case .bracketExt:
             _ = try expect(.rightBracket(loc)); _ = try expect(.rightBracket(loc))
         case .traitExt:
-            /// `>>` 闭合双态：词法合并的 `.rightShift`（`<<T>>` 紧邻形态，行内 `>>` 恒合并）与
-            /// 空格分隔的 `.greaterThan` ×2（`<<T >>`）都接受。
+            // `>>` 闭合双态：词法合并的 `.rightShift`（`<<T>>` 紧邻形态，行内 `>>` 恒合并）与
+            // 空格分隔的 `.greaterThan` ×2（`<<T >>`）都接受。
             if case .rightShift(_) = currentToken {
                 advance()
             } else {
@@ -777,7 +777,7 @@ public class Parser {
                     break
                 }
                 let funcDecl = try parseBareFuncDecl(position: .typeBodyMethod, allowEmptyBody: isTraitExt)
-                // 规则 3.14：类型扩展内只允许 |self/|own 方法；特征扩展保持 trait-body 宽松
+                // 类型扩展内只允许 |self/|own 方法；特征扩展保持 trait-body 宽松
                 if !isTraitExt {
                     let hasSelfModifier = funcDecl.modifiers.contains("self") || funcDecl.modifiers.contains("own")
                     if !hasSelfModifier {
@@ -833,13 +833,13 @@ public class Parser {
         // 期望 )
         _ = try expect(.rightParen(loc))
 
-        // 解析内容态（声明上下文收紧·规则 3.2：类型体内只允许字段，方法移至扩展块）
+        // 内容态：类型体内只允许字段，方法移至扩展块。
         var fields: [FieldDecl] = []
 
         skipNewlines()
 
-        // 内嵌组合：检测结构体内首行裸父类型名（原称 A3 简写）
-        // 条件：当前 token 是 identifier，但不是裸函数也不是普通字段声明
+        // 内嵌组合：检测结构体内首行裸父类型名（组合简写）。
+        // 条件：当前 token 是 identifier，但不是裸函数也不是普通字段声明。
         if composedType == nil,
             case .identifier(let bareName, let bareLoc) = currentToken,
             !isBareFunctionDeclStart()
@@ -869,20 +869,20 @@ public class Parser {
             if case .indent(_) = currentToken { advance(); skipNewlines() }
             if case .dedent(_) = currentToken { advance(); break }
             // 类型体结束：顶格下一类型块头（`(`/`[`/`<`）；`{` 在类型体内是函数声明 → 报错。
-            // 注意：不能用 isTopLevelDeclStart()——它把 `name(...)` 裸函数也当顶级声明，使规则 3.2 报错失效。
+            // 注意：不能用 isTopLevelDeclStart()——它把 `name(...)` 裸函数也当顶级声明，会让下面的检查失效。
             if case .leftParen(_) = currentToken { break }
             if case .leftBracket(_) = currentToken { break }
             if case .lessThan(_) = currentToken { break }
             if case .leftBrace(_) = currentToken {
-                // `{{` 是对象扩展块（下一顶级声明）→ 结束类型体；单 `{` 是类型体内函数声明 → 规则 3.2 报错
+                // `{{` 是对象扩展块（下一顶级声明）→ 结束类型体；单 `{` 是类型体内函数声明 → 报错
                 if case .leftBrace(_) = peek(offset: 1) { break }
-                // 规则 3.2：类型体内禁止函数声明；方法须移到同文件扩展块并显式写 `|self` 或 `|Self`。
+                // 类型体内禁止函数声明；方法须移到同文件扩展块并显式写 `|self` 或 `|Self`。
                 throw ParserError.invalidStatement(
                     reason: "类型体内禁止函数声明（规则 3.2）：`\(name)` 的方法应移至同文件扩展块 `((\(name)))` 中，并显式使用 `|self` 或 `|Self`",
                     location: currentLocation
                 )
             } else if case .identifier = currentToken, isBareFunctionDeclStart() {
-                // `name|func` 是顶级自由函数（类型体结束）；其余函数声明是类型体内方法（规则 3.2 报错）
+                // `name|func` 是顶级自由函数（类型体结束）；其余函数声明是类型体内方法 → 报错
                 if isBareFuncWithFuncModifierStart() { break }
                 throw ParserError.invalidStatement(
                     reason: "类型体内禁止函数声明（规则 3.2）：`\(name)` 的方法应移至同文件扩展块 `((\(name)))` 中，并显式使用 `|self` 或 `|Self`",
@@ -941,7 +941,7 @@ public class Parser {
         extensionBracket: String? = nil
     ) throws -> ObjectDecl {
         let bracket = extensionBracket ?? "{{\(name)}}"
-        // 解析内容态（声明上下文收紧·规则 3.2：对象体内只允许字段，方法移至扩展块）
+        // 内容态：对象体内只允许字段，方法移至扩展块。
         var fields: [FieldDecl] = []
 
         skipNewlines()
@@ -957,15 +957,15 @@ public class Parser {
             if case .leftBracket(_) = currentToken { break }
             if case .lessThan(_) = currentToken { break }
             if case .leftBrace(_) = currentToken {
-                // `{{` 是对象扩展块（下一顶级声明）→ 结束类型体；单 `{` 是类型体内函数声明 → 规则 3.2 报错
+                // `{{` 是对象扩展块（下一顶级声明）→ 结束类型体；单 `{` 是类型体内函数声明 → 报错
                 if case .leftBrace(_) = peek(offset: 1) { break }
-                // 规则 3.2：类型体内禁止函数声明；方法须移到同文件扩展块并显式写 `|self` 或 `|Self`。
+                // 类型体内禁止函数声明；方法须移到同文件扩展块并显式写 `|self` 或 `|Self`。
                 throw ParserError.invalidStatement(
                     reason: "类型体内禁止函数声明（规则 3.2）：`\(name)` 的方法应移至同文件扩展块 `\(bracket)` 中，并显式使用 `|self` 或 `|Self`",
                     location: currentLocation
                 )
             } else if case .identifier = currentToken, isBareFunctionDeclStart() {
-                // `name|func` 是顶级自由函数（类型体结束）；其余函数声明是类型体内方法（规则 3.2 报错）
+                // `name|func` 是顶级自由函数（类型体结束）；其余函数声明是类型体内方法 → 报错
                 if isBareFuncWithFuncModifierStart() { break }
                 throw ParserError.invalidStatement(
                     reason: "类型体内禁止函数声明（规则 3.2）：`\(name)` 的方法应移至同文件扩展块 `\(bracket)` 中，并显式使用 `|self` 或 `|Self`",
@@ -1005,9 +1005,9 @@ public class Parser {
     // MARK: - 枚举块解析
 
     private func parseEnumDeclContent(name: String, genericParams: [GenericParam], location: SourceLocation) throws -> EnumDecl {
-        // 解析内容态（声明上下文收紧·规则 3.2：枚举体内只允许用例，方法移至扩展块）
+        // 内容态：枚举体内只允许用例，方法移至扩展块。
         var cases: [EnumCase] = []
-        /// `实现:` 与用例同属体内声明，但形状是「名: 特征」，故在用例分支之前摘出。
+        // `实现:` 与用例同属体内声明，但形状是「名: 特征」，故在用例分支之前摘出。
         var traits: [String] = []
 
         skipNewlines()
@@ -1021,23 +1021,23 @@ public class Parser {
             if case .leftBracket(_) = currentToken { break }
             if case .lessThan(_) = currentToken { break }
             if case .leftBrace(_) = currentToken {
-                // `{{` 是对象扩展块（下一顶级声明）→ 结束类型体；单 `{` 是类型体内函数声明 → 规则 3.2 报错
+                // `{{` 是对象扩展块（下一顶级声明）→ 结束类型体；单 `{` 是类型体内函数声明 → 报错
                 if case .leftBrace(_) = peek(offset: 1) { break }
-                // 规则 3.2：类型体内禁止函数声明；方法须移到同文件扩展块并显式写 `|self` 或 `|Self`。
+                // 类型体内禁止函数声明；方法须移到同文件扩展块并显式写 `|self` 或 `|Self`。
                 throw ParserError.invalidStatement(
                     reason: "类型体内禁止函数声明（规则 3.2）：`\(name)` 的方法应移至同文件扩展块 `[[\(name)]]` 中，并显式使用 `|self` 或 `|Self`",
                     location: currentLocation
                 )
             } else if case .identifier = currentToken, isBareFunctionDeclStart() {
-                // `name|func` 是顶级自由函数（类型体结束）；其余函数声明是类型体内方法（规则 3.2 报错）
+                // `name|func` 是顶级自由函数（类型体结束）；其余函数声明是类型体内方法 → 报错
                 if isBareFuncWithFuncModifierStart() { break }
                 throw ParserError.invalidStatement(
                     reason: "类型体内禁止函数声明（规则 3.2）：`\(name)` 的方法应移至同文件扩展块 `[[\(name)]]` 中，并显式使用 `|self` 或 `|Self`",
                     location: currentLocation
                 )
             } else if case .identifier("实现", _) = currentToken, case .colon(_) = peek() {
-                /// 枚举体的特征声明：`实现: 错误`。与 struct 体同形，只是枚举体不收字段，
-                /// 故不能走字段解析，需在此单独消费。
+                // 枚举体的特征声明：`实现: 错误`。与 struct 体同形，只是枚举体不收字段，
+                // 故不能走字段解析，需在此单独消费。
                 advance()
                 advance()
                 guard case .identifier(let traitName, _) = currentToken else {
@@ -1068,7 +1068,7 @@ public class Parser {
         if case .leftParen(_) = currentToken {
             advance()
             while !check(.rightParen(loc)) && !isEOF() {
-                /// 具名形参 `IDENT ':' 类型` 合法；默认值 / 裸字面量 / 表达式默认值仍拒绝，与是否具名无关。
+                // 具名形参 `IDENT ':' 类型` 合法；默认值 / 裸字面量 / 表达式默认值仍拒绝，与是否具名无关。
                 var assocName: String? = nil
                 if case .identifier(let possibleName, _) = currentToken, peekIsColon() {
                     assocName = possibleName
@@ -1192,7 +1192,7 @@ public class Parser {
             advance()
             _ = try expect(.leftParen(loc))
             while !check(.rightParen(loc)) && !isEOF() {
-                // 可能是 "名称: 类型" 或直接 "类型"（草稿 A2，批次 1.3：命名返回的分量标签记录进 returnLabels）
+                // 可能是「名称: 类型」或直接「类型」；命名返回的分量标签记录进 returnLabels。
                 if case .identifier(let name, _) = currentToken {
                     let nextTok = peek(offset: 1)
                     if case .colon(_) = nextTok {
@@ -1237,24 +1237,24 @@ public class Parser {
         return (params, returnTypes, returnLabels, isAsync)
     }
 
-    /// H-1 capture 上下文：nil = 不在匿名函数体解析中；非 nil = 当前块嵌套深度
+    /// capture 上下文：nil = 不在匿名函数体解析中；非 nil = 当前块嵌套深度
     ///（0 = 正在解析字面量头与体之间，1 = 缩进体顶层语句位，≥2 = 嵌套块内）。
     /// parseCaptureStmt 依据此判定「仅匿名函数体顶层语句位」。
     private var anonCaptureDepth: Int? = nil
 
-    /// 解析匿名函数字面量（spec G29）：`func (形式参数元组,) -> (返回元组,):` + 块体。
+    /// 解析匿名函数字面量：`func (形式参数元组,) -> (返回元组,):` + 块体。
     /// `=> (返回元组,)` 为 async 形式。产出 `Expression.funcLiteral`（FuncDecl 同构表示）。
     private func parseFuncLiteral() throws -> Expression {
         let loc = currentLocation
         advance()  // 跳过 func
 
-        /// 匿名函数**允许** `using` 形参：省略式与物化在参数位同样生效。
+        // 匿名函数**允许** `using` 形参：省略式与物化在参数位同样生效。
         let (params, returnTypes, returnLabels, isAsync) = try parseFunctionSignature(loc: loc, position: .anonymousFunction)
 
         // 匿名函数是「引导子块关键字」，带 `:` 尾缀
         _ = try expect(.colon(loc))
         skipNewlines()
-        // H-1：capture 声明的合法性上下文——仅本匿名函数缩进体的顶层语句位。
+        // capture 声明的合法性上下文——仅本匿名函数缩进体的顶层语句位。
         // 深度基准清零后，parseBlock 逐层 +1，parseCaptureStmt 要求深度恰为 1。
         let savedCaptureDepth = anonCaptureDepth
         anonCaptureDepth = 0
@@ -1268,7 +1268,7 @@ public class Parser {
             body = Block(statements: [stmt], location: loc)
         }
 
-        // H-1：capture 声明聚入 FuncDecl.captured（每行恰一个，体顶层语句序即声明序）
+        // capture 声明聚入 FuncDecl.captured（每行恰一个，体顶层语句序即声明序）
         let captured = body.statements.compactMap { stmt -> String? in
             if case .captureStatement(let n, _) = stmt { return n }
             return nil
@@ -1317,9 +1317,9 @@ public class Parser {
         _ = try expect(.leftParen(loc))
         var params: [Parameter] = []
         while !check(.rightParen(loc)) {
-            ///  注意  调用者只有 `parseTraitDecl` ⇒ 服务的是 trait 抽象签名的「花括号形态」
-            /// `{名}(...)`，与函数名里的「类型体内」无关（名字易误导）。
-            /// trait 抽象签名无体 ⇒ 取用点无处插入 ⇒ 拒。
+            //  注意  调用者只有 `parseTraitDecl` ⇒ 服务的是 trait 抽象签名的「花括号形态」
+            // `{名}(...)`，与函数名里的「类型体内」无关（名字易误导）。
+            // trait 抽象签名无体 ⇒ 取用点无处插入 ⇒ 拒。
             let param = try parseParameter(position: .traitSignature)
             params.append(param)
             if case .comma(_) = currentToken {
@@ -1378,9 +1378,8 @@ public class Parser {
 
         // 解析方法体（Block）
         var body: Block? = nil
-        // H-4：带执行块的函数一律以 `:` 开块，与
-        // `if` / `while` 一致。记录冒号是否出现；下方见 indent（执行体）时若无
-        // 冒号即报错。无执行体的签名（trait 抽象方法）不受约束。
+        // 带执行块的函数一律以 `:` 开块，与 `if` / `while` 一致。记录冒号是否出现；
+        // 下方见 indent（执行体）时若无冒号即报错。无执行体的签名（trait 抽象方法）不受约束。
         var sawColon = false
         if case .colon(_) = currentToken {
             advance()
@@ -1462,7 +1461,7 @@ public class Parser {
     }
 
     /// 判断是否是 `name|func(...)` 形式的裸函数（顶级自由函数，类型体内遇到即结束类型体）。
-    /// 声明上下文收紧·规则 3.2 后类型体循环用它区分「顶级函数（break）」与「类型体内方法/函数（报错）」。
+    /// 类型体循环用它区分「顶级函数（break）」与「类型体内方法 / 函数（报错）」。
     private func isBareFuncWithFuncModifierStart() -> Bool {
         guard case .identifier = currentToken else { return false }
         guard case .pipe(_) = peek(offset: 1) else { return false }
@@ -1497,8 +1496,8 @@ public class Parser {
         if case .pipe(_) = currentToken {
             advance()
             let modifier = try parseIdentifier()
-            // Phase 2a（FFI 子系统）：`|unsafe` 仅限自由函数（顶层函数或
-            // `[名称|foreign]` 块签名）；禁止用于类型扩展方法 / trait 签名。
+            // `|unsafe` 仅限自由函数（顶层函数或 `[名称|foreign]` 块签名）；
+            // 禁止用于类型扩展方法与 trait 签名。
             if modifier == "unsafe" && !allowUnsafeModifier {
                 throw ParserError.invalidStatement(
                     reason: "`|unsafe` 仅限自由函数（顶层函数或 `[名称|foreign]` 块签名）：`\(name)` 不在此列",
@@ -1508,9 +1507,9 @@ public class Parser {
             modifiers.append(modifier)
         }
 
-        /// 顶层裸函数是 `main` / `|test` / 普通函数**三态合一**，而三者只能按**名字**与
-        /// **修饰符**分辨 —— 两者在进入这里之前还不可知，故细分落在这里。
-        /// ⇒ 传 `.freeFunction` 时它是**候选**值（待细分）；其余位置原样透传。
+        // 顶层裸函数是 `main` / `|test` / 普通函数**三态合一**，而三者只能按**名字**与
+        // **修饰符**分辨——两者在进入这里之前还不可知，故细分落在这里。
+        // ⇒ 传 `.freeFunction` 时它是**候选**值（待细分）；其余位置原样透传。
         var paramPosition = position
         if case .freeFunction = position {
             if name == "main" {
@@ -1592,9 +1591,8 @@ public class Parser {
 
         // 解析函数体（Block）
         var body: Block? = nil
-        // H-4：带执行块的函数一律以 `:` 开块，与
-        // `if` / `while` 一致。记录冒号是否出现；下方见 indent（执行体）时若无
-        // 冒号即报错。无执行体的签名（trait 抽象方法）不受约束。
+        // 带执行块的函数一律以 `:` 开块，与 `if` / `while` 一致。记录冒号是否出现；
+        // 下方见 indent（执行体）时若无冒号即报错。无执行体的签名（trait 抽象方法）不受约束。
         var sawColon = false
         if case .colon(_) = currentToken {
             advance()
@@ -1610,9 +1608,9 @@ public class Parser {
             }
             body = try parseBlock()
         } else if !allowEmptyBody {
-            /// 函数体必须按层次缩进且至少缩进一层：顶格累积的裸语句不被接受
-            /// （`func-body` 只有缩进块一条路）。
-            /// trait 抽象方法（`allowEmptyBody`）除外 —— 签名可以无 body。
+            // 函数体必须按层次缩进且至少缩进一层：顶格累积的裸语句不被接受
+            // （`func-body` 只有缩进块一条路）。
+            // trait 抽象方法（`allowEmptyBody`）除外——签名可以无 body。
             throw ParserError.invalidStatement(
                 reason: "函数体必须缩进至少一层（草稿意图已采纳）：`\(name)` 的语句请缩进书写，如 ` return ...`",
                 location: currentLocation
@@ -1794,10 +1792,10 @@ public class Parser {
 
     // MARK: - Block解析
 
-    /// H-1：capture 声明（A1 裁决：体内部、每行恰一个外部标识符、散落多条）。
+    /// capture 声明（体内部、每行恰一个外部标识符、可散落多条）。
     /// 位置合法性在此由 `anonCaptureDepth` 强制：仅匿名函数缩进体的顶层语句位。
     private func parseCaptureStmt() throws -> Statement {
-        // H-1 位置合法性：仅匿名函数缩进体的顶层语句位（深度恰为 1）
+        // 位置合法性：仅匿名函数缩进体的顶层语句位（深度恰为 1）
         guard let depth = anonCaptureDepth, depth == 1 else {
             throw ParserError.invalidStatement(
                 reason: "capture 仅允许出现在匿名函数体的缩进体顶层语句位（H-1）",
@@ -1828,12 +1826,12 @@ public class Parser {
 
     private func parseBlock() throws -> Block {
         let loc = currentLocation
-        // H-1：进入任何嵌套块都离开「体顶层」——深度 +1，退出恢复
+        // 进入任何嵌套块都离开「体顶层」——深度 +1，退出恢复
         let savedCaptureDepth = anonCaptureDepth
         if savedCaptureDepth != nil { anonCaptureDepth = savedCaptureDepth! + 1 }
         defer { anonCaptureDepth = savedCaptureDepth }
 
-        // INDENT
+        // 缩进块开始（INDENT）
         _ = try expect(.indent(loc))
 
         var statements: [Statement] = []
@@ -1875,7 +1873,7 @@ public class Parser {
 
         // INDENT 开始
         _ = try expect(.indent(loc))
-        // H-1：控制块同样离开「匿名函数体顶层」——深度 +1，退出恢复
+        // 控制块同样离开「匿名函数体顶层」——深度 +1，退出恢复
         let savedCaptureDepth = anonCaptureDepth
         if savedCaptureDepth != nil { anonCaptureDepth = savedCaptureDepth! + 1 }
         defer { anonCaptureDepth = savedCaptureDepth }
@@ -1904,12 +1902,12 @@ public class Parser {
     // MARK: - Statement解析
 
     private func parseStatement() throws -> Statement {
-        // H-1：capture 声明（合法性上下文见 parseCaptureStmt）
+        // capture 声明（合法性上下文见 parseCaptureStmt）
         if case .keyword(.capture, _) = currentToken {
             return try parseCaptureStmt()
         }
 
-        // 标签语法反转（规则 3.13）：`标签|控制流关键字` 前缀 → 带标签语句。
+        // 标签语法：`标签|控制流关键字` 前缀 → 带标签语句。
         // 仅当 `IDENT '|'` 后为控制流关键字（if/while/for）时才识别为标签；
         // 否则（按位或 `a | b`）回退为表达式，由 parseBitwise 认领该记号。
         if case .identifier(let labelName, _) = currentToken,
@@ -1960,7 +1958,7 @@ public class Parser {
         case .keyword(.defer, _):
             return try parseDefer()
         case .keyword(.detach, let detachLoc):
-            /// `detach <expr>` 语句形式：fire-and-forget，不等结果。
+            // `detach <expr>` 语句形式：fire-and-forget，不等结果。
             advance()  // 跳过 detach
             let expr = try parseExpression()
             return Statement.detachStatement(expression: expr, location: detachLoc)
@@ -1971,7 +1969,7 @@ public class Parser {
             advance()
             return .passStatement(location: l)
         case .keyword(.elif, let l):
-            // 草稿 A4（批次 2）：elif/else 是 if 专属延续关键字——走到此处必为「孤儿」：
+            // elif/else 是 if 专属的延续关键字——走到此处必为「孤儿」：
             // 无同级 if 可匹配（跨级被 dedent 拦截、其他块关键字不消费它们）。明确报错，
             // 而非落入表达式解析给出笼统的「无效的表达式」。
             throw ParserError.invalidStatement(reason: "elif 前必须有同级 if（elif 只与同级 if/elif 匹配）", location: l)
@@ -1986,7 +1984,7 @@ public class Parser {
         let loc = currentLocation
         advance()  // 跳过 var 或 let
 
-        // 草稿 A1（批次 1）：左值模式元组解构 `var (t, e) = rhs`——括号开头走解构路径，
+        // 左值模式元组解构 `var (t, e) = rhs`：括号开头走解构路径，
         // 模式元组与 for-in 同构（parsePatternTuple 共享），`_` 占位忽略。
         if case .leftParen(_) = currentToken {
             let names = try parsePatternTuple()
@@ -2182,8 +2180,8 @@ public class Parser {
         let loc = currentLocation
         advance()  // 跳过 while
 
-        /// 注（规则 3.13）：标签绑在 while 本体上（`标签|while 条件:`），由 parseStatement
-        /// 的 `标签|控制流关键字` 前缀解析；`scope 块标签:` 形式不接受。
+        // 注：标签绑在 while 本体上（`标签|while 条件:`），由 parseStatement
+        // 的 `标签|控制流关键字` 前缀解析；`scope 块标签:` 形式不接受。
 
         // 条件表达式
         let condition = try parseExpression()
@@ -2192,7 +2190,7 @@ public class Parser {
         let body = try parseControlBlock()
 
         // 可选 step 步进块：step 向前就近匹配 while，
-        // 在每个循环体正常结束（含 continue）后执行，break 跳过（P1-3 落实语义）。
+        // 在每个循环体正常结束（含 continue）后执行，break 跳过。
         var step: Block? = nil
         skipNewlines()
         if checkKeyword(.step) {
@@ -2209,7 +2207,7 @@ public class Parser {
         )
     }
 
-    /// 解析左值模式元组 `( 标识符|_ {, 标识符|_} )`——for-in（G36）与元组解构（草稿 A1，批次 1）共用。
+    /// 解析左值模式元组 `( 标识符|_ {, 标识符|_} )`——for-in 与元组解构共用。
     /// `_` 占位保留在数组中原样返回，由上层语义按「忽略」处理。
     private func parsePatternTuple() throws -> [String] {
         guard case .leftParen(_) = currentToken else {
@@ -2238,14 +2236,14 @@ public class Parser {
         return pattern
     }
 
-    /// `for [@label] (模式元组,) in 集合值: body [step: block]`（G36）
-    /// 模式元组 = 标识符/`_` 列表，与集合元素**一一对应**绑定（数组/集合=1 字段、字典=2 字段 (k,v)）；`_` 占位忽略。
+    /// `for [@label] (模式元组,) in 集合值: body [step: block]`
+    /// 模式元组 = 标识符 / `_` 列表，与集合元素**一一对应**绑定（数组、集合 = 1 字段，字典 = 2 字段 (k,v)）。
     private func parseFor(label: String? = nil) throws -> Statement {
         let loc = currentLocation
         advance()  // 跳过 for
 
-        /// 注（规则 3.13）：标签绑在 for 本体上（`标签|for ... in ...:`），由 parseStatement
-        /// 的 `标签|控制流关键字` 前缀解析；`scope 块标签:` 形式不接受。
+        // 注：标签绑在 for 本体上（`标签|for ... in ...:`），由 parseStatement
+        // 的 `标签|控制流关键字` 前缀解析；`scope 块标签:` 形式不接受。
 
         // 模式元组：( 标识符|_ {, 标识符|_} )
         let pattern = try parsePatternTuple()
@@ -2292,7 +2290,7 @@ public class Parser {
         return Statement.unrollStatement(pattern: pattern, table: table, body: body, location: loc)
     }
 
-    /// `scope` 不是关键字：带标签控制流写作 `标签|控制流关键字`（规则 3.13）。
+    /// `scope` 不是关键字：带标签控制流写作 `标签|控制流关键字`。
     /// scopedBlock AST 节点与 Interpreter.executeScope 仍为兼容保留。
 
     private func parseMatch() throws -> Statement {
@@ -2304,8 +2302,8 @@ public class Parser {
         _ = try expect(.colon(loc))
         skipNewlines()
 
-        /// match 子块结构：`match 值:` 后必须缩进子块，`case` 在子块内（比 `match` 深一级）；
-        /// 通配写作 `case _:`。
+        // match 子块结构：`match 值:` 后必须缩进子块，`case` 在子块内（比 `match` 深一级）；
+        // 通配写作 `case _:`。
         guard case .indent(_) = currentToken else {
             throw ParserError.invalidStatement(
                 reason: "match 后必须缩进子块：`case` 分支须与 `match` 差一级缩进",
@@ -2365,7 +2363,7 @@ public class Parser {
                     if case .identifier(let possibleName, _) = firstTok {
                         let nextTok = peek(offset: 1)
                         if case .colon(let colonLoc) = nextTok {
-                            /// 具名绑定 `关联值名: 变量`：按关联值名对位绑定，与位置绑定并存。
+                            // 具名绑定 `关联值名: 变量`：按关联值名对位绑定，与位置绑定并存。
                             advance()
                             advance()
                             guard case .identifier(let varIdent, _) = currentToken else {
@@ -2497,9 +2495,9 @@ public class Parser {
         let loc = currentLocation
         advance()  // 跳过 defer
 
-        /// defer 双形态：相邻单行 `defer 语句`，或 `defer:` 加缩进块。块形式复用
-        /// deferStatement(scopedBlock)，整个块作为**一个** defer 项入 deferStack，在包含块退出时按书写序
-        /// 执行；跨 defer 的 LIFO 由 deferStack 保证。
+        // defer 双形态：相邻单行 `defer 语句`，或 `defer:` 加缩进块。块形式复用
+        // deferStatement(scopedBlock)，整个块作为**一个** defer 项入 deferStack，在包含块退出时按书写序
+        // 执行；跨 defer 的 LIFO 由 deferStack 保证。
         if case .colon(_) = currentToken {
             let body = try parseControlBlock()
             let inner = Statement.scopedBlock(label: nil, body: body, location: loc)
@@ -2725,8 +2723,8 @@ public class Parser {
                 operand: operand, errorVar: errorVar, handler: handler, location: loc)
         }
 
-        /// `await`/`wait` 前缀：让出式 / 占用式 join。两个关键字产出的节点相同、`form` 不同，
-        /// 那一位是下游唯一需要的区别信息。二者仅作表达式起始位的前缀，中缀 `<=` 是纯比较运算符。
+        // `await`/`wait` 前缀：让出式 / 占用式 join。两个关键字产出的节点相同、`form` 不同，
+        // 那一位是下游唯一需要的区别信息。二者仅作表达式起始位的前缀，中缀 `<=` 是纯比较运算符。
         if case .keyword(.await, _) = currentToken {
             advance()
             let operand = try parseUnary()
@@ -2774,9 +2772,9 @@ public class Parser {
             return Expression.unary(op: .minus, operand: operand, location: loc)
         }
 
-        /// `^` 右值糖：`^expr` 脱糖为 `try expr else err: return err`，合成名 err 遮蔽外层同名绑定，
-        /// 语义与手写嵌套 try-else 一致。只在操作数起始位（parseFactor 调用 parseUnary 时）生效，
-        /// 中缀异或由 parseBitwise 消费，类型糖 `^T` 走另一上下文。
+        // `^` 右值糖：`^expr` 脱糖为 `try expr else err: return err`，合成名 err 遮蔽外层同名绑定，
+        // 语义与手写嵌套 try-else 一致。只在操作数起始位（parseFactor 调用 parseUnary 时）生效，
+        // 中缀异或由 parseBitwise 消费，类型糖 `^T` 走另一上下文。
         if case .bitwiseXor(_) = currentToken {
             advance()
             let operand = try parseUnary()
@@ -2787,22 +2785,22 @@ public class Parser {
             return Expression.tryExpression(operand: operand, errorVar: "err", handler: handler, location: loc)
         }
 
-        // Phase 2a（FFI 子系统）：`unsafe` 不安全消耗点前缀。
+        // `unsafe` 不安全消耗点前缀。
         if case .keyword(.unsafe, _) = currentToken {
             advance()
             let operand = try parseUnary()
             return Expression.unsafe(operand: operand, location: loc)
         }
 
-        /// `weak` 弱引用前缀：操作数必须是对象，结果类型 `WeakRef<T>`；不进入 unsafe 上下文。
+        // `weak` 弱引用前缀：操作数必须是对象，结果类型 `WeakRef<T>`；不进入 unsafe 上下文。
         if case .keyword(.weak, _) = currentToken {
             advance()
             let operand = try parseUnary()
             return Expression.weakRef(operand: operand, location: loc)
         }
 
-        // Phase 2a（FFI 子系统）：`&` 不安全取地址前缀（复用 .bitwiseAnd token，
-        // 前缀位置与中缀按位与靠语法位置消歧——parseUnary 在操作数起始位消费）。
+        // `&` 不安全取地址前缀（复用 .bitwiseAnd token）：
+        // 前缀位置与中缀按位与靠语法位置消歧——parseUnary 在操作数起始位消费。
         if case .bitwiseAnd(_) = currentToken {
             advance()
             let operand = try parseUnary()
@@ -2878,9 +2876,9 @@ public class Parser {
             return .boolLiteral(value: value, location: loc)
         case .keyword(.nil, _):
             advance()
-            // `nil` 是 `Optional.none` 的等效常量关键字：映射为与 `Optional.none`
-            // 完全同构的 `.member(identifier("Optional"), "none")` AST，全链路复用其既有
-            // 类型推断 / 解释器 / IR 路径（spec G30，零新增 Expression/Value case）。
+            // `nil` 是 `Optional.none` 的等效常量关键字：映射为与 `Optional.none` 完全同构的
+            // `.member(identifier("Optional"), "none")` AST，全链路复用其类型推断 / 解释器 / IR 路径，
+            // 不新增 Expression / Value case。
             return .member(object: .identifier(name: "Optional", location: loc), name: "none", location: loc)
         case .leftParen(_):
             // 可能是元组或优先结合表达式
@@ -2890,9 +2888,9 @@ public class Parser {
         case .leftBrace(_):
             return try parseBraceLiteral()
         case .dot(_):
-            /// 点号用例构造：前导点标记成员意图，解析期只产出携带名字的未解析节点，决议在类型检查阶段
-            /// 按期望类型完成（命中 → 该枚举；唯一父枚举 → 回退；歧义或无 → 报错要求限定或期望类型）。
-            /// 带实参形态 `.caseName(args)` 由 parsePrimarySuffix 的调用后缀包成 .call(.dotCaseRef, args)。
+            // 点号用例构造：前导点标记成员意图，解析期只产出携带名字的未解析节点，决议在类型检查阶段
+            // 按期望类型完成（命中 → 该枚举；唯一父枚举 → 回退；歧义或无 → 报错要求限定或期望类型）。
+            // 带实参形态 `.caseName(args)` 由 parsePrimarySuffix 的调用后缀包成 .call(.dotCaseRef, args)。
             advance()
             let name = try parseIdentifier()
             return .dotCaseRef(name: name, location: loc)
@@ -2967,7 +2965,7 @@ public class Parser {
                 var label: String? = nil
                 if case .identifier(let possibleLabel, _) = firstTok {
                     let nextTok = peek(offset: 1)
-                    /// 实参标签用 `=`（值的注入方向统一为 `=`）。
+                    // 实参标签用 `=`（值的注入方向统一为 `=`）。
                     if case .assign(_) = nextTok {
                         advance()
                         advance()
@@ -3035,20 +3033,20 @@ public class Parser {
             return .tuple(labels: [], elements: [], location: loc)
         }
 
-        // 草稿 A2（批次 1.3，D1）：命名元组 `(a: 1, b: 2,)`——元素为 `标识符: 表达式`。
+        // 命名元组 `(a: 1, b: 2,)`——元素为 `标识符: 表达式`。
         // 识别规则：当前为 identifier 且下一 token 为 `:` 即命名元素；否则为位置元素（label=nil）。
         var labels: [String?] = []
         var elements: [Expression] = []
 
         func parseElement() throws -> Expression {
-            /// 括号内没有可作表达式起点的记号时，缺的是右括号而不是表达式：
-            /// 报 E2-001（期望 `)`，实际得到该记号），与「表达式无效」的 E2-006 区分开。
+            // 括号内没有可作表达式起点的记号时，缺的是右括号而不是表达式：
+            // 报 E2-001（期望 `)`，实际得到该记号），与「表达式无效」的 E2-006 区分开。
             guard startsExpression() else {
                 let actualDesc = tokenDescription(currentToken)
                 throw ParserError.unexpectedToken(
                     expected: tokenDescription(.rightParen(loc)), actual: actualDesc, location: currentLocation)
             }
-            /// 标签元组元素同样用 `=`（构造侧同样是值的注入方向）。
+            // 标签元组元素同样用 `=`（构造侧同样是值的注入方向）。
             if case .identifier(let name, _) = currentToken,
                 case .assign(_) = peek(offset: 1)
             {
@@ -3138,7 +3136,7 @@ public class Parser {
             advance()
             guard !check(.rightBrace(loc)) else { break }
             let element = try parseExpression()
-            /// 集合中途出现 `=` / `:` ⇒ 集合与字典混写，按字典条目提示，不静默吞成集合元素。
+            // 集合中途出现 `=` / `:` ⇒ 集合与字典混写，按字典条目提示，不静默吞成集合元素。
             if case .assign(_) = currentToken {
                 throw ParserError.invalidExpression(
                     reason: "集合字面量中不得出现键值对（`=`）；集合与字典不可混写",
@@ -3197,7 +3195,7 @@ public class Parser {
                     var label: String? = nil
                     if case .identifier(let possibleLabel, _) = firstTok {
                         let nextTok = peek(offset: 1)
-                        /// 实参标签用 `=`（值的注入方向统一为 `=`）。
+                        // 实参标签用 `=`（值的注入方向统一为 `=`）。
                         if case .assign(_) = nextTok {
                             advance()
                             advance()
@@ -3221,7 +3219,7 @@ public class Parser {
             // 成员访问 . 或 元组位置访问 .0
             if case .dot(_) = currentToken {
                 advance()
-                // 草稿 A2（批次 1）：`.` 后随整数 = 元组位置访问 `.index`（如 `some_thing_error().0`）；
+                // `.` 后随整数 = 元组位置访问 `.index`（如 `some_thing_error().0`）；
                 // 否则为成员访问 `.名称`。与 `3.14` 浮点无冲突（`.` 前非数字）。
                 if case .integerLiteral(let idx, _) = currentToken, idx >= 0 {
                     advance()
@@ -3233,9 +3231,9 @@ public class Parser {
                 continue
             }
 
-            /// 下标访问 `[index]`：容器是任意前序表达式（call/member/subscript/元组/...），不限标识符 ——
-            /// 解析累积到 `result`，故 `(expr)[i]` 天然支持。
-            /// 检测到冒号即进入切片脱糖（见 `sliceSugar`）：`a[i:j]` / `a[i:]` / `a[:j]` / `a[:]`。
+            // 下标访问 `[index]`：容器是任意前序表达式（call/member/subscript/元组/…），不限标识符——
+            // 解析累积到 `result`，故 `(expr)[i]` 天然支持。
+            // 检测到冒号即进入切片脱糖（见 `sliceSugar`）：`a[i:j]` / `a[i:]` / `a[:j]` / `a[:]`。
             if case .leftBracket(_) = currentToken {
                 advance()
                 // 切片形态一：起始省略 `a[:j]` / `a[:]`
@@ -3273,9 +3271,9 @@ public class Parser {
                 continue
             }
 
-            /// 后缀强制解包 `!`：紧接 primary / 后缀表达式之后（标识符、调用、成员、下标、元组位置…）。
-            /// 与前缀逻辑非同字符，按位置消歧——parseUnary 在操作数起始位消费前缀 `!`，此处只在已取得
-            /// 左操作数后消费。`!=` 已被词法归并，故后缀位的 .logicalNot 必为强制解包。
+            // 后缀强制解包 `!`：紧接 primary / 后缀表达式之后（标识符、调用、成员、下标、元组位置…）。
+            // 与前缀逻辑非同字符，按位置消歧——parseUnary 在操作数起始位消费前缀 `!`，此处只在已取得
+            // 左操作数后消费。`!=` 已被词法归并，故后缀位的 .logicalNot 必为强制解包。
             if case .logicalNot(_) = currentToken {
                 advance()
                 result = Expression.unary(op: .forceUnwrap, operand: result, location: loc)
@@ -3288,7 +3286,7 @@ public class Parser {
         return result
     }
 
-    // MARK: - 切片语法脱糖（P2-B）
+    // MARK: - 切片语法脱糖
 
     /// 开放边界字面量：复用 `nil` 的 AST 形态（= `.member(identifier("Optional"), "none")`），
     /// 运行时求值为 `Optional.none`，切片实现据此识别为"省略该边界"。
@@ -3312,7 +3310,7 @@ public class Parser {
     private func parseTypeAnnotation() throws -> TypeAnnotation {
         let loc = currentLocation
 
-        // 前缀可选类型糖 ?T === Optional<T>（spec G31 / G31）
+        // 前缀可选类型糖 ?T ≡ Optional<T>
         // 在类型注解起始处特判 ?，递归解析内层类型后映射为既有 Optional 泛型。
         if case .questionMark(_) = currentToken {
             advance()
@@ -3329,8 +3327,8 @@ public class Parser {
             return .generic(name: "Result", params: [inner], location: loc)
         }
 
-        // Phase 2a（FFI 子系统）：前缀指针类型糖 *T ≡ 原始指针（复用 .star token）。
-        // 元素类型为 C 兼容类型（标量/纯值结构体/另一指针）；T 禁 object（ARC 隔离）。
+        // 前缀指针类型糖 *T ≡ 原始指针（复用 .star token）。
+        // 元素类型为 C 兼容类型（标量 / 纯值结构体 / 另一指针）；T 禁 object（ARC 隔离）。
         if case .star(_) = currentToken {
             advance()
             let inner = try parseTypeAnnotation()
@@ -3405,7 +3403,7 @@ public class Parser {
             var labels: [String?] = []
             var elements: [TypeAnnotation] = []
             while !check(.rightParen(loc)) {
-                // 草稿 A2（批次 1.3，D1）：命名元组类型元素 `标识符: 类型`（如 `-> (商: I32, 余: I32,)`）。
+                // 命名元组类型元素 `标识符: 类型`（如 `-> (商: I32, 余: I32,)`）。
                 if case .identifier(let name, _) = currentToken,
                     case .colon(_) = peek(offset: 1)
                 {
@@ -3462,7 +3460,7 @@ public class Parser {
             return .tuple(labels: labels, elements: elements, location: loc)
         }
 
-        // self 和 own 类型（G50：Self 更名 own）
+        // self 与 own 类型：`own` 是 Self 的现用拼写。
         if checkKeyword(.self) {
             advance()
             return .simple(name: "self", location: loc)
@@ -3489,8 +3487,8 @@ public class Parser {
         while true {
             let name = try parseIdentifier()
 
-            /// 可选的约束：分隔符为 `:`，与扩展块特征约束 `((块:特征))` 同形；`|` 不作分隔符，
-            /// 那里是块形态的关键字位。
+            // 可选的约束：分隔符为 `:`，与扩展块特征约束 `((块:特征))` 同形；`|` 不作分隔符，
+            // 那里是块形态的关键字位。
             var constraint: TypeAnnotation? = nil
             if case .colon(_) = currentToken {
                 advance()
@@ -3563,8 +3561,8 @@ public class Parser {
     private func parseParameter(position: UsingParamPosition) throws -> Parameter {
         let loc = currentLocation
 
-        /// 取用参数 `using` 的参数位前缀：`using` 是关键字，只能出现在这里，标识符位与 `|` 修饰符位
-        /// 一律不接受。前缀只标记参数，不在此层解析实参来源；位置合法性由 `UsingParamPosition` 收窄。
+        // 取用参数 `using` 的参数位前缀：`using` 是关键字，只能出现在这里，标识符位与 `|` 修饰符位
+        // 一律不接受。前缀只标记参数，不在此层解析实参来源；位置合法性由 `UsingParamPosition` 收窄。
         var isUsing = false
         if checkKeyword(.using) {
             if let reason = position.rejectionReason {
@@ -3608,15 +3606,15 @@ public class Parser {
             advance()
             return "func"
         case .keyword(.unsafe, _):
-            // Phase 2a（FFI 子系统， modifier）：`|unsafe` 函数修饰符。
+            // `|unsafe` 函数修饰符。
             advance()
             return "unsafe"
         case .keyword(.foreign, _):
-            // Phase 2a（FFI 子系统， modifier）：`[名称|foreign]` 块修饰符。
+            // `[名称|foreign]` 块修饰符。
             advance()
             return "foreign"
         case .keyword(.test, _):
-            // G51：`名称|test` 测试函数块修饰符（G41）——宿主词法对齐自举 kw_test。
+            // `名称|test` 测试函数块修饰符——宿主词法对齐自举 kw_test。
             advance()
             return "test"
         default:
@@ -3631,7 +3629,7 @@ public class Parser {
         case .keyword(.import, _), .keyword(.export, _):
             return true
         case .leftBrace(_):
-            // 声明上下文收紧·规则 3.2：类型体内禁止函数声明后，行首 `{` 恒为顶级声明
+            // 类型体内禁止函数声明后，行首 `{` 恒为顶级声明
             //（`{name|func}` 函数块或 `{name}` 对象块），不再需要方法缺省假定区分。
             return true
         case .lessThan(_):

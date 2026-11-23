@@ -44,7 +44,7 @@ public struct DiagnosticPublisher {
         return PublishDiagnosticsParams(uri: uri, version: nil, diagnostics: diagnostics)
     }
 
-    // MARK: - Mapping
+    // MARK: - 映射
 
     private func mapLexerWarning(_ warning: LexerWarning, source: String, language: DiagnosticLanguage?) -> Diagnostic {
         Diagnostic(
@@ -106,7 +106,7 @@ public struct DiagnosticPublisher {
         )
     }
 
-    // MARK: - Location → LSP Range (single-char span)
+    // MARK: - 位置 → LSP 区间（单字符跨度）
 
     private func toLSPRange(_ loc: SourceLocation) -> LSPRange {
         // Pini 行列均为 1-based，LSP 为 0-based
@@ -117,7 +117,7 @@ public struct DiagnosticPublisher {
         return LSPRange(start: pos, end: Position(line: line, character: col + 1))
     }
 
-    // MARK: - Error location extraction
+    // MARK: - 错误位置提取
 
     private func location(of err: ParserError) -> SourceLocation {
         switch err {

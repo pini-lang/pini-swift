@@ -8,13 +8,13 @@ import PiniSyntax
 import PiniSemantics
 import PiniIR
 
-/// Runtime operations both engines need: the value-level helpers, builtins and predicates the surviving engine shares.
-/// Nothing here may reference `Interpreter`; every member is pure over `Value`, so this is a move, not a redesign.
-/// Name tables are filled once at load and never rewritten; their closures capture nothing, so unguarded reads are safe.
+/// 两个引擎共用的运行时操作：值级辅助函数、内建与谓词。
+/// 这里不得引用 `Interpreter`，每个成员都是对 `Value` 的纯函数。
+/// 名字表在加载时填一次、此后不再改写，闭包不捕获任何东西，故无锁读取安全。
 public enum RuntimeOps {
 
-    /// Value-type copy: a `structInstance` is copied field by field, recursively; everything else passes through.
-    /// Objects are aliased on purpose, which is what makes aliasing correct; both engines owe this rule at every store site.
+    /// 值类型拷贝：`structInstance` 逐字段递归复制，其余值原样返回。
+    /// 对象故意保持别名，这正是别名语义正确的来源；两个引擎的每个存储点都要遵守。
     static func copyIfStruct(_ value: Value) -> Value {
         if case .structInstance(let si) = value {
             var copiedFields: [String: Value] = [:]
@@ -60,8 +60,8 @@ public enum RuntimeOps {
         case (.float(let a), .float(let b), .minus): return .float(a - b)
         case (.float(let a), .float(let b), .multiply): return .float(a * b)
         case (.float(let a), .float(let b), .divide): return .float(a / b)
-        /// F64 同型比较六算符，与 int 分派形态一致：`==` / `!=` / `<` / `<=` / `>` / `>=`。
-        /// 缺一条就会落到 `default` 抛 `typeMismatch`，F64 于是只能算不能比。
+        // F64 同型比较六算符，与 int 分派形态一致：`==` / `!=` / `<` / `<=` / `>` / `>=`。
+        // 缺一条就会落到 `default` 抛 `typeMismatch`，F64 于是只能算不能比。
         case (.float(let a), .float(let b), .equal): return .bool(a == b)
         case (.float(let a), .float(let b), .notEqual): return .bool(a != b)
         case (.float(let a), .float(let b), .lessThan): return .bool(a < b)
@@ -69,9 +69,9 @@ public enum RuntimeOps {
         case (.float(let a), .float(let b), .greaterThan): return .bool(a > b)
         case (.float(let a), .float(let b), .greaterThanOrEqual): return .bool(a >= b)
         case (.string(let a), .string(let b), .plus): return .string(a + b)
-        /// `Char` 搭 `String` 的车：凡 `String` 支持的算符，`Char` 参与时行为一致（拼接出 `String`、比较按字素内容）。
-        /// 分派按值 case 的元组形状做，`Char` 与 `String` 是两个 case ⇒ 3 算符 × 3 组合写全。
-        /// 漏写会落到 `default: throw`，编译器同样不报 —— 只能按清单逐处勾。
+        // `Char` 搭 `String` 的车：凡 `String` 支持的算符，`Char` 参与时行为一致（拼接出 `String`、比较按字素内容）。
+        // 分派按值 case 的元组形状做，`Char` 与 `String` 是两个 case ⇒ 3 算符 × 3 组合写全。
+        // 漏写会落到 `default: throw`，编译器同样不报 —— 只能按清单逐处勾。
         case (.char(let a), .char(let b), .plus): return .string(a + b)
         case (.char(let a), .string(let b), .plus): return .string(a + b)
         case (.string(let a), .char(let b), .plus): return .string(a + b)
@@ -86,8 +86,8 @@ public enum RuntimeOps {
         case (.string(let a), .char(let b), .notEqual): return .bool(!byteEqual(a, b))
         case (.bool(let a), .bool(let b), .equal): return .bool(a == b)
         case (.bool(let a), .bool(let b), .notEqual): return .bool(a != b)
-        /// 无主引用在编译通道就是对象指针：比较的是目标身份，同一目标的两份句柄相等。
-        ///  注意  目标已销毁时比较与编译通道一样落在未定义行为上，不在这里补存活判定。
+        // 无主引用在编译通道就是对象指针：比较的是目标身份，同一目标的两份句柄相等。
+        //  注意  目标已销毁时比较与编译通道一样落在未定义行为上，不在这里补存活判定。
         case (.unownedRef(let a), .unownedRef(let b), .equal): return .bool(a.target === b.target)
         case (.unownedRef(let a), .unownedRef(let b), .notEqual): return .bool(a.target !== b.target)
         case (.bool(let a), .bool(let b), .and): return .bool(a && b)
@@ -105,8 +105,7 @@ public enum RuntimeOps {
     static func builtinAbs(_ value: Value) throws -> Value {
         switch value {
         case .int(let v):
-            // Int.min has no representable absolute value; without this guard
-            // abs(Int.min) traps on integer overflow.
+            // `Int.min` 没有可表示的绝对值：不先挡住，`abs(Int.min)` 会因整数溢出触发陷阱。
             if v == .min {
                 throw RuntimeError.invalidOperation(
                     reason: "abs 整数溢出: \(v) 超出 Int 表示范围",
@@ -123,8 +122,8 @@ public enum RuntimeOps {
         }
     }
 
-    /// `F64(value)` — the numeric value constructor (`BuiltinRegistry` `F64`, group `.value`).
-    /// A float passes through unchanged and an integer widens; the IR executor owes the same rule as the AST walk.
+    /// `F64(value)` —— 数值构造函数（`BuiltinRegistry` 的 `F64`，`value` 组）。
+    /// 浮点原样返回，整数拓宽；IR 执行器与 AST 走查同守这条规则。
     static func builtinF64(_ value: Value) throws -> Value {
         switch value {
         case .float(let f): return .float(f)
@@ -137,16 +136,16 @@ public enum RuntimeOps {
         }
     }
 
-    /// The Array member face the IR path answers by name: the receiver first, then the call's arguments.
-    /// Each entry returns exactly what the AST walk's member dispatch returns, so the two engines cannot drift.
+    /// IR 通道按名字作答的数组成员面：接收者在先，调用实参随后。
+    /// 每条返回的都等于 AST 走查的成员分派结果，两个引擎因此不会漂移。
     nonisolated(unsafe) static let arrayMethods: [String: ([Value]) throws -> Value] = [
         "Array.append": builtinArrayAppend,
         "Array.last": builtinArrayLast,
         "Array.pop": builtinArrayPop,
     ]
 
-    /// `xs.append(v)` -- a new array with `v` on the end. The receiver is left
-    /// alone, which is what makes the value semantics visible at the call site.
+    /// `xs.append(v)` —— 末尾追加 `v` 的新数组；接收者保持不动，
+    /// 值语义因此在调用点可见。
     static func builtinArrayAppend(_ args: [Value]) throws -> Value {
         let arr = try arrayMemberReceiver(args)
         guard args.count == 2 else {
@@ -174,8 +173,7 @@ public enum RuntimeOps {
     /// 消费式追加的命中计数：只服务判据，不进语义；测试读它证明快路真在跑。
     nonisolated(unsafe) public static var consumingAppendHits = 0
 
-    /// `xs.last()` -- the final element, or `null` when the array is empty.
-    /// `xs.last()` -- 末元素。空数组走安全断言通道，与 `xs[len(xs) - 1]` 同一条退出。
+    /// `xs.last()` —— 末元素。空数组走安全断言通道，与 `xs[len(xs) - 1]` 同一条退出。
     ///  注意  返回的是元素本身而非 `Optional`：静态类型是元素类型，用 null 兜底会让类型与值脱钩。
     static func builtinArrayLast(_ args: [Value]) throws -> Value {
         let arr = try arrayMemberReceiver(args)
@@ -194,8 +192,7 @@ public enum RuntimeOps {
         return .tuple(labels: [nil, nil], elements: [.array(Array(arr.dropLast())), last])
     }
 
-    /// The receiver is always the first value; a call that could not have come
-    /// from the lowering layer is refused rather than guessed at.
+    /// 接收者永远是第一个值；不可能来自降载层的调用直接拒绝，不猜测。
     private static func arrayMemberReceiver(_ args: [Value]) throws -> [Value] {
         guard let first = args.first, case .array(let a) = first else {
             throw RuntimeError.invalidOperation(
@@ -247,8 +244,8 @@ public enum RuntimeOps {
             guard idx >= 0, idx < arr.count else { return try outOfRange() }
             return checked ? some(arr[idx]) : arr[idx]
         case .string(let s):
-            /// 字素簇语义不变，但「数总字数」与「定位第 i 个字素」都走 `GraphemeCursor`（均摊 O(1)、空间 O(1)）。
-            /// ⇒ 逐字符扫描整体 O(n) 而非 O(n²)；语义与边界判定（含负值尾计数）一字未改。
+            // 字素簇语义不变，但「数总字数」与「定位第 i 个字素」都走 `GraphemeCursor`（均摊 O(1)、空间 O(1)）。
+            // ⇒ 逐字符扫描整体 O(n) 而非 O(n²)；语义与边界判定（含负值尾计数）不变。
             let n = GraphemeCursor.count(of: s)
             let idx = raw < 0 ? n + raw : raw
             guard idx >= 0, idx < n else { return try outOfRange() }
@@ -338,8 +335,8 @@ public enum RuntimeOps {
         }
         switch elem {
         case .simple(let name, _):
-            /// 元素类型只能来自 `CPointerTarget` 的标量表：检查期已挡住表外名字，
-            /// 这里再挡一次，好让「表里有、解码没写」在运行时立刻显形，而不是按错宽度读。
+            // 元素类型只能来自 `CPointerTarget` 的标量表：检查期已挡住表外名字，
+            // 这里再挡一次，让「表里有、解码没写」在运行时立刻显形，而不是按错宽度读。
             guard CPointerTarget.width(of: name) != nil else {
                 throw RuntimeError.invalidOperation(reason: "load：不支持的指针元素类型 `\(name)`", location: loc)
             }
@@ -408,8 +405,8 @@ public enum RuntimeOps {
         }
         switch elem {
         case .simple(let name, _):
-            /// 与 `decodePointer` 同一道表检查：写进去的宽度必须是表里登记的那个，
-            /// 表外名字在检查期就该被拒，走到这里说明判据漏了。
+            // 与 `decodePointer` 同一道表检查：写入宽度必须是表里登记的那个，
+            // 表外名字在检查期就该被拒，走到这里说明判据有漏。
             guard CPointerTarget.width(of: name) != nil else {
                 throw RuntimeError.invalidOperation(reason: "store：不支持的指针元素类型 `\(name)`", location: loc)
             }
@@ -533,7 +530,7 @@ public enum RuntimeOps {
                 return .int(Int(bitPattern: UInt(value.bitPattern)))
             }
 
-            // memcpy(dst: *U8, src: *U8, n: U64) -> *U8。
+            // memcpy(dst: *U8, src: *U8, n: U64) -> *U8：复制 n 个字节，返回 dst。
             shims["memcpy"] = LibcShim(shape: [.pointer, .pointer, .integer]) { args in
                 guard args.count >= 3 else { throw RuntimeError.argumentCountMismatch(name: "memcpy", expected: 3, got: args.count, location: loc) }
                 guard case .rawPointer(let dst) = args[0] else { throw RuntimeError.invalidOperation(reason: "memcpy 第 1 参须为指针", location: loc) }
@@ -543,7 +540,7 @@ public enum RuntimeOps {
                 return args[0]
             }
 
-            // memset(p: *U8, v: I32, n: U64) -> *U8。
+            // memset(p: *U8, v: I32, n: U64) -> *U8：把 n 个字节置为 v 的低 8 位，返回 p。
             shims["memset"] = LibcShim(shape: [.pointer, .integer, .integer]) { args in
                 guard args.count >= 3 else { throw RuntimeError.argumentCountMismatch(name: "memset", expected: 3, got: args.count, location: loc) }
                 guard case .rawPointer(let p) = args[0] else { throw RuntimeError.invalidOperation(reason: "memset 第 1 参须为指针", location: loc) }
@@ -553,7 +550,7 @@ public enum RuntimeOps {
                 return args[0]
             }
 
-            // strlen(s: *U8) -> U64。
+            // strlen(s: *U8) -> U64：数到第一个 NUL，长度不含结尾符。
             shims["strlen"] = LibcShim(shape: [.pointer]) { args in
                 let p = try RuntimeOps.ptrArg(args, name: "strlen", self: nil)
                 let s = p.pointer.assumingMemoryBound(to: CChar.self)
@@ -568,7 +565,7 @@ public enum RuntimeOps {
                 return .int(Int(r))
             }
 
-            // strcmp(a: *U8, b: *U8) -> I32。
+            // strcmp(a: *U8, b: *U8) -> I32：按字节序比较，返回负、零或正。
             shims["strcmp"] = LibcShim(shape: [.pointer, .pointer]) { args in
                 guard args.count >= 2 else { throw RuntimeError.argumentCountMismatch(name: "strcmp", expected: 2, got: args.count, location: loc) }
                 guard case .rawPointer(let a) = args[0] else { throw RuntimeError.invalidOperation(reason: "strcmp 第 1 参须为指针", location: loc) }
@@ -687,13 +684,13 @@ public enum RuntimeOps {
         case .int(let v): return String(v)
         case .float(let v): return String(v)
         case .string(let v): return v
-        /// `Char` prints as the character itself, not quoted or bracketed — what the value layer already did for `s[i]`.
-        /// So the type change is behaviour-preserving here.
+        // `Char` 直接打印字符本身，不加引号也不加括号；值层对 `s[i]` 一直如此。
+        // 类型换成 `Char` 因此在展示上保持了原有行为。
         case .char(let v): return v
         case .bool(let v): return String(v)
         case .null: return "null"
         case .tuple(let labels, let vs):
-            // 草稿 A2（批次 1.3，D1）：命名元组显示 `[商: 2, 余: 1]`，位置元组保持 `[2, 1]`。
+            // 命名元组显示为 `[商: 2, 余: 1]`，位置元组保持 `[2, 1]`。
             return "["
                 + vs.enumerated().map { i, v in
                     let prefix = (labels.indices.contains(i) && labels[i] != nil) ? "\(labels[i]!): " : ""
@@ -712,7 +709,7 @@ public enum RuntimeOps {
             // 无主引用不查存活：打印连目标类型都不读——读它就是要目标活着，而「持有与传递」本该安全。
             return "UnownedRef"
         case .lazyRef:
-            // G40：LazyRef 引用语义承载——打印为 `LazyRef`（不展开内部状态）。
+            // LazyRef 按引用语义承载：打印为 `LazyRef`，不展开内部状态。
             return "LazyRef"
         case .structInstance(let si):
             // 内建 Error / CancelError 直接呈现其 message，便于 `print(<= t)` 输出 `err(boom)`
@@ -723,8 +720,8 @@ public enum RuntimeOps {
             {
                 return message
             }
-            // 字段按名排序输出：Dictionary 迭代顺序非声明序，非确定性；排序保证解释器与
-            // LLVM 后端 `generateStringifyAggregate` 的展示顺序逐字节一致（T2 对齐）。
+            // 字段按名排序输出：Dictionary 迭代顺序非声明序、不确定；排序保证解释器与
+            // LLVM 后端 `generateStringifyAggregate` 的展示顺序逐字节一致。
             let sorted = si.fields.sorted { $0.key < $1.key }
             return "\(si.typeName){" + sorted.enumerated().map { i, kv in (i > 0 ? ", " : "") + "\(kv.key): " + stringifyValue(kv.value) }.joined() + "}"
         case .objectReference(let oref):
@@ -734,7 +731,7 @@ public enum RuntimeOps {
             if ev.associatedValues.isEmpty {
                 return "\(ev.caseName)"
             }
-            /// 渲染不带关联值名（`圆(5.0)` 而非 `圆(r: 5.0)`）：`paramNames` 只供 match 具名绑定按名对位，不进渲染。
+            // 渲染不带关联值名（`圆(5.0)` 而非 `圆(r: 5.0)`）：`paramNames` 只供 match 具名绑定按名对位，不进渲染。
             let inner = ev.associatedValues.map { stringifyValue($0) }.joined(separator: ", ")
             return "\(ev.caseName)(\(inner))"
         case .function(let fv): return "<\(fv.name)>"
@@ -744,7 +741,7 @@ public enum RuntimeOps {
             }
             return "<pending Future>"
         case .rawPointer(let rp):
-            // Phase 2a（FFI 子系统）：打印 `*T@0x...`（元素类型 + 地址）。
+            // 指针打印为 `*T@0x...`：元素类型加地址。
             let t = rp.elemType.map { $0.describe() } ?? "?"
             return "*\(t)@\(rp.pointer)"
         }
@@ -806,8 +803,8 @@ public enum RuntimeOps {
         }
     }
 
-    /// `chars` — split into grapheme clusters (matching Swift `Character`, so surrogate pairs stay whole); empty gives empty.
-    /// `len(chars(s)) == len(s)` holds by construction; the parameter stays `String`, since `Char` would collapse it.
+    /// `chars` —— 按字素簇切分（与 Swift `Character` 一致，代理对不被拆开）；空串得空数组。
+    /// `len(chars(s)) == len(s)` 由构造保证；参数仍是 `String`，换成 `Char` 会塌掉。
     static func builtinChars(_ args: [Value]) throws -> Value {
         guard case .string(let s) = args[0] else {
             throw RuntimeError.invalidOperation(
@@ -851,9 +848,9 @@ public enum RuntimeOps {
         return .int(value & 0xFF)
     }
 
-    /// `chr` — code point to a `Char`.
-    /// Out of range — negative, past the scalar maximum, or a surrogate — panics as an out-of-range `s[i]` does.
-    /// A `Char` always holds exactly one grapheme, so there is no sentinel value meaning "nothing".
+    /// `chr` —— 码点转 `Char`。
+    /// 越界（负数、超过标量上限或落在代理区）按越界 `s[i]` 那样报错。
+    /// `Char` 恒持一个字素，没有表示「空」的哨兵值。
     static func builtinChr(_ args: [Value]) throws -> Value {
         guard case .int(let code) = args[0] else {
             throw RuntimeError.invalidOperation(
@@ -871,9 +868,9 @@ public enum RuntimeOps {
         return .char(String(scalar))
     }
 
-    /// `ord` — the first Unicode scalar's code point; a multi-scalar grapheme yields its first scalar.
-    /// "Empty" is not a value this signature can be handed, so the guard is a floor rather than an assertion.
-    /// It is unreachable for a well-typed `Char`; a `null` injected by a test should read as an error, not a crash.
+    /// `ord` —— 首个 Unicode 标量的码点；多标量字素取首个。
+    /// 这个签名拿不到「空」值，所以守卫只是兜底而不是断言。
+    /// 对良类型的 `Char` 不可达；测试塞进来的 `null` 应读成错误，而不是崩掉。
     static func builtinOrd(_ args: [Value]) throws -> Value {
         guard case .char(let c) = args[0] else {
             throw RuntimeError.invalidOperation(
@@ -885,9 +882,8 @@ public enum RuntimeOps {
         return .int(Int(first.value))
     }
 
-    /// `is_letter` — Unicode letter property of the first character. The empty
-    /// string was false rather than an error; a `Char` (G67) has no empty case,
-    /// so the guard remains only as the floor for a `null` zero value.
+    /// `is_letter` —— 首字符是否为 Unicode 字母。
+    /// `Char` 不存在空值情形，守卫只兜 `null` 零值，返回 false。
     static func builtinIsLetter(_ args: [Value]) throws -> Value {
         guard case .char(let c) = args[0] else {
             throw RuntimeError.invalidOperation(
@@ -899,8 +895,8 @@ public enum RuntimeOps {
         return .bool(first.isLetter)
     }
 
-    /// `is_number` — Unicode numeric property of the first character. A strict
-    /// superset of `\p{N}`, matching the host's `Character.isNumber`.
+    /// `is_number` —— 首字符的 Unicode 数字属性，是 `\p{N}` 的严格超集，
+    /// 与宿主 `Character.isNumber` 一致。
     static func builtinIsNumber(_ args: [Value]) throws -> Value {
         guard case .char(let c) = args[0] else {
             throw RuntimeError.invalidOperation(
@@ -912,21 +908,21 @@ public enum RuntimeOps {
         return .bool(first.isNumber)
     }
 
-    /// Bytes of host stack that must remain before one more body may be entered.
-    /// A share rather than a constant: main carries 8 MB, a `Thread` 512 KB, and "enough" means nothing without the total.
-    /// An eighth is held back so the diagnostic and unwinding still fit, with a floor for stacks too small to spare one.
+    /// 再进入一层函数体之前，宿主栈必须留有的字节数。
+    /// 按比例而非定值：主线程 8 MB、`Thread` 512 KB，不给总量时「够用」没有意义。
+    /// 留出八分之一给诊断与栈展开，栈小到留不出时退回固定下限。
     static func freeStackFloor(stackSize: Int) -> Int {
         max(stackSize / 8, 256 * 1024)
     }
 
-    /// The ceiling the guard falls back to where the stack cannot be read.
-    /// Deliberately conservative: its only job is to keep a silent smash impossible where the stack cannot be read.
-    /// Where a reading is available the remaining stack decides, and this is never consulted.
+    /// 读不到栈时守卫退回的调用层数上限。
+    /// 取值保守：唯一职责是让「读不到栈」也无法静默压栈。
+    /// 能读到余量时由栈决定，这个值不参与判断。
     static let fallbackCallCeiling = 120
 
-    /// Whether one more body may be entered at `depth`.
-    /// A frame count cannot decide: a scalar recursion costs about 47 KB per frame, an enum-returning `match` about 80 KB.
-    /// So a count is wrong both ways — smashing on the heavy shape, refusing a legal one as infinite; the stack left decides.
+    /// `depth` 处能否再进入一层函数体。
+    /// 帧数判不了：标量递归每帧约 47 KB，返回枚举的 `match` 约 80 KB。
+    /// 计数两头都错 —— 重形态压爆、合法深递归被误判；能判的是剩余栈。
     static func mayEnterAnotherBody(depth: Int) -> Bool {
         guard let stack = hostStack() else {
             return depth < fallbackCallCeiling
@@ -936,9 +932,9 @@ public enum RuntimeOps {
         return here - stack.low > freeStackFloor(stackSize: stack.size)
     }
 
-    /// The running thread's stack, or `nil` where the platform cannot report it.
-    /// Read once per thread and cached for its life: the bounds do not move, and on Linux asking walks the process maps.
-    /// A thread whose bounds cannot be read is cached as such, so it is not asked again.
+    /// 当前线程的栈，平台报不出时返回 `nil`。
+    /// 每线程读一次并缓存到该线程结束：边界不会移动，Linux 上每次询问都要走进程映射。
+    /// 读不出边界的线程同样缓存成「读不出」，不再重复询问。
     static func hostStack() -> (low: Int, size: Int)? {
         let bounds: HostStackBounds
         if let cached = hostStackBounds.value {
@@ -952,9 +948,9 @@ public enum RuntimeOps {
         return (low, size)
     }
 
-    /// The error the guard raises when it refuses a call.
-    /// One construction site, since a caller matching on the reason can only match one wording.
-    /// The depth is carried in the text because it separates a runaway recursion from a merely deep one.
+    /// 守卫拒绝调用时抛出的错误。
+    /// 只有这一个构造点，调用方按原因匹配时只需对一份措辞。
+    /// 深度写进文本：它区分失控递归与单纯很深的递归。
     static func recursionGuardError(depth: Int) -> RuntimeError {
         RuntimeError.invalidOperation(
             reason: "宿主栈余量不足，无法再进入一层调用（深度 \(depth)），疑似无限递归或递归过深",
@@ -962,9 +958,9 @@ public enum RuntimeOps {
         )
     }
 
-    /// The character builtins, by name.
-    /// One table serves both engines: the lowerer's whitelist reads it and the executor dispatches through it.
-    /// A name therefore cannot be half-supported, with a lowering rule on one side and no answer on the other.
+    /// 字符内建，按名字索引。
+    /// 一张表服务两个引擎：降载器的白名单读它，执行器经它分派。
+    /// 因此一个名字不会被半支持 —— 一侧有降载规则，另一侧却没有实现。
     nonisolated(unsafe) static let characterBuiltins: [String: ([Value]) throws -> Value] = [
         "chars": builtinChars,
         "tempUtf8Bytes": builtinTempUtf8Bytes,
@@ -976,13 +972,12 @@ public enum RuntimeOps {
         "is_number": builtinIsNumber,
     ]
 
-    /// Where the builtin constructors report from.
-    /// One constant read by both engines, so the two channels' error text cannot diverge at the location field.
+    /// 内建构造器上报错误时使用的位置。
+    /// 两引擎共读一个常量，位置字段上的报错文本不会分叉。
     static let builtinLocation = SourceLocation(line: 0, column: 0, fileName: "<builtin>")
 
-    /// The `sleep` argument rule. Shared so both channels reject the same
-    /// things in the same words; a duration is an integer number of
-    /// milliseconds and always has been.
+    /// `sleep` 的实参规则。共用是为了两通道拒绝同样的输入、给出同样的措辞；
+    /// 时长以整数毫秒计。
     static func sleepMilliseconds(_ args: [Value]) throws -> Int {
         guard args.count == 1, case .int(let ms) = args[0] else {
             throw RuntimeError.invalidOperation(
@@ -993,9 +988,9 @@ public enum RuntimeOps {
         return ms
     }
 
-    /// `sleep(ms)` — block the calling thread for that long.
-    /// It sleeps in slices so cancellation is checked between them, stopping within a slice, not after the whole duration.
-    /// The checkpoint is a parameter: the AST channel passes a real check, the IR channel a no-op until it holds a task handle.
+    /// `sleep(ms)` —— 阻塞调用线程该时长。
+    /// 分片睡，片间检查取消，最迟一片之内停下，不必等满整段时长。
+    /// 检查点是参数：AST 通道传真检查，IR 通道在拿到任务句柄前传空操作。
     static func builtinSleep(milliseconds ms: Int, checkpoint: () throws -> Void) throws -> Value {
         try checkpoint()
         var remaining = max(0, Double(ms)) / 1000.0
@@ -1009,9 +1004,8 @@ public enum RuntimeOps {
         return .null
     }
 
-    /// The `Error("msg")` / `CancelError("msg")` argument rule. Both
-    /// constructors take exactly one string, and the two types are structurally
-    /// identical — they are told apart by `isCancel`, never by their payload.
+    /// `Error("msg")` / `CancelError("msg")` 的实参规则。
+    /// 两个构造器都只接受一个字符串，类型结构相同 —— 靠 `isCancel` 区分，绝不靠载荷。
     static func errorMessageArgument(_ args: [Value]) throws -> String {
         guard args.count == 1, case .string(let message) = args[0] else {
             throw RuntimeError.typeMismatch(
@@ -1023,18 +1017,18 @@ public enum RuntimeOps {
         return message
     }
 
-    /// `Error("msg")` — the built-in default error value.
+    /// `Error("msg")` —— 内建默认错误值。
     static func builtinErrorConstructor(_ args: [Value]) throws -> Value {
         try makeError(try errorMessageArgument(args))
     }
 
-    /// `CancelError("msg")` — the cancellation error.
+    /// `CancelError("msg")` —— 取消错误值。
     static func builtinCancelErrorConstructor(_ args: [Value]) throws -> Value {
         try makeCancelError(try errorMessageArgument(args))
     }
 
-    /// The cancellation error value.
-    /// Both callers — the AST channel's by-name chain and the IR executor's table — build it here, so the rule has one home.
+    /// 取消错误值。
+    /// 两个调用方（AST 通道的按名链与 IR 执行器的表）都在此构造，规则只有一处。
     static func makeCancelError(_ message: String) -> Value {
         .structInstance(
             StructInstance(
@@ -1043,9 +1037,9 @@ public enum RuntimeOps {
             ))
     }
 
-    /// The concurrency builtins this grid answers synchronously, by name.
-    /// Same contract as `characterBuiltins`: the lowerer's whitelist reads it and the executor dispatches through it.
-    /// Only what a plain call can express: `sleep` blocks, `Error` / `CancelError` build a value; joins need a task handle.
+    /// 这张表同步作答的并发内建，按名字索引。
+    /// 契约同 `characterBuiltins`：降载器白名单读它，执行器经它分派。
+    /// 只收普通调用能表达的：`sleep` 阻塞，`Error` / `CancelError` 造值；join 需要任务句柄。
     nonisolated(unsafe) static let concurrencyBuiltins: [String: ([Value]) throws -> Value] = [
         "sleep": { args in
             try builtinSleep(milliseconds: try sleepMilliseconds(args), checkpoint: {})
@@ -1054,10 +1048,10 @@ public enum RuntimeOps {
         "CancelError": builtinCancelErrorConstructor,
     ]
 
-    // MARK: - G-3c-1: Future-valued concurrency, shared by both engines
+    // MARK: - 返回 Future 的并发语义，两引擎共用
 
-    /// Whether a value is a cancellation error — the `isCancel(e)` predicate.
-    /// `Error` and `CancelError` are structurally identical, so the type name is the only thing telling them apart.
+    /// 值是否为取消错误 —— `isCancel(e)` 谓词。
+    /// `Error` 与 `CancelError` 结构相同，区分它们的只有类型名。
     static func isCancelErrorValue(_ value: Value) -> Bool {
         guard case .structInstance(let si) = value else { return false }
         return si.typeName == builtinCancelErrorTypeName
@@ -1074,22 +1068,22 @@ public enum RuntimeOps {
         return message
     }
 
-    /// Whether a value is already a `Result` case (`ok` / `err`).
-    /// It decides whether a join boxes its value or passes it through; two answers would give the engines different results.
+    /// 值是否已经是 `Result` 的 `ok` / `err` 用例。
+    /// 它决定 join 是装箱还是原样透传；两种答案会让两引擎结果不同。
     static func isResultValue(_ value: Value) -> Bool {
         guard case .enumValue(let ev) = value else { return false }
         return ev.parentEnum == builtinResultEnumName
     }
 
-    /// Whether a value is the `err` case of a `Result` (`ok` gives false).
+    /// 值是否为 `Result` 的 `err` 用例（`ok` 返回 false）。
     static func isErrResultValue(_ value: Value) -> Bool {
         guard case .enumValue(let ev) = value else { return false }
         return ev.parentEnum == builtinResultEnumName && ev.caseName == "err"
     }
 
-    /// Cooperative cancellation checkpoint: a task cancelled while waiting ends here, not at an arbitrary instruction.
-    /// Shared, so the rule is assertable without naming an engine: cancelling on one side only would be a language difference.
-    /// Inlined: it sits on every async body's entry path, where the synchronous case is a nil check that must cost nothing.
+    /// 协作式取消检查点：等待中被取消的任务停在这里，而不是停在任意指令。
+    /// 共用使规则不依赖具体引擎即可断言：只在一边取消就是语言差异。
+    /// 内联：它在每个异步体入口，同步路径上只是判空，不能有开销。
     @inline(__always)
     static func checkCancellation(_ owner: FutureValue?) throws {
         if let owner = owner, owner.isCancelled {
@@ -1097,12 +1091,12 @@ public enum RuntimeOps {
         }
     }
 
-    /// Block until `fut` resolves and normalise the outcome to a `Result` value — errors as data, never thrown across the join.
-    /// An existing `Result` passes through, an ordinary value is boxed as `ok(v)`, and a throw or timeout becomes `err`.
-    /// `form` records the keyword; both forms block, because yielding needs a resumable body and a tree-walker has none.
+    /// 阻塞到 `fut` 落定，把结果归一成 `Result` 值 —— 错误变成数据，绝不穿过 join 抛出。
+    /// 已是 `Result` 的原样透传，普通值装箱成 `ok(v)`，抛出或超时变成 `err`。
+    /// `form` 记录关键字；两种形式都阻塞，因为让出需要可恢复的体，树遍历器没有。
     static func joinFuture(_ fut: FutureValue, timeoutMs: Int?, form: JoinForm = .waits) -> Value {
-        // A joined child leaves its parent: its lifetime has been consumed
-        // explicitly, so the parent's return must stop cancelling it.
+        // 被 join 的子任务脱离父任务：它的生命周期已被显式消费完，
+        // 父任务返回时不该再取消它。
         defer { fut.detachFromParent() }
         do {
             let value: Value
@@ -1129,9 +1123,9 @@ public enum RuntimeOps {
         }
     }
 
-    /// `joinAll([a, b, c])` → an aggregate future over every member.
-    /// Fail-fast: the first `err` decides the aggregate and the rest are cancelled, since nobody is waiting for them.
-    /// A member keeps its own parent, the aggregate linking only for cancellation; scheduler and hooks arrive as parameters.
+    /// `joinAll([a, b, c])` → 覆盖全部成员的聚合 future。
+    /// 快速失败：第一个 `err` 决定聚合结果，其余成员被取消，因为没人在等它们。
+    /// 成员保留自己的父任务，聚合只为取消而链接；调度器与钩子由参数传入。
     static func makeJoinAllFuture(
         argument: Value,
         scheduler: Scheduler,
@@ -1165,9 +1159,8 @@ public enum RuntimeOps {
         let captured = members
         let work = WorkHandoff {
             let restore = enterTask(aggregate)
-            // Registration order matches the AST side: the scope close runs
-            // before the task handle is restored, so the close still sees the
-            // aggregate as the current task.
+            // 登记顺序与 AST 侧一致：作用域关闭先于任务句柄恢复，
+            // 关闭时看到的仍是聚合任务。
             defer { restore() }
             defer { aggregate.cancelUnjoinedChildren() }
 
@@ -1180,8 +1173,8 @@ public enum RuntimeOps {
                     for rest in captured.dropFirst(index + 1) where !rest.isFinished {
                         rest.cancel()
                     }
-                    // Resolve explicitly rather than by returning: this task decides its own outcome at the decision point.
-                    // Reporting `.finished` afterwards is harmless, since a second `resolve` is ignored once the future is settled.
+                    // 用显式 resolve 而非靠返回：本任务在决策点定下自己的结果。
+                    // 之后再报 `.finished` 无害，future 一旦落定，第二次 `resolve` 会被忽略。
                     aggregate.resolve(joined)
                     return .finished(.null)
                 }
@@ -1194,9 +1187,9 @@ public enum RuntimeOps {
         return .future(aggregate)
     }
 
-    /// The structured rule's bounded override: a body that finished `ok` beside an unjoined failed child comes out `err`.
-    /// Bounded on purpose — a body that produced its own `err` keeps it, or the failure that happened would be lost.
-    /// The flip happens at the return boundary as a value, so `match` can inspect it; nothing enters the call stack.
+    /// 结构化规则的有限覆盖：体以 `ok` 结束却带着未 join 的失败子任务时，结果为 `err`。
+    /// 有界是有意的 —— 体自己产出的 `err` 保留，否则真正发生的失败会丢。
+    /// 翻转在返回边界以值的形式发生，`match` 能检视到；不进入调用栈。
     static func flipIfLeaked(_ result: Value, leaked: [Value]) -> Value {
         guard !leaked.isEmpty else { return result }
         if isErrResultValue(result) { return result }
@@ -1208,8 +1201,8 @@ public enum RuntimeOps {
     }
 }
 
-/// The stack bounds of one thread, cached for the life of that thread.
-/// Both fields are optional so "cannot answer" is a cacheable value too; otherwise every call would ask again.
+/// 一个线程的栈边界，随该线程存活缓存。
+/// 两个字段都是可选的，「答不出」本身也是可缓存的值，否则每次调用都会再问一遍。
 private final class HostStackBounds {
     let low: Int?
     let size: Int?
@@ -1220,7 +1213,7 @@ private final class HostStackBounds {
     }
 }
 
-/// One cache per thread — read by `RuntimeOps.hostStack()`.
+/// 每线程一份缓存 —— 由 `RuntimeOps.hostStack()` 读取。
 private let hostStackBounds = ThreadLocal<HostStackBounds>()
 
 #if canImport(Glibc)
@@ -1231,8 +1224,8 @@ private let hostStackBounds = ThreadLocal<HostStackBounds>()
     ) -> Int32
 #endif
 
-/// Ask the platform where the running thread's stack begins and how big it is.
-/// `low` is the lowest address the stack can reach: it grows downward, so a frame closer to `low` has less room left.
+/// 向平台询问当前线程栈的起点与大小。
+/// `low` 是栈能到达的最低地址：栈向低处生长，越靠近 `low` 的帧剩余空间越小。
 private func readHostStack() -> (low: Int, size: Int)? {
     #if canImport(Darwin)
         let thread = pthread_self()

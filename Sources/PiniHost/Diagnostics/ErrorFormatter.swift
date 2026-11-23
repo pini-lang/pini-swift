@@ -117,8 +117,8 @@ public enum ErrorFormatter {
         case is SemanticWarning: key = "semanticWarning"; fallback = "语义警告"
         case is TypeError: key = "type"; fallback = "类型错误"
         case is RuntimeError: key = "runtime"; fallback = "运行时错误"
-        // The capability gate reuses the irgen domain's E6 code face, so it carries
-        // that domain's label instead of the generic fallback.
+        // 能力门禁复用 irgen 域的 `E6` 错误码面，因此显示该域的标签，
+        // 而不是通用兜底标签。
         case is IRLowerer.IRLoweringError: key = "irgen"; fallback = "IR 生成错误"
         case is IRValidator.Failure: key = "validator"; fallback = "IR 结构错误"
         case let e as PiniError:

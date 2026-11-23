@@ -7,7 +7,7 @@ public struct FuncDecl: Equatable, ASTNode, Sendable {
     public let genericParams: [GenericParam]
     public let params: [Parameter]
     public let returnTypes: [TypeAnnotation]
-    /// 草稿 A2（批次 1.3，D1）：命名返回元组的分量标签，与 returnTypes 一一对应（nil = 无标签）。
+    /// 命名返回元组的分量标签，与 returnTypes 一一对应（nil = 无标签）。
     /// 运行时给多返回值补写标签，`.名称` 标签访问才可命中。
     public let returnLabels: [String?]
     public let isAsync: Bool

@@ -51,7 +51,7 @@ public struct PackageSymbol: Equatable, Sendable {
     public let name: String
     /// 定义该符号的源文件路径（物理锚点）。
     public let fileName: String
-    /// 依 spec 推导出的可见性级别。
+    /// 由声明处的可见性写法推出的级别。
     public let visibility: VisibilityLevel
     /// 符号种类（仅用于诊断信息）。
     public let kind: SymbolKind
@@ -72,9 +72,9 @@ public struct PackageSymbol: Equatable, Sendable {
 /// 单文件 `Package` 由 `analyze(module:)` / `check(module:)` 原样处理，本索引只服务多文件场景。
 public struct PackageSymbolIndex: Equatable, Sendable {
     private let byName: [String: PackageSymbol]
-    /// 枚举 case 名 → 父枚举名集合。case 名按枚举命名空间隔离（P5-5 HIGH-1：
-    /// 跨枚举同名 case 允许共存），故同名可映射到多个父枚举；多于一个即**歧义**，
-    /// 未限定构造须改用 形状.圆(...) 限定写法。
+    /// 枚举 case 名 → 父枚举名集合。case 名按枚举命名空间隔离，跨枚举同名 case 允许共存，
+    /// 故同名可映射到多个父枚举；多于一个即**歧义**，
+    /// 未限定构造须改用 `形状.圆(...)` 的限定写法。
     private let caseParents: [String: Set<String>]
 
     public init(byName: [String: PackageSymbol], caseParents: [String: Set<String>] = [:]) {

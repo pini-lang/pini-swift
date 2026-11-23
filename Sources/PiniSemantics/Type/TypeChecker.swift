@@ -25,8 +25,8 @@ public final class TypeChecker {
         registerBuiltinTypes()
     }
 
-    /// 已知内建类型（其成员方法已在 registerBuiltinTypes 登记）。
-    /// 这些类型上调用未注册成员应在静态期报错（unknownMember），而非静默跳过（P3-2 ③）。
+    /// 已登记成员方法的内建类型（见 `registerBuiltinTypes`）。在这两类值上调用未登记的成员
+    /// 必须报 unknownMember，不能静默放行。
     private static let builtinTypesWithMembers: Set<String> = ["String", "Array"]
 
     /// 引用类型（object）的名字：其 `let` 仅约束引用本身、对象内容仍可变，故成员赋值不可变性
@@ -39,23 +39,23 @@ public final class TypeChecker {
     /// 而一条好的隔离报错必须指名道姓说出是哪个形参。
     private var asyncFunctionParamNames: [String: [String]] = [:]
 
-    /// B3-1：`Type.method` → 形参名列表，覆盖标了 `=>` 的**方法**（与自由函数同等对待）。
+    /// `Type.method` → 形参名列表，覆盖标了 `=>` 的方法（与自由函数同等对待）。
     private var asyncMethodParamNames: [String: [String]] = [:]
 
-    /// 声明上下文收紧·规则 3.2/3.14：类型字段表（register 阶段填充），供扩展块方法体检查注入 self 字段作用域。
+    /// 类型名 → 字段表（登记阶段填充），供扩展块方法体检查注入 self 字段作用域。
     private var typeFieldsByName: [String: [(name: String, type: TypeAnnotation)]] = [:]
     /// 已声明析构的类型名：每个类型至多一个 `deinit`，跨扩展块累计。
     private var lifecycleOwners: Set<String> = []
 
-    /// P4 Phase 3：多文件包分析时的包级符号索引与「当前正在分析的文件」。
-    /// 单文件模式（`check(module:)`）下恒为 `nil`，故单文件行为零回归。
+    /// 多文件包分析时的包级符号索引与当前正在分析的文件名。
+    /// 单文件模式（`check(module:)`）下恒为 `nil`，故单文件路径不受影响。
     private var packageContext: (index: PackageSymbolIndex, currentFileName: String)? = nil
 
-    /// Phase 2a（FFI 子系统）：不安全上下文深度。`|unsafe` 函数体或 `unsafe (...)` 消耗点内 > 0。
-    /// `&` 取地址 / 指针解引用仅允许在此深度 > 0 时出现。
+    /// 不安全上下文深度：`|unsafe` 函数体或 `unsafe (...)` 消耗点内大于 0。
+    /// `&` 取地址与指针解引用只在深度大于 0 时放行。
     private var unsafeContextDepth: Int = 0
-    // F5（issue-unsafe-gate-foreign）：foreign 函数名集——调用位门禁用。
-    // foreignDecl 注册进通用函数表时无 foreign 标记，故在此并行登记。
+    // foreign 函数名集合，调用位据此判定是否要过不安全门禁。
+    // foreignDecl 进通用函数表时没有 foreign 标记，故在这里并行登记。
     private var foreignSymbolNames: Set<String> = []
     /// 声明了 `|readonly` 的外部数据符号：写侧禁令的判据来源。
     private var readonlyForeignData: Set<String> = []
@@ -85,9 +85,9 @@ public final class TypeChecker {
 
     private func registerBuiltinTypes() {
         let loc = SourceLocation(line: 0, column: 0, fileName: "<builtin>")
-        /// 内建静态签名从单点登记表（BuiltinRegistry）派生：不登记则示例/用户代码调用这些自由函数时
-        /// 调用点查不到签名而被跳过校验。带泛型/指针/通配位的特例由专属路径登记，表中 typeSignature = nil。
-        /// `defineFunction` 按名覆盖、不支持重载，故 abs 只登记 I32 形态（示例传整数字面量，推断为 I32）。
+        // 内建自由函数的静态签名从单点登记表（BuiltinRegistry）派生：不登记则调用点查不到签名而跳过校验。
+        // 带泛型、指针或通配位的特例由专属路径登记，表中 typeSignature 为 nil。
+        // `defineFunction` 按名覆盖、不支持重载，故 abs 只登记 I32 形态（整数字面量推断为 I32）。
         for decl in BuiltinRegistry.decls {
             guard let sig = decl.typeSignature else { continue }
             typeEnv.defineFunction(
@@ -99,8 +99,8 @@ public final class TypeChecker {
         }
         let string = TypeAnnotation.simple(name: "String", location: loc)
 
-        // Phase 2a（FFI 子系统）：指针原语内建（与 Interpreter.registerPointerBuiltins 对齐）。
-        // load/store 参数用 Any 通配——接受任意 `*T`（元素类型由运行时指针值自描述，静态层不约束）。
+        // 指针原语内建，与 Interpreter.registerPointerBuiltins 对齐。
+        // load/store 的参数用 Any 通配，接受任意 `*T`：元素类型由运行时指针值自描述，静态层不约束。
         let anyType = TypeAnnotation.simple(name: "Any", location: loc)
         let anyPtr = TypeAnnotation.pointer(element: TypeAnnotation.simple(name: "U8", location: loc), location: loc)
         // `load` 的返回类型按实参的 `*T` 元素在 `TypeInference` 里给出；静态签名只登记参数，
@@ -119,9 +119,9 @@ public final class TypeChecker {
 
         registerConcurrencyBuiltins(loc: loc, string: string)
 
-        /// 内建特征 collection 的声明面：方法集即 append/pop/slice/join/contains 加 len（len 现为自由
-        /// 函数，下标读走运算符通道，都不入方法表）。抽象签名参数与返回一律 `_` 通配位——`Any` 非顶部
-        /// 类型，`isAssignable` 对 expected=Any 不放行。String/Array 的遵循为标记式登记，不触发严格校验。
+        // 内建特征 collection 的声明面：方法集即 append/pop/slice/join/contains 加 len（len 现为自由
+        // 函数，下标读走运算符通道，都不入方法表）。抽象签名参数与返回一律 `_` 通配位——`Any` 非顶部
+        // 类型，`isAssignable` 对 expected=Any 不放行。String/Array 的遵循为标记式登记，不触发严格校验。
         let any = TypeAnnotation.simple(name: "_", location: loc)
         let selfParam = Parameter(name: "self")
         func collectionMethod(_ name: String, extra: [Parameter], returns: [TypeAnnotation]) -> FuncDecl {
@@ -153,9 +153,9 @@ public final class TypeChecker {
             typeEnv.markConformance(typeName: typeName, traits: traitNames)
         }
 
-        /// 内建成员方法签名从 BuiltinRegistry.memberMethods 派生，与运行时 evaluateMember 的表驱动
-        /// 派发共用同一张表：未知成员由类型层报 unknownMember，早于运行时的 undefinedVariable。
-        /// 集合字面量按元素推断；空数组取 I32，空字典 / 集合无期望时仍是未知，成员校验只对可解析者生效。
+        // 内建成员方法签名从 BuiltinRegistry.memberMethods 派生，与运行时 evaluateMember 的表驱动派发共用一张表。
+        // 效果是未知成员由类型层报 unknownMember，早于运行时的 undefinedVariable。
+        // 集合字面量按元素推断；空数组取 I32，空字典 / 集合无期望类型时仍是未知，成员校验只对可解析者生效。
         for m in BuiltinRegistry.memberMethods {
             typeEnv.defineMethod(typeName: m.typeName, methodName: m.name, params: m.params, returns: m.returns)
         }
@@ -168,8 +168,8 @@ public final class TypeChecker {
         let t = TypeAnnotation.simple(name: "T", location: loc)
         let e = TypeAnnotation.simple(name: "E", location: loc)
 
-        // Future<T, E>：无字段的不透明句柄类型；登记为泛型结构以便注解与实参个数校验生效。
-        // 成员 `cancel()`（B2-1）：递归取消该任务及其所有子孙任务，返回 ()。
+        // Future<T, E>：无字段的不透明句柄，登记为泛型结构以便注解与实参个数校验生效。
+        // 成员 `cancel()` 递归取消该任务及其所有子孙任务，返回 ()。
         typeEnv.defineGenericStruct(
             name: "Future",
             genericParams: ["T", "E"],
@@ -177,7 +177,7 @@ public final class TypeChecker {
             methods: [(name: "cancel", params: [], returns: [], paramCalls: [])]
         )
 
-        // Result<T, E>：内建泛型枚举（B0-1 已打通泛型枚举特化链路）
+        // Result<T, E>：内建泛型枚举，用例为 ok(v) / err(e)。
         typeEnv.defineGenericEnum(
             name: "Result",
             genericParams: ["T", "E"],
@@ -194,9 +194,9 @@ public final class TypeChecker {
             params: [string],
             returns: [.simple(name: "Error", location: loc)]
         )
-        // CancelError（B2-1 / Q5 表示法 A）：取消专用错误，与业务 Error 并列的独立类型。
-        // 结构与 Error 相同（message: String），因此 `e.message` 在两者上都可读；
-        // 判别靠内建谓词 isCancel(e)，而非字符串约定。
+        // CancelError：取消专用的错误类型，与业务 Error 并列而独立。
+        // 结构与 Error 相同（message: String），故 `e.message` 在两者上都可读；
+        // 判别靠内建谓词 isCancel(e)，不靠字符串约定。
         typeEnv.defineStruct(name: cancelErrorTypeName, fields: [(name: "message", type: string)])
         typeEnv.defineFunction(
             name: cancelErrorTypeName,
@@ -215,8 +215,8 @@ public final class TypeChecker {
             name: Self.errorTraitName,
             trait: TraitDecl(
                 name: Self.errorTraitName, genericParams: [], signatures: [], location: loc))
-        /// 稳定码：标记式，与 `错误` 同用。写它表示该 enum 的用例码按「块名-类型名-用例名」散列，
-        /// 不随类型序漂移；非 enum 载体没有用例名，固定码仍走扩展块的 `码()`。
+        // 稳定码：标记式特征，与 `错误` 一样没有成员。实现它表示该 enum 的用例码按「块名-类型名-用例名」散列，
+        // 不随声明顺序漂移；非 enum 载体没有用例名，固定码仍走扩展块的 `码()`。
         typeEnv.defineTrait(
             name: Self.stableCodeTraitName,
             trait: TraitDecl(
@@ -224,7 +224,7 @@ public final class TypeChecker {
         typeEnv.markConformance(typeName: "Error", traits: [Self.errorTraitName])
         typeEnv.markConformance(typeName: cancelErrorTypeName, traits: [Self.errorTraitName])
 
-        // joinAll（B2-4 / Q3）：[Future<T, E>] → Future<[T], Error>，`await` / `wait` 接 `joinAll([...])` 得 Result<[T], Error>。
+        // joinAll：[Future<T, E>] → Future<[T], Error>，`await` / `wait` 接 `joinAll([...])` 得 Result<[T], Error>。
         // 形参锚定 `Array<Future<_, _>>`：元素类型由数组字面量按元素推断给出，`_` 只定住
         // Future 的构造子与元数。写成裸 `Array` 会把推断出的 `Array<Future<...>>` 判成不匹配。
         let wildcard = TypeAnnotation.simple(name: "_", location: loc)
@@ -249,9 +249,8 @@ public final class TypeChecker {
             ]
         )
 
-        // joinWithin（B2-5 / Q5·超时）：(Future<_, _>, I32) → Result<_, Error>。
-        // 本身即阻塞 join，故返回 Result 而非 Future；超时归约为 err(CancelError)。
-        // 载荷类型此刻不可解（无泛型函数推断），用 `_` 通配位锚定构造子与元数。
+        // joinWithin：(Future<_, _>, I32) → Result<_, Error>，本身即阻塞 join，故返回 Result 而非 Future。
+        // 超时归约为 err(CancelError)；载荷类型此刻不可解（无泛型函数推断），用 `_` 通配位锚定构造子与元数。
         typeEnv.defineFunction(
             name: "joinWithin",
             params: [
@@ -275,9 +274,9 @@ public final class TypeChecker {
             returns: []
         )
 
-        /// 语言预置的调度特征：登记名字使其可被 `实现:` 引用，派发点由编译器插入取用；方法集两个
-        /// （`收下` 接任务 / `选择下一个任务` 空队返空句柄），是策略层接口，可被用户扩展块覆盖。
-        /// 两个签名都带最小默认体而非纯抽象：校验只对无体签名要求实现，且真实现要访问队列字段。
+        // 语言预置的调度特征：登记名字使其可被 `实现:` 引用，派发点由编译器插入取用；方法集两个
+        // （`收下` 接任务 / `选择下一个任务` 空队返空句柄），是策略层接口，可被用户扩展块覆盖。
+        // 两个签名都带最小默认体而非纯抽象：校验只对无体签名要求实现，且真实现要访问队列字段。
         let schedulerSelfParam = Parameter(name: "self")
         let schedulerHandleType = TypeAnnotation.pointer(
             element: TypeAnnotation.simple(name: "U8", location: loc), location: loc)
@@ -320,9 +319,9 @@ public final class TypeChecker {
             )
         )
 
-        /// 上述特征的**给定块形态**：语言提供的默认调度实例。只有特征不够——`using` 位的取用点只认
-        /// 给定块，名字仅有特征形态时该形参类型在降载期解析不出来（类型检查判过、降载期才拒）。
-        /// 声明内容住在预置声明件里（唯一出处），此处按与用户声明同一条路径登记进类型环境。
+        // 上述特征的给定块形态：语言提供的默认调度实例。
+        // 只有特征不够——`using` 位的取用点只认给定块，名字仅有特征形态时形参类型在降载期解析不出来。
+        // 声明内容住在预置声明里（唯一出处），此处按与用户声明同一条路径登记进类型环境。
         for decl in PredefinedDecls.all {
             registerTopLevelDeclSignature(decl)
         }
@@ -331,9 +330,8 @@ public final class TypeChecker {
     /// 取消专用错误类型名（与 Interpreter.builtinCancelErrorTypeName 对齐）。
     private let cancelErrorTypeName = "CancelError"
 
-    /// 立场 B 语法糖归一（Pini草稿.md（异步函数块） /）：
-    /// 源码 `func f() => (T,)` 的**类型层签名返回** `Future<T, Error>`。
-    /// 非 async 函数原样返回其声明返回类型。
+    /// 异步函数签名的返回归一：源码 `func f() => (T,)` 在类型层记为 `Future<T, Error>`。
+    /// 同步函数原样返回其声明的返回类型。
     private static func signatureReturns(of f: FuncDecl) -> [TypeAnnotation] {
         guard f.isAsync else { return f.returnTypes }
         return [.generic(name: "Future", params: asyncPayloadAndError(of: f), location: f.location)]
@@ -373,7 +371,7 @@ public final class TypeChecker {
     /// **给定块**的类型名集合。用于把「给定块类型名出现在值位」报成一条
     /// 可行动的静态诊断（否则落到 IRGen 层报「未声明的变量」，读起来像拼错了变量名）。
     private var givenBlockTypeNames: Set<String> = []
-    /// `P3` 豁免计数：为正时不做上面那条检查 —— `配置()` 的 callee 位是**显式构造**，不是值位引用。
+    /// 抑制计数：为正时跳过上面那条未登记判定——`配置()` 出现在 callee 位是显式构造，不是值位引用。
     private var givenBlockNameCheckSuppression = 0
 
     /// 收集在本程序里仍然生效的给定块类型名：本模块声明的加预置的（宿主提供）；本模块占了某名时
@@ -445,8 +443,8 @@ public final class TypeChecker {
                     reason: "文件名 `\(block.name)` 转写后是 `\(blockName)`，不是合法 C 标识符（须以字母或下划线开头）",
                     location: block.location))
         }
-        /// 只含真正会发出去的符号。`_last_error` 不在此列：该符号从未实现，占着名字只会挡住
-        /// 想自己导出错误访问器的库。
+        // 只含真正会发出去的符号。`_last_error` 不在此列：该符号从未实现，占着名字只会挡住
+        // 想自己导出错误访问器的库。
         let lifecycleNames: Set<String> = [
             "\(blockName)_init", "\(blockName)_shutdown",
         ]
@@ -619,7 +617,7 @@ public final class TypeChecker {
         switch t {
         case .simple(let name, _):
             if name == "StringHandle" {
-                /// 形参与返回都成立：C 侧两侧都是一个不透明指针，计数归 C 自己。
+                // 形参与返回位都成立：两侧在 C 侧都是不透明指针，计数归 C 自己管。
                 return position == .field
                     ? "`StringHandle` 不作给定块字段：字段区是进程级存储，句柄的计数无从落账" : nil
             }
@@ -629,8 +627,8 @@ public final class TypeChecker {
             }
             return CPointerTarget.scalarNames.contains(name) ? nil : "`\(name)` 不是 C 兼容标量"
         case .pointer(let element, _):
-            /// 指针目标必须是白名单里的标量：头文件只写得出标量指针，IR 也只按标量解析元素。
-            /// 其余形状在这里拒绝，理由取 `CPointerTarget` —— 与导入面、声明级同一句。
+            // 指针目标必须是白名单里的标量：头文件只写得出标量指针，IR 也只按标量解析元素。
+            // 其余形状在这里拒绝，理由文案取自 `CPointerTarget`，与导入面、声明级共用同一句。
             if case .simple(let name, _) = element, CPointerTarget.scalarNames.contains(name) {
                 return nil
             }
@@ -643,7 +641,7 @@ public final class TypeChecker {
             guard position == .result else { return "`^T` 只能作返回类型" }
             guard let payload = params.first else { return "`^T` 缺载荷类型" }
             if params.count == 2 {
-                /// 两参数形态是「带错误集的 Result」：E 必须实现 `错误`，否则 C 侧没有码可回填。
+                // 两参数形态是「带错误集的 Result」：E 必须实现 `错误`，否则 C 侧没有错误码可回填。
                 guard case .simple(let errorType, _) = params[1], errorTypes.contains(errorType) else {
                     return "`Result` 的错误位须是实现 `错误` 特征的类型"
                 }
@@ -655,7 +653,7 @@ public final class TypeChecker {
         case .tuple:
             return "元组不可跨越 C 边界"
         case .function(let params, let returns, let captured, let usingIndices, _):
-            /// 函数类型只在形参位成立：C 侧写成 `ret (*)(params)`，转发层把裸地址包成 Pini 函数值。
+            // 函数类型只在形参位成立：C 侧写成 `ret (*)(params)`，转发层把裸地址包成 Pini 函数值。
             guard position == .parameter else {
                 return "函数类型只作导出函数的形参：返回位没有可承载它的 C 形状"
             }
@@ -846,11 +844,11 @@ public final class TypeChecker {
         }
     }
 
-    // MARK: - 跨文件类型名可见性 enforce（P4 审查修复）
+    // MARK: - 跨文件类型名可见性强制
 
-    /// 对一个「命名类型引用」执行跨文件可见性 enforce：若该类型（struct/object/enum/trait）
+    /// 对一个「命名类型引用」执行跨文件可见性强制：若该类型（struct / object / enum / trait）
     /// 定义在另一文件且对当前文件不可见，报 `inaccessibleSymbol`。
-    /// 内置类型（String/I32/...）、泛型参数、Self 不在符号索引中，直接跳过（lookup 返回 nil）。
+    /// 内置类型（String / I32 / …）、泛型参数、Self 不在符号索引中，直接跳过（lookup 返回 nil）。
     private func enforceTypeVisibility(name: String, location: SourceLocation) throws {
         guard let ctx = packageContext else { return }
         guard let entry = ctx.index.lookup(name),
@@ -906,7 +904,7 @@ public final class TypeChecker {
                 if !symbol.isFunction { try enforceAnnotationVisibility(symbol.annotation) }
             }
         case .givenDecl(let g):
-            /// 给定块与对象同规 —— 字段类型与 `实现: T` 都是类型名引用，须过可见性 enforce。
+            // 给定块与对象同规：字段类型与 `实现: T` 都是类型名引用，须过可见性强制。
             for f in g.fields { try enforceAnnotationVisibility(f.typeAnnotation) }
             for t in g.traits { try enforceTypeVisibility(name: t, location: g.location) }
         case .traitDecl, .extensionDecl, .varDecl, .statement, .importDecl, .exportDecl:
@@ -923,7 +921,7 @@ public final class TypeChecker {
         }
     }
 
-    // MARK: - 字段级 type-private 强制（P4.5）
+    // MARK: - 字段级 type-private 强制
 
     /// 当前访问者类型：若正处于某类型的方法体内，`self` 在类型环境中被注册为
     /// `.simple(name: 类型名)`，取其类型名即为「当前方法所属类型」。
@@ -1003,9 +1001,9 @@ public final class TypeChecker {
         }
     }
 
-    /// 收集模式入口（P2-4 收尾）：不抛出，返回模块内全部类型错误。
-    /// 复用 `check` 的注册 + 检查逻辑；`report` 在收集态下累积并静默，
-    /// 函数体内逐语句恢复（跨语句/跨方法/跨顶级声明均不中断），单文件可一次性报出多错。
+    /// 收集模式入口：不抛出，返回模块内全部类型错误。
+    /// 复用 `check` 的注册与检查逻辑；`report` 在收集态下累积并静默，
+    /// 函数体内逐语句恢复（跨语句 / 跨方法 / 跨顶级声明均不中断），一次报出多错。
     public func checkCollecting(
         module: Module, foreignConstantFailures: [String: ForeignConstantFailure]
     ) -> [TypeError] {
@@ -1077,7 +1075,7 @@ public final class TypeChecker {
         }
     }
 
-    /// 把类型注解中的 `own`（G50 更名自 Self）替换为具体实现类型名（trait 约束求解与成员可见性需要）。
+    /// 把类型注解中的 `own` 替换为具体实现类型名：trait 约束求解与成员可见性都按具体类型判。
     private func replaceSelf(_ type: TypeAnnotation, with typeName: String) -> TypeAnnotation {
         switch type {
         case .simple(let name, let loc):
@@ -1324,18 +1322,18 @@ public final class TypeChecker {
 
     private func isAssignable(actual: TypeAnnotation, expected: TypeAnnotation) -> Bool {
         if actual.isStructurallyEquivalent(to: expected) { return true }
-        /// 隐式整型宽度转换（对齐解释器 leniency）：整型 primitive 族（I8..I64/U8..U64）之间可互相
-        /// 赋值，如 I32 字面量 → I8 字段、I32 → I64。浮点与 Bool 不在集合内，`I32 → F64` 仍报 mismatch；
-        /// String↔I32 等异类仍走结构等价 → 报错。
+        // 隐式整型宽度转换（对齐解释器 leniency）：整型族（I8..I64/U8..U64）之间可互相赋值，
+        // 如 I32 字面量 → I8 字段、I32 → I64。浮点与 Bool 不在集合内，`I32 → F64` 仍报 mismatch；
+        // String↔I32 等异类仍走结构等价 → 报错。
         if case .simple(let aName, _) = actual,
             case .simple(let eName, _) = expected,
             isNumericPrimitive(aName), isNumericPrimitive(eName)
         {
             return true
         }
-        /// `Char → String` 单向加宽：两者表示同构，一个「恰含 1 个字素」的串本来就是串，故该方向恒安全；
-        /// 反向是窄化，不在此放行——方向性就是本规则的全部内容，窄化入口只留 `s[i]` / `chars` / `chr`
-        /// 加一次显式转换，「恰含 1 个字素」的不变式因此仍归类型系统管。
+        // `Char → String` 单向加宽：两者表示同构，一个「恰含 1 个字素」的串本来就是串，故该方向恒安全。
+        // 反向是窄化，不在此放行——方向性就是这条规则的全部内容；窄化入口只留 `s[i]` / `chars` / `chr`
+        // 加一次显式转换，「恰含 1 个字素」的不变式因此仍归类型系统管。
         if isCharWideningTo(actual, expected) { return true }
         // 内建签名可在泛型实参位使用 `_` 通配（如 `joinWithin(t: Future<_, _>, ms: I32)`）：
         // 元素类型对内建而言无关紧要，只需锚定外层构造子与元数。顶层 `_` 早在
@@ -1354,9 +1352,9 @@ public final class TypeChecker {
             let parent = typeEnv.parentEnum(of: aName)
             if case .simple(let eName, _) = expected, parent == eName { return true }
             if case .generic(let eName, _, _) = expected, parent == eName { return true }
-            // B2-1：CancelError 是「取消」的独立类型，但在期望 Error 的位置（如 `err(e)` 的
-            // 载荷、`Result<T, Error>` 的错误分量）视为可赋值——等价于 Error 的内建子类型。
-            // 待类型层具备 trait 子类型能力后（Q1 原意），此白名单应由 conformance 取代。
+            // CancelError 是「取消」的独立类型，但在期望 Error 的位置（`err(e)` 载荷、`Result<T, Error>`
+            // 的错误分量）视为可赋值，等价于 Error 的内建子类型。类型层还没有 trait 子类型，
+            // 故靠这张白名单；有能力时该由 conformance 取代。
             if aName == cancelErrorTypeName,
                 case .simple(let eName, _) = expected,
                 eName == "Error"
@@ -1367,9 +1365,9 @@ public final class TypeChecker {
         return false
     }
 
-    /// Phase 0：整型 primitive 判定（仅整型宽度族）。用于隐式整型宽度转换放行
+    /// 整型 primitive 判定（仅整型宽度族）：用于隐式整型宽度转换放行
     /// （I32 字面量 → I8/I16/I64 字段等），**不含浮点**——`I32 ↔ F64` 仍报 mismatch
-    /// （TypeCheckerMultiErrorTests 的语义测试依赖此严格性），也不含 Bool。
+    /// （语义测试依赖此严格性），也不含 Bool。
     private func isNumericPrimitive(_ name: String) -> Bool {
         switch name {
         case "I8", "I16", "I32", "I64", "U8", "U16", "U32", "U64":
@@ -1407,7 +1405,7 @@ public final class TypeChecker {
         (lhs == charTypeName && rhs == stringTypeName) || (lhs == stringTypeName && rhs == charTypeName)
     }
 
-    /// 内建标量名：`Char` / `String`（G68 的两端）。集中一处，避免字面量散落。
+    /// 两个内建标量名。集中一处，避免字面量散落。
     private var charTypeName: String { "Char" }
     private var stringTypeName: String { "String" }
     /// C 面的不透明句柄名。它不是 Pini 的通用类型：只在 `[..|foreign]` 与 `|c` 签名里成立。
@@ -1546,7 +1544,7 @@ public final class TypeChecker {
             }
             return
         }
-        /// 声明为具名形态时标签实参合法（按名对位）；位置声明仍拒绝具名实参。
+        // 声明为具名形态时标签实参合法（按名对位）；位置声明仍拒绝具名实参。
         let declaredNames = typeEnv.lookupEnumCaseFields(enumName: parent, caseName: caseName) ?? []
         let declaredNamed = declaredNames.allSatisfy { $0.name != nil } && !declaredNames.isEmpty
         if !declaredNamed, let labeled = args.first(where: { $0.label != nil }) {
@@ -1573,9 +1571,8 @@ public final class TypeChecker {
         // refineEnumCaseConstruction 在期望特化类型下推路径处理。
         if typeEnv.genericEnumParamCount(name: parent) == nil {
             for (i, arg) in args.enumerated() {
-                // 裸名 case 消歧（静态收敛版）（实参位补全）：线程字段声明类型作期望——嵌套 case 构造
-                // （如 target_annot: none(...)）的歧义名由此消歧；不线程则嵌套歧义名
-                // 一律推断失败（S4.9 宿主对等改名回退的前置）。
+                // 裸名 case 消歧（实参位补全）：以字段声明类型作期望——嵌套 case 构造（如 target_annot: none(...)）
+                // 的歧义名由此消歧；不线程期望则嵌套歧义名一律推断失败。
                 guard let actual = inference.infer(expression: arg.expression, expected: fields[i].type) else { continue }
                 try noteBareCaseOutcome(arg.expression, actual: actual, location: location)
                 if !isAssignable(actual: actual, expected: fields[i].type) {
@@ -1687,13 +1684,13 @@ public final class TypeChecker {
         case .funcDecl(let f):
             // 保留形参个数（即使未标注类型也用 "_" 哨兵占位），以保证参数个数校验不因缺省类型而失真
             let paramTypes = f.params.map { $0.typeAnnotation ?? TypeAnnotation.simple(name: "_", location: f.location) }
-            // 立场 B：`=>` 函数的签名返回类型为 Future<T, Error>（`=> T` 是语法糖）
+            // `=>` 函数的签名返回类型为 Future<T, Error>（`=> T` 是语法糖）
             let returnTypes = TypeChecker.signatureReturns(of: f)
-            // B3-1：登记并发进程的形参名，供任务隔离检查在报错时指名道姓
+            // 登记并发进程的形参名，供任务隔离检查在报错时指名道姓
             if f.isAsync { asyncFunctionParamNames[f.name] = f.params.map { $0.name } }
             let paramCalls = Self.paramCalls(of: f.params, at: f.location)
             if !f.genericParams.isEmpty {
-                // P3-0：泛型函数模板注册——供调用点 T 占位通配比对（端到端）
+                // 泛型函数按模板注册，供调用点以 T 占位做通配比对（端到端）。
                 typeEnv.defineGenericFunction(
                     name: f.name,
                     genericParams: f.genericParams.map { $0.name },
@@ -1709,8 +1706,8 @@ public final class TypeChecker {
                     paramCalls: paramCalls
                 )
             }
-            /// 回调候选表：只收顶层、非泛型、非 `|test`、非 `main` 的自由函数。
-            /// `main` 是进程入口，C 侧回调它没有意义；`|test` 不进发布面。
+            // 回调候选表：只收顶层、非泛型、非 `|test`、非 `main` 的自由函数。
+            // `main` 是进程入口，C 侧回调它没有意义；`|test` 不进发布面。
             if f.genericParams.isEmpty, !f.modifiers.contains("test"), f.name != "main" {
                 callbackFunctions[f.name] = (
                     params: paramTypes, returns: returnTypes,
@@ -1775,9 +1772,9 @@ public final class TypeChecker {
                 registerTraitMethods(for: o.name, traits: o.traits, location: loc)
             }
         case .givenDecl(let g):
-            /// 给定块与对象**同规注册**（字段表 / 类型环境 / `实现: T` 的方法）。
-            ///  注意  不登记 `referenceTypeNames` —— 值 / 引用语义尚未裁定，只落声明面，
-            /// 不预设语义（登记与否会改变构造与赋值的行为）。
+            // 给定块与对象同规注册（字段表 / 类型环境 / `实现: T` 的方法）。
+            //  注意  不登记 `referenceTypeNames`：值 / 引用语义尚未裁定，只落声明面，
+            // 不预设语义（登记与否会改变构造与赋值的行为）。
             typeFieldsByName[g.name] = g.fields.map { ($0.name, $0.typeAnnotation ?? .simple(name: "_", location: $0.location)) }
             if !g.genericParams.isEmpty {
                 let fieldInfos = g.fields.map { (name: $0.name, type: $0.typeAnnotation) }
@@ -1816,7 +1813,7 @@ public final class TypeChecker {
                 defaultedCounts[c.name] = c.associatedParams.filter { $0.defaultValue != nil }.count
             }
             if !e.genericParams.isEmpty {
-                // P5 B0-1：泛型枚举模板注册（特化路径闭合 R1）
+                // 泛型枚举按模板注册，实例化由特化路径完成。
                 typeEnv.defineGenericEnum(
                     name: e.name,
                     genericParams: e.genericParams.map { $0.name },
@@ -1832,7 +1829,7 @@ public final class TypeChecker {
         case .traitDecl(let t):
             typeEnv.defineTrait(name: t.name, trait: t)
         case .extensionDecl(let x):
-            // 声明上下文收紧·规则 3.2/3.14：扩展块方法注册到目标类型（与类型自身方法同等对待）。
+            // 扩展块的方法注册到目标类型，与类型自身声明的方法同等对待。
             registerExtensionMethods(x)
         case .foreignDecl(let fd):
             // 一条外部符号要么是函数、要么是数据：种类由类型决定，两张表分开登记。
@@ -1860,7 +1857,7 @@ public final class TypeChecker {
         }
     }
 
-    // MARK: - Phase 2a FFI 子系统：`*T` C 兼容性校验（ARC 隔离）
+    // MARK: - `*T` 的 C 兼容性校验（ARC 隔离）
 
     /// 遍历声明的全部类型注解并校验 `*T` 元素 C 兼容性。
     private func validateDeclPointerTypes(_ decl: TopLevelDecl) throws {
@@ -1883,10 +1880,10 @@ public final class TypeChecker {
         case .extensionDecl(let x):
             for m in x.methods { try validateFuncDeclPointerTypes(m) }
         case .foreignDecl:
-            /// 导入面的闭合表（`FFIType.resolve`）判的是同一件事，且码更精确；这里不再插手。
+            // 导入面的闭合表（`FFIType.resolve`）判的是同一件事，且码更精确，这里不再插手。
             break
         case .givenDecl(let g):
-            /// 给定块字段与对象字段同规过 `*T` C 兼容校验。
+            // 给定块字段与对象字段同规过 `*T` C 兼容校验。
             for f in g.fields { try validatePointerAnnotations(f.typeAnnotation) }
             for m in g.methods { try validateFuncDeclPointerTypes(m) }
         case .varDecl, .statement, .importDecl, .exportDecl:
@@ -2054,8 +2051,8 @@ public final class TypeChecker {
     private func checkTopLevelDecl(_ decl: TopLevelDecl) throws {
         // `StringHandle` 只在 C 面上成立；这一条先跑，免得它在普通函数体里留下一个不可解释的类型。
         try rejectStringHandleOutsideCFace(decl)
-        // Phase 2a（FFI 子系统）：`*T` 元素须为 C 兼容类型（标量/纯值结构体/指针），
-        // 禁 object 及含 object 字段的复合类型（ARC 隔离）。此时 register 已完成，类型表完整。
+        // `*T` 的元素须为 C 兼容类型（标量 / 纯值结构体 / 指针），禁 object 及含 object 字段的复合类型
+        // （ARC 隔离）。此时 register 已完成，类型表完整。
         try validateDeclPointerTypes(decl)
         switch decl {
         case .funcDecl(let f):
@@ -2092,12 +2089,11 @@ public final class TypeChecker {
                 try checkFuncBody(method, fields: targetFields, typeName: x.targetType)
             }
         case .foreignDecl(let fd):
-            // Phase 2a（FFI 子系统）：顶层签名静态校验——拒绝 by-value 结构体（Phase 2c）、
-            // 元组、函数指针、泛型；标量 / 指针 / 引用类型（含 shim 友好的 String）放行（shim 经原生函数表解析，
-            // 裸 C 绑定 C 兼容校验见 Phase 2b）。
+            // 顶层签名静态校验：拒绝 by-value 结构体、元组、函数指针、泛型；
+            // 标量 / 指针 / 引用类型（含 shim 友好的 String）放行——shim 经原生函数表解析。
             try checkForeignDeclSignatures(fd)
         case .givenDecl(let g):
-            /// 给定块方法体按字段作用域检查 + `实现: T` 一致性校验（与对象同规）。
+            // 给定块方法体按字段作用域检查，外加 `实现: T` 的一致性校验（与对象同规）。
             for method in g.methods {
                 try checkFuncBody(method, fields: g.fields.map { ($0.name, $0.typeAnnotation ?? .simple(name: "_", location: $0.location)) }, typeName: g.name)
             }
@@ -2131,14 +2127,14 @@ public final class TypeChecker {
                     try checkFFIType(annotation, at: .result, symbol: symbol)
                 }
             } else {
-                /// 变参是调用点的性质，数据符号没有调用点；标志写错了就地报，别让它悄悄无效。
+                // 变参是调用点的性质，数据符号没有调用点；标志写错了就地报，别让它悄悄无效。
                 if symbol.flags.contains("varargs") {
                     try report(
                         TypeError.foreignVarargsOnNonFunction(
                             symbol: symbol.name, location: symbol.location))
                 }
-                /// 宏常量只收 C 标量：指针、字符串与句柄在 C 侧都没有「一个值」的形态。
-                /// 只在类型本身可表达时报，表外类型留给 E4-028，免得一处声明两条码。
+                // 宏常量只收 C 标量：指针、字符串与句柄在 C 侧都没有「一个值」的形态。
+                // 只在类型本身可表达时报，表外类型留给 E4-028，免得一处声明两条码。
                 if symbol.flags.contains("macro"),
                     let resolved = try? FFIType.resolve(symbol.annotation, at: .data),
                     !Self.isScalarFFIType(resolved)
@@ -2256,8 +2252,8 @@ public final class TypeChecker {
                 if case .function = $0 { return true }; return false
             })
         else { return }
-        /// 个数与 `using` 的错配已由 `validateCallArguments` 报过；这里只按位置对齐，
-        /// 再报一次同样是错配的二次噪声。
+        // 个数与 `using` 的错配已由 `validateCallArguments` 报过；这里只按位置对齐，
+        // 再报一次只是同一错配的二次噪声。
         guard arguments.count == signature.params.count else { return }
         for (index, param) in signature.params.enumerated() {
             guard case .function(let callbackParams, let callbackReturns, _, _, _) = param else { continue }
@@ -2324,7 +2320,7 @@ public final class TypeChecker {
             return
         }
         for index in fixed..<arguments.count {
-            /// 裸函数名不是值，推断给不出类型；它却是最容易写错的那一笔，单独认一次。
+            // 裸函数名不是值，推断给不出类型；它却是最容易写错的一笔，单独认一次。
             if case .identifier(let name, _) = arguments[index].expression,
                 typeEnv.lookupFunction(name: name) != nil
             {
@@ -2336,7 +2332,7 @@ public final class TypeChecker {
                 continue
             }
             guard let type = inference.infer(expression: arguments[index].expression) else { continue }
-            /// 句柄在变参尾也没有落脚处：创建即复制发生在声明的形参位，C 从变参尾看不出这里要一个句柄。
+            // 句柄在变参尾也没有落脚处：创建即复制发生在声明的形参位，C 从变参尾看不出这里要一个句柄。
             if case .simple(let name, _) = type, name == stringHandleTypeName {
                 try report(
                     TypeError.foreignVariadicArgument(
@@ -2345,7 +2341,7 @@ public final class TypeChecker {
                         location: location))
                 continue
             }
-            /// 回调在变参尾没有落脚处：提升表里没有它的形状，C 也从签名看不出这里要一个函数指针。
+            // 回调在变参尾没有落脚处：提升表里没有它的形状，C 也从签名看不出这里要一个函数指针。
             if case .function = type {
                 try report(
                     TypeError.foreignVariadicArgument(
@@ -2376,8 +2372,8 @@ public final class TypeChecker {
         }
     }
 
-    /// Control-flow subblocks own a type scope: an inner declaration cannot replace the outer binding of the same name.
-    /// Mirrors the semantic analyzer, IR validator and LLVM emitter, which each open a scope per block.
+    /// 控制流子块自成一个类型作用域：内层声明不能顶掉外层同名绑定。
+    /// 与语义分析器、IR 校验器、LLVM 后端一致，三者都是每块开一层作用域。
     private func checkInBlockScope(_ statements: [Statement]) throws {
         typeEnv.pushScope()
         defer { typeEnv.popScope() }
@@ -2386,15 +2382,15 @@ public final class TypeChecker {
 
     private func checkFuncBody(_ funcDecl: FuncDecl, fields: [(name: String, type: TypeAnnotation)] = [], typeName: String? = nil) throws {
         guard let body = funcDecl.body else { return }
-        // Phase 2a（FFI 子系统）：`|unsafe` 函数体自动处于不安全上下文。
-        // foreign 块内函数声明时已被注入 `unsafe` 修饰符（本路径无 body，不进入）。
+        // `|unsafe` 函数体自动处于不安全上下文。
+        // foreign 块内声明的函数在声明期已注入 `unsafe` 修饰符（该路径没有 body，不进入这里）。
         let bodyUnsafe = funcDecl.modifiers.contains("unsafe")
         if bodyUnsafe { unsafeContextDepth += 1 }
         defer { if bodyUnsafe { unsafeContextDepth -= 1 } }
         typeEnv.pushScope()
-        /// 方法体作用域：注册 self 与所属类型字段，使字段引用可参与类型推断；字段先于参数注册，
-        /// 参数可遮蔽同名字段。二者都传 `persistent: false`——按类型注入的名字进跨作用域兜底表会顶掉
-        /// 别处同名局部变量（该表按裸名索引、模块内共享），成员归字段表、self 归方法签名，都不归它管。
+        // 方法体作用域：注册 self 与所属类型字段，使字段引用可参与类型推断；字段先于参数注册，
+        // 参数可遮蔽同名字段。二者都传 `persistent: false`——按类型注入的名字进跨作用域兜底表会顶掉
+        // 别处同名局部变量（该表按裸名索引、模块内共享），成员归字段表、self 归方法签名，都不归它管。
         if let tn = typeName {
             // self 的注册不得以「类型有字段」为前提——否则无字段类型
             // （或字段表未传入）的扩展方法拿不到 self，方法体内 self 调用退化 Any。
@@ -2415,9 +2411,9 @@ public final class TypeChecker {
             try checkStatement(stmt)
         }
         if !funcDecl.returnTypes.isEmpty {
-            // P2-1.3 + P2-2：返回类型经结构等价精确比对（含元组返回与多返回）；
-            // void（returnTypes 为空，即 -> ()）已在上方 !isEmpty 守卫跳过（放行带值返回）。
-            // 立场 B：`=>` 函数体内 return 的期望类型为 Result<T, Error>（错误即数据）。
+            // 返回类型经结构等价精确比对（含元组返回与多返回）；void（`returnTypes` 为空，即 `-> ()`）
+            // 已由上方 `!isEmpty` 守卫跳过，故这里只放行带值返回。
+            // `=>` 函数体内 return 的期望类型为 Result<T, Error>（错误即数据）。
             let expected = TypeChecker.bodyReturns(of: funcDecl)
 
             var findings: [ReturnFinding] = []
@@ -2428,8 +2424,8 @@ public final class TypeChecker {
                     let expectedDesc = expected.map { $0.describe() }.joined(separator: ", ")
                     try report(TypeError.mismatch(expected: expectedDesc, got: "()", location: f.location))
                 }
-                // 立场 B / 判别联合：`return ok(v)` / `return err(e)` / `return 圆(r)` 这类
-                // 「枚举用例构造」在期望类型为该枚举（或其特化）时，按期望类型下推校验实参，
+                // 判别联合：`return ok(v)` / `return err(e)` / `return 圆(r)` 这类「枚举用例构造」
+                // 在期望类型为该枚举（或其特化）时，按期望类型下推校验实参，
                 // 而非拿用例名做结构等价比对（用例名不是类型名，直接比对必然失配）。
                 if expected.count == 1, let e = f.expr,
                     try refineEnumCaseConstruction(expr: e, expected: expected[0])
@@ -2526,8 +2522,8 @@ public final class TypeChecker {
         return Set(all).isSubset(of: covered)
     }
 
-    /// 收集函数体内所有 return 语句的返回信息（是否带值 + 推断类型 + 位置）。
-    /// 用于 P2-1.3 / P2-2 返回类型一致性校验；不递归进入内层 lambda（lambda 有独立返回语义）。
+    /// 收集函数体内所有 return 语句的返回信息（是否带值、推断类型、位置）。
+    /// 供返回类型一致性校验使用；不递归进内层 lambda——lambda 有独立的返回语义。
     private typealias ReturnFinding = (
         hasValue: Bool,
         type: TypeAnnotation?,
@@ -2693,7 +2689,7 @@ public final class TypeChecker {
     private func checkStatement(_ stmt: Statement) throws {
         switch stmt {
         case .varDecl(let name, let annot, let initializer, let isMutable, let location):
-            /// 局部声明与签名位同一道 `*T` 判据：同一份标注换个位置不该换结论。
+            // 局部声明与签名位同一道 `*T` 判据：同一份标注换个位置不该换结论。
             if let annot { try validatePointerAnnotations(annot) }
             // 裸名 case 消歧（静态收敛版）：显式标注作为期望类型下推——枚举用例构造走 refine
             // （跨枚举同名 case 按标注消歧），其余按标注比对；绑定类型 = 标注（与宿主声明类型语义对齐）。
@@ -2710,7 +2706,7 @@ public final class TypeChecker {
                     if (try refineEnumCaseConstruction(expr: initExpr, expected: annot)) {
                         // 枚举用例构造已按期望类型下推校验
                     } else if try refineCollectionLiteral(expr: initExpr, expected: annot, location: location) {
-                        // 集合字面量已按 [T]/{T,}/{K: V,} 逐元素校验（[T] 元素标注，D-β）
+                    // 集合字面量已按 [T]/{T,}/{K: V,} 逐元素校验（[T] 元素标注）
                     } else {
                         if let actual = inference.infer(expression: initExpr, expected: annot) {
                             try noteBareCaseOutcome(initExpr, actual: actual, location: location)
@@ -2747,7 +2743,7 @@ public final class TypeChecker {
             typeEnv.defineVariable(name: name, type: declaredType, isMutable: isMutable)
 
         case .varDestructure(let names, _, let initializer, let isMutable, let location):
-            // 草稿 A1（批次 1）：右值必须推断为元组且分量数等于绑定数（含 `_` 占位）。
+            // 右值须推断为元组，且分量数等于绑定数（含 `_` 占位）。
             guard let initExpr = initializer else {
                 try report(TypeError.mismatch(expected: "tuple", got: "missing initializer", location: location))
                 break
@@ -2783,12 +2779,12 @@ public final class TypeChecker {
             }
             switch target {
             case .identifier(let name):
-                // P3-3：`let` 不可变边界静态检查——提前于运行时 immutableVariable 捕获重赋值。
+                // `let` 不可变边界静态检查：早于运行时的 immutableVariable 捕获重赋值。
                 if let mutable = typeEnv.lookupVariableMutability(name: name), !mutable {
                     try report(TypeError.reassignmentToImmutable(variableName: name, location: location))
                 }
                 if let varType = typeEnv.lookupVariable(name: name) {
-                    // [T] 元素标注（D-β）：标注位仍逐项校验 —— 推断只给出共同元素类型，
+                    // [T] 元素标注：标注位仍逐项校验——推断只给出共同元素类型，
                     // 混合元素会收敛成 `Array<Any>`，单靠通用比对看不出「哪一项不合标注」。
                     if try refineCollectionLiteral(expr: value, expected: varType, location: location) {
                         // 集合字面量已逐元素校验
@@ -2801,10 +2797,10 @@ public final class TypeChecker {
             case .member(let object, let name):
                 // 无主引用的字段写同样要 unsafe：它是解引用的一种，不能靠「持有安全」绕过。
                 try enforceUnownedAccess(object, at: location, what: "字段写")
-                // P4.5：字段写同样受 type-private 约束（与读对称）；写入方须为声明类型自身方法。
+                // 字段写同样受 type-private 约束（与读对称）；写入方须为声明类型自身的方法。
                 try enforceFieldVisibility(object: object, fieldName: name, location: location)
-                // P3-3 加固：根是不可变 let 绑定时拒绝字段写。
-                // 但引用类型（object）的 let 仅约束引用本身、对象内容仍可变，须豁免（见 referenceTypeNames）；
+                // 根是不可变 `let` 绑定时拒绝字段写。
+                // 引用类型（object）的 let 只约束引用本身、对象内容仍可变，须豁免（见 `referenceTypeNames`）；
                 // 仅值类型（struct）整体不可变才拦截。self 豁免——方法内实例字段写按设计走 self.字段 路径。
                 if case .identifier(let rootName, _) = object, rootName != "self" {
                     if let mutable = typeEnv.lookupVariableMutability(name: rootName), !mutable {
@@ -2918,8 +2914,8 @@ public final class TypeChecker {
         {
             try report(TypeError.givenBlockTypeInValuePosition(typeName: givenName, location: givenLoc))
         }
-        /// 宏常量未求值：只有读到它才报；类型仍按声明类型算，下游不因缺值改道。
-        /// 放在 unsafe 门禁之前 —— 宏是常量，读它本来就不需要 unsafe。
+        // 宏常量未求值：只有读到它才报；类型仍按声明类型算，下游不因缺值改道。
+        // 放在 unsafe 门禁之前——宏是常量，读它本来就不需要 unsafe。
         if case .identifier(let macroName, let macroLoc) = expr,
             let failure = foreignConstantFailures[macroName]
         {
@@ -2953,8 +2949,8 @@ public final class TypeChecker {
 
         case .unary(let op, let operand, let location):
             if op == .increment || op == .decrement {
-                // F3（spec「前缀 ++/--」注钉定）：目标须可赋值（变量/成员/下标）——
-                // 字面量等不可赋值目标为编译错误（静态拒绝，运行时 evaluateIncDec 兜底）。
+                // 前缀 ++/-- 的目标须可赋值（变量 / 成员 / 下标）；字面量等不可赋值目标为编译错误，
+                // 静态在这里拒绝，运行时 evaluateIncDec 兜底。
                 switch operand {
                 case .identifier, .member, .subscript: break
                 default:
@@ -3010,7 +3006,7 @@ public final class TypeChecker {
                     try report(TypeError.mismatch(expected: "Result<T, E>", got: t.describe(), location: location))
                 }
             }
-            // handler：errorVar 绑定子作用域 + 块校验；块形式须以控制流语句终止（spec 附录 try-stmt 产生式）。
+            // handler：errorVar 绑定子作用域 + 块校验；块形式须以控制流语句终止。
             typeEnv.pushScope()
             typeEnv.defineVariable(name: errorVar, type: .simple(name: "Any", location: location))
             for s in handler.statements { try checkStatement(s) }
@@ -3027,10 +3023,10 @@ public final class TypeChecker {
             }
             for arg in arguments { try checkExpression(arg.expression) }
 
-            // P2-1 / P2-1.4 调用点校验：按被调用者形态分派
+            // 调用点校验：按被调用者形态分派。
             switch callee {
             case .identifier(let calleeName, let calleeLocation):
-                // MED-3：枚举用例构造 arity 始终校验（与期望类型无关），覆盖变量初始化/return/实参等
+                // 枚举用例构造的 arity 始终校验（与期望类型无关），覆盖变量初始化 / return / 实参等位置。
                 try checkEnumCaseConstruction(calleeName: calleeName, args: arguments, location: location)
                 // 指针读：返回类型由实参的 `*T` 元素给出（TypeInference 特判）。这里钉住实参形态，
                 // 让 `load(1)` 在静态层就红，而不是等到降载才报 "expects a *T pointer"。
@@ -3101,9 +3097,8 @@ public final class TypeChecker {
                         location: location
                     )
                 } else if let sig = typeEnv.lookupFunction(name: calleeName) {
-                    // F5（issue-unsafe-gate-foreign）：foreign 调用是「该消耗而未消耗」的反向缺口——
-                    // 与 空 unsafe 消耗点无害（空 unsafe 消耗点无害）正交：安全上下文裸调 foreign 必须拦截，
-                    // `|unsafe` 函数体 / `unsafe (...)` 消耗点 / 块内自动 |unsafe 放行。
+                    // foreign 调用是「该消耗而未消耗」的反向缺口：安全上下文里裸调 foreign 必须拦截，
+                    // 与「空 unsafe 消耗点无害」正交；`|unsafe` 函数体 / `unsafe (...)` 消耗点 / 块内自动 `|unsafe` 均放行。
                     if foreignSymbolNames.contains(calleeName), unsafeContextDepth == 0 {
                         try report(
                             TypeError.mismatch(
@@ -3113,26 +3108,26 @@ public final class TypeChecker {
                             ))
                         return
                     }
-                    /// 回调实参：外部函数形参位上的函数类型要一个真地址，判据在调用点。
-                    /// 排在校验实参之前 —— 签名差一位时，讲「C 会按声明调用它」比讲「类型不匹配」有用。
+                    // 回调实参：外部函数形参位上的函数类型要一个真地址，判据在调用点。
+                    // 排在校验实参之前——签名差一位时，讲「C 会按声明调用它」比讲「类型不匹配」有用。
                     if foreignSymbolNames.contains(calleeName) {
                         try checkForeignCallbackArguments(
                             callee: calleeName, arguments: arguments, signature: sig, location: location)
-                        /// 变参尾的实参不在 `validateCallArguments` 的下标循环里，判据单独一条。
+                        // 变参尾的实参不在 `validateCallArguments` 的下标循环里，判据单独一条。
                         try checkForeignVariadicArguments(
                             callee: calleeName, arguments: arguments, signature: sig, location: location)
                     }
                     try validateCallArguments(
                         arguments: arguments, signature: sig, location: location, callee: calleeName,
                         arityLocation: calleeLocation)
-                    // B3-1：并发进程调用点的任务隔离——引用类型不得越过 `=>` 边界（消解 R6）
+                    // 并发进程调用点的任务隔离：引用类型不得越过 `=>` 边界。
                     if let paramNames = asyncFunctionParamNames[calleeName] {
                         try enforceTaskIsolation(
                             functionName: calleeName, paramNames: paramNames,
                             arguments: arguments, signature: sig, location: location
                         )
                     }
-                    // P4 Phase 3：跨文件可见性 enforce——被调函数定义在其他文件且不可见时报错。
+                    // 跨文件可见性强制：被调函数定义在其他文件且不可见时报错。
                     if let ctx = packageContext,
                         let entry = ctx.index.lookup(calleeName),
                         !entry.isVisible(from: ctx.currentFileName)
@@ -3160,7 +3155,7 @@ public final class TypeChecker {
                 } else if let sig = lookupMethodSignature(for: object, memberName: memberName) {
                     try validateCallArguments(
                         arguments: arguments, signature: sig, location: location, callee: memberName)
-                    // B3-1：标了 `=>` 的方法与自由函数同等对待（方法也是并发进程的派发入口）
+                    // 标了 `=>` 的方法与自由函数同等对待：方法也是并发进程的派发入口。
                     if let recv = inference.infer(expression: object) {
                         let recvName: String?
                         switch recv {
@@ -3178,9 +3173,9 @@ public final class TypeChecker {
                         }
                     }
                 } else if let objType = inference.infer(expression: object) {
-                    // P3-2 ③：已知内建类型（String/Array）上调用未注册成员 → 静态报错。
-                    // 接收者可能是简单类型（String）或泛型特化（Array<T>），取基类型名统一判定。
-                    // （P3 审查修复：原实现仅匹配 .simple，导致 Array<T> 静态未知成员检测完全失效，只能运行时兜底。）
+                    // 已知内建类型（String / Array）上调用未注册成员 → 静态报错。
+                    // 接收者可能是简单类型（String）或泛型特化（Array<T>），取基类型名统一判定；
+                    // 只匹配 `.simple` 的做法会让 Array<T> 的未知成员检测失效，只能运行时兜底。
                     let baseName: String?
                     switch objType {
                     case .simple(let n, _): baseName = n
@@ -3206,7 +3201,7 @@ public final class TypeChecker {
                 try checkEnumCaseConstruction(calleeName: caseName, args: arguments, location: location)
             default:
                 // 函数类型变量调用（f(...)：高阶函数形参 / 匿名函数绑定变量）——按 callee
-                // 推断的函数类型校验实参（闭合 L1：匿名函数参数标注 + 函数类型实参校验）。
+                // 推断出的函数类型校验实参：匿名函数参数标注与函数类型实参校验在此闭合。
                 if let calleeType = inference.infer(expression: callee),
                     case .function(let params, let returns, _, let usingIndices, _) = calleeType
                 {
@@ -3229,15 +3224,15 @@ public final class TypeChecker {
             }
             try checkExpression(object)
             try enforceUnownedAccess(object, at: location, what: "成员访问")
-            // 草稿 A2（批次 1.3，D1）：命名元组 `.名称` 标签访问——object 为元组类型时，
-            // name 必须在 labels 中存在，未知标签报 unknownMember；命中则跳过字段可见性检查。
+            // 命名元组 `.名称` 标签访问——object 为元组类型时，name 必须在 labels 中存在，
+            // 未知标签报 unknownMember；命中则跳过字段可见性检查。
             if let t = inference.infer(expression: object), case .tuple(let labels, _, _) = t {
                 if !labels.contains(where: { $0 == name }) {
                     try report(TypeError.unknownMember(typeName: t.describe(), memberName: name, location: location))
                 }
                 break
             }
-            // P4.5：字段级 type-private 强制。`_`-前缀字段仅声明类型自身方法可访问；
+            // 字段级 type-private 强制。`_` 前缀字段仅声明类型自身方法可访问；
             // 同文件普通函数 / 跨类型方法 / 跨文件访问均报 inaccessibleField。
             try enforceFieldVisibility(object: object, fieldName: name, location: location)
 
@@ -3245,7 +3240,7 @@ public final class TypeChecker {
             for elem in elements { try checkExpression(elem) }
 
         case .tupleIndex(let object, let index, let location):
-            // 草稿 A2（批次 1）：`.0` 位置访问——object 必须推断为元组类型且索引不越界；
+            // `.0` 位置访问——object 必须推断为元组类型且索引不越界；
             // 非元组或越界均报类型错误（静态拦截，运行时另有兜底）。
             try checkExpression(object)
             if let t = inference.infer(expression: object) {
@@ -3276,7 +3271,7 @@ public final class TypeChecker {
             for entry in entries {
                 try checkExpression(entry.key)
                 try checkExpression(entry.value)
-                /// 显式类型条目（`{k: T = v,}`）只在此处约束值，不进入降载。
+                // 显式类型条目（`{k: T = v,}`）只在此处约束值，不进入降载。
                 if let declared = entry.valueType,
                     let actual = inference.infer(expression: entry.value, expected: declared),
                     !isAssignable(actual: actual, expected: declared)
@@ -3298,7 +3293,7 @@ public final class TypeChecker {
             try checkExpression(index)
 
         case .genericConstruct(let typeName, let typeArgs, let arguments, let location):
-            // P3-0：泛型函数调用点比对（T 占位通配，端到端）——优先于类型构造分派
+            // 泛型函数调用点比对（T 占位通配）——优先于类型构造分派。
             if let expectedG = typeEnv.genericFunctionParamCount(name: typeName) {
                 if typeArgs.count != expectedG {
                     try report(
@@ -3313,7 +3308,7 @@ public final class TypeChecker {
                         arguments: arguments, signature: sig, location: location, callee: typeName)
                 }
             } else if let expectedCount = typeEnv.genericParamCount(name: typeName) {
-                // P2-2.3：泛型实例化实参个数须与声明泛型形参个数一致
+                // 泛型实例化实参个数须与声明的泛型形参个数一致。
                 if typeArgs.count != expectedCount {
                     try report(
                         TypeError.genericArgumentCountMismatch(
@@ -3324,7 +3319,7 @@ public final class TypeChecker {
                         ))
                 }
             } else if let expectedG = typeEnv.genericEnumParamCount(name: typeName) {
-                // P5 B0-1：泛型枚举实参个数校验（闭合 R1）
+                // 泛型枚举实参个数须与声明的泛型形参个数一致。
                 if typeArgs.count != expectedG {
                     try report(
                         TypeError.genericArgumentCountMismatch(
@@ -3399,8 +3394,8 @@ public final class TypeChecker {
 
         case .join(let inner, let location, _):
             try checkExpression(inner)
-            // （G12）：`await`/`wait` 的操作数必须是 Future<_,_>（或后续的 Chan<_>）；
-            // 对普通值 join 是类型错误（收紧了早期 await 的「非 Future 透传」行为）。
+            // `await` / `wait` 的操作数必须是 Future<_,_>（或后续的 Chan<_>）；
+            // 对普通值 join 是类型错误，不做「非 Future 直接透传」。
             // 操作数类型不可推断时跳过（沿用类型层既有容忍策略，避免误报）。
             if let operandType = inference.infer(expression: inner) {
                 var isJoinable = false
@@ -3421,7 +3416,7 @@ public final class TypeChecker {
             }
 
         case .unsafe(let operand, let location):
-            // Phase 2a（FFI 子系统）：不安全消耗点——进入不安全上下文检查操作数。
+            // 不安全消耗点：进入不安全上下文后检查操作数。
             unsafeContextDepth += 1
             defer { unsafeContextDepth -= 1 }
             try checkExpression(operand)
@@ -3444,7 +3439,7 @@ public final class TypeChecker {
             }
 
         case .addressOf(let operand, let location):
-            // Phase 2a（FFI 子系统）：`&` 取地址仅在 unsafe 上下文可用。
+            // `&` 取地址仅在 unsafe 上下文可用。
             guard unsafeContextDepth > 0 else {
                 try report(
                     TypeError.mismatch(
@@ -3454,8 +3449,8 @@ public final class TypeChecker {
                     ))
                 return
             }
-            /// 外部数据符号的裸名不再递归：unsafe 已在此处判过，它也没有子表达式要查。
-            /// 递归会让未求值的宏在一条表达式上报两条诊断。
+            // 外部数据符号的裸名不再递归：unsafe 已在此处判过，它也没有子表达式要查。
+            // 递归会让未求值的宏在一条表达式上报两条诊断。
             if case .identifier(let symbolName, _) = operand,
                 typeEnv.lookupForeignData(name: symbolName) != nil
             {
@@ -3542,15 +3537,15 @@ public final class TypeChecker {
         let leftName = typeName(from: leftType)
         let rightName = typeName(from: rightType)
 
-        /// `Char` / `String` 视为相容对：二者表示同构，类型名不等并不代表不可运算；放宽只覆盖这一对，
-        /// 二元运算对称，方向性不适用。本处只放宽「能不能运算」——支持哪些算符仍是既有事实，
-        /// 与 `String` 一致：`+` / `==` / `!=` 有实现，`<` 一族在运行时响亮拒绝。
+        // `Char` / `String` 视为相容对：二者表示同构，类型名不等并不代表不可运算；放宽只覆盖这一对，
+        // 二元运算对称，方向性不适用。这里只放宽「能不能运算」，支持哪些算符仍是既有事实，
+        // 与 `String` 一致：`+` / `==` / `!=` 有实现，`<` 一族在运行时响亮拒绝。
         if leftName != rightName, !isCharStringPair(leftName, rightName) {
             try report(TypeError.mismatch(expected: leftName, got: rightName, location: location))
         }
     }
 
-    // MARK: - 调用点校验辅助（P2-1 / P2-1.4 共用）
+    // MARK: - 调用点校验辅助
 
     /// 该表达式是否为无返回值调用（返回类型为空，即 `()`）。`TypeInference` 对这类调用返回 `nil`，
     /// 与「推不出类型」同一出口，而 `nil` 在值位按「未知」放行——二者须分开：`nil` 是推不出，
@@ -3612,8 +3607,8 @@ public final class TypeChecker {
         for arg in arguments where isVoidCall(arg.expression) {
             try report(TypeError.mismatch(expected: "值", got: "()", location: location))
         }
-        /// `using` 形参的实参可由编译器插入 ⇒ 除「全显式」外「省略式」也合法（实参个数 = 形参个数 −
-        /// using 个数）。映射助手把两种形态统一成「形参位置序列」，标签与位置两条通路共用它。
+        // `using` 形参的实参可由编译器插入 ⇒ 除「全显式」外「省略式」也合法（实参个数 = 形参个数 −
+        // using 个数）。映射助手把两种形态统一成「形参位置序列」，标签与位置两条通路共用它。
         let paramIndices = sig.argumentToParamIndices(argumentCount: arguments.count)
         if !sig.isVariadic && paramIndices == nil {
             try report(
@@ -3662,8 +3657,8 @@ public final class TypeChecker {
             if case .simple(let pname, _) = paramType, (pname == "_" || pname == "Any") { continue }
             guard let argType = inference.infer(expression: arg.expression, expected: paramType) else { continue }
             try noteBareCaseOutcome(arg.expression, actual: argType, location: location)
-            /// 句柄位收 Pini 串：边界上复制一份、计数交给 C。方向只有这一条 ——
-            /// 句柄变不回串（要读字节得由 C 侧给它一个入口），故不进 `isAssignable` 的通路。
+            // 句柄位收 Pini 串：边界上复制一份、计数交给 C。方向只有这一条——
+            // 句柄变不回串（要读字节得由 C 侧给它一个入口），故不进 `isAssignable` 的通路。
             if case .simple(let expectedName, _) = paramType, expectedName == stringHandleTypeName,
                 case .simple(let actualName, _) = argType, actualName == stringTypeName
             {
@@ -3675,7 +3670,7 @@ public final class TypeChecker {
         }
     }
 
-    // MARK: - B3-1 任务隔离（消解 R6 数据竞争）
+    // MARK: - 任务隔离：跨 `=>` 边界的数据竞争防护
 
     /// 校验一次并发调用（被调方标了 `=>`）的实参未把引用类型带过任务边界。取类型优先级为形参声明
     /// 类型 > 实参推断类型：形参标注为 `_`/`Any` 哨兵时声明类型不携带信息，退回推断，避免「不标注
@@ -3704,9 +3699,9 @@ public final class TypeChecker {
             } else {
                 candidate = inference.infer(expression: arg.expression)
             }
-            /// 函数类型实参携带闭包捕获集，而 declared 形参类型不携带——须从实参实际类型取 captured 并入
-            /// 检测，否则闭包捕获的引用类型可借「闭包 + => 边界」双重通道偷渡。仅当实参实际类型确为带
-            /// 捕获的函数类型时才覆盖，非函数实参走原 declared/推断路径。
+            // 函数类型实参携带闭包捕获集，而 declared 形参类型不携带——须从实参实际类型取 captured 并入
+            // 检测，否则闭包捕获的引用类型可借「闭包 + => 边界」双重通道偷渡。仅当实参实际类型确为带
+            // 捕获的函数类型时才覆盖，非函数实参走 declared / 推断路径。
             if let actual = inference.infer(expression: arg.expression),
                 case .function(_, _, let actualCaptured, _, _) = actual, !actualCaptured.isEmpty
             {
@@ -3757,7 +3752,7 @@ public final class TypeChecker {
             }
             return nil
         case .pointer(let element, _):
-            // Phase 2a（FFI 子系统）：`*T` 禁 object（ARC 隔离），元素理论上不会是引用类型；
+            // `*T` 禁 object（ARC 隔离），元素理论上不会是引用类型；
             // 仍递归下钻以防御含 object 的纯值结构体被误用作指针元素。
             return escapingReferenceType(in: element, visiting: &visiting)
         }
@@ -3766,7 +3761,7 @@ public final class TypeChecker {
     /// 经接收者表达式推断对象类型，交 `lookupAnyMethod` 分派（泛型模板特化 + 内建容器元素回填）。
     private func lookupMethodSignature(for object: Expression, memberName: String) -> TypeEnvironment.FunctionSignature? {
         guard let raw = inference.infer(expression: object) else { return nil }
-        /// 无主引用透传：方法在元素类型上找；unsafe 门禁由调用点单独把关。
+        // 无主引用透传：方法在元素类型上找；unsafe 门禁由调用点单独把关。
         let objType = unwrapUnownedReceiver(raw).type
         switch objType {
         case .simple(let typeName, _):

@@ -3,32 +3,32 @@ import PiniSyntax
 import PiniSemantics
 import PiniIR
 
-/// One REPL evaluation: turn input lines into a run of a program. Evaluation sits outside the I/O loop so it can be
-/// driven and asserted without a session; the engine is fixed and lowering reads the checker's inference, so an
-/// input that does not typecheck cannot be lowered and is reported as a REPL type error, not swallowed.
+/// 一次 REPL 求值：把输入行变成一次程序运行。求值逻辑放在 I/O 循环之外，
+/// 因此不依赖会话也能驱动与断言；引擎固定，降载读取检查器的推导结果，
+/// 所以无法通过类型检查的输入也降不了载，会作为 REPL 类型错误报出而不是被吞掉。
 public final class ReplEvaluator {
 
-    /// Declarations accumulated across inputs — the REPL's session state. Every evaluation re-registers all of them:
-    /// there is no incremental compilation, so accumulate-and-re-run is the whole mechanism, instant at REPL scale.
+    /// 跨输入累积的声明 —— REPL 的会话状态。每次求值都重新登记全部声明：
+    /// 没有增量编译，累积再重跑就是全部机制，在 REPL 规模上瞬时完成。
     public private(set) var accumulatedDeclarations: [TopLevelDecl] = []
 
     public init() {}
 
-    /// Drops the accumulated session state (`:clear`).
+    /// 丢弃累积的会话状态（`:clear`）。
     public func reset() {
         accumulatedDeclarations.removeAll()
     }
 
-    /// What an input turned out to be.
+    /// 一次输入的结果类型。
     public enum Outcome: Equatable {
-        /// Evaluated as an expression, wrapped into a temporary `main`.
+        /// 按表达式求值，包进临时 `main`。
         case expression
-        /// Accumulated as declarations, without a temporary `main`.
+        /// 按声明累积，不生成临时 `main`。
         case declaration
     }
 
-    /// Evaluates one submitted input. `output` receives the program's own line output — a parameter rather than `print`
-    /// because a caller checking REPL behaviour has to see what the snippet printed, and stdout is not a test.
+    /// 求值一次提交的输入。`output` 接收程序自己的行输出 —— 用参数而非 `print`，
+    /// 是因为检查 REPL 行为的调用方需要看到片段打印了什么，stdout 不能当断言面。
     @discardableResult
     public func evaluate(
         _ lines: [String],
@@ -38,9 +38,8 @@ public final class ReplEvaluator {
         let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if isExpressionInput(trimmed) {
-            // `print(...)` is left alone rather than wrapped again: wrapping it
-            // would print the null a `print` call returns, so `print(1)` would
-            // come out as an extra blank line.
+            // `print(...)` 不再包一层：再包会把 `print` 返回的 null 也打印出来，
+            // `print(1)` 就会多出一行空白。
             let body =
                 trimmed.hasPrefix("print(") || trimmed.hasPrefix("print ")
                 ? trimmed
@@ -54,9 +53,8 @@ public final class ReplEvaluator {
             return .expression
         }
 
-        // Declaration input: accumulate, then re-register so the next input can
-        // refer to it. A session with no `main` is the normal case here, which
-        // is what `tolerateMissingMain` is for.
+        // 声明输入：累积后重新登记，下一次输入才能引用它。
+        // 只有声明、还没有 `main` 是这里的常态，`tolerateMissingMain` 就是为此存在。
         let module = try parse(source)
         accumulatedDeclarations.append(contentsOf: module.declarations)
         let runnable = moduleForRun(declarations: accumulatedDeclarations)
@@ -64,16 +62,15 @@ public final class ReplEvaluator {
         return .declaration
     }
 
-    // MARK: - Running
+    // MARK: - 运行
 
     private func run(
         _ module: Module,
         output: @escaping (String) -> Void,
         tolerateMissingMain: Bool
     ) throws {
-        // The checker is not optional on this path: lowering reads its inference
-        // to type the nodes, so an untypeable input cannot be lowered at all.
-        // Reported as a REPL type error, not swallowed.
+        // 这条路径上检查器不可省：降载要靠它的推导给节点定类型，
+        // 通不过类型检查的输入根本降不了载。它会作为 REPL 类型错误报出，不被吞掉。
         let checker = TypeChecker()
         let errors = checker.checkCollecting(
             module: module, foreignConstantFailures: [:])
@@ -83,9 +80,8 @@ public final class ReplEvaluator {
                     .joined(separator: "\n")
             )
         }
-        /// A session of pure declarations is the REPL's normal state, and the lowerer treats it as an error — it requires an
-        /// executable program and throws while lowering. Detected by asking whether `main` exists, not by matching the
-        /// error message, which would drift the day it is reworded.
+        // 只有声明的会话是 REPL 的常态，而降载器视之为错误 —— 它要求存在可执行程序，会在降载中抛出。
+        // 判据是问 `main` 是否存在，而不是匹配错误文本，否则措辞一改判据就失效。
         if tolerateMissingMain, !Self.hasMainFunction(module) { return }
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
         let ir = try IRLowerer.lower(module: module, typeInference: checker.typeInference)
@@ -99,8 +95,8 @@ public final class ReplEvaluator {
         }
     }
 
-    /// Whether the module declares a `main`. The REPL asks before lowering: "no main yet" is normal mid-session and an
-    /// error to the lowerer.
+    /// 模块是否声明了 `main`。REPL 在降载前先问：「还没有 main」在会话中途是常态，
+    /// 对降载器却是错误。
     private static func hasMainFunction(_ module: Module) -> Bool {
         module.declarations.contains { declaration in
             if case .funcDecl(let function) = declaration { return function.name == "main" }
@@ -108,9 +104,8 @@ public final class ReplEvaluator {
         }
     }
 
-    /// The module the engine actually runs. Assembled fresh per evaluation —
-    /// that is the "fresh instance per evaluation" shape the REPL has always
-    /// had, now stated once instead of once per engine.
+    /// 引擎真正运行的模块，每次求值重新组装 ——
+    /// 每个求值一个新实例是 REPL 一贯的形状，在组装的这一处说明，而非每个引擎各说一遍。
     private func moduleForRun(declarations: [TopLevelDecl]) -> Module {
         Module(
             declarations: declarations,
@@ -119,14 +114,13 @@ public final class ReplEvaluator {
         )
     }
 
-    // MARK: - Input classification
+    // MARK: - 输入分类
 
-    /// File name every REPL-evaluated node carries. It is a placeholder, and it
-    /// is spelled as one so a diagnostic pointing here is visibly *not* a file.
+    /// REPL 求值出的每个节点都带这个文件名。它是占位符，写法上就摆明：
+    /// 诊断指到这里，读者一眼看出它不是真实文件。
     public static let replFileName = "<repl>"
 
-    /// Declaration starters. Input beginning with one of these is accumulated
-    /// rather than evaluated; everything else is treated as an expression.
+    /// 声明起始词。以其中之一开头的输入按声明累积，其余一律当表达式。
     private static let declarationStarters: Set<String> = [
         "{", "object", "enum", "trait", "func",
         "let", "var", "import", "export",
@@ -162,9 +156,9 @@ public final class ReplEvaluator {
     }
 }
 
-// MARK: - Errors
+// MARK: - 错误
 
-/// REPL-facing errors: the two ways an input fails before it can run.
+/// REPL 侧错误：输入在能运行之前失败的两条路径。
 public enum ReplError: LocalizedError {
     case parseError(String)
     case typeError(String)

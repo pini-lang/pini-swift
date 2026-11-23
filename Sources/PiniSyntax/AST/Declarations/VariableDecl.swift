@@ -10,10 +10,10 @@ public enum TopLevelDecl: Equatable, Sendable {
     case enumDecl(EnumDecl)
     case funcDecl(FuncDecl)
     case traitDecl(TraitDecl)
-    /// 声明上下文收紧·规则 3.2/3.14（ extension-decl）：扩展块 `((T))`/`{{T}}`/`[[T]]`/`<<T>>`，
-    /// 承载类型的 `|self`/`|Self` 方法（数据与逻辑分离）。
+    /// 扩展块 `((T))` / `{{T}}` / `[[T]]` / `<<T>>`，
+    /// 承载类型的 `|self` / `|Self` 方法（数据与逻辑分离）。
     case extensionDecl(ExtensionDecl)
-    /// Phase 2a（FFI 子系统， foreign-decl）：外部 C 函数声明块 `[名称|foreign]`。
+    /// 外部 C 函数声明块 `[名称|foreign]`。
     case foreignDecl(ForeignDecl)
     case varDecl(Statement)
     case statement(Statement)
@@ -24,7 +24,7 @@ public enum TopLevelDecl: Equatable, Sendable {
 /// 模块
 public struct Module: Equatable, ASTNode, Sendable {
     public let declarations: [TopLevelDecl]
-    /// P4 模块化：原始 `import` 声明（仅暂存，不解析 / 不 enforce）。
+    /// 原始 `import` 声明（仅暂存，不解析 / 不强制）。
     public let imports: [ImportDecl]
     /// export 块：`|pini` 条目沿用可见性语义，`|c` 条目由类型检查与降载消费。
     public let exports: [ExportDecl]

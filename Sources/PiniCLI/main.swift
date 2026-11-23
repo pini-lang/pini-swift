@@ -6,14 +6,14 @@ import PiniIR
 import PiniBackendLLVM
 import PiniHost
 
-// MARK: - Token Description
+// MARK: - 记号描述
 
 func describeToken(_ token: Token) -> String {
     let loc = token.location
     return "\(loc.line):\(loc.column) \(token.typeName) \(token.lexeme)"
 }
 
-// MARK: - AST Description
+// MARK: - AST 描述
 
 func describeTypeAnnotation(_ type: TypeAnnotation, indent: String = "") -> String {
     switch type {
@@ -244,7 +244,7 @@ func describeStatement(_ stmt: Statement, indent: String = "") -> String {
         }
         return result
     case .varDestructure(let names, let typeAnnotation, let initializer, let isMutable, _):
-        // 草稿 A1（批次 1）：解构声明描述。
+        // 解构声明：名字列表、可选类型标注与初始化式按同一缩进铺开。
         var result = "\(indent)varDestructure:\n"
         result += "\(indent) names: \(names.joined(separator: ", "))\n"
         result += "\(indent) mutable: \(isMutable)"
@@ -637,7 +637,7 @@ func describeAST(_ module: Module) -> String {
     return String(result.dropLast())
 }
 
-// MARK: - CLI Commands
+// MARK: - CLI 命令
 
 /// `pini bind <header>`：头文件 → `[名称|foreign]` 块。跳过项打到 stderr，
 /// 生成文本默认写 stdout，`-o` 落文件。翻译只读头文件与 C 工具链，不碰构建状态。
@@ -784,9 +784,8 @@ func readFile(_ path: String) throws -> String {
     return try String(contentsOf: url, encoding: .utf8)
 }
 
-/// P2-4.3：以收集模式解析；若有解析错误，格式化全部诊断并退出（不再『遇错即抛』只报第一个）。
-/// 仅在无任何解析错误时返回成功解析的 module。词法错误仍按原有方式渲染并退出。
-/// `withStdlib` 关闭时只交出用户源码的树——`parse` / `fmt` 要看的就是那一份，标准库会污染它们的输出。
+/// 以收集模式解析：有解析错误就把全部诊断格式化后退出，无错才返回 module。
+/// 词法错误同样渲染后退出；`withStdlib` 关闭时只交出用户源码的树——`parse` / `fmt` 要的正是那一份。
 func parseOrReport(source: String, fileName: String, withStdlib: Bool = true) -> Module {
     let scan = FrontEnd.scan(source: source, fileName: fileName)
     switch scan.outcome {
@@ -1005,8 +1004,8 @@ func givenCycleWarnings(
 /// 代价明写：含其他降载错误的文件拿不到环检测。
 func givenCycleWarnings(module: Module, checker: TypeChecker) -> [SemanticWarning] {
     checker.typeInference.environment?.persistAcrossScopesForCodegen = true
-    /// 宏常量求不出就照样跳过环检测：这条通道本来就是 best-effort，缺值不该把它变成错误。
-    /// 求值器只在工具链故障时抛，单条失败已在失败表里，这里只用得到有值的那半。
+    // 宏常量求不出就照样跳过环检测：这条通道本来就是 best-effort，缺值不该把它变成错误。
+    // 求值器只在工具链故障时抛，单条失败已在失败表里，这里只用得到有值的那半。
     guard
         let macros = try? evaluateForeignMacros(
             symbols: foreignSymbols(in: module), config: .default),
@@ -1064,7 +1063,7 @@ private func runIREngine(
     module: Module, source: String, programBase: String?,
     argv: [String] = []
 ) throws {
-    /// 单文件没有清单：失败表恒为「缺头文件」，不启动工具链；求值只产出空值表与理由。
+    // 单文件没有清单：失败表恒为「缺头文件」，不启动工具链；求值只产出空值表与理由。
     let macros =
         (try? evaluateForeignMacros(symbols: foreignSymbols(in: module), config: .default))
         ?? ForeignMacroEvaluation(values: [], failures: [:])
@@ -1191,7 +1190,7 @@ func runRunPath(_ path: String, argv: [String] = []) {
     }
 }
 
-// MARK: - 调试器（P7-4）
+// MARK: - 调试器
 
 /// 从 stdin 读取命令的调试驱动。
 struct CLIDebugDriver: DebugDriver {
@@ -1241,7 +1240,7 @@ struct CLIDebugDriver: DebugDriver {
     }
 }
 
-/// 源码级调试入口（P7-4）：单 `.pini` 文件或含 `pini.toml` 的目录/模块均可。
+/// 源码级调试入口：单 `.pini` 文件或含 `pini.toml` 的目录/模块均可。
 func runDebugPath(_ path: String) {
     var isDir: ObjCBool = false
     guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir) else {
@@ -1263,7 +1262,7 @@ private func runDebugFile(_ path: String) {
     }
     let module = parseOrReport(source: source, fileName: path)
     let sources = [path: source]
-    /// 单文件没有清单：求值器直接给出「缺头文件」失败表，不启动工具链。
+    // 单文件没有清单：求值器直接给出「缺头文件」失败表，不启动工具链。
     let macros =
         (try? evaluateForeignMacros(symbols: foreignSymbols(in: module), config: .default))
         ?? ForeignMacroEvaluation(values: [], failures: [:])
@@ -1393,10 +1392,10 @@ func checkSingleFileDiagnostics(source: String, fileName: String, withStdlib: Bo
         result.diagnostics.append(renderedWarning(w, source: source))
     }
 
-    // 类型检查阶段（P2-4 收尾）：收集模式一次性同报多错；
-    // 仅在无语义错误时进入（语义层已能多错同报，类型层不重复污染）。
+    // 类型检查阶段：收集模式一次性同报多错；仅在无语义错误时进入，
+    // 免得语义层与类型层对同一处重复报。
     if semanticErrors.isEmpty {
-        /// 单文件没有清单：求值器直接给出「缺头文件」失败表，不启动工具链。
+        // 单文件没有清单：求值器直接给出「缺头文件」失败表，不启动工具链。
         let macros =
             (try? evaluateForeignMacros(symbols: foreignSymbols(in: module), config: .default))
             ?? ForeignMacroEvaluation(values: [], failures: [:])
@@ -1554,7 +1553,7 @@ func runTestPath(
             return
         }
 
-        // 模块外单文件：单文件行为（G41 原语义，向后兼容）
+        // 模块外单文件：走单文件测试，不加载包清单。
         try runSingleFileTests(path: abs, filter: filter, skip: skip, channel: channel)
     } catch let err as SemanticError {
         handleSemanticError(err); exit(1)
@@ -1583,7 +1582,7 @@ private func runWorkspaceTests(
     if report.failed > 0 { exit(1) }
 }
 
-/// G49：模块模式测试——整包加载（`[build] exclude` 生效）+ 显式路径加回 + 收集范围限定。
+/// 模块模式测试：整包加载（`[build] exclude` 生效）、显式路径加回、收集范围限定。
 private func runModuleTests(
     moduleRoot: String, scopePath: String?, filter: String?, skip: [String],
     channel: TestChannel
@@ -1623,9 +1622,9 @@ private func runModuleTests(
         programBase: absoluteProgramBase(moduleRoot), filter: filter, skip: skip, channel: channel)
 }
 
-/// G49：语义/类型门禁（整包，与 check 目录模式一致）→ 包级测试 → 汇总报告。
+/// 语义/类型门禁（整包，与 `check` 目录模式同口径）→ 包级测试 → 汇总报告。
 ///
-/// `channel` 只影响**最后怎么跑**这一步；门禁、报告首行、以及「跑哪些」的收窄两条通道同规。
+/// `channel` 只影响最后怎么跑；门禁、报告首行与「跑哪些」的收窄两条通道同规。
 private func gateAndRunTests(
     pkg: Package, scope: ((String) -> Bool)?, scopeLabel: String?,
     ffiConfig: FFIConfig, programBase: String? = nil,
@@ -1708,7 +1707,7 @@ private func reportAllSkipped(filter: String? = nil, skip: [String]) -> Never {
     exit(2)
 }
 
-/// G41 原单文件语义（模块外单文件向后兼容路径）。
+/// 模块外单文件测试：直接解析该文件、跑其 `|test` 函数，不加载包。
 private func runSingleFileTests(
     path: String, filter: String? = nil, skip: [String] = [],
     channel: TestChannel = .interpreter
@@ -1720,8 +1719,8 @@ private func runSingleFileTests(
     }
     if checkResult.hasBlockingDiagnostics { exit(1) }
     let module = FrontEnd.assemble(module: try FrontEnd.parse(source: source, fileName: path))
-    // Phase 2b（解释器 dlsym 加载）：单文件测试若位于含清单的模块内，加载其 `[ffi]` 配置，
-    // 使 foreign 块经 search_paths 解析到项目内依赖（如 vendored lib/），而非依赖 cwd 或系统库。
+    // 单文件测试若位于含清单的模块内，加载其 `[ffi]` 配置，使 foreign 块经 search_paths
+    // 解析到项目内依赖（如 vendored lib/），而不依赖 cwd 或系统库。
     let dir = (path as NSString).deletingLastPathComponent
     let manifest = try? FileLoader.loadManifest(directory: dir)
     // 单文件测试基准 = 该文件所在目录。
@@ -1917,8 +1916,8 @@ func runCheckPath(_ path: String, withStdlib: Bool = true) {
             let analyzer = SemanticAnalyzer()
             try analyzer.analyze(package: pkg)
             emitSemanticWarnings(analyzer)
-            /// 先求值再检查：未求值的宏只在使用点报，检查期要能读到失败表。
-            /// 失败不抛，未使用即零诊断；通过后补一行提示，避免静默。
+            // 先求值再检查：未求值的宏只在使用点报，检查期要能读到失败表。
+            // 失败不抛，未使用即零诊断；通过后补一行提示，避免静默。
             let macros = try evaluateForeignMacros(
                 symbols: pkg.fileUnits.flatMap { foreignSymbols(in: $0.module) },
                 config: foreignConfigFor(root: path, manifest: manifest))
@@ -2033,9 +2032,8 @@ private func lowerSingleFile(
     source: String, fileName: String, policy: EntryPolicy
 ) throws -> IRModule {
     let module = parseOrReport(source: source, fileName: fileName)
-    // The semantic layer gates here for the same reason `check` runs it before the type layer:
-    // it enforces capture declarations, undefined names and visibility. A check that runs ahead of
-    // only one backend is not a check, it is a backend trait -- it hides E3-008 divergences.
+    // 语义层先过：它管捕获声明、未定义名与可见性，与 `check` 的顺序相同。
+    // 只在某个后端前跑就成不了检查，只会掩盖 E3-008 这类后端差异。
     let analyzer = SemanticAnalyzer()
     let semanticErrors = analyzer.analyzeCollecting(module: module)
     if !semanticErrors.isEmpty {
@@ -2062,7 +2060,7 @@ private func lowerSingleFile(
         module: module, typeInference: checker.typeInference,
         foreignConstants: macros.values,
         requiresMain: policy.requiresMain(hasCSurface: hasCSurface(module.exports)))
-    /// 结构不变量先过一遍：后端读 IR 时按它们取槽、取字段、取用例，破了就是进程信号而不是诊断。
+    // 结构不变量先过一遍：后端读 IR 时按它们取槽、取字段、取用例，破了就是进程信号而不是诊断。
     try IRValidator.check(irModule)
     return irModule
 }
@@ -2091,9 +2089,8 @@ func runEmitCommand(
     }
 }
 
-// If `path` sits inside a manifest module (a `pini.toml` at or above its directory), load that
-// whole module as a `Package` -- the same entry `pini run <dir>` uses; nil for a bare file or a
-// directory path. Nested dirs resolve upward like the checker; the root returns with the package.
+// `path` 若在含清单的模块内（所在目录或上层有 `pini.toml`），把整个模块载为 `Package`，
+// 与 `pini run <dir>` 同一入口；裸文件或目录路径返回 nil。向上查找与检查器同规，命中时一并交出模块根。
 private func loadOwningPackageIfModule(path: String) throws -> (package: Package, moduleRoot: String)? {
     var isDir: ObjCBool = false
     guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir),
@@ -2104,9 +2101,8 @@ private func loadOwningPackageIfModule(path: String) throws -> (package: Package
     return try (loadPackageWithGenerated(path: moduleRoot, manifest: manifest), moduleRoot)
 }
 
-// Package-level IR emit: package semantic + type-check, then `IRLowerer.lower(package:)` ->
-// IREmitter. The checker already enforced visibility (D4), so the IR channel re-enforces nothing.
-// `moduleRoot` is the package's own directory: the whole package is lowered as one unit.
+// 包级 IR 发射：语义 → 类型检查 → `IRLowerer.lower(package:)` → IREmitter。
+// 可见性已由检查器裁定，IR 通道不再重复校验。`moduleRoot` 是包自身目录，整个包作为一个单元降载。
 private func runIRPackageEmit(
     package: Package, moduleRoot: String, outputPath: String?,
     backend: any PiniBackend = IREmitter()
@@ -2136,7 +2132,7 @@ private func lowerPackage(
         symbols: package.fileUnits.flatMap { foreignSymbols(in: $0.module) }, config: config)
     let checker = TypeChecker()
     try checker.check(package: package, foreignConstantFailures: macros.failures)
-    // Same persistent-table fallback as the single-file pipeline.
+    // 与单文件管线同一份持久表兜底。
     checker.typeInference.environment?.persistAcrossScopesForCodegen = true
     let irModule = try IRLowerer.lower(
         package: package, typeInference: checker.typeInference,
@@ -2191,7 +2187,7 @@ func runBuildPath(_ path: String, printPlan: Bool = false, withStdlib: Bool = tr
                     print("未变 \(output)")
                 }
             }
-            /// 宏段在翻译之后写：生成块的 `|macro` 值只能来自刚落盘的头文件与计划步骤。
+            // 宏段在翻译之后写：生成块的 `|macro` 值只能来自刚落盘的头文件与计划步骤。
             let plan = try BuildRunner.recordMacros(report.plan, layout: configured.layout)
             if !plan.macros.isEmpty {
                 let unresolved = plan.macros.filter { !$0.isResolved }.count
@@ -2300,7 +2296,7 @@ private func checkWorkspace(_ plan: WorkspaceBuildPlan, withStdlib: Bool) {
             try analyzer.analyze(package: loaded.package)
             emitSemanticWarnings(analyzer)
             let checker = TypeChecker()
-            /// 接口面只收公开名：宏是否求值不影响这份文本，失败表传空。
+            // 接口面只收公开名：宏是否求值不影响这份文本，失败表传空。
             try checker.check(package: loaded.package, foreignConstantFailures: [:])
             texts[package.name] = loaded.publicInterface
             hashes[package.name] = WorkspaceInterfaceLedger.digest(loaded.publicInterface)
@@ -2709,7 +2705,7 @@ func diagnosticRow(_ error: Error) -> Bool {
 }
 
 func handleSemanticError(_ error: SemanticError) {
-    // T11（A4）：收敛消息源——check 多文件路径复用 ErrorFormatter，源码按诊断位置回读。
+    // 收敛消息源：check 多文件路径复用 ErrorFormatter，源码按诊断位置回读。
     guard !diagnosticRow(error) else { return }
     printError(ErrorFormatter.formatSemanticError(error, source: sourceFor(error)))
 }
@@ -2719,14 +2715,14 @@ func handleTypeError(_ error: TypeError) {
     printError(ErrorFormatter.formatTypeError(error, source: sourceFor(error)))
 }
 
-// MARK: - Error Helpers
+// MARK: - 错误输出
 
 func printError(_ message: String) {
     FileHandle.standardError.write(Data((message + "\n").utf8))
 }
 
 func formatCLIError(error: Error, source: String?) -> String {
-    // T1（A3）：诊断驱动渲染——错误码 + 中文消息 + 跨度下划线 + 建议（DiagnosticProviding 协议元数据）。
+    // 诊断驱动渲染：错误码 + 中文消息 + 跨度下划线 + 建议（DiagnosticProviding 协议元数据）。
     if let d = error as? any DiagnosticProviding {
         _ = d
         return ErrorFormatter.formatDiagnostic(error, source: source ?? "")
@@ -2738,11 +2734,11 @@ func formatCLIError(error: Error, source: String?) -> String {
     return "Error: \(error.localizedDescription)"
 }
 
-// MARK: - Main Entry Point
+// MARK: - 主入口
 
 // 执行线程栈放大：深递归命令在主线程 8MB 栈上被递归守卫限深（单帧 ≈47–80KB，有效深度 ~85）。
-// 守卫语义健康（1/8 栈安全垫 + 实况读数），瓶颈是栈供给 ⇒ 把 CLI 逻辑搬进 64MB 栈的工作线程
-// 重入一次，守卫读实况自动适配（深度 ×8），语义零改动；重入标记走 setenv，主线程 wait 后统一退。
+// 瓶颈是栈供给，故把 CLI 逻辑搬进 256MB 栈的工作线程重入一次，守卫读实况自动适配，语义零改动。
+// 重入标记走 setenv；主线程 wait 到子线程退出后统一 exit。
 let alreadyWidened = ProcessInfo.processInfo.environment["PINI_STACK_WIDENED"] != nil
 if !alreadyWidened {
     setenv("PINI_STACK_WIDENED", "1", 1)
@@ -2761,7 +2757,7 @@ if !alreadyWidened {
 func cliMain() {
 var args = CommandLine.arguments
 
-// T11（A4）：--lang zh|en 诊断语言（TOML 资源驱动；默认 zh，未覆盖码回退 zh）。
+// --lang zh|en 选择诊断语言（TOML 资源驱动；默认 zh，未覆盖码回退 zh）。
 // 解析后从 args 移除该参数对，避免干扰命令的路径/子参数解析。
 if let langIdx = args.firstIndex(of: "--lang"), langIdx + 1 < args.count,
     let lang = DiagnosticLanguage(rawValue: args[langIdx + 1])
@@ -2993,9 +2989,8 @@ case "emit":
             exit(1)
         }
         let outputPath = flagOutput ?? (positional.count == 2 ? positional[1] : nil)
-        // A file inside a manifest module runs through the package pipeline, which lowers the whole
-        // package; a bare file outside any module keeps single-file behavior. Directory arguments are
-        // not accepted here, so no directory branch is added.
+        // 文件在含清单的模块内时走包管线，整个包一起降载；模块外的裸文件保持单文件行为。
+        // 这里不收目录参数，故没有目录分支。
         if let loaded = try loadOwningPackageIfModule(path: path) {
             try runIRPackageEmit(
                 package: loaded.package, moduleRoot: loaded.moduleRoot,

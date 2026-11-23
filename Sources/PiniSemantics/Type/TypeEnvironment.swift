@@ -93,7 +93,7 @@ public final class TypeEnvironment {
 
     public init() {}
 
-    // MARK: - Scope management
+    // MARK: - 作用域管理
 
     public func pushScope() {
         scopes.append(Scope())
@@ -104,7 +104,7 @@ public final class TypeEnvironment {
         scopes.removeLast()
     }
 
-    // MARK: - Variables
+    // MARK: - 变量
 
     /// 登记一个名字的类型。`persistent` 决定是否进跨作用域 re-infer 兜底表：形参、局部绑定、
     /// 模块级值都要靠它，类型作用域注入的名字必须传 `false`——那张表按裸名索引且模块内共享，
@@ -157,7 +157,7 @@ public final class TypeEnvironment {
         foreignDataTypes[name]
     }
 
-    // MARK: - Functions
+    // MARK: - 函数
 
     public func defineFunction(
         name: String,
@@ -185,7 +185,7 @@ public final class TypeEnvironment {
         return nil
     }
 
-    // MARK: - Type fields and methods
+    // MARK: - 类型字段与方法
 
     public func defineStruct(name: String, fields: [(name: String, type: TypeAnnotation)]) {
         var fieldMap: [String: TypeAnnotation] = [:]
@@ -199,7 +199,7 @@ public final class TypeEnvironment {
         return typeFields[typeName]?[fieldName]
     }
 
-    /// 取某类型的**全部字段类型**。B3-1 任务隔离用它递归下钻，识别「引用藏在 struct 字段里」的偷渡。
+    /// 取某类型的**全部字段类型**。任务隔离用它递归下钻，识别「引用藏在 struct 字段里」的偷渡。
     /// 返回 nil 表示该名字不是已登记的聚合类型（如内建类型或未知类型）。
     public func lookupFieldTypes(typeName: String) -> [TypeAnnotation]? {
         guard let fields = typeFields[typeName] else { return nil }
@@ -253,7 +253,7 @@ public final class TypeEnvironment {
         return ownMethodSignatures[typeName]?[methodName]
     }
 
-    // MARK: - Traits
+    // MARK: - 特征
 
     /// trait 声明注册表：traitName -> TraitDecl（含方法签名，body 非空即默认实现）。
     private var traits: [String: TraitDecl] = [:]
@@ -280,7 +280,7 @@ public final class TypeEnvironment {
         return builtinConformances[typeName]?.contains(traitName) ?? false
     }
 
-    // MARK: - Generic types
+    // MARK: - 泛型类型
 
     private struct GenericTypeTemplate {
         let genericParams: [String]
@@ -303,7 +303,7 @@ public final class TypeEnvironment {
         )
     }
 
-    /// 返回已注册泛型类型的类型形参个数；未注册返回 nil（P2-2.3 用于实例化实参个数校验）。
+    /// 返回已注册泛型类型的类型形参个数；未注册返回 nil（用于实例化实参个数校验）。
     public func genericParamCount(name: String) -> Int? {
         return genericTypes[name]?.genericParams.count
     }
@@ -348,9 +348,9 @@ public final class TypeEnvironment {
             if method.name == methodName {
                 let subParams = method.params.map { substitutor.substitute(type: $0) }
                 let subReturns = method.returns.map { substitutor.substitute(type: $0) }
-                /// Generic method templates keep methods as plain tuples, so no declared
-                /// labels survive specialisation — a specialised generic method's named returns stay positional.
-                /// Left as is: no measured case, and closing it means widening the template tuple in `defineGenericStruct`.
+                // 泛型方法模板把方法存成普通元组，特化时没有标签可搬——
+                // 特化出的泛型方法其命名返回值按位置呈现，不带标签。
+                // 要补标签须在 `defineGenericStruct` 的模板元组里一并存下。
                 return FunctionSignature(params: subParams, returns: subReturns, paramCalls: method.paramCalls)
             }
         }
@@ -387,7 +387,7 @@ public final class TypeEnvironment {
             paramCalls: template.paramCalls)
     }
 
-    // MARK: - Generic functions
+    // MARK: - 泛型函数
 
     private struct GenericFunctionTemplate {
         let genericParams: [String]
@@ -418,7 +418,7 @@ public final class TypeEnvironment {
     }
 
     /// 把泛型函数签名中的类型形参 T 按实参 bindings 替换，得到特化 FunctionSignature。
-    /// 供 TypeChecker 做端到端调用点比对（P3-0：T 占位通配——调用点把 T 绑定为实参类型后再比对）。
+    /// 供 TypeChecker 做端到端调用点比对：调用点把 T 绑定为实参类型后再比对。
     public func lookupSpecializedFunctionSignature(
         name: String,
         typeArgs: [TypeAnnotation]
@@ -437,7 +437,7 @@ public final class TypeEnvironment {
         return FunctionSignature(params: subParams, returns: subReturns, paramCalls: tmpl.paramCalls)
     }
 
-    // MARK: - Enums
+    // MARK: - 枚举
 
     /// 判别联合注册表：enumName -> caseName -> 关联参数（字段名? + 类型）。
     /// 供 TypeChecker 实现「枚举变体 → 联合类型」可赋值性（判别联合子类型）与 match 模式绑定类型注入。
@@ -526,7 +526,7 @@ public final class TypeEnvironment {
         return caseParentMulti[caseName] ?? []
     }
 
-    // MARK: - Generic enums (P5 B0-1：泛型枚举特化，闭合 R1)
+    // MARK: - 泛型枚举（特化）
 
     private struct GenericEnumTemplate {
         let genericParams: [String]

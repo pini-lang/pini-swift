@@ -13,16 +13,16 @@ public enum TypeError: Error, Equatable {
     case traitRequirementNotSatisfied(typeName: String, traitName: String, methodName: String, location: SourceLocation)
     /// 类型提供的方法签名与 trait 抽象方法要求不匹配（参数个数/类型或返回类型不符）。
     case traitMethodSignatureMismatch(typeName: String, traitName: String, methodName: String, detail: String, location: SourceLocation)
-    /// 已知内建类型（String/Array）上调用未注册成员方法（P3-2 ③：内建成员方法静态校验）。
+    /// 已知内建类型（String / Array）上调用未注册的成员方法（内建成员方法的静态校验）。
     /// 运行时本就会对未知成员抛 undefinedVariable，此处提前到静态检查捕获（如拼写错误 `s.uppr()`）。
     case unknownMember(typeName: String, memberName: String, location: SourceLocation)
-    /// 对 `let` 声明的不可变变量重新赋值（P3-3：值/引用语义收口之 `let` 不可变边界）。
+    /// 对 `let` 声明的不可变变量重新赋值。
     /// 运行时 `Environment.assign` 本就会抛 `immutableVariable`，此处提前到静态检查捕获。
     case reassignmentToImmutable(variableName: String, location: SourceLocation)
     /// 跨文件可见性违规：引用了定义在其他文件中、按 4 级可见性不可见的符号。
     /// `definedIn` 为定义所在源文件，`level` 为该符号的可见性级别。
     case inaccessibleSymbol(name: String, definedIn: String, level: VisibilityLevel, location: SourceLocation)
-    /// 字段级 type-private 违规（P4.5）：访问了以 `_` 前缀声明的字段，
+    /// 字段级 type-private 违规：访问了以 `_` 前缀声明的字段，
     /// 但访问点不在该字段**声明类型自身的方法**内（同文件普通函数 / 跨类型方法 / 跨文件均不可访问）。
     /// `typeName` 为字段声明所在类型，`fieldName` 为被访问的 `_` 字段。
     case inaccessibleField(typeName: String, fieldName: String, location: SourceLocation)

@@ -77,14 +77,14 @@ public enum BuiltinRegistry {
         .simple(name: name, location: builtinLocation)
     }
 
-    /// 内建归组表 归组清单（唯一事实源）。旧调用名全部保留，零破坏。
+    /// 内建归组清单（唯一事实源）：名字、分组与签名只在此声明一次，各层从这里取用。
     public static let decls: [BuiltinDecl] = [
-        // ---- collection ----
+        // ---- 集合 ----
         BuiltinDecl(
             name: "len", group: .collection, paramNames: ["value"],
             params: [t("Any")], returns: [t("I32")]),
 
-        // ---- value ----
+        // ---- 值 ----
         BuiltinDecl(
             name: "print", group: .value, paramNames: ["value"],
             params: [t("Any")], returns: [], isVariadic: true),
@@ -97,7 +97,7 @@ public enum BuiltinRegistry {
         BuiltinDecl(name: "err", group: .value, paramNames: ["value"], definesRuntimeValue: false),
         BuiltinDecl(name: "Error", group: .value, paramNames: ["message"], definesRuntimeValue: false),
         // F64 值构造——没有它整型表达式无法参与浮点算术（E5-003 混合算术拒绝）。
-        // 最小面：int→float、float 原样；字符串解析另行提案。
+        // 最小面：int→float、float 原样；字符串解析不在其列。
         BuiltinDecl(
             name: "F64", group: .value, paramNames: ["value"],
             params: [t("Any")], returns: [t("F64")]),
@@ -117,22 +117,22 @@ public enum BuiltinRegistry {
         BuiltinDecl(
             name: "chars", group: .char, paramNames: ["value"],
             params: [t("String")], returns: [.generic(name: "Array", params: [t("Char")], location: builtinLocation)]),
-        /// 临时字节视图：字节文本模型落地前的最小入口，返回 UTF-8 字节副本，不改字符串语义。
-        /// 名字带 `temp` 前缀即为过渡标识；正式字节缓冲接入后整条入口移除。
+        // 临时字节视图：字节文本模型落地前的最小入口，返回 UTF-8 字节副本，不改字符串语义。
+        // 名字带 `temp` 前缀即为过渡标识；正式字节缓冲接入后整条入口移除。
         BuiltinDecl(
             name: "tempUtf8Bytes", group: .char, paramNames: ["value"],
             params: [t("String")], returns: [.generic(name: "Array", params: [t("U8")], location: builtinLocation)]),
-        /// 临时数值桥：`as` 尚未落地前，字节与整数之间唯一的显式转换入口。
-        /// 两者都按低位截断 / 零扩展，与字节缓冲的 0..255 不变量一致。
+        // 临时数值桥：`as` 尚未落地前，字节与整数之间唯一的显式转换入口。
+        // 两者都按低位截断 / 零扩展，与字节缓冲的 0..255 不变量一致。
         BuiltinDecl(
             name: "tempByteToInt", group: .char, paramNames: ["value"],
             params: [t("U8")], returns: [t("I32")]),
         BuiltinDecl(
             name: "tempIntToByte", group: .char, paramNames: ["value"],
             params: [t("I32")], returns: [t("U8")]),
-        /// 码点原语：解锁字符范围判定（hex 判定等）与 upper/lower 下沉；ord 取首 Unicode scalar，
-        /// 对齐 grapheme 模型。`Char` 参数恒为 1 个字素，故 ord 的「空串」哨兵不可表达；
-        /// `chr` 越界 / 代理区 panic（`RuntimeError.indexOutOfRange`，与 `s[i]` 同通道，不新增诊断码）。
+        // 码点原语：解锁字符范围判定（hex 判定等）与 upper/lower 下沉；ord 取首 Unicode scalar，
+        // 对齐 grapheme 模型。`Char` 参数恒为 1 个字素，故 ord 的「空串」哨兵不可表达；
+        // `chr` 越界 / 代理区 panic（`RuntimeError.indexOutOfRange`，与 `s[i]` 同通道，不新增诊断码）。
         BuiltinDecl(
             name: "ord", group: .char, paramNames: ["value"],
             params: [t("Char")], returns: [t("I32")]),
@@ -140,24 +140,24 @@ public enum BuiltinRegistry {
             name: "chr", group: .char, paramNames: ["code"],
             params: [t("I32")], returns: [t("Char")]),
 
-        // ---- pointer（unsafe；专属路径 registerPointerBuiltins）----
+        // ---- 指针（unsafe；专属路径 registerPointerBuiltins 登记）----
         BuiltinDecl(name: "load", group: .pointer, paramNames: ["p"], definesRuntimeValue: false),
         BuiltinDecl(name: "store", group: .pointer, paramNames: ["p", "v"], definesRuntimeValue: false),
         BuiltinDecl(name: "addressof", group: .pointer, paramNames: ["value"], definesRuntimeValue: false),
-        /// 本表第一个非函数条目：策略层的空句柄，即就绪队列为空时的返回值。队列元素是不透明标量句柄，
-        /// 而语言目前构造不出这种值（`addressof` 未实现，`nil` 类型不匹配），且用户写自己的策略时也要
-        /// 写空队列分支。`definesRuntimeValue: false`——它由降载层直出常量，解释器无新增求值分支。
+        // 本表第一个非函数条目：策略层的空句柄，即就绪队列为空时的返回值。队列元素是不透明标量句柄，
+        // 而语言目前构造不出这种值（`addressof` 未实现，`nil` 类型不匹配），且用户写自己的策略时也要
+        // 写空队列分支。`definesRuntimeValue: false`——它由降载层直出常量，解释器无新增求值分支。
         BuiltinDecl(
             name: emptyHandleName, group: .pointer,
             valueType: .pointer(element: t("U8"), location: builtinLocation),
             definesRuntimeValue: false),
 
-        // ---- io ----
+        // ---- IO ----
         // 程序基准查询——模块根（单文件=入口文件所在目录），绝对路径。
         BuiltinDecl(
             name: "moduleRoot", group: .io, paramNames: [],
             params: [], returns: [t("String")]),
-        // F6：命令行参数透传（脚本路径之后的裸参数；LLVM 端暂 unsupported）。
+        // 命令行参数透传（脚本路径之后的裸参数；LLVM 端暂 unsupported）。
         BuiltinDecl(
             name: "argv", group: .io, paramNames: [],
             params: [], returns: [t("Array")]),
@@ -176,9 +176,9 @@ public enum BuiltinRegistry {
         BuiltinDecl(
             name: "readLine", group: .io, paramNames: [],
             params: [], returns: [t("String")]),
-        /// 目录枚举：`.pini` 源码经此才写得出「列出目录」，自举仓的 module 层要以目录为输入编译自身源码。
-        /// 条目数无上限，列不全即报错，不静默截断（本仓「读入」类内建都不设上限，不平白引进任意数字）。
-        /// 排序语义属语言语义：按 UTF-8 字节序升序——文件系统返回顺序不稳定，不排序则顺序类判据都是假绿。
+        // 目录枚举：`.pini` 源码经此才写得出「列出目录」，自举仓的 module 层要以目录为输入编译自身源码。
+        // 条目数无上限，列不全即报错，不静默截断（本仓「读入」类内建都不设上限，不平白引进任意数字）。
+        // 排序语义属语言语义：按 UTF-8 字节序升序——文件系统返回顺序不稳定，不排序则顺序类判据都是假绿。
         BuiltinDecl(
             name: "listDir", group: .io, paramNames: ["path"],
             params: [t("String")],
@@ -191,14 +191,14 @@ public enum BuiltinRegistry {
         BuiltinDecl(
             name: "isDir", group: .io, paramNames: ["path"],
             params: [t("String")], returns: [t("Bool")]),
-        /// 建目录：幂等，中间层一并创建；建不出来即陷阱，故不返布尔，也没有可接住的变体。
-        /// 构建器靠它把 `.build/<profile>` 从无到有建出来 —— 那条路径不存在是常态，不是错误。
+        // 建目录：幂等，中间层一并创建；建不出来即陷阱，故不返布尔，也没有可接住的变体。
+        // 构建器靠它把 `.build/<profile>` 从无到有建出来——那条路径不存在是常态，不是错误。
         BuiltinDecl(
             name: "ensureDir", group: .io, paramNames: ["path"],
             params: [t("String")], returns: []),
-        /// 可接住的 IO：三个 `try*` 与陷阱版并存，不是替代——失败形态由调用点写的名字决定，不是运行时开关。
-        /// 载荷：读是文件内容，写与追加是空元组（写成功不产生值，不编造字节数——它恒为入参的 UTF-8 长度）。
-        /// 与 `ok`/`err` 同族：走专属降载，不登记解释器函数值。
+        // 可接住的 IO：三个 `try*` 与陷阱版并存，不是替代——失败形态由调用点写的名字决定，不是运行时开关。
+        // 载荷：读是文件内容，写与追加是空元组（写成功不产生值，不编造字节数——它恒为入参的 UTF-8 长度）。
+        // 与 `ok`/`err` 同族：走专属降载，不登记解释器函数值。
         BuiltinDecl(
             name: "tryReadFile", group: .io, paramNames: ["path"],
             params: [t("String")],
@@ -236,7 +236,7 @@ public enum BuiltinRegistry {
             ],
             definesRuntimeValue: false),
 
-        // ---- math ----
+        // ---- 数学 ----
         BuiltinDecl(
             name: "abs", group: .math, paramNames: ["x"],
             params: [t("I32")], returns: [t("I32")]),
@@ -259,7 +259,7 @@ public enum BuiltinRegistry {
             name: "tan", group: .math, paramNames: ["x"],
             params: [t("F64")], returns: [t("F64")]),
 
-        // ---- concurrency ----
+        // ---- 并发 ----
         BuiltinDecl(
             name: "sleep", group: .concurrency, paramNames: ["ms"],
             params: [t("I32")], returns: []),
@@ -269,9 +269,9 @@ public enum BuiltinRegistry {
         BuiltinDecl(name: "joinAll", group: .concurrency, paramNames: ["futures"], definesRuntimeValue: false),
         BuiltinDecl(name: "joinWithin", group: .concurrency, paramNames: ["future", "ms"], definesRuntimeValue: false),
 
-        // ---- ffi ----
-        /// 取回：C 串复制成 Pini 串。与 `toCString` 反向；`toCString` 是 shim 名，由调用方在 foreign 块里声明。
-        /// 本条目是语言内建，不需要声明。读 NUL 为止，空指针按空串处理。
+        // ---- FFI ----
+        // 取回：C 串复制成 Pini 串。与 `toCString` 反向；`toCString` 是 shim 名，由调用方在 foreign 块里声明。
+        // 本条目是语言内建，不需要声明。读 NUL 为止，空指针按空串处理。
         BuiltinDecl(
             name: "fromCString", group: .ffi, paramNames: ["p"],
             params: [.pointer(element: t("U8"), location: builtinLocation)],
@@ -295,7 +295,7 @@ public enum BuiltinRegistry {
         public let paramNames: [String]
         public let params: [TypeAnnotation]
         public let returns: [TypeAnnotation]
-        /// 是否属于 collection 特征方法面（D1 最小集）
+        /// 是否属于 collection 特征的方法面。
         public let inTrait: Bool
 
         init(
@@ -334,9 +334,9 @@ public enum BuiltinRegistry {
         MemberDecl(
             typeName: "String", name: "slice", paramNames: ["start", "end"],
             params: [t("Any"), t("Any")], returns: [t("String")], inTrait: true),
-        /// String trim/index builtins: leading/trailing ASCII space stripping (U+0020 only — a tab is NOT
-        /// stripped) and grapheme-indexed first occurrence (empty needle yields 0, absent yields -1).
-        /// `inTrait = false`: extension surface, not the collection trait face.
+        // String 的 trim / index 内建：按字素索引取首次出现（空针返回 0，无匹配返回 -1），
+        // trim 只削首尾 ASCII 空格 U+0020——制表符不在其列。
+        // `inTrait = false`：属扩展面，不是 collection 特征的方法面。
         MemberDecl(
             typeName: "String", name: "trimLeft", paramNames: [],
             params: [], returns: [t("String")], inTrait: false),
@@ -346,9 +346,9 @@ public enum BuiltinRegistry {
         MemberDecl(
             typeName: "String", name: "indexOf", paramNames: ["needle"],
             params: [t("String")], returns: [t("I32")], inTrait: false),
-        /// 三通道取值：安全可选通道 `.get(i)` 与不安全通道 `.getUnchecked(i)`。下标 `a[i]` 是安全断言
-        /// （越界 panic），容错取值须显式走 `get`；`getUnchecked` 供已证明界内的热路径跳过检查，
-        /// 调用方以 `unsafe` 消耗点承担义务。`inTrait = false`，故用户类型不被要求实现这两个方法。
+        // 三通道取值：安全可选通道 `.get(i)` 与不安全通道 `.getUnchecked(i)`。下标 `a[i]` 是安全断言
+        // （越界 panic），容错取值须显式走 `get`；`getUnchecked` 供已证明界内的热路径跳过检查，
+        // 调用方以 `unsafe` 消耗点承担义务。`inTrait = false`，故用户类型不被要求实现这两个方法。
         MemberDecl(
             typeName: "String", name: "get", paramNames: ["index"],
             params: [t("I32")], returns: [TypeAnnotation.generic(name: "Optional", params: [t("Char")], location: builtinLocation)], inTrait: false),
@@ -356,8 +356,8 @@ public enum BuiltinRegistry {
             typeName: "String", name: "getUnchecked", paramNames: ["index"],
             params: [t("I32")], returns: [t("Char")], inTrait: false),
         // Array（collection 子集：append/pop/slice/join；扩展面：last）
-        /// `T` 是内建容器的元素类型占位：查询时按接收者的类型实参回填，故 `Array<I32>.append` 收 I32、
-        /// 回 `Array<I32>`。它不是 `genericTypes` 里的类型参数 —— Array 没有泛型声明，别处看不见这个名。
+        // `T` 是内建容器的元素类型占位：查询时按接收者的类型实参回填，故 `Array<I32>.append` 收 I32、
+        // 回 `Array<I32>`。它不是 `genericTypes` 里的类型参数——Array 没有泛型声明，别处看不见这个名。
         MemberDecl(
             typeName: "Array", name: "join", paramNames: ["sep"],
             params: [t("String")], returns: [t("String")], inTrait: true),

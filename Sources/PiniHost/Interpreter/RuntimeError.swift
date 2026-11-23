@@ -22,28 +22,27 @@ public enum RuntimeError: Error, CustomStringConvertible {
     case indexOutOfRange(location: SourceLocation)
     case invalidOperation(reason: String, location: SourceLocation)
     case mainNotFound(location: SourceLocation)
-    /// G52 §9 Def-3：清单声明了 `[[bin]].entry` / `[lib].entry`，但 `main` 不在其中。
-    /// 声明入口即承诺「程序从这里开始」，故 `main` 落在别处是**配置与代码不一致**，
-    /// 不是「随便找一个 main 跑」——静默取全局 main 会让 entry 字段形同虚设。
+    /// 清单声明了 `[[bin]].entry` / `[lib].entry`，但 `main` 不在其中。
+    /// 声明入口即承诺「程序从这里开始」，`main` 落在别处就是配置与代码不一致；
+    /// 静默退化为全局找 `main` 会让 entry 字段形同虚设。
     case entryMainMismatch(entries: [String], declaredIn: String, location: SourceLocation)
     case notCallable(location: SourceLocation)
     case arityMismatch(expected: Int, got: Int, location: SourceLocation)
-    /// 字段级 type-private 违规（P4.5）：访问了以 `_` 前缀声明的字段，
-    /// 但访问点不在该字段**声明类型自身的方法**内（同文件普通函数 / 跨类型方法 / 跨文件均不可访问）。
+    /// 访问了以 `_` 前缀声明的字段，而访问点不在该字段声明类型自身的方法内：
+    /// 同文件的普通函数、跨类型方法、跨文件访问都会被拒。
     case inaccessibleField(typeName: String, fieldName: String, location: SourceLocation)
-    /// 并发任务被取消（B2-1，立场 B ）：手动 `t.cancel()` / 父任务返回自动取消 /
-    /// 超时归约取消。join 时被 `Interpreter.joinFuture` 归约为 `err(CancelError)` 数据值，
-    /// 不会作为异常冒泡到用户代码——错误即数据。
+    /// 并发任务被取消：手动 `t.cancel()`、父任务返回自动取消或超时归约。
+    /// join 时会被归约成 `err(CancelError)` 数据值，不作为异常冒泡到用户代码 —— 错误即数据。
     case taskCancelled(reason: String, location: SourceLocation)
-    /// match 未穷尽（MED-1，P5）：枚举值主体无 case 命中且无可兜底（default/通配子块）时抛错，替代原静默 no-op。
+    /// 枚举值没有任何 case 命中，也没有 default / 通配子块兜底时抛出，而非静默跳过。
     case matchNotExhaustive(value: String, location: SourceLocation)
-    /// G41（test 块，R2）：assert 内建断言失败——条件为 false 时抛出，测试运行器捕获为测试失败。
+    /// `assert` 内建的条件为 false 时抛出；测试运行器捕获它并记为测试失败。
     case assertionFailed(message: String, location: SourceLocation)
-    /// Phase 2a（FFI 子系统）：原生函数实参个数不符（load/store/malloc 等）。
+    /// 原生函数实参个数与签名不符（`load` / `store` / `malloc` 等）。
     case argumentCountMismatch(name: String, expected: Int, got: Int, location: SourceLocation)
-    /// Phase 2a（FFI 子系统）：`[名称|foreign]` 声明的 C 函数不在原生函数表（未预注册）。
+    /// `[名称|foreign]` 声明的 C 函数不在原生函数表里（未预注册）。
     case undefinedNativeFunction(name: String, available: [String], location: SourceLocation)
-    /// Phase 2b（解释器 dlsym 加载 FFI dlsym）：`[名称|foreign]` 块名对应的库在搜索路径中未找到。
+    /// `[名称|foreign]` 块名对应的库在搜索路径中找不到（解释器经 dlsym 加载）。
     case libraryNotFound(library: String, searched: [String], location: SourceLocation)
     /// 符号在 `[ffi].libs` 预加载的库与进程映像里都找不到。`searched` 是查过的库标签，
     /// 顺序与解析顺序一致 —— 报错要能回答「到底找过哪些地方」。

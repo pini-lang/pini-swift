@@ -35,29 +35,29 @@ public struct Parameter: Equatable, Sendable {
     }
 }
 
-/// 类型注解。`indirect`：`.pointer(element:)` 递归引用自身（Phase 2a `*T`，FFI 子系统）。
+/// 类型注解。`indirect`：`.pointer(element:)` 递归引用自身（FFI 的 `*T`）。
 public indirect enum TypeAnnotation: Equatable, Sendable {
     case simple(name: String, location: SourceLocation)
     /// 元组类型。labels[i] 对应 elements[i] 的可选标签（nil = 位置元素）；
-    /// 命名元组 `(a: I32, b: String,)` 的 labels = ["a", "b"]（草稿 A2，批次 1.3，D1）。
+    /// 命名元组 `(a: I32, b: String,)` 的 labels = ["a", "b"]。
     case tuple(labels: [String?], elements: [TypeAnnotation], location: SourceLocation)
     case generic(name: String, params: [TypeAnnotation], location: SourceLocation)
     case function(params: [TypeAnnotation], returns: [TypeAnnotation], captured: [TypeAnnotation], usingIndices: Set<Int>, location: SourceLocation)
-    /// Phase 2a（FFI 子系统， `*T`）：原始指针类型。element 须为 C 兼容类型
+    /// 原始指针类型 `*T`。element 须为 C 兼容类型
     /// （标量、纯值结构体、或另一指针），禁 object 及含 object 字段的复合类型。
     case pointer(element: TypeAnnotation, location: SourceLocation)
 }
 
 extension TypeAnnotation {
     /// 结构等价（忽略 SourceLocation），用于类型比对。
-    /// P2-2：元组逐分量、泛型同名同元数、函数签名（参数+返回）逐位比较。
+    /// 元组逐分量、泛型同名同元数、函数签名（参数 + 返回）逐位比较。
     public func isStructurallyEquivalent(to other: TypeAnnotation) -> Bool {
         switch (self, other) {
         case (.simple(let a, _), .simple(let b, _)):
             return a == b
         case (.tuple(_, let a, _), .tuple(_, let b, _)):
             // 标签不参与结构等价：位置元组与命名元组按元素类型序列比对即可互赋
-            // （标签仅用于 `.名称` 访问解析，草稿 A2，批次 1.3，D1）。
+            // （标签仅用于 `.名称` 访问解析）。
             return a.count == b.count
                 && zip(a, b).allSatisfy { $0.isStructurallyEquivalent(to: $1) }
         case (.generic(let a, let pa, _), .generic(let b, let pb, _)):

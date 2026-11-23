@@ -304,7 +304,7 @@ public enum Keyword: String, CaseIterable {
     // 产生式两侧同值：改一处必须改另一处。
     case `unsafe` = "unsafe"
     case `foreign` = "foreign"
-    // G51（spec KEYWORD 收口）：测试函数块修饰符关键字——宿主词法对齐自举
+    // 测试函数块修饰符关键字——宿主词法对齐自举
     //（自举 lexer 关键字表本就含 kw_test）；`名称|test` 修饰符位经 parseIdentifier
     // 白名单接出为修饰符串 "test"（Interpreter.runTests 收集路径不变）。
     case `test` = "test"

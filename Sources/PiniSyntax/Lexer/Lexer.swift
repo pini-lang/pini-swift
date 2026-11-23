@@ -7,7 +7,7 @@ public class Lexer {
     private var line: Int
     private var column: Int
     private var indentTracker: IndentTracker
-    /// 草稿 A2（批次 1）：上一个已产出 token 是否为 `.`（dot）。
+    /// 上一个已产出 token 是否为 `.`（dot）。
     /// 用于元组位置访问 `.index` 的词法消歧：`.` 后随数字时只读整数、不进浮点，
     /// 避免 `t.0.1` 中 `0.1` 被读成浮点字面量（`0.1` 本应拆为 `.0` `.1`）。
     private var prevTokenIsDot = false
@@ -22,18 +22,18 @@ public class Lexer {
     /// 边界：`< >` 不跟踪深度，前瞻仅限同行，反引号转义的 `func` 不算块携带，未闭合到 EOF 静默，不匹配 closer 一律 pop。
     private var bracketStack: [(char: Character, blockCarrying: Bool)] = []
 
-    /// 词法旁路表：注释不进 token 流，只在跳过时登记，供打印器锚回原位。
-    /// 顺序即出现顺序；一次 `tokenize()` 之内只增不改。
+/// 词法旁路表：注释不进 token 流，只在跳过时登记，供打印器锚回原位。
+/// 顺序即出现顺序；一次 `tokenize()` 之内只增不改。
     public private(set) var comments: [CommentEntry] = []
 
-    /// 字面量原拼写：AST 只存值，打印器要原文只能在这里取。
+/// 字面量原拼写：AST 只存值，打印器要原文只能在这里取。
     public private(set) var spellings: [PrintHints.Spelling] = []
 
-    /// 每行前导空格数：缩进块还原宽度的依据。只登记代码行。
+/// 每行前导空格数：缩进块还原宽度的依据。只登记代码行。
     public private(set) var indents: [Int: Int] = [:]
 
-    /// 词法警告：扫描不中断。与 `comments` 同生命周期，一次 `tokenize()` 之内只增不改。
-    /// 只承载「看见了但继续编译」的事实；是否阻断由调用方按严重度决定。
+/// 词法警告：扫描不中断。与 `comments` 同生命周期，一次 `tokenize()` 之内只增不改。
+/// 只承载「看见了但继续编译」的事实；是否阻断由调用方按严重度决定。
     public private(set) var warnings: [LexerWarning] = []
 
     /// 本次扫描的位置旁路。词法失败时只含失败点之前的部分。
@@ -94,7 +94,7 @@ public class Lexer {
                 }
 
                 if char == ";" || char == "#" {
-                    // `;` 行注释 / `#` 文档注释（行首=文档注释，行中=退化行注释）；均持续到行尾（G35）
+                    // `;` 行注释 / `#` 文档注释（行首=文档注释，行中=退化行注释）；均持续到行尾
                     recordComment(column: column, ownLine: awaitingFirstTokenOfLine)
                     break
                 }
@@ -378,8 +378,8 @@ public class Lexer {
                 return .identifier(escaped, loc)
             }
             return .identifier("`", loc)
-        // `#` 已由行级注释拦截（G35：文档注释/退化行注释），不再产出 token；
-        // 若意外到达此处则落入 default → invalidCharacter（历史 `.hash` token 保留于 Token.swift 供兼容）。
+        // `#` 已由行级注释拦截（文档注释 / 退化行注释），不再产出 token；
+        // 若意外到达此处则落入 default → invalidCharacter；`.hash` token 定义仍在 Token.swift 里闲置。
         case "?":
             _ = advance()
             return .questionMark(loc)
@@ -498,8 +498,8 @@ public class Lexer {
     }
 
     private func readIdentifier(startingWith prefix: String) throws -> String {
-        // IDENT 续字符放宽：IDENT 续字符 = \p{L} ∪ numeric property ∪ `_`——spec 已按
-        // numeric property（isNumber 语义，严格超集 \p{N}）放宽对齐本实现（见 spec「词法类」主题）；INT 字面量仍限 [0-9]。
+        // IDENT 续字符放宽：IDENT 续字符 = \p{L} ∪ numeric property ∪ `_`——按 isNumber 语义
+        // （严格超集 \p{N}）对齐本实现；INT 字面量仍限 [0-9]。
         var name = prefix
         while let char = currentChar, char.isLetter || char.isNumber || char == "_" {
             // 变体选择符与零宽字符能与基字合成同一个字素簇，只看簇属性会漏掉，故逐标量查。
@@ -587,7 +587,7 @@ public class Lexer {
         }
 
         var isFloat = false
-        // 草稿 A2（批次 1）：`.` 后随数字 = 元组位置访问 `.index`（如 `t.0.1` 拆为 `.0` `.1`），
+        // `.` 后随数字 = 元组位置访问 `.index`（如 `t.0.1` 拆为 `.0` `.1`），
         // 数字只读整数部分、不进入浮点；其余位置（前 token 非 `.`）照常支持 `3.14` 浮点。
         if !prevTokenIsDot, let char = currentChar, char == ".", let next = peek(offset: 1), next.isNumber {
             isFloat = true

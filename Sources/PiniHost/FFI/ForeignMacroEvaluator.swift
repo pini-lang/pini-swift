@@ -169,7 +169,7 @@ public enum ForeignMacroEvaluator {
         let file = directory.appendingPathComponent("probe.c")
         try source.write(to: file, atomically: true, encoding: .utf8)
 
-        /// `Process` 只认可执行文件的绝对路径，不查 PATH，故这里自己按 PATH 找。
+        // `Process` 只认可执行文件的绝对路径，不查 PATH，故这里自己按 PATH 找。
         let compiler = preprocessorPath()
         let arguments =
             ["-E"] + flags + config.includePaths.map { "-I\($0)" }
@@ -365,7 +365,7 @@ struct MacroExpressionParser {
                 let start = i
                 var seenDot = false
                 var seenExponent = false
-                /// 十六进制的 `e` 是数字位，指数只在十进制里出现。
+                // 十六进制的 `e` 是数字位，指数只在十进制里出现。
                 let isHex = start + 1 < chars.count && chars[start] == "0"
                     && (chars[start + 1] == "x" || chars[start + 1] == "X")
                 while i < chars.count {
@@ -388,7 +388,7 @@ struct MacroExpressionParser {
                     }
                 }
                 var literal = String(chars[start..<i])
-                /// 整数后缀 `u` / `U` / `l` / `L` 全部剥掉：宽度由声明类型决定，不由此处。
+                // 整数后缀 `u` / `U` / `l` / `L` 全部剥掉：宽度由声明类型决定，不由此处。
                 while let last = literal.last, "uUlL".contains(last) {
                     literal.removeLast()
                 }

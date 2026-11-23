@@ -109,7 +109,7 @@ public class Environment {
         throw RuntimeError.undefinedVariable(name: name, location: SourceLocation(line: 0, column: 0, fileName: ""))
     }
 
-    /// 查询变量是否可变（P3-3 加固：供 `let` 聚合成员赋值的运行时拦截使用）。
+    /// 查询变量是否可变：供 `let` 聚合成员赋值的运行时拦截使用。
     /// 沿作用域链与 enclosing 向上查找；未找到返回 nil。
     public func isMutable(name: String) -> Bool? {
         for scope in scopes.reversed() {

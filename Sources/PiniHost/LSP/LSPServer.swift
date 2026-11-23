@@ -18,8 +18,8 @@ public final class LSPServer {
     /// 文档的包级索引缓存
     private var documentIndex: [String: PackageSymbolIndex] = [:]
 
-    /// LSP 诊断语言（T11 解耦）：由 `initialize` 的 `locale` 决定（zh* → 中文，否则英文），
-    /// 独立于 CLI --lang 全局状态；未收到 locale 时默认英文。
+    /// LSP 诊断语言：由 `initialize` 的 `locale` 决定（zh* → 中文，否则英文），
+    /// 独立于 CLI 的 --lang 全局状态；未收到 locale 时默认英文。
     private var diagnosticLanguage: DiagnosticLanguage = .en
 
     /// 按 LSP locale 决定诊断语言（LSP 规范：客户端 locale，如 "zh-CN"）。
@@ -49,7 +49,7 @@ public final class LSPServer {
         }
     }
 
-    // MARK: - Message dispatch
+    // MARK: - 消息分派
 
     private func handleMessage(_ data: Data) {
         // 通知与请求都含 jsonrpc/method，但只有请求有 id；`RequestMessage.id` 可选，故通知也能解码成 RequestMessage，
@@ -93,7 +93,7 @@ public final class LSPServer {
     private func dispatchNotification(_ notif: NotificationMessage) {
         switch notif.method {
         case "initialized":
-            // no-op, client is ready
+            // 空操作：客户端已就绪，无需回应。
             break
         case "textDocument/didOpen":
             handleDidOpen(notif)
@@ -108,10 +108,10 @@ public final class LSPServer {
         }
     }
 
-    // MARK: - Handlers
+    // MARK: - 请求处理
 
     private func handleInitialize(_ req: RequestMessage) throws -> JSONValue {
-        // T11（解耦）：诊断语言跟随 LSP 客户端 locale（InitializeParams.locale），不随 CLI --lang。
+        // 诊断语言跟随 LSP 客户端 locale（InitializeParams.locale），不随 CLI 的 --lang。
         if let params = req.params, let obj = params.objectValue,
             let locale = obj["locale"]?.stringValue
         {
@@ -181,12 +181,12 @@ public final class LSPServer {
         documentIndex.removeValue(forKey: uri)
     }
 
-    // MARK: - Diagnostic Pipeline
+    // MARK: - 诊断管线
 
     private func publishDiagnostics(uri: String, text: String) {
         let fileName = Self.fileNameFromURI(uri)
 
-        // Step 1: 词法 + 语法 —— 与其余五个入口共用 FrontEnd，pass 清单不在本文件分叉。
+        // 词法与语法：与其余入口共用 `FrontEnd`，流程不在此处分叉。
         let module: Module
         let parserErrors: [ParserError]
         // 用 `scan` 而非 `collect`：两者跑同一条路径，前者额外带回词法警告。
@@ -216,7 +216,7 @@ public final class LSPServer {
         var typeErrors: [TypeError] = []
         var semanticWarnings: [SemanticWarning] = []
 
-        // Step 2: 如果 Parser 有结构性错误，跳过语义阶段
+        // 解析有结构性错误时跳过语义阶段：残缺 AST 上的语义结论不可信。
         let hasStructuralError = parserErrors.contains { err in
             if case .unexpectedEOF = err { return true }
             if case .missingBlockEnd = err { return true }
@@ -225,7 +225,7 @@ public final class LSPServer {
         }
 
         if !hasStructuralError {
-            // Step 3: Semantic + Type check
+            // 语义分析与类型检查；两者都收集错误而不中断，便于一次报全。
             let analyzer = SemanticAnalyzer()
             semanticErrors = analyzer.analyzeCollecting(module: module)
             semanticWarnings = analyzer.warnings  // B2：warning 随诊断一起发布（severity: .warning）
@@ -273,7 +273,7 @@ public final class LSPServer {
         try? transport.sendNotification(method: "textDocument/publishDiagnostics", params: params)
     }
 
-    // MARK: - Completion Handler
+    // MARK: - 补全处理
 
     private func handleCompletion(_ req: RequestMessage) throws -> JSONValue {
         guard let params = req.params,
@@ -302,7 +302,7 @@ public final class LSPServer {
         return try encoder.encodeJSONValue(fullList)
     }
 
-    // MARK: - Definition Handler
+    // MARK: - 跳转定义处理
 
     private func handleDefinition(_ req: RequestMessage) throws -> JSONValue {
         guard let params = req.params,
@@ -332,7 +332,7 @@ public final class LSPServer {
         return .null
     }
 
-    // MARK: - Utility
+    // MARK: - 工具
 
     /// 提取光标位置处的标识符（字母 / 数字 / 下划线连续串）。
     /// - Parameter before: true 只取光标前的部分，false 取完整标识符。
@@ -391,7 +391,7 @@ public final class LSPServer {
     }
 }
 
-// MARK: - JSONValue helpers
+// MARK: - JSONValue 辅助
 
 extension JSONValue {
     var objectValue: [String: JSONValue]? {
@@ -412,7 +412,7 @@ extension JSONValue {
     }
 }
 
-// MARK: - JSONEncoder helper
+// MARK: - JSONEncoder 辅助
 
 extension JSONEncoder {
     func encodeJSONValue<T: Encodable>(_ value: T) throws -> JSONValue {

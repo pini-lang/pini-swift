@@ -33,8 +33,8 @@ public struct FileLoader {
         guard let enumerator = fm.enumerator(atPath: path) else {
             throw LoaderError.cannotReadDirectory(path: path)
         }
-        /// `[build] exclude` 显式排除：被排除路径（目录前缀或全路径）从模块包加载中剔除，
-        /// run/check/build/test 全目标统一生效。
+        // `[build] exclude` 显式排除：被排除路径（目录前缀或全路径）从模块包加载中剔除，
+        // run / check / build / test 全目标统一生效。
         let excludeEntries = (manifest?.buildExclude ?? []).map { (entry: String) -> String in
             let trimmed = entry.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             return trimmed.isEmpty ? entry : trimmed
@@ -88,7 +88,7 @@ public struct FileLoader {
     }
 
     /// 在目录中寻找并解析 `pini.toml`；不存在则返回 `nil`（隐式根模块兜底）。
-    /// Phase 5 起为 CLI / 加载器识别「这是一个显式多文件模块」的唯一信号。
+    /// 它是 CLI 与加载器识别「这是一个显式多文件模块」的唯一信号。
     public static func loadManifest(directory: String) throws -> ModuleManifest? {
         let tomlPath = (directory as NSString).appendingPathComponent(manifestFileName)
         let legacyPath = (directory as NSString).appendingPathComponent(legacyManifestFileName)
@@ -100,8 +100,8 @@ public struct FileLoader {
         }
         let text = try String(contentsOfFile: tomlPath, encoding: .utf8)
         let manifest = try parseManifest(text, path: tomlPath)
-        // Phase 2b（解释器 dlsym 加载）：将 `[ffi].search_paths` 的非绝对项规一为「相对本模块目录」
-        // 的绝对路径，使 FFI 搜索与调用 cwd 解耦（示例可在任意检出位置独立运行）。
+        // 把 `[ffi].search_paths` 的非绝对项规一为「相对本模块目录」的绝对路径，
+        // 使 FFI 搜索与调用 cwd 解耦（示例可在任意检出位置独立运行）。
         // 绝对路径（如系统库 /usr/lib）原样保留；无 `[ffi]` 表时此步为空操作。
         guard let ffi = manifest.ffi, !ffi.searchPaths.isEmpty else { return manifest }
         let resolved = ffi.searchPaths.map { (sp: String) -> String in
@@ -222,7 +222,7 @@ public struct ModuleManifest: Equatable {
     public let resourcesTaps: [String: [String: String]]
     /// `[replace]` 强制版本 / 本地 / 换 fork（仅主模块生效）。
     public let replaces: [String: String]
-    /// Phase 2b（解释器 dlsym 加载）：`[ffi]` FFI 配置；无 `[ffi]` 表时为 `nil`（解释器回退 `FFIConfig.default`）。
+    /// `[ffi]` FFI 配置；无 `[ffi]` 表时为 `nil`（解释器回退 `FFIConfig.default`）。
     public let ffi: FFIConfig?
     /// `[build] exclude`：模块包加载排除路径（相对模块根，目录前缀匹配，`loadDirectory` 统一生效；
     /// `pini test` 显式路径可加回）。

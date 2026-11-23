@@ -1,9 +1,7 @@
 import Foundation
 
-/// match 语句
-/// matchStatement(value: Expression, cases: [MatchCase], defaultCase: Block?, location: SourceLocation)
 
-/// match 模式（P5-4 HIGH-2）：枚举 case 名 / 整数字面量 / 浮点字面量 / 字符串字面量 / 布尔字面量 / 通配 `_`
+/// match 模式：枚举 case 名 / 整数字面量 / 浮点字面量 / 字符串字面量 / 布尔字面量 / 通配 `_`。
 /// 字面量带位置：AST 只存值，打印器要保住 `0xFF` 这类写法只能回词法旁路按位置取原文。
 public enum MatchPattern: Equatable, CustomStringConvertible, Sendable {
     case enumCase(String)
@@ -25,7 +23,7 @@ public enum MatchPattern: Equatable, CustomStringConvertible, Sendable {
     }
 }
 
-/// match case
+/// match 的单个分支：模式 + 绑定 + 子块。
 public struct MatchCase: Equatable, ASTNode, Sendable {
     public let pattern: MatchPattern
     public let bindings: [MatchBinding]

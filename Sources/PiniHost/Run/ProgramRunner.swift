@@ -8,24 +8,23 @@ import PiniIR
 /// `runTests` 与动态库 FFI 已在本类型落地：后者经 `FFILoader` + `ForeignThunk`，与解释器同一链路。
 public final class ProgramRunner: DebugHookHost {
 
-    /// Receives the program's own line output.
+    /// 接收程序自己的行输出。
     public var outputSink: (String) -> Void = { line in print(line) }
 
-    /// Called at each statement boundary that carries a source position.
+    /// 在每个带源码位置的语句边界上调用。
     public var debugHook: ((DebugContext) throws -> DebugAction)? = nil
 
-    /// `argv()` as the program sees it.
+    /// 程序看到的 `argv()`。
     public var processArguments: [String] = []
 
-    /// Manifest-declared entry files. Empty = undeclared, which means "do not
-    /// narrow the search for `main`" (G52 Def-3).
+    /// 清单声明的入口文件。空集表示未声明，即「不缩小 `main` 的搜索范围」。
     public var entryFiles: Set<String> = []
 
     /// 包的 `[ffi]` 表，随类型下传，使运行与测试两条路径共用一种构造形状。
     /// 执行器据此按 `search_paths` 解析裸 C 绑定，故带随附库的模块在两个引擎上行为一致。
     public let ffiConfig: FFIConfig
 
-    /// Directory the program's relative paths resolve against.
+    /// 程序的相对路径以此为基准解析。
     public let programBase: String?
 
     public init(ffiConfig: FFIConfig = .default, programBase: String? = nil) {
@@ -33,7 +32,7 @@ public final class ProgramRunner: DebugHookHost {
         self.programBase = programBase
     }
 
-    // MARK: - Running
+    // MARK: - 运行
 
     /// Runs one module.
     /// 装配在入口做一次：CLI 已装配过的模块原样返回，进程内直接构造模块的调用方（测试、嵌入）也拿得到标准库。
@@ -48,13 +47,11 @@ public final class ProgramRunner: DebugHookHost {
                 errors.map { ErrorFormatter.formatTypeError($0, source: "") }
             )
         }
-        // After the type check on purpose: the AST path reaches `mainNotFound`
-        // last (declaration registration, then `executeMain`), so asking first
-        // here would let "no main" mask a program's real type errors.
+        // 放在类型检查之后是有意的：AST 路径最后才走到 `mainNotFound`
+        // （先登记声明，再 `executeMain`），先问就会让「没有 main」掩盖真正的类型错误。
         try requireMain(assembled)
-        // Same as every other lowering path: lowering re-infers match
-        // scrutinees after the checker popped its scopes, so the table that
-        // inference built has to outlive them.
+        // 与其他降载路径一致：检查器弹出作用域后，降载还要重新推导 match 的被检值，
+        // 所以推导建的这张表必须活过作用域。
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
         // 单文件也能跨模块调用：import 声明在模块内，别名需在降载前并入模块。
         // 与包路径共用同一合并入口，故两条路径对「import 带进来什么」不会给出不同答案。
@@ -81,8 +78,7 @@ public final class ProgramRunner: DebugHookHost {
         let checker = TypeChecker()
         try checkEntryConsistency(in: assembled)
         try checker.check(package: assembled, foreignConstantFailures: [:])
-        // Same ordering rule as the module path: type errors first, "no main"
-        // last, so the latter cannot mask the former.
+        // 与模块路径同一顺序规则：先报类型错误，「没有 main」最后，后者不能盖住前者。
         try requireMain(in: assembled)
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
         let lowered = try IRLowerer.lower(package: assembled, typeInference: checker.typeInference)
@@ -97,7 +93,7 @@ public final class ProgramRunner: DebugHookHost {
         try executor.run(module: module)
     }
 
-    // MARK: - Test blocks
+    // MARK: - 测试块
 
     /// 一个 `|test` 块的结果，`pini test` 按此报告。放在此处而非 `Interpreter`：
     /// 它是两个引擎共用的报告形状，不应随任一引擎退役。
@@ -228,14 +224,14 @@ public final class ProgramRunner: DebugHookHost {
         case .f64: return .float(0)
         case .boolean: return .bool(false)
         case .string: return .string("")
-        /// `Char` 单列一臂并返回 `null`：语言没有「空字符」，任何注入零值都会违反单字素不变量。
-        /// 写出来是为了让这个选择可见，而不是被 `default` 吸收。
+        // `Char` 单列一臂并返回 `null`：语言没有「空字符」，任何注入零值都会违反单字素不变量。
+        // 单独写出来是为了让这个选择可见，而不是被 `default` 吸收。
         case .char: return .null
         default: return .null
         }
     }
 
-    // MARK: - Entry consistency
+    // MARK: - 入口一致性
 
     /// 清单声明了入口文件时，`main` 必须落在其中之一：声明入口即承诺「程序从这里开始」，
     /// 别处的 `main` 是配置与代码不一致。空集表示未声明，不干预。
@@ -282,7 +278,7 @@ public final class ProgramRunner: DebugHookHost {
         return nil
     }
 
-    // MARK: - Main presence
+    // MARK: - main 是否存在
 
     /// 与 AST 路径的 `RuntimeError.mainNotFound` 对齐：两个引擎在不同阶段遇到同一条件，
     /// 这里主动判条件而不是捕获降载器的报错再匹配文案，调用方断言的错误类型因此不变。
@@ -314,9 +310,9 @@ public final class ProgramRunner: DebugHookHost {
     }
 }
 
-// MARK: - Errors
+// MARK: - 错误
 
-/// What can refuse a program before it runs on the IR path.
+/// IR 路径上程序开跑之前可能被拒的原因。
 public enum ProgramRunError: LocalizedError {
     /// 程序未通过类型检查：AST 单文件路径不检查，故这是新增的拒绝，不是新增的缺陷。
     case typeCheck([String])
