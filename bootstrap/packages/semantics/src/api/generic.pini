@@ -131,7 +131,6 @@ instanceWorld|func(world: MemberWorld, table: TypeTable, binds: Array<GenericBin
     out.decls = world.decls
     out.builtins = world.builtins
     out.functions = world.functions
-    out.labels = world.labels
     out.genericBindings = binds
     return out
 

@@ -361,9 +361,7 @@ typeText|func(pool: TypePool, id: I32,) -> (String,):
             return "(" + inner + ")?"
         return inner + "?"
     if isTypeClass(kind = entry.kind, expected = .typeClassTuple):
-        if len(entry.kids) == 0:
-            return "()"
-        return "(" + joinTypes(pool = pool, ids = entry.kids) + ",)"
+        return tupleText(pool = pool, entry = entry)
     if isTypeClass(kind = entry.kind, expected = .typeClassResult):
         return resultText(pool = pool, entry = entry)
     if isTypeClass(kind = entry.kind, expected = .typeClassFunction):
@@ -372,6 +370,38 @@ typeText|func(pool: TypePool, id: I32,) -> (String,):
             params = "()"
         return params + " -> " + typeText(pool = pool, id = entry.ret)
     return "<无效>"
+
+; 元组文本：有标签的分量印 `标签: 类型`，标签串与分量一一对应。
+tupleText|func(pool: TypePool, entry: TypeEntry,) -> (String,):
+    if len(entry.kids) == 0:
+        return "()"
+    var out = "("
+    var i = 0
+    while i < len(entry.kids):
+        if i > 0:
+            out = out + ", "
+        let label = tupleLabelAt(entry = entry, index = i)
+        if len(label) > 0:
+            out = out + label + ": "
+        out = out + typeText(pool = pool, id = entry.kids[i])
+        i = i + 1
+    return out + ",)"
+
+; 元组分量标签：条目名存标签串，空段表示该分量无标签；越界或无标签答空串。
+tupleLabelAt|func(entry: TypeEntry, index: I32,) -> (String,):
+    if index < 0 || len(entry.name) == 0:
+        return ""
+    var at = 0
+    var segment = 0
+    var start = 0
+    while at <= len(entry.name):
+        if at == len(entry.name) || ord(entry.name[at]) == 44:
+            if segment == index:
+                return entry.name.substring(start, at)
+            segment = segment + 1
+            start = at + 1
+        at = at + 1
+    return ""
 
 ; 结果文本：`^T` 是 `Result<T, Error>` 的糖；错误实参非内建 Error 时退回全写。
 resultText|func(pool: TypePool, entry: TypeEntry,) -> (String,):

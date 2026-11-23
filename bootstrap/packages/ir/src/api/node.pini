@@ -523,9 +523,28 @@ irEnumType|func(pool: IrTypePool, name: String,) -> (IrTypeInsert,):
 irFunctionType|func(pool: IrTypePool, params: Array<I32>, ret: I32, uses: Array<I32>,) -> (IrTypeInsert,):
     return irInternType(pool = pool, kind = .irTypeFunction, name = "", kids = params, ret = ret, uses = uses, flags = 0)
 
-; 元组类型驻留：分量按声明序，标签不进池（标签只供诊断，槽序即分量序）。
-irTupleType|func(pool: IrTypePool, fields: Array<I32>,) -> (IrTypeInsert,):
-    return irInternType(pool = pool, kind = .irTypeTuple, name = "", kids = fields, ret = -1, uses = [], flags = 0)
+; 元组类型驻留：分量按声明序；标签串随类型入池，供成员读按名定位槽序。
+irTupleType|func(pool: IrTypePool, fields: Array<I32>, labels: String,) -> (IrTypeInsert,):
+    return irInternType(pool = pool, kind = .irTypeTuple, name = labels, kids = fields, ret = -1, uses = [], flags = 0)
+
+; 元组标签序号：类型名存标签串，空段表示该分量无标签；未命中答 -1。
+irTupleLabelIndex|func(pool: IrTypePool, id: I32, name: String,) -> (I32,):
+    if id < 0 || id >= len(pool.entries) || len(name) == 0:
+        return -1
+    let entry = pool.entries[id]
+    if len(entry.name) == 0:
+        return -1
+    var at = 0
+    var segment = 0
+    var start = 0
+    while at <= len(entry.name):
+        if at == len(entry.name) || ord(entry.name[at]) == 44:
+            if segment < len(entry.kids) && entry.name.substring(start, at) == name:
+                return segment
+            segment = segment + 1
+            start = at + 1
+        at = at + 1
+    return -1
 
 ; 池长：下标合法区间是 0 到 count - 1。
 irTypeCount|func(_pool: IrTypePool,) -> (I32,):

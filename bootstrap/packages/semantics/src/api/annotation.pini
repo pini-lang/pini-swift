@@ -291,7 +291,7 @@ resolveContainerType|func(cursor: TypeCursor, pool: TypePool, node: TypeNode, na
     out.root = inserted.id
     return out
 
-; 元组：逐个解析分量，空表即 `()`。
+; 元组：逐个解析分量，空表即 `()`；分量标签取自类型节点的标签串。
 resolveTuple|func(cursor: TypeCursor, pool: TypePool, node: TypeNode,) -> (TypeResolution,):
     var out = TypeResolution()
     var ids: Array<I32> = []
@@ -309,7 +309,7 @@ resolveTuple|func(cursor: TypeCursor, pool: TypePool, node: TypeNode,) -> (TypeR
     out.pool = working
     if failed:
         return out
-    let inserted = intern(pool = working, kind = .typeClassTuple, name = "", kids = ids, ret = -1)
+    let inserted = intern(pool = working, kind = .typeClassTuple, name = node.labels, kids = ids, ret = -1)
     out.pool = inserted.pool
     out.root = inserted.id
     return out

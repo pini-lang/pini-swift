@@ -878,3 +878,45 @@ defer单行|test() -> ():
     let 形参 = ast.declAt(方法.kids[0])
     assert(形参.nameEnd - 形参.nameStart == 4, "形参名是 self")
     return
+
+; 元组标签：`名字 = 值` 的元素与实参同形，单元素带标签仍是元组。
+元组标签解析|test() -> ():
+    let 结果 = parseText("取|func() -> (I32,):\n    let t = (a = 1, 2,)\n    return t.0\n")
+    assert(len(结果.diagnostics) == 0, "不应有语法诊断")
+    let ast = 结果.ast
+    var 元组 = -1
+    var i = 0
+    while i < ast.exprCount():
+        if ast.isTupleExpr(i):
+            元组 = i
+        i = i + 1
+    assert(元组 >= 0, "应有一个元组节点")
+    let 元素 = ast.exprAt(元组).kids
+    assert(len(元素) == 2, "两个元素")
+    assert(ast.isLabeledArgument(元素[0]), "首元素带标签")
+    assert(!ast.isLabeledArgument(元素[1]), "次元素是位置值")
+    let 单 = parseText("取|func() -> (I32,):\n    let t = (a = 1)\n    return t.a\n")
+    assert(len(单.diagnostics) == 0, "单元素带标签不应报诊断")
+    var 单个 = -1
+    i = 0
+    while i < 单.ast.exprCount():
+        if 单.ast.isTupleExpr(i):
+            单个 = i
+        i = i + 1
+    assert(单个 >= 0, "单元素带标签应保留元组")
+    assert(len(单.ast.exprAt(单个).kids) == 1, "元组里只有一个元素")
+    return
+
+; 命名元组类型：元素标签存类型节点的标签串，逐分量对应。
+命名元组类型解析|test() -> ():
+    let 结果 = parseText("f|func() -> ():\n    var t: (a: I32, b: Bool,) = (a = 1, b = true,)\n    return\n")
+    assert(len(结果.diagnostics) == 0, "不应有语法诊断")
+    let ast = 结果.ast
+    let 声明 = ast.declAt(ast.itemAt(0))
+    let 块 = ast.stmtAt(声明.body)
+    let 语句 = ast.stmtAt(块.kids[0])
+    assert(ast.isType(id = 语句.typeId, kind = .typeTuple), "应是元组类型")
+    let 类型 = ast.typeAt(语句.typeId)
+    assert(len(类型.kids) == 2, "两个分量")
+    assert(类型.labels == "a,b", "标签串应逐分量，实得 " + 类型.labels)
+    return

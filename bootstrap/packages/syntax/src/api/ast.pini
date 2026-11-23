@@ -7,6 +7,7 @@ decls: Array<DeclNode> = []
 items: Array<I32> = []
 
 ; 类型节点：`kids` 是元素或实参，函数类型另用 `ret` 指向返回类型。
+; `labels` 只对元组成立：逐分量标签以逗号分隔，空段表示该分量无标签，空串表示全无标签。
 (TypeNode)
 kind: I32 = 0
 start: I32 = 0
@@ -15,6 +16,7 @@ nameStart: I32 = -1
 nameEnd: I32 = -1
 kids: Array<I32> = []
 ret: I32 = -1
+labels: String = ""
 
 ; 表达式节点：`op` 是运算符记号码，`typeId` 是转换节点的目标类型与字典条目的值标注，
 ; `body` 是 try 的处理器块；`isAsync` 只对函数字面量成立，`kids` 按源序排列。

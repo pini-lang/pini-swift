@@ -302,6 +302,21 @@ intSpellingValue|func(text: String,) -> (I64,):
         i = i + 1
     return value
 
+; 十进制序号：整串都是数字才成立，否则答 -1；与语义面的数字名字判据同规。
+decimalIndex|func(text: String,) -> (I32,):
+    let pieces = chars(text)
+    if len(pieces) == 0 || len(pieces) > 4:
+        return -1
+    var value = 0
+    var i = 0
+    while i < len(pieces):
+        let code = ord(pieces[i])
+        if code < 48 || code > 57:
+            return -1
+        value = value * 10 + (code - 48)
+        i = i + 1
+    return value
+
 ; 造节点并入池：类别、类型、算符与子节点一次写齐。
 addIrNode|func(pool: IrNodePool, kind: I32, typeId: I32, op: I32, kids: Array<I32>,) -> (IrNodeInsert,):
     var node = irMakeNode(kind = kind, typeId = typeId)
@@ -1865,10 +1880,12 @@ lowerMember|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: T
         baseType = unownedElement
     let slot = fieldSlotOf(table = done.frame.decls, typeId = baseType, name = fieldName)
     if slot < 0:
-        ; 元组成员按字段序读：名字即序号，标签名不在本层解析。
+        ; 元组成员：数字名即序号，其余按类型的标签串定位；两路都取不到才记缺口。
         let baseTag = irTypeTag(irTypeAt(pool = map.pool, id = baseType).kind)
         if baseTag == irTypeTag(.irTypeTuple):
-            let index = intSpellingValue(text = fieldName) as I32
+            var index = decimalIndex(text = fieldName)
+            if index < 0:
+                index = irTupleLabelIndex(pool = map.pool, id = baseType, name = fieldName)
             if index < 0:
                 return missNeed(out = done, unit = unit, id = id, what = "元组成员 " + fieldName)
             let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irTupleIndexGet), typeId = typeId, op = index, kids = [baseId])

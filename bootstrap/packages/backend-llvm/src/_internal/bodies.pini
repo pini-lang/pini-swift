@@ -2203,6 +2203,73 @@ emitArrayPrint|func(ctx: BodyCtx, module: IrModule, arrayText: String, elemType:
     appendLine(sink = out.lines, text = "  call i32 (ptr, ...) @printf(ptr @fmt_rbracket)")
     return out
 
+; 集合打印：花括号包住、逗号分隔，元素按自身类别出；顺序即运行时去重后的迭代序。
+emitSetPrint|func(ctx: BodyCtx, module: IrModule, setText: String, elemType: I32,) -> (BodyCtx,):
+    var out = ctx
+    let elemTag = typeTagAt(module = module, typeId = elemType)
+    let printable = elemTag == 1 || elemTag == 2 || elemTag == 3 || elemTag == 4 || elemTag == 5
+    if !printable && elemTag != 6 && elemTag != 7 && elemTag != 8 && elemTag != 9 && elemTag != 12 && elemTag != 16 && elemTag != 19:
+        out = addGap(ctx = out, gap = "打印集合元素 类别码 " + countText(elemTag))
+        return out
+    useExtern(use = out.externs, name = "bk_set_len")
+    useExtern(use = out.externs, name = "bk_set_at")
+    let elemName = llvmTypeName(pool = module.types, typeId = elemType)
+    let at = out.label
+    out.label = at + 1
+    let condLabel = labelName(prefix = "set.cond.", index = at)
+    let elemLabel = labelName(prefix = "set.elem.", index = at)
+    let sepLabel = labelName(prefix = "set.sep.", index = at)
+    let putLabel = labelName(prefix = "set.put.", index = at)
+    let incLabel = labelName(prefix = "set.inc.", index = at)
+    let endLabel = labelName(prefix = "set.end.", index = at)
+    let idxName = "%setidx" + countText(at)
+    let lenName = "%setlen" + countText(at)
+    appendLine(sink = out.lines, text = "  " + idxName + " = alloca i32")
+    appendLine(sink = out.lines, text = "  store i32 0, ptr " + idxName)
+    appendLine(sink = out.lines, text = "  call i32 (ptr, ...) @printf(ptr @fmt_lbrace)")
+    appendLine(sink = out.lines, text = "  " + lenName + " = call i32 @bk_set_len(ptr " + setText + ")")
+    appendLine(sink = out.lines, text = "  br label %" + condLabel)
+    appendLine(sink = out.lines, text = condLabel + ":")
+    let indexId = out.temp
+    out.temp = indexId + 1
+    let index = tempName(index = indexId)
+    appendLine(sink = out.lines, text = "  " + index + " = load i32, ptr " + idxName)
+    let moreId = out.temp
+    out.temp = moreId + 1
+    let more = tempName(index = moreId)
+    appendLine(sink = out.lines, text = "  " + more + " = icmp slt i32 " + index + ", " + lenName)
+    appendLine(sink = out.lines, text = "  br i1 " + more + ", label %" + elemLabel + ", label %" + endLabel)
+    appendLine(sink = out.lines, text = elemLabel + ":")
+    let firstId = out.temp
+    out.temp = firstId + 1
+    let first = tempName(index = firstId)
+    appendLine(sink = out.lines, text = "  " + first + " = icmp eq i32 " + index + ", 0")
+    appendLine(sink = out.lines, text = "  br i1 " + first + ", label %" + putLabel + ", label %" + sepLabel)
+    appendLine(sink = out.lines, text = sepLabel + ":")
+    appendLine(sink = out.lines, text = "  call i32 (ptr, ...) @printf(ptr @fmt_comma)")
+    appendLine(sink = out.lines, text = "  br label %" + putLabel)
+    appendLine(sink = out.lines, text = putLabel + ":")
+    let boxId = out.temp
+    out.temp = boxId + 1
+    let box = tempName(index = boxId)
+    appendLine(sink = out.lines, text = "  " + box + " = call ptr @bk_set_at(ptr " + setText + ", i32 " + index + ")")
+    let valueId = out.temp
+    out.temp = valueId + 1
+    let value = tempName(index = valueId)
+    appendLine(sink = out.lines, text = "  " + value + " = load " + elemName + ", ptr " + box)
+    out = printAnyValue(ctx = out, module = module, text = value, typeId = elemType)
+    appendLine(sink = out.lines, text = "  br label %" + incLabel)
+    appendLine(sink = out.lines, text = incLabel + ":")
+    let nextId = out.temp
+    out.temp = nextId + 1
+    let next = tempName(index = nextId)
+    appendLine(sink = out.lines, text = "  " + next + " = add i32 " + index + ", 1")
+    appendLine(sink = out.lines, text = "  store i32 " + next + ", ptr " + idxName)
+    appendLine(sink = out.lines, text = "  br label %" + condLabel)
+    appendLine(sink = out.lines, text = endLabel + ":")
+    appendLine(sink = out.lines, text = "  call i32 (ptr, ...) @printf(ptr @fmt_rbrace)")
+    return out
+
 ; 字典打印：花括号包住、逗号分隔，键与值各按自身类别出。
 emitDictPrint|func(ctx: BodyCtx, module: IrModule, dictText: String, keyType: I32, valueType: I32,) -> (BodyCtx,):
     var out = ctx
@@ -2296,7 +2363,7 @@ emitTuplePrint|func(ctx: BodyCtx, module: IrModule, text: String, typeId: I32,) 
     appendLine(sink = out.lines, text = "  call i32 (ptr, ...) @printf(ptr @fmt_rbracket)")
     return out
 
-; 展示一个值：容器与元组各走自己的形状，其余回到标量通道。
+; 展示一个值：容器、集合与元组各走自己的形状，其余回到标量通道。
 printAnyValue|func(ctx: BodyCtx, module: IrModule, text: String, typeId: I32,) -> (BodyCtx,):
     let tag = typeTagAt(module = module, typeId = typeId)
     if tag == 12:
@@ -2304,6 +2371,11 @@ printAnyValue|func(ctx: BodyCtx, module: IrModule, text: String, typeId: I32,) -
         if len(entry.kids) == 0:
             return addGap(ctx = ctx, gap = "打印数组缺元素类型")
         return emitArrayPrint(ctx = ctx, module = module, arrayText = text, elemType = entry.kids[0])
+    if tag == 17:
+        let entry = irTypeAt(pool = module.types, id = typeId)
+        if len(entry.kids) == 0:
+            return addGap(ctx = ctx, gap = "打印集合缺元素类型")
+        return emitSetPrint(ctx = ctx, module = module, setText = text, elemType = entry.kids[0])
     if tag == 16:
         let entry = irTypeAt(pool = module.types, id = typeId)
         if len(entry.kids) < 2:

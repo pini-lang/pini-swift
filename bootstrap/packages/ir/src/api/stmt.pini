@@ -887,6 +887,8 @@ lowerMatchStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map
                 condId = cmp.id
         let mark = frameMark(frame = done.frame)
         var armIds: Array<I32> = []
+        var bindSlots: Array<I32> = []
+        var bindTypes: Array<I32> = []
         if family != 0:
             var b = 0
             while b < len(info.bindings):
@@ -920,6 +922,8 @@ lowerMatchStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map
                     if caseName == "err":
                         done.frame = markErrorSlot(frame = done.frame, slot = done.frame.nextSlot - 1)
                     armIds = armIds.append(insertedLocal.id)
+                    bindSlots = bindSlots.append(done.frame.nextSlot - 1)
+                    bindTypes = bindTypes.append(typeId)
                 b = b + 1
         elif len(info.bindings) > 0:
             return missStmt(out = done, unit = unit, stmtId = stmtId, what = "裸值匹配的绑定")
@@ -934,6 +938,16 @@ lowerMatchStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map
         while k < len(body.ids):
             armIds = armIds.append(body.ids[k])
             k = k + 1
+        ; 绑定槽随分支结束归还：拖到函数出口会让弱引用读到已该销毁的对象。
+        var q = len(bindSlots) - 1
+        while q >= 0:
+            var dropBind = irMakeNode(kind = irStmtTag(.irReleaseVar), typeId = bindTypes[q])
+            dropBind.intValue = bindSlots[q] as I64
+            let insertedBindDrop = irAppendNode(pool = done.pool, node = dropBind)
+            done.pool = insertedBindDrop.pool
+            done.positions = recordPosition(positions = done.positions, node = insertedBindDrop.id, offset = unit.ast.stmtAt(stmtId).start)
+            armIds = armIds.append(insertedBindDrop.id)
+            q = q - 1
         done.frame = closeBlock(frame = done.frame, mark = mark)
         if condId < 0:
             elseIds = armIds

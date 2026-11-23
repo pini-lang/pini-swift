@@ -8,7 +8,7 @@
 access	单文件	ok	ok	ok	通过	通过	-	-	-
 array-basic	单文件	ok	ok	ok	通过	通过	-	-	-
 closures	单文件	ok	ok	ok	通过	通过	-	-	-
-collections	单文件	fail	-	-	语法	缺语法构造	元组元素的标签位	E2-001@20:20	期望`)`，实际得到=
+collections	单文件	ok	ok	ok	通过	通过	-	-	-
 comments	单文件	ok	ok	ok	通过	通过	-	-	-
 composition	单文件	ok	ok	ok	通过	通过	-	-	-
 compound-assign	单文件	ok	ok	ok	通过	通过	-	-	-

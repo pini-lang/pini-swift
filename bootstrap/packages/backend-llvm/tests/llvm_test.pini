@@ -1020,7 +1020,7 @@ _backend_kit = "../../backend-kit"
     pool = intType.pool
     let text = irScalarTypeOfCode(pool = pool, code = 8, name = "string")
     pool = text.pool
-    let unit = irTupleType(pool = pool, fields = [])
+    let unit = irTupleType(pool = pool, fields = [], labels = "")
     pool = unit.pool
     let outcome = irWrapTypeOfCode(pool = pool, code = 10, name = "", inner = unit.id)
     return outcome.pool
@@ -1598,4 +1598,66 @@ _backend_kit = "../../backend-kit"
     assert(!result.failed, "数学内建应发得出来")
     assert(发射含子串(text = result.text, needle = "icmp slt i32"), "abs 应按比较展开")
     assert(发射含子串(text = result.text, needle = "select i1"), "abs 应按选择取值")
+    return
+
+; 集合模块：i32 与 set<i32> 两个类型，一个字面量、一次打印；槽位零。
+发射造集合模块|func() -> (IrModule,):
+    var module = IrModule()
+    var pool = IrTypePool()
+    let intType = irScalarTypeOfCode(pool = pool, code = 1, name = "i32")
+    pool = intType.pool
+    let setType = irWrapTypeOfCode(pool = pool, code = 17, name = "", inner = intType.id)
+    module.types = setType.pool
+    var nodes = IrNodePool()
+    var two = irMakeNode(kind = tagOfName(name = "intConst"), typeId = intType.id)
+    two.intValue = 2
+    let placedTwo = irAppendNode(pool = nodes, node = two)
+    nodes = placedTwo.pool
+    var three = irMakeNode(kind = tagOfName(name = "intConst"), typeId = intType.id)
+    three.intValue = 3
+    let placedThree = irAppendNode(pool = nodes, node = three)
+    nodes = placedThree.pool
+    var literal = irMakeNode(kind = tagOfName(name = "setLiteral"), typeId = setType.id)
+    literal.kids = [placedTwo.id, placedThree.id]
+    let placedLiteral = irAppendNode(pool = nodes, node = literal)
+    nodes = placedLiteral.pool
+    var alloc = irMakeNode(kind = tagOfName(name = "allocVar"), typeId = setType.id)
+    alloc.text = 0
+    alloc.intValue = 0
+    alloc.kids = [placedLiteral.id]
+    let placedAlloc = irAppendNode(pool = nodes, node = alloc)
+    nodes = placedAlloc.pool
+    var reading = irMakeNode(kind = tagOfName(name = "load"), typeId = setType.id)
+    reading.intValue = 0
+    let placedReading = irAppendNode(pool = nodes, node = reading)
+    nodes = placedReading.pool
+    var printed = irMakeNode(kind = tagOfName(name = "printCall"), typeId = -1)
+    printed.kids = [placedReading.id]
+    let placedPrintCall = irAppendNode(pool = nodes, node = printed)
+    nodes = placedPrintCall.pool
+    var printStmt = irMakeNode(kind = tagOfName(name = "exprStmt"), typeId = -1)
+    printStmt.kids = [placedPrintCall.id]
+    let placedPrint = irAppendNode(pool = nodes, node = printStmt)
+    nodes = placedPrint.pool
+    var back = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    let placedBack = irAppendNode(pool = nodes, node = back)
+    nodes = placedBack.pool
+    module.nodes = nodes
+    var fn = IrFunction()
+    fn.name = "main"
+    fn.returnType = -1
+    fn.body = [placedAlloc.id, placedPrint.id, placedBack.id]
+    module.functions = module.functions.append(fn)
+    return module
+
+; 集合打印：花括号包住、逗号分隔，元素从运行时按序取回后回到标量通道。
+集合打印|test() -> ():
+    let module = 发射造集合模块()
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    if result.failed:
+        assert(false, "缺口：" + result.gaps[0])
+    assert(发射含子串(text = result.text, needle = "call i32 (ptr, ...) @printf(ptr @fmt_lbrace)"), "集合应以左花括号开头")
+    assert(发射含子串(text = result.text, needle = "declare ptr @bk_set_at(ptr, i32)"), "取元素符号应出声明")
+    assert(发射含子串(text = result.text, needle = "call ptr @bk_set_at(ptr"), "元素应按序取回")
+    assert(发射含子串(text = result.text, needle = "call i32 (ptr, ...) @printf(ptr @fmt_rbrace)"), "集合应以右花括号收尾")
     return

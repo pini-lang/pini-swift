@@ -21,8 +21,11 @@ sameType|func(pool: TypePool, first: I32, second: I32,) -> (Bool,):
         return sameKey(first = a.key, second = b.key) && sameTypeList(pool = pool, first = a.kids, second = b.kids)
     if isTypeClass(kind = a.kind, expected = .typeClassPointer) || isTypeClass(kind = a.kind, expected = .typeClassOptional):
         return sameType(pool = pool, first = a.kids[0], second = b.kids[0])
-    if isTypeClass(kind = a.kind, expected = .typeClassResult) || isTypeClass(kind = a.kind, expected = .typeClassTuple):
+    if isTypeClass(kind = a.kind, expected = .typeClassResult):
         return sameTypeList(pool = pool, first = a.kids, second = b.kids)
+    ; 元组：标签是类型身份的一部分，同名同形才等价；赋值面另按位置放宽。
+    if isTypeClass(kind = a.kind, expected = .typeClassTuple):
+        return sameTypeList(pool = pool, first = a.kids, second = b.kids) && sameKey(first = a.key, second = b.key)
     if isTypeClass(kind = a.kind, expected = .typeClassFunction):
         return sameTypeList(pool = pool, first = a.kids, second = b.kids) && sameType(pool = pool, first = a.ret, second = b.ret)
     return false
@@ -108,7 +111,21 @@ isAssignable|func(pool: TypePool, from: I32, to: I32,) -> (Bool,):
         if isTypeClass(kind = source.kind, expected = .typeClassResult):
             return isAssignable(pool = pool, from = source.kids[0], to = target.kids[0])
         return isAssignable(pool = pool, from = from, to = target.kids[0])
+    ; 元组：按位置逐位可赋值，标签不参与；带标签的值因此能进位置元组声明。
+    if isTypeClass(kind = source.kind, expected = .typeClassTuple) && isTypeClass(kind = target.kind, expected = .typeClassTuple):
+        return assignableList(pool = pool, first = source.kids, second = target.kids)
     return false
+
+; 分量逐位可赋值：长度须同，按位置递推；标签不参与。
+assignableList|func(pool: TypePool, first: Array<I32>, second: Array<I32>,) -> (Bool,):
+    if len(first) != len(second):
+        return false
+    var i = 0
+    while i < len(first):
+        if !isAssignable(pool = pool, from = first[i], to = second[i]):
+            return false
+        i = i + 1
+    return true
 
 ; 标量名：只有标量有名字，其余答空串。
 scalarNameOf|func(pool: TypePool, id: I32,) -> (String,):

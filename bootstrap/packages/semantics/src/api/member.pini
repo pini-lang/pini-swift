@@ -49,11 +49,6 @@ error: MemberError = MemberError()
 failed: Bool = false
 deferred: Bool = false
 
-; 元组标签：按类型下标挂一串标签拼写，位置即分量序号。
-(TypeLabels)
-typeId: I32 = -1
-labels: Array<String> = []
-
 ; 组合表：结构体名与其嵌入父类型名；没有嵌入的结构不入表，判定只查这张表。
 (TypeComposition)
 name: String = ""
@@ -68,7 +63,6 @@ symbols: SymbolIndex = SymbolIndex()
 decls: DeclIndex = DeclIndex()
 builtins: Array<BuiltinMember> = []
 functions: Array<BuiltinFunction> = []
-labels: Array<TypeLabels> = []
 genericBindings: Array<GenericBinding> = []
 compositions: Array<TypeComposition> = []
 
@@ -203,15 +197,6 @@ attachTypeParams|func(world: MemberWorld,) -> (MemberWorld,):
     out.genericBindings = params.bindings
     return out
 
-; 挂标签：同一类型重复挂时后挂的整串替换，位置即分量序号。
-withTupleLabels|func(world: MemberWorld, typeId: I32, labels: Array<String>,) -> (MemberWorld,):
-    var out = world
-    var row = TypeLabels()
-    row.typeId = typeId
-    row.labels = labels
-    out.labels = out.labels.append(row)
-    return out
-
 ; 名义类型查找：按名字在池里找结构、对象或枚举；未驻留答 -1。
 nominalTypeId|func(world: MemberWorld, name: String,) -> (I32,):
     var i = 0
@@ -234,17 +219,14 @@ ownerTypeId|func(world: MemberWorld, name: String,) -> (I32,):
         i = i + 1
     return -1
 
-; 标签序号：按类型下标取标签串，逐项比 NFC 键；未命中答 -1。
-tupleLabelIndex|func(world: MemberWorld, typeId: I32, key: Array<U8>,) -> (I32,):
-    var r = 0
-    while r < len(world.labels):
-        if world.labels[r].typeId == typeId:
-            var i = 0
-            while i < len(world.labels[r].labels):
-                if sameKey(first = keyOfText(world.labels[r].labels[i]), second = key):
-                    return i
-                i = i + 1
-        r = r + 1
+; 标签序号：元组条目名存标签串，逐段按 NFC 键比；未命中答 -1。
+tupleLabelIndex|func(entry: TypeEntry, key: Array<U8>,) -> (I32,):
+    var i = 0
+    while i < len(entry.kids):
+        let label = tupleLabelAt(entry = entry, index = i)
+        if len(label) > 0 && sameKey(first = keyOfText(label), second = key):
+            return i
+        i = i + 1
     return -1
 
 ; 数字序号：整串十进制数字才成立，否则答 -1；四位以上直接否决，避免回绕。
@@ -318,8 +300,8 @@ variantType|func(world: MemberWorld, ref: DeclRef, enumId: I32,) -> (TypeInsert,
         return hitType(pool = world.types.pool, id = enumId)
     return intern(pool = world.types.pool, kind = .typeClassFunction, name = "", kids = params, ret = enumId)
 
-; 元组成员：数字名字按位置取分量，其余名字走标签表。
-checkTupleMember|func(world: MemberWorld, out: MemberResult, entry: TypeEntry, access: MemberAccess,) -> (MemberResult,):
+; 元组成员：数字名字按位置取分量，其余名字走标签串。
+checkTupleMember|func(out: MemberResult, entry: TypeEntry, access: MemberAccess,) -> (MemberResult,):
     let typeName = typeText(pool = out.pool, id = access.receiver)
     let index = digitIndex(access.spelling)
     if index >= 0:
@@ -329,7 +311,7 @@ checkTupleMember|func(world: MemberWorld, out: MemberResult, entry: TypeEntry, a
         done.kind = .memberTupleIndex
         done.typeId = entry.kids[index]
         return done
-    let label = tupleLabelIndex(world = world, typeId = access.receiver, key = access.key)
+    let label = tupleLabelIndex(entry = entry, key = access.key)
     if label < 0 || label >= len(entry.kids):
         return failMember(out = out, access = access, kind = .memberUnknown, typeName = typeName)
     var done = out
@@ -499,7 +481,7 @@ checkMember|func(world: MemberWorld, access: MemberAccess,) -> (MemberResult,):
         return deferMember(out = out, receiver = access.receiver)
     let entry = out.pool.entries[access.receiver]
     if isTypeClass(kind = entry.kind, expected = .typeClassTuple):
-        return checkTupleMember(world = world, out = out, entry = entry, access = access)
+        return checkTupleMember(out = out, entry = entry, access = access)
     if isTypeClass(kind = entry.kind, expected = .typeClassScalar) && entry.name == "String":
         let declared = probeDeclared(world = world, pool = out.pool, entry = entry, access = access)
         if !isUnknownMember(result = declared):
