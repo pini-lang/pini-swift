@@ -334,6 +334,19 @@ fallbackIrType|func(map: TypeMap, types: ExprTypes, unit: CompilationUnit, unitI
         if len(expr.kids) > 0:
             return exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = frame, bytes = bytes, id = expr.kids[0])
         return -1
+    if unit.ast.isTupleExpr(id):
+        var ids: Array<I32> = []
+        var t = 0
+        while t < len(expr.kids):
+            var member = expr.kids[t]
+            if unit.ast.isLabeledArgument(member):
+                member = unit.ast.childOf(id = member, index = 0)
+            let memberType = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = frame, bytes = bytes, id = member)
+            if memberType < 0:
+                return -1
+            ids = ids.append(memberType)
+            t = t + 1
+        return findTupleType(pool = map.pool, kids = ids)
     if unit.ast.isMemberExpr(id):
         if len(expr.kids) < 1:
             return -1
@@ -915,7 +928,17 @@ calleeOfMethod|func(frame: LowerFrame, map: TypeMap, pool: IrNodePool, receiver:
     let owner = receiverOwner(map = map, typeId = irNodeAt(pool = pool, id = receiver).typeId)
     if len(owner) == 0:
         return out
-    let symbol = lookupMemberByName(index = frame.world.symbols, owner = owner, name = memberName)
+    var symbol = lookupMemberByName(index = frame.world.symbols, owner = owner, name = memberName)
+    var methodOwner = owner
+    if symbol < 0:
+        ; 组合：方法声明在嵌入的父类型上，逐级向上找；符号名按声明所在的类型出。
+        let parents = composedParentNames(world = frame.world, owner = owner)
+        var p = 0
+        while p < len(parents) && symbol < 0:
+            symbol = lookupMemberByName(index = frame.world.symbols, owner = parents[p], name = memberName)
+            if symbol >= 0:
+                methodOwner = parents[p]
+            p = p + 1
     let ref = symbolDecl(world = frame.world, symbol = symbol)
     if ref.unit < 0:
         return out
@@ -927,10 +950,10 @@ calleeOfMethod|func(frame: LowerFrame, map: TypeMap, pool: IrNodePool, receiver:
     out.ret = frame.world.types.typeOf(unit = ref.unit, decl = ref.decl)
     out.ordered = true
     if decl.isOwn:
-        out.name = ownMethodName(method = memberName, owner = owner)
+        out.name = ownMethodName(method = memberName, owner = methodOwner)
         out.takesReceiver = false
     else:
-        out.name = instanceMethodName(method = memberName, owner = owner)
+        out.name = instanceMethodName(method = memberName, owner = methodOwner)
         out.takesReceiver = true
     return out
 
@@ -980,32 +1003,72 @@ zeroConstructType|func(map: TypeMap, name: String, isObject: Bool,) -> (I32,):
 
 ; 零参构造：字段初值按声明序展开成「字段号 + 表达式」对，随节点带走。
 ; 无初值或初值定不了型的字段不发对子，后端按字段类型清零；初值在声明所在单元取表达式。
+; 字段默认值来源：沿组合链找该名字的字段声明，返回所在单元与初值表达式下标。
+(FieldDefault)
+unit: I32 = -1
+expr: I32 = -1
+
+findFieldDefault|func(world: MemberWorld, owner: String, name: String, depth: I32,) -> (FieldDefault,):
+    var out = FieldDefault()
+    if depth > 4:
+        return out
+    let symbol = lookupTopByName(index = world.symbols, name = owner)
+    let ref = symbolDecl(world = world, symbol = symbol)
+    if ref.unit < 0:
+        return out
+    let unit = world.units[ref.unit]
+    let decl = unit.ast.decls[ref.decl]
+    let view = unitBytes(unit)
+    var i = 0
+    while i < len(decl.kids):
+        let child = unit.ast.decls[decl.kids[i]]
+        if isFieldDeclCode(child.kind):
+            let fieldName = declName(unit = unit, bytes = view, decl = child)
+            if fieldName == name:
+                out.unit = ref.unit
+                if len(child.kids) > 0:
+                    out.expr = child.kids[0]
+                return out
+        i = i + 1
+    let parents = composedParentNames(world = world, owner = owner)
+    var p = 0
+    while p < len(parents):
+        let up = findFieldDefault(world = world, owner = parents[p], name = name, depth = depth + 1)
+        if up.unit >= 0:
+            return up
+        p = p + 1
+    return out
+
+; 构造默认值：按扁平化后的字段序逐个找初值，父字段的初值从父声明取。
+; 缺初值的字段不发节点，由构造节点留零值。
 lowerConstructDefaults|func(out: LowerExpr, map: TypeMap, types: ExprTypes, ref: DeclRef, typeId: I32,) -> (LowerExpr,):
     var done = out
     let declUnit = done.frame.world.units[ref.unit]
     let decl = declUnit.ast.decls[ref.decl]
-    let declBytes = unitBytes(declUnit)
+    let ownerName = declName(unit = declUnit, bytes = unitBytes(declUnit), decl = decl)
+    let flat = declAt(table = done.frame.decls, typeId = typeId)
     var kids: Array<I32> = []
     var index = 0
     var i = 0
-    while i < len(decl.kids):
-        let child = declUnit.ast.decls[decl.kids[i]]
-        if isFieldDeclCode(child.kind):
-            if len(child.kids) > 0:
-                let before = done
-                let one = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = declUnit, unitIndex = ref.unit, bytes = declBytes, frame = done.frame, id = child.kids[0])
-                if !one.failed:
-                    var mark = irMakeNode(kind = irExprTag(.irIntConst), typeId = map.i32Id)
-                    mark.intValue = index as I64
-                    let placed = irAppendNode(pool = one.pool, node = mark)
-                    done.pool = placed.pool
-                    done.texts = one.texts
-                    done.frame = one.frame
-                    kids = kids.append(placed.id)
-                    kids = kids.append(one.id)
-                else:
-                    done = before
-            index = index + 1
+    while i < len(flat.fields):
+        let fieldName = flat.fields[i].name
+        let source = findFieldDefault(world = done.frame.world, owner = ownerName, name = fieldName, depth = 0)
+        if source.unit >= 0 && source.expr >= 0:
+            let sourceUnit = done.frame.world.units[source.unit]
+            let before = done
+            let one = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = sourceUnit, unitIndex = source.unit, bytes = unitBytes(sourceUnit), frame = done.frame, id = source.expr)
+            if !one.failed:
+                var mark = irMakeNode(kind = irExprTag(.irIntConst), typeId = map.i32Id)
+                mark.intValue = index as I64
+                let placed = irAppendNode(pool = one.pool, node = mark)
+                done.pool = placed.pool
+                done.texts = one.texts
+                done.frame = one.frame
+                kids = kids.append(placed.id)
+                kids = kids.append(one.id)
+            else:
+                done = before
+        index = index + 1
         i = i + 1
     let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irConstruct), typeId = typeId, op = 0, kids = kids)
     done.pool = inserted.pool
@@ -1113,11 +1176,42 @@ lowerNamedCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map
     done.id = inserted.id
     return done
 
+; 错误值判定：匹配错误支绑定的局部，或语义类型是内建错误两个名义名之一。
+isErrorValueArg|func(world: MemberWorld, frame: LowerFrame, types: ExprTypes, unit: CompilationUnit, unitIndex: I32, bytes: Array<U8>, id: I32,) -> (Bool,):
+    if id >= 0 && id < unit.ast.exprCount() && unit.ast.isIdentifierExpr(id):
+        let expr = unit.ast.exprAt(id)
+        let name = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
+        let at = findIrLocal(frame = frame, name = name)
+        if at >= 0 && isErrorSlot(frame = frame, slot = frame.locals[at].slot):
+            return true
+    let semantic = exprTypeAt(table = types, unit = unitIndex, node = id)
+    if semantic < 0 || semantic >= len(world.types.pool.entries):
+        return false
+    let entry = world.types.pool.entries[semantic]
+    if !isScalarClass(entry.kind):
+        return false
+    return entry.name == "Error" || entry.name == "CancelError"
+
 ; 按名调用：被调方未知或内建时按源序传参，名字就用源码里的拼写。
 lowerPlainCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32, name: String, actuals: Array<IrActual>, leading: I32,) -> (LowerExpr,):
     var done = out
+    let expr = unit.ast.exprAt(id)
     if name == "print" && len(actuals) == 1 && leading < 0:
-        let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irPrintCall), typeId = -1, op = 0, kids = [actuals[0].id])
+        var valueId = actuals[0].id
+        ; 错误值在 IR 侧擦成整数；打印前先经消息入口换成字串，否则印出的是句柄位型。
+        var sourceId: I32 = expr.kids[1]
+        if unit.ast.isLabeledArgument(sourceId):
+            sourceId = unit.ast.childOf(id = sourceId, index = 0)
+        if isErrorValueArg(world = done.frame.world, frame = done.frame, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, id = sourceId) && map.stringId >= 0:
+            let placed = internText(texts = done.texts, value = "bk_error_message")
+            var call = irMakeNode(kind = irExprTag(.irCall), typeId = map.stringId)
+            call.text = placed.id
+            call.kids = [valueId]
+            let called = irAppendNode(pool = done.pool, node = call)
+            done.texts = placed.texts
+            done.pool = called.pool
+            valueId = called.id
+        let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irPrintCall), typeId = -1, op = 0, kids = [valueId])
         done.pool = inserted.pool
         done.id = inserted.id
         return done
@@ -1316,7 +1410,9 @@ lowerJoin|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: Typ
         return takeFailure(out = done, one = one)
     let handleType = irNodeAt(pool = done.pool, id = one.id).typeId
     if irTypeTag(irTypeAt(pool = map.pool, id = handleType).kind) != irTypeTag(.irTypeFuture):
-        return missNeed(out = done, unit = unit, id = id, what = "等待目标不是任务句柄")
+        ; 已在结算值上等待：没有句柄可等，原样透传。
+        done.id = one.id
+        return done
     var form = 1
     if awaits:
         form = 0
@@ -1543,18 +1639,26 @@ isFutureHandle|func(map: TypeMap, receiverType: I32,) -> (Bool,):
         return false
     return irTypeTag(irTypeAt(pool = map.pool, id = receiverType).kind) == irFutureTypeTag()
 
-; 数组成员判定：名字在两类之内且接收者类型是数组 —— 字串的同名成员归字串批。
+; 数组成员判定：名字在四类之内且接收者类型是数组 —— 字串的同名成员归字串批。
 isArrayMember|func(memberName: String, receiverType: I32, map: TypeMap,) -> (Bool,):
-    if memberName != "append" && memberName != "slice" && memberName != "join":
+    if memberName != "append" && memberName != "slice" && memberName != "join" && memberName != "get":
         return false
     if receiverType < 0 || receiverType >= irTypeCount(map.pool):
         return false
     return irTypeTag(irTypeAt(pool = map.pool, id = receiverType).kind) == irTypeTag(.irTypeArray)
 
-; 数组成员：append 发「Array.append」命名调用（与宿主同形），slice 发切片节点。
+; 数组成员：append 发「Array.append」命名调用（与宿主同形），slice 发切片节点，get 发宽容读节点。
 ; 结果类型取接收者；数目不符或名字不认识时照旧报「成员被调」，不猜。
 lowerArrayMember|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32, member: String, receiver: I32, receiverType: I32, actuals: Array<IrActual>,) -> (LowerExpr,):
     var done = out
+    if member == "get" && len(actuals) == 1:
+        let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
+        if typeId < 0:
+            return missType(out = done, unit = unit, id = id, bytes = bytes)
+        let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irOptionalGet), typeId = typeId, op = 0, kids = [receiver, actuals[0].id])
+        done.pool = inserted.pool
+        done.id = inserted.id
+        return done
     if member == "append" && len(actuals) == 1:
         let placed = internText(texts = done.texts, value = "Array.append")
         var node = irMakeNode(kind = irExprTag(.irCall), typeId = receiverType)
@@ -1580,11 +1684,12 @@ lowerArrayMember|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, m
         return done
     return missExpr(out = done, unit = unit, id = id, what = "成员被调 " + member)
 
-; 字符串成员判定：名字在九类之内；upper/lower/trimLeft/trimRight 只属字串，接收者未定时也认。
+; 字符串成员判定：名字在十类之内；upper/lower/trimLeft/trimRight 只属字串，接收者未定时也认。
 isStringMember|func(memberName: String, receiverType: I32, map: TypeMap,) -> (Bool,):
-    if memberName != "contains" && memberName != "split" && memberName != "substring" && memberName != "indexOf" && memberName != "slice":
-        if memberName != "upper" && memberName != "lower" && memberName != "trimLeft" && memberName != "trimRight":
-            return false
+    if memberName != "contains" && memberName != "split" && memberName != "substring" && memberName != "indexOf":
+        if memberName != "slice" && memberName != "get":
+            if memberName != "upper" && memberName != "lower" && memberName != "trimLeft" && memberName != "trimRight":
+                return false
     let unary = memberName == "upper" || memberName == "lower" || memberName == "trimLeft" || memberName == "trimRight"
     if receiverType < 0 || receiverType >= irTypeCount(map.pool):
         return unary
@@ -1603,10 +1708,17 @@ lowerStringMember|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, 
             typeId = map.i32Id
         elif member == "split":
             return missType(out = done, unit = unit, id = id, bytes = bytes)
+        elif member == "get":
+            return missType(out = done, unit = unit, id = id, bytes = bytes)
         else:
             typeId = map.stringId
     if typeId < 0:
         return missType(out = done, unit = unit, id = id, bytes = bytes)
+    if member == "get" && len(actuals) == 1:
+        let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irOptionalGet), typeId = typeId, op = 0, kids = [receiver, actuals[0].id])
+        done.pool = inserted.pool
+        done.id = inserted.id
+        return done
     if member == "contains" && len(actuals) == 1:
         return lowerStringNode(out = done, unit = unit, id = id, kind = .irStringContains, typeId = typeId, receiver = receiver, actuals = actuals)
     if member == "split" && len(actuals) == 1:
@@ -1726,6 +1838,16 @@ lowerMember|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: T
         baseType = unownedElement
     let slot = fieldSlotOf(table = done.frame.decls, typeId = baseType, name = fieldName)
     if slot < 0:
+        ; 元组成员按字段序读：名字即序号，标签名不在本层解析。
+        let baseTag = irTypeTag(irTypeAt(pool = map.pool, id = baseType).kind)
+        if baseTag == irTypeTag(.irTypeTuple):
+            let index = intSpellingValue(text = fieldName) as I32
+            if index < 0:
+                return missNeed(out = done, unit = unit, id = id, what = "元组成员 " + fieldName)
+            let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irTupleIndexGet), typeId = typeId, op = index, kids = [baseId])
+            done.pool = inserted.pool
+            done.id = inserted.id
+            return done
         return missExpr(out = done, unit = unit, id = id, what = "字段 " + fieldName + " 不在声明里")
     var node = irMakeNode(kind = irExprTag(.irFieldGet), typeId = typeId)
     node.op = slot
@@ -2014,6 +2136,85 @@ lowerArrayLiteral|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, 
     done.id = inserted.id
     return done
 
+; 字典字面量：条目在 kids 里按键、值交替平铺，顺序即源序；建句柄与写入由发射面做。
+lowerDictionaryLiteral|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
+    let expr = unit.ast.exprAt(id)
+    var done = out
+    var kids: Array<I32> = []
+    var i = 0
+    while i < len(expr.kids):
+        let entryId = expr.kids[i]
+        if !unit.ast.isDictEntryExpr(entryId):
+            return missExpr(out = done, unit = unit, id = id, what = "字典条目")
+        let entry = unit.ast.exprAt(entryId)
+        var k = 0
+        while k < len(entry.kids):
+            let one = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = entry.kids[k])
+            done.pool = one.pool
+            done.texts = one.texts
+            done.frame = one.frame
+            if one.failed:
+                return takeFailure(out = done, one = one)
+            kids = kids.append(one.id)
+            k = k + 1
+        i = i + 1
+    let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
+    if typeId < 0:
+        return missType(out = done, unit = unit, id = id, bytes = bytes)
+    let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irDictLiteral), typeId = typeId, op = 0, kids = kids)
+    done.pool = inserted.pool
+    done.id = inserted.id
+    return done
+
+; 集合字面量：元素按源序平铺进 kids，重复元素的去重由运行时写入负责。
+lowerSetLiteral|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
+    let expr = unit.ast.exprAt(id)
+    var done = out
+    var kids: Array<I32> = []
+    var i = 0
+    while i < len(expr.kids):
+        let one = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = expr.kids[i])
+        done.pool = one.pool
+        done.texts = one.texts
+        done.frame = one.frame
+        if one.failed:
+            return takeFailure(out = done, one = one)
+        kids = kids.append(one.id)
+        i = i + 1
+    let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
+    if typeId < 0:
+        return missType(out = done, unit = unit, id = id, bytes = bytes)
+    let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irSetLiteral), typeId = typeId, op = 0, kids = kids)
+    done.pool = inserted.pool
+    done.id = inserted.id
+    return done
+
+; 元组字面量：元素按源序进 kids，标签只作名字不进节点。
+lowerTupleLiteral|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
+    let expr = unit.ast.exprAt(id)
+    var done = out
+    var kids: Array<I32> = []
+    var i = 0
+    while i < len(expr.kids):
+        var valueId = expr.kids[i]
+        if unit.ast.isLabeledArgument(valueId):
+            valueId = unit.ast.childOf(id = valueId, index = 0)
+        let one = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = valueId)
+        done.pool = one.pool
+        done.texts = one.texts
+        done.frame = one.frame
+        if one.failed:
+            return takeFailure(out = done, one = one)
+        kids = kids.append(one.id)
+        i = i + 1
+    let typeId = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = done.frame, bytes = bytes, id = id)
+    if typeId < 0:
+        return missType(out = done, unit = unit, id = id, bytes = bytes)
+    let inserted = addIrNode(pool = done.pool, kind = irExprTag(.irTupleConstruct), typeId = typeId, op = 0, kids = kids)
+    done.pool = inserted.pool
+    done.id = inserted.id
+    return done
+
 ; 显式转换：操作数一个子节点，目标类型取推导表；合法性由语义层挡。
 lowerCast|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):
     let expr = unit.ast.exprAt(id)
@@ -2192,6 +2393,12 @@ lowerExpr|func(pool: IrNodePool, texts: IrTextPool, map: TypeMap, types: ExprTyp
         return lowerNil(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
     if unit.ast.isArrayExpr(id):
         return lowerArrayLiteral(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
+    if unit.ast.isTupleExpr(id):
+        return lowerTupleLiteral(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
+    if unit.ast.isDictionaryExpr(id):
+        return lowerDictionaryLiteral(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
+    if unit.ast.isSetExpr(id):
+        return lowerSetLiteral(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
     if unit.ast.isCaseExpr(id):
         return lowerCaseValue(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
     if unit.ast.isIdentifierExpr(id):

@@ -10,22 +10,22 @@ array-basic	单文件	fail	-	-	语义	示例违规	match 分支内 break 无外�
 closures	单文件	ok	ok	ok	通过	通过	-	-	-
 collections	单文件	fail	-	-	语法	缺语法构造	元组元素的标签位	E2-001@20:20	期望`)`，实际得到=
 comments	单文件	ok	ok	ok	通过	通过	-	-	-
-composition	单文件	ok	fail	-	降载	降载缺口	-	-	1 字段 数值 不在声明里 尚未降载 ./examples/composition.pini:4
+composition	单文件	ok	ok	ok	通过	通过	-	-	-
 compound-assign	单文件	ok	ok	ok	通过	通过	-	-	-
 concurrency-arrow-dual	单文件	ok	ok	ok	通过	通过	-	-	-
 concurrency-async-contagion-end	单文件	ok	ok	ok	通过	通过	-	-	-
-concurrency-async-decl	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 调用 ./examples/concurrency-async-decl.p
+concurrency-async-decl	单文件	ok	ok	ok	通过	通过	-	-	-
 concurrency-await	单文件	ok	ok	ok	通过	通过	-	-	-
-concurrency-cancel	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 调用 ./examples/concurrency-cancel.pini:
-concurrency-future-handle	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 调用 ./examples/concurrency-future-handl
-concurrency-joinall-var	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 调用 ./examples/concurrency-joinall-var.
-concurrency-joinall	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 调用 ./examples/concurrency-joinall.pini
-concurrency	单文件	ok	fail	-	降载	降载缺口	-	-	2 异步函数需带载荷返回 ./examples/concurrency.pini:481
+concurrency-cancel	单文件	ok	ok	ok	通过	通过	-	-	-
+concurrency-future-handle	单文件	ok	ok	ok	通过	通过	-	-	-
+concurrency-joinall-var	单文件	ok	ok	ok	通过	通过	-	-	-
+concurrency-joinall	单文件	ok	ok	ok	通过	通过	-	-	-
+concurrency	单文件	ok	ok	ok	通过	通过	-	-	-
 control-if	单文件	ok	ok	ok	通过	通过	-	-	-
 control-while	单文件	ok	ok	ok	通过	通过	-	-	-
-cow	单文件	ok	fail	-	降载	降载缺口	-	-	1 字典字面量 尚未降载 ./examples/cow.pini:654
-defer	单文件	ok	fail	-	降载	降载缺口	-	-	1 该语句类别尚未降载 ./examples/defer.pini:344
-dict-set	单文件	ok	fail	-	降载	降载缺口	-	-	1 字典字面量 尚未降载 ./examples/dict-set.pini:447
+cow	单文件	ok	ok	ok	通过	通过	-	-	-
+defer	单文件	ok	ok	ok	通过	通过	-	-	-
+dict-set	单文件	ok	ok	ok	通过	通过	-	-	-
 enum-dot-case	单文件	ok	ok	fail	发射	发射缺口	-	-	打印带标签值 类别码 15
 enum-named	单文件	ok	ok	ok	通过	通过	-	-	-
 enum-namespacing	单文件	ok	ok	fail	发射	发射缺口	-	-	打印带标签值 类别码 15
@@ -37,7 +37,7 @@ ffi-varargs-handle	单文件	ok	ok	ok	通过	通过	-	-	-
 ffi	单文件	ok	ok	ok	通过	通过	-	-	-
 ffi_generated	目录	fail	-	-	语义	待核	夹具未就绪：需先 build	E3-011	构建计划不存在：请先运行 build
 ffi_module	目录	ok	ok	ok	通过	通过	-	-	-
-for	单文件	ok	fail	-	降载	降载缺口	-	-	1 该语句类别尚未降载 ./examples/for.pini:446
+for	单文件	ok	ok	ok	通过	通过	-	-	-
 generic-func	单文件	ok	ok	ok	通过	通过	-	-	-
 generic	单文件	fail	-	-	语义	缺符号	类型参数注册	E3-003@5:5	类型未声明：T
 hello	单文件	ok	ok	ok	通过	通过	-	-	-
@@ -48,7 +48,7 @@ lambda	单文件	ok	ok	ok	通过	通过	-	-	-
 lazyref	单文件	ok	ok	ok	通过	通过	-	-	-
 lexical	单文件	ok	ok	fail	发射	发射缺口	-	-	插值段 类别码 12
 match	单文件	ok	ok	ok	通过	通过	-	-	-
-multidim	单文件	ok	fail	-	降载	降载缺口	-	-	1 成员被调 get 尚未降载 ./examples/multidim.pini:485
+multidim	单文件	ok	ok	ok	通过	通过	-	-	-
 multifile	目录	ok	ok	ok	通过	通过	-	-	-
 object	单文件	ok	ok	ok	通过	通过	-	-	-
 operators	单文件	ok	ok	ok	通过	通过	-	-	-
@@ -58,18 +58,18 @@ own-method	单文件	ok	ok	ok	通过	通过	-	-	-
 package-demo	目录	ok	ok	ok	通过	通过	-	-	-
 pointer-address	单文件	ok	ok	ok	通过	通过	-	-	-
 recursion	单文件	ok	ok	ok	通过	通过	-	-	-
-slice	单文件	ok	fail	-	降载	降载缺口	-	-	1 成员被调 get 尚未降载 ./examples/slice.pini:793
+slice	单文件	ok	ok	ok	通过	通过	-	-	-
 stdlib-container-ops	单文件	ok	ok	ok	通过	通过	-	-	-
 stdlib-container	单文件	ok	ok	ok	通过	通过	-	-	-
 stdlib-equality	单文件	ok	ok	ok	通过	通过	-	-	-
 stdlib-probe	单文件	ok	ok	ok	通过	通过	-	-	-
 stdlib-strings	单文件	ok	ok	ok	通过	通过	-	-	-
 stdlib	单文件	ok	ok	fail	发射	发射缺口	-	-	外部调用 abs
-step	单文件	ok	fail	-	降载	降载缺口	-	-	1 带 step 的循环 ./examples/step.pini:437
+step	单文件	ok	ok	ok	通过	通过	-	-	-
 struct	单文件	ok	ok	fail	发射	发射缺口	-	-	外部调用 sqrt
 test	单文件	ok	ok	ok	通过	通过	-	-	-
 trait	单文件	ok	ok	ok	通过	通过	-	-	-
-try	单文件	ok	fail	-	降载	降载缺口	-	-	1 错误处理 尚未降载 ./examples/try.pini:309
-tuple	单文件	ok	fail	-	降载	降载缺口	-	-	1 元组 尚未降载 ./examples/tuple.pini:385
+try	单文件	ok	ok	ok	通过	通过	-	-	-
+tuple	单文件	ok	ok	ok	通过	通过	-	-	-
 unroll	单文件	ok	ok	ok	通过	通过	-	-	-
 validated-match	单文件	ok	ok	ok	通过	通过	-	-	-

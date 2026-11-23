@@ -43,9 +43,11 @@ addMapError|func(map: TypeMap, kind: LowerErrorKind, detail: String,) -> (TypeMa
 ; 标量映射：只收 IR 有宽度的九种；名字未登记即能力缺口。
 mapScalar|func(map: TypeMap, name: String, semanticId: I32,) -> (TypeMap,):
     var out = map
-    ; 错误字在 Result 里已经类型擦除，IR 侧只有 i64；不驻留，也不算能力缺口。
+    ; 错误字在 Result 里已经类型擦除，IR 侧只有 i64：与 i64 同形驻留，构造与读取才有宽度。
     if name == "Error" || name == "CancelError":
-        return out
+        let inserted = irScalarType(pool = out.pool, kind = .irTypeI64, name = "i64")
+        out.pool = inserted.pool
+        return setMapped(map = out, semanticId = semanticId, irId = inserted.id)
     if name == "I8":
         let inserted = irScalarType(pool = out.pool, kind = .irTypeI8, name = "i8")
         out.pool = inserted.pool
@@ -295,6 +297,24 @@ buildTypeMap|func(world: MemberWorld,) -> (TypeMap,):
     out.pool = narrowed.pool
     out.i32Id = narrowed.id
     return out
+
+; 同形元组：按成员类型在池里找回已驻留的条目；没有答 -1。
+; 元组字面量在推断表里未必留型，形状本身已足够认出它要的类型。
+findTupleType|func(pool: IrTypePool, kids: Array<I32>,) -> (I32,):
+    var i = 0
+    while i < irTypeCount(pool):
+        let entry = irTypeAt(pool = pool, id = i)
+        if irTypeTag(entry.kind) == irTypeTag(.irTypeTuple) && len(entry.kids) == len(kids):
+            var same = true
+            var k = 0
+            while k < len(kids):
+                if entry.kids[k] != kids[k]:
+                    same = false
+                k = k + 1
+            if same:
+                return i
+        i = i + 1
+    return -1
 
 ; 映射计数：已映射的条目数，供回执与测试对照。
 mappedCount|func(map: TypeMap,) -> (I32,):

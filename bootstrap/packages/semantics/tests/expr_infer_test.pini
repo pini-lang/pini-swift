@@ -271,3 +271,17 @@ types: ExprTypes = ExprTypes()
     let 类型 = exprTypeAt(table = 推.types, unit = 0, node = 字面量)
     assert(typeText(pool = 推.pool, id = 类型) == "(I32,) -> I32", "实得 " + typeText(pool = 推.pool, id = 类型))
     return
+
+; 聚合等待：joinAll 由 Future 数组推成 Result 数组，joinWithin 与 wait 同形。
+聚合等待定型|test() -> ():
+    let 样例 = 造推导样例("任务|func(_n: I32,) => (I32,):\n    return ok(_n)\n\nmain|func() -> ():\n    var all = joinAll([任务(1)])\n    var r = joinWithin(任务(2), 10)\n    return\n")
+    let 推 = inferUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
+    let 聚合 = 同名标识符(样例.unit, "all")
+    assert(len(聚合) >= 1, "样例应含 all")
+    let 聚合类型 = exprTypeAt(table = 推.types, unit = 0, node = 聚合[0])
+    assert(typeText(pool = 推.pool, id = 聚合类型) == "^Array<I32>", "聚合实得 " + typeText(pool = 推.pool, id = 聚合类型))
+    let 等待 = 同名标识符(样例.unit, "r")
+    assert(len(等待) >= 1, "样例应含 r")
+    let 等待类型 = exprTypeAt(table = 推.types, unit = 0, node = 等待[0])
+    assert(typeText(pool = 推.pool, id = 等待类型) == "^I32", "等待实得 " + typeText(pool = 推.pool, id = 等待类型))
+    return

@@ -114,7 +114,8 @@ makeDecl|func(shapes: ShapeTable, map: TypeMap, at: I32,) -> (IrDecl,):
     return out
 
 ; 建表：形态表逐条转声明；取不到像的类型不入表，缺一条即有一个名义类型不可发。
-makeDeclTable|func(shapes: ShapeTable, map: TypeMap,) -> (IrDeclTable,):
+; 组合在第二遍展开：父字段前置、子字段在后，同名由子覆盖。
+makeDeclTable|func(shapes: ShapeTable, map: TypeMap, world: MemberWorld,) -> (IrDeclTable,):
     var out = IrDeclTable()
     var i = 0
     while i < len(shapes.entries):
@@ -122,6 +123,68 @@ makeDeclTable|func(shapes: ShapeTable, map: TypeMap,) -> (IrDeclTable,):
         if row.typeId >= 0:
             out.entries = out.entries.append(row)
         i = i + 1
+    var k = 0
+    while k < len(out.entries):
+        let flat = flattenDecl(table = out, decl = out.entries[k], world = world, depth = 0)
+        out.entries[k] = flat
+        k = k + 1
+    return out
+
+; 按名查声明：未命中答空条目。
+declByName|func(table: IrDeclTable, name: String,) -> (IrDecl,):
+    var i = 0
+    while i < len(table.entries):
+        if table.entries[i].name == name:
+            return table.entries[i]
+        i = i + 1
+    return IrDecl()
+
+; 字段位置：未命中答 -1。
+fieldAt|func(fields: Array<IrField>, name: String,) -> (I32,):
+    var i = 0
+    while i < len(fields):
+        if fields[i].name == name:
+            return i
+        i = i + 1
+    return -1
+
+; 扁平化：父字段前置、子字段在后，同名由子覆盖；组合行本身不占槽。
+; 深度上限四层挡自嵌环，与成员判定的回溯上限同源。
+flattenDecl|func(table: IrDeclTable, decl: IrDecl, world: MemberWorld, depth: I32,) -> (IrDecl,):
+    var out = decl
+    if depth > 4:
+        return out
+    let parents = composedParentNames(world = world, owner = decl.name)
+    if len(parents) == 0:
+        return out
+    var fields: Array<IrField> = []
+    var p = 0
+    while p < len(parents):
+        let parent = declByName(table = table, name = parents[p])
+        if parent.typeId >= 0:
+            let flat = flattenDecl(table = table, decl = parent, world = world, depth = depth + 1)
+            var f = 0
+            while f < len(flat.fields):
+                if fieldAt(fields = fields, name = flat.fields[f].name) < 0:
+                    fields = fields.append(flat.fields[f])
+                f = f + 1
+        p = p + 1
+    var c = 0
+    while c < len(decl.fields):
+        var isParent = false
+        var q = 0
+        while q < len(parents):
+            if decl.fields[c].name == parents[q]:
+                isParent = true
+            q = q + 1
+        if !isParent:
+            let at = fieldAt(fields = fields, name = decl.fields[c].name)
+            if at >= 0:
+                fields[at] = decl.fields[c]
+            else:
+                fields = fields.append(decl.fields[c])
+        c = c + 1
+    out.fields = fields
     return out
 
 ; 条目数：下标合法区间是 0 到 count - 1。

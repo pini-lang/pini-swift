@@ -2579,14 +2579,24 @@ wait 表达式
 ⇒ 收窄把两层收口到同一个答案上，该位置改由降载侧报 `E6-010`。
 如实说清代价：一条**在解释器后端跑得通**的写法（嵌套让出）**从能受理变成不受理**。
 
+#### joinAll
+
+```
+joinAll(futures: [Future<T>,],) -> Result<[T,],>
+```
+
+把一组同载荷类型的任务**当场聚合**为一个结果：全部成功时载荷是各任务载荷按**实参次序**
+排成的数组；任一成员失败即以该错误返回 `err`，并取消其余未完成任务（见 §8.4 的 fail-fast 条款）。
+实参数组为空时结果为 `ok([])`。聚合本身不另起任务；在结果上写 `wait` 是空操作，原样透传。
+
 #### joinWithin
 
 ```
-joinWithin(未来, 毫秒)
+joinWithin(future: Future<T>, ms: I32,) -> Result<T>
 ```
 
 带超时**阻塞**等待；超时归约为 `err(CancelError)`。手动取消与超时在调用方**同构**
-（`isCancel(e)` 均为真）。
+（`isCancel(e)` 均为真）。等待的是单个句柄，返回值与 `wait` 同形，不经 `Future` 包装。
 
 #### detach
 
@@ -2659,6 +2669,15 @@ main() -> ():
   → 子任务在下一个检查点终止
   → CancelError 经 Result 传播
 ```
+
+#### cancel
+
+```
+cancel|self() -> ()
+```
+
+对 `Future` 句柄调用，取消该任务及其派生子任务；不等待、不返回结果。此后对该句柄的 `wait` 或
+`joinWithin` 得到 `err(CancelError)`。对已决任务调用是空操作。
 
 ### 8.4 错误传播 `[Provisional]`
 
@@ -2740,10 +2759,10 @@ let 结果 = try (await 未来) else err:
 以下几项**现行有效**、**尚未钉住** —— 模型的其余部分已由「异步语义契约」定级为 `Provisional`，
 但下列**签名与构造细节**仍属 `Experimental`：
 
-- 并发原语 `cancel` / `joinAll` / `joinWithin` 的**函数签名**未钉住
-  （`isCancel(e) -> Bool` 已钉，见 §8.4）
 - `Result` 的**构造参数与字段细节**待钉定（`Error("msg")` / `CancelError("msg")` 与其
   `message` 字段已钉，见 §8.4）
+
+并发原语 `cancel` / `joinAll` / `joinWithin` 的签名已在 §8.2 与 §8.3 钉住，不再列于此。
 
 ### 8.7 已退役的实现形态（挂起模式）`[Provisional]`
 

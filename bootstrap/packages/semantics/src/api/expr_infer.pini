@@ -474,6 +474,12 @@ inferNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
             out.pool = settled.pool
             out.typeId = settled.id
             out.types = writeExprType(table = out.types, unit = unitIndex, node = node, typeId = out.typeId)
+        elif future.typeId >= 0 && future.typeId < len(out.pool.entries):
+            ; 已在结算值上等待（`wait joinAll(...)` 这类）：站点类型就是操作数类型。
+            let entry = out.pool.entries[future.typeId]
+            if isTypeClass(kind = entry.kind, expected = .typeClassResult):
+                out.typeId = future.typeId
+                out.types = writeExprType(table = out.types, unit = unitIndex, node = node, typeId = out.typeId)
         return out
     if unit.ast.isBinaryExpr(node):
         return inferBinary(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out, bytes = bytes)

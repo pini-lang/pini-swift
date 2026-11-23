@@ -513,13 +513,11 @@ lowerIfStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: T
     done.ids = ids
     return done
 
-; 循环：只接条件与体；`step` 块的轮末语义另批处理，出现即报缺口。
+; 循环：条件与体，可选 step 块接在体后；`tail` 切出体段与 step 段。
 lowerWhileStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32,) -> (LowerStmt,):
     let kids = unit.ast.stmtAt(stmtId).kids
     if len(kids) < 2:
         return missStmt(out = out, unit = unit, stmtId = stmtId, what = "缺体的循环")
-    if len(kids) > 2 && kids[2] >= 0:
-        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "带 step 的循环")
     var done = out
     let cond = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = kids[0])
     done.pool = cond.pool
@@ -531,19 +529,183 @@ lowerWhileStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map
     done = bodyPart
     if done.failed:
         return done
+    var stepIds: Array<I32> = []
+    if len(kids) > 2 && kids[2] >= 0:
+        let stepPart = lowerBlockOf(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, blockId = kids[2])
+        done = stepPart
+        if done.failed:
+            return done
+        stepIds = stepPart.ids
     var nodes: Array<I32> = [cond.id]
     var i = 0
     while i < len(bodyPart.ids):
         nodes = nodes.append(bodyPart.ids[i])
         i = i + 1
+    let tail = len(nodes)
+    var k = 0
+    while k < len(stepIds):
+        nodes = nodes.append(stepIds[k])
+        k = k + 1
     var node = irMakeNode(kind = irStmtTag(.irWhileStmt), typeId = -1)
     node.kids = nodes
-    node.tail = len(nodes)
+    node.tail = tail
     let inserted = irAppendNode(pool = done.pool, node = node)
     done.pool = inserted.pool
     done.ids = [inserted.id]
     done.positions = recordPosition(positions = done.positions, node = inserted.id, offset = unit.ast.stmtAt(stmtId).start)
     return done
+
+; 遍历语句：模式名逐项声明为局部，元素类型按迭代目标的种类取。
+; 种类码：一数组、二字典、三集合；字典的两个槽按模式字段序给，槽号写进节点。
+lowerForStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32,) -> (LowerStmt,):
+    let stmt = unit.ast.stmtAt(stmtId)
+    if len(stmt.kids) < 3:
+        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "遍历缺模式或目标")
+    let pattern: I32 = stmt.kids[0]
+    if pattern < 0:
+        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "遍历缺模式")
+    var done = out
+    let iter = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = stmt.kids[1])
+    done.pool = iter.pool
+    done.texts = iter.texts
+    done.frame = iter.frame
+    if iter.failed:
+        return takeStmtFailure(out = done, detail = iter.detail, offset = iter.offset)
+    let iterType = irNodeAt(pool = done.pool, id = iter.id).typeId
+    if iterType < 0 || iterType >= irTypeCount(map.pool):
+        return missStmt(out = done, unit = unit, stmtId = stmtId, what = "遍历目标类型未定")
+    let entry = irTypeAt(pool = map.pool, id = iterType)
+    let tag = irTypeTag(entry.kind)
+    var kind = 0
+    var firstType = -1
+    var secondType = -1
+    if tag == irTypeTag(.irTypeArray) || tag == irTypeTag(.irTypeSet):
+        if tag == irTypeTag(.irTypeArray):
+            kind = 1
+        else:
+            kind = 3
+        if len(entry.kids) > 0:
+            firstType = entry.kids[0]
+    elif tag == irTypeTag(.irTypeDict):
+        kind = 2
+        if len(entry.kids) > 1:
+            firstType = entry.kids[0]
+            secondType = entry.kids[1]
+    else:
+        return missStmt(out = done, unit = unit, stmtId = stmtId, what = "遍历目标不是容器")
+    if firstType < 0 || kind == 2 && secondType < 0:
+        return missStmt(out = done, unit = unit, stmtId = stmtId, what = "遍历元素类型未定")
+    var names: Array<I32> = []
+    if unit.ast.isTupleExpr(pattern):
+        names = unit.ast.exprAt(pattern).kids
+    else:
+        names = [pattern]
+    if kind == 2 && len(names) != 2:
+        return missStmt(out = done, unit = unit, stmtId = stmtId, what = "字典遍历模式须两字段")
+    if kind != 2 && len(names) != 1:
+        return missStmt(out = done, unit = unit, stmtId = stmtId, what = "遍历模式字段数不符")
+    var slots: Array<I32> = []
+    var n = 0
+    while n < len(names):
+        var name = "_"
+        if names[n] >= 0:
+            let bound = unit.ast.exprAt(names[n])
+            if bound.nameEnd > bound.nameStart:
+                name = decodeSpelling(bytes = bytes, start = bound.nameStart, end = bound.nameEnd)
+        var boundType = firstType
+        if n == 1:
+            boundType = secondType
+        let declared = declareIrLocal(frame = done.frame, name = name, typeId = boundType, mutable = false)
+        done.frame = declared
+        slots = slots.append(declared.locals[len(declared.locals) - 1].slot)
+        n = n + 1
+    let bodyPart = lowerBlockOf(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, blockId = stmt.kids[2])
+    done = bodyPart
+    if done.failed:
+        return done
+    var stepIds: Array<I32> = []
+    if len(stmt.kids) > 3 && stmt.kids[3] >= 0:
+        let stepPart = lowerBlockOf(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, blockId = stmt.kids[3])
+        done = stepPart
+        if done.failed:
+            return done
+        stepIds = stepPart.ids
+    var nodes: Array<I32> = [iter.id]
+    var i = 0
+    while i < len(bodyPart.ids):
+        nodes = nodes.append(bodyPart.ids[i])
+        i = i + 1
+    let tail = len(nodes)
+    var k = 0
+    while k < len(stepIds):
+        nodes = nodes.append(stepIds[k])
+        k = k + 1
+    var node = irMakeNode(kind = irStmtTag(.irForInStmt), typeId = -1)
+    node.kids = nodes
+    node.tail = tail
+    node.op = kind
+    node.intValue = slots[0] as I64
+    if len(slots) > 1:
+        node.adopt = slots[1]
+    return appendStmtNode(out = done, node = node, offset = stmt.start)
+
+; 延迟语句：体展开成语句序列，执行时机与作用域退出由发射面管。
+lowerDeferStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32,) -> (LowerStmt,):
+    let stmt = unit.ast.stmtAt(stmtId)
+    if len(stmt.kids) < 1 || stmt.kids[0] < 0:
+        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "延迟语句缺体")
+    let part = lowerBlockOf(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, blockId = stmt.kids[0])
+    if part.failed:
+        return part
+    var node = irMakeNode(kind = irStmtTag(.irDeferStmt), typeId = -1)
+    node.kids = part.ids
+    return appendStmtNode(out = part, node = node, offset = stmt.start)
+
+; 错误处理（语句位）：操作数一条，处理器接在其后；错误变量占一个 i64 槽。
+; 解包糖 `^x` 的处理器是合成的，本层不造，留缺口。
+lowerTryStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, stmtId: I32,) -> (LowerStmt,):
+    let stmt = unit.ast.stmtAt(stmtId)
+    if len(stmt.kids) < 1:
+        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "错误处理缺语句")
+    let exprId: I32 = stmt.kids[0]
+    let expr = unit.ast.exprAt(exprId)
+    if len(expr.kids) < 1:
+        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "错误处理缺操作数")
+    if expr.body < 0:
+        return missStmt(out = out, unit = unit, stmtId = stmtId, what = "解包糖的处理器尚未降载")
+    var done = out
+    let operand = lowerExpr(pool = done.pool, texts = done.texts, map = map, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, frame = done.frame, id = expr.kids[0])
+    done.pool = operand.pool
+    done.texts = operand.texts
+    done.frame = operand.frame
+    if operand.failed:
+        return takeStmtFailure(out = done, detail = operand.detail, offset = operand.offset)
+    let operandType = irNodeAt(pool = done.pool, id = operand.id).typeId
+    if operandType < 0 || operandType >= irTypeCount(map.pool):
+        return missStmt(out = done, unit = unit, stmtId = stmtId, what = "错误处理操作数类型未定")
+    if irTypeTag(irTypeAt(pool = map.pool, id = operandType).kind) != irTypeTag(.irTypeResult):
+        return missStmt(out = done, unit = unit, stmtId = stmtId, what = "错误处理操作数不是结果值")
+    var name = "_"
+    if expr.nameEnd > expr.nameStart:
+        name = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
+    let declared = declareIrLocal(frame = done.frame, name = name, typeId = map.i64Id, mutable = false)
+    done.frame = declared
+    let errSlot = declared.locals[len(declared.locals) - 1].slot
+    let handlerPart = lowerBlockOf(out = done, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, blockId = expr.body)
+    done = handlerPart
+    if done.failed:
+        return done
+    var nodes: Array<I32> = [operand.id]
+    var i = 0
+    while i < len(handlerPart.ids):
+        nodes = nodes.append(handlerPart.ids[i])
+        i = i + 1
+    var node = irMakeNode(kind = irStmtTag(.irTryStmt), typeId = -1)
+    node.kids = nodes
+    node.tail = 1
+    node.intValue = -1
+    node.adopt = errSlot
+    return appendStmtNode(out = done, node = node, offset = stmt.start)
 
 ; 块：进块记边界，逐条降载，退块只收回名字。
 lowerBlockOf|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, blockId: I32,) -> (LowerStmt,):
@@ -755,6 +917,8 @@ lowerMatchStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map
                     boundPool.nodes[insertedLocal.id] = bound
                     done.pool = boundPool
                     done.frame = declareIrLocal(frame = done.frame, name = name, typeId = typeId, mutable = false)
+                    if caseName == "err":
+                        done.frame = markErrorSlot(frame = done.frame, slot = done.frame.nextSlot - 1)
                     armIds = armIds.append(insertedLocal.id)
                 b = b + 1
         elif len(info.bindings) > 0:
@@ -850,6 +1014,9 @@ lowerStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: Typ
     if unit.ast.isAssignStmt(stmtId):
         return lowerAssignStmt(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId)
     if unit.ast.isExpressionStmt(stmtId):
+        let stmt = unit.ast.stmtAt(stmtId)
+        if len(stmt.kids) > 0 && unit.ast.isTryExpr(stmt.kids[0]):
+            return lowerTryStmt(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId)
         return lowerExprStmt(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId)
     if unit.ast.isReturnStmt(stmtId):
         return lowerReturnStmt(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId)
@@ -857,6 +1024,10 @@ lowerStmt|func(out: LowerStmt, unit: CompilationUnit, bytes: Array<U8>, map: Typ
         return lowerIfStmt(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId)
     if unit.ast.isWhileStmt(stmtId):
         return lowerWhileStmt(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId)
+    if unit.ast.isForStmt(stmtId):
+        return lowerForStmt(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId)
+    if unit.ast.isDeferStmt(stmtId):
+        return lowerDeferStmt(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId)
     if unit.ast.isMatchStmt(stmtId):
         return lowerMatchStmt(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, stmtId = stmtId)
     if unit.ast.isBreakStmt(stmtId):

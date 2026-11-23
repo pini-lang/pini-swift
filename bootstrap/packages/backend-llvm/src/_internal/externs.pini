@@ -57,6 +57,18 @@ externSignature|func(name: String,) -> (String,):
         return "declare ptr @bk_array_append(ptr, ptr, i32, i32)"
     if name == "bk_dict_len":
         return "declare i32 @bk_dict_len(ptr)"
+    if name == "bk_dict_create":
+        return "declare ptr @bk_dict_create()"
+    if name == "bk_dict_key_at":
+        return "declare ptr @bk_dict_key_at(ptr, i32)"
+    if name == "bk_dict_val_at":
+        return "declare ptr @bk_dict_val_at(ptr, i32)"
+    if name == "bk_set_create":
+        return "declare ptr @bk_set_create()"
+    if name == "bk_set_add":
+        return "declare ptr @bk_set_add(ptr, ptr, i32, i32)"
+    if name == "bk_set_at":
+        return "declare ptr @bk_set_at(ptr, i32)"
     if name == "bk_set_len":
         return "declare i32 @bk_set_len(ptr)"
     if name == "bk_string_count":
@@ -127,6 +139,20 @@ externSignature|func(name: String,) -> (String,):
         return "declare ptr @bk_dict_get(ptr, ptr, i32, i32)"
     if name == "bk_dict_set":
         return "declare ptr @bk_dict_set(ptr, ptr, i32, i32, ptr, i32, i32)"
+    ; 错误值：构造答擦除字，判定与取消息各一个入口。
+    if name == "bk_error_create":
+        return "declare i64 @bk_error_create(ptr)"
+    if name == "bk_cancel_error_create":
+        return "declare i64 @bk_cancel_error_create(ptr)"
+    if name == "bk_error_is_cancel":
+        return "declare i32 @bk_error_is_cancel(i64)"
+    if name == "bk_error_message":
+        return "declare ptr @bk_error_message(i64)"
+    ; 聚合等待：结算值经出参槽交回，返回的是状态码。
+    if name == "bk_task_join_all_box":
+        return "declare i32 @bk_task_join_all_box(ptr, ptr)"
+    if name == "bk_task_join_within":
+        return "declare i32 @bk_task_join_within(ptr, i32, ptr)"
     ; 任务族：帧按字节数分配，句柄由运行时段持有；等待的三槽由调用方给。
     if name == "bk_task_frame":
         return "declare ptr @bk_task_frame(i64)"

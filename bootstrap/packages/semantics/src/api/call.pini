@@ -325,6 +325,10 @@ checkBuiltinCall|func(world: MemberWorld, out: CallResult, site: CallSite,) -> (
     if site.builtin < 0 || site.builtin >= len(world.functions):
         return deferCall(out)
     let function = world.functions[site.builtin]
+    if function.name == "joinAll":
+        return checkJoinAll(out = out, site = site)
+    if function.name == "joinWithin":
+        return checkJoinWithin(out = out, site = site)
     let typed = builtinParams(pool = out.pool, params = function.params)
     let ret = builtinShapeType(pool = typed.pool, shape = function.ret, kids = [])
     var ready = out
@@ -335,6 +339,47 @@ checkBuiltinCall|func(world: MemberWorld, out: CallResult, site: CallSite,) -> (
     if ret.id < 0:
         return deferCall(matched)
     return matched
+
+; 聚合等待：`joinAll([Future<T>,])` 当场聚合为 `Result<[T,],>`，载荷取任务返回元组的首分量。
+; 聚合不另起任务：示例在结果上再 `wait`，`wait` 对已结算值原样透传。
+checkJoinAll|func(out: CallResult, site: CallSite,) -> (CallResult,):
+    if len(site.args) != 1:
+        return failCall(out = out, site = site, offset = site.offset, kind = .callArity, expected = "1 个实参", got = countText(len(site.args)))
+    let arg = site.args[0]
+    if arg.typeId < 0 || arg.typeId >= len(out.pool.entries):
+        return deferCall(out)
+    let list = out.pool.entries[arg.typeId]
+    if !isTypeClass(kind = list.kind, expected = .typeClassCollection) || len(list.kids) == 0:
+        return failCall(out = out, site = site, offset = arg.offset, kind = .callArgType, expected = "Future 数组", got = typeText(pool = out.pool, id = arg.typeId))
+    let future = out.pool.entries[list.kids[0]]
+    if !isTypeClass(kind = future.kind, expected = .typeClassGeneric) || len(future.kids) == 0:
+        return failCall(out = out, site = site, offset = arg.offset, kind = .callArgType, expected = "Future 元素", got = typeText(pool = out.pool, id = list.kids[0]))
+    var payload = future.kids[0]
+    let wrapped = out.pool.entries[payload]
+    if isTypeClass(kind = wrapped.kind, expected = .typeClassTuple) && len(wrapped.kids) > 0:
+        payload = wrapped.kids[0]
+    let shared = intern(pool = out.pool, kind = .typeClassCollection, name = "Array", kids = [payload], ret = -1)
+    let result = intern(pool = shared.pool, kind = .typeClassResult, name = "Result", kids = [shared.id], ret = -1)
+    var done = out
+    done.pool = result.pool
+    done.typeId = result.id
+    return done
+
+; 带超时等待：`joinWithin(Future<T>, I32)` 与 `wait` 同形，返回 `Result<T>`，不经 Future 包装。
+checkJoinWithin|func(out: CallResult, site: CallSite,) -> (CallResult,):
+    if len(site.args) != 2:
+        return failCall(out = out, site = site, offset = site.offset, kind = .callArity, expected = "2 个实参", got = countText(len(site.args)))
+    let arg = site.args[0]
+    if arg.typeId < 0 || arg.typeId >= len(out.pool.entries):
+        return deferCall(out)
+    let future = out.pool.entries[arg.typeId]
+    if !isTypeClass(kind = future.kind, expected = .typeClassGeneric) || len(future.kids) == 0:
+        return failCall(out = out, site = site, offset = arg.offset, kind = .callArgType, expected = "Future", got = typeText(pool = out.pool, id = arg.typeId))
+    let result = intern(pool = out.pool, kind = .typeClassResult, name = "Result", kids = [future.kids[0]], ret = -1)
+    var done = out
+    done.pool = result.pool
+    done.typeId = result.id
+    return done
 
 ; 指针读写：结果类型由实参的指针元素决定，签名表给不了固定形状，故单独判定。
 ; 两者都是内建，只认位置实参；`store` 无值，判定结果不带类型。

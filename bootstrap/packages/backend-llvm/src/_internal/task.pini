@@ -88,10 +88,14 @@ ensureTaskBody|func(defs: TaskDefs, module: IrModule, target: I32,) -> (TaskDefs
     let err = "%err"
     body = body + "  " + err + " = extractvalue " + retSpelling + " " + result + ", 2\n"
     var word = ok
-    let op = widenSpelling(name = okSpelling)
-    if len(op) > 0:
-        word = "%okw"
-        body = body + "  " + word + " = " + op + " " + okSpelling + " " + ok + " to i64\n"
+    if okSpelling == "{}":
+        ; 空载荷没有位可搬：三槽的 ok 格写零，读侧也不取它。
+        word = "0"
+    else:
+        let op = widenSpelling(name = okSpelling)
+        if len(op) > 0:
+            word = "%okw"
+            body = body + "  " + word + " = " + op + " " + okSpelling + " " + ok + " to i64\n"
     body = body + "  store i64 " + tag + ", ptr %out\n"
     body = body + "  %os = getelementptr i8, ptr %out, i64 8\n"
     body = body + "  store i64 " + word + ", ptr %os\n"

@@ -27,6 +27,8 @@ closures: Array<IrFunction> = []
 isAsync: Bool = false
 ; 泛型实例表随帧走：调用点按节点查实例名，与降载层读同一份。
 generics: GenericFill = GenericFill()
+; 错误局部：匹配错误支绑定的槽号；打印这类值要先换消息串，不能按整数出。
+errorSlots: Array<I32> = []
 ; 闭包编号全工作区递增：函数名与 env 类型名同源，跨单元不得撞。
 closureSerial: I32 = 0
 
@@ -95,6 +97,21 @@ closeBlock|func(frame: LowerFrame, mark: I32,) -> (LowerFrame,):
 ; 局部数：在册名字的条数，退块后变小。
 frameLocalCount|func(frame: LowerFrame,) -> (I32,):
     return len(frame.locals)
+
+; 错误槽登记：匹配错误支绑定的槽进名单，打印与打印前缀据此换成消息串。
+markErrorSlot|func(frame: LowerFrame, slot: I32,) -> (LowerFrame,):
+    var out = frame
+    out.errorSlots = out.errorSlots.append(slot)
+    return out
+
+; 错误槽判定：槽号在名单里即错误值。
+isErrorSlot|func(frame: LowerFrame, slot: I32,) -> (Bool,):
+    var i = 0
+    while i < len(frame.errorSlots):
+        if frame.errorSlots[i] == slot:
+            return true
+        i = i + 1
+    return false
 
 ; 槽位水位：函数内已分配的下一个槽位，函数结束时即帧大小。
 frameSlotCount|func(frame: LowerFrame,) -> (I32,):
