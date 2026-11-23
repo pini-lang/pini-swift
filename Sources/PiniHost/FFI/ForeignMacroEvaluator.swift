@@ -3,9 +3,8 @@ import PiniIR
 import PiniSemantics
 import PiniSyntax
 
-/// 宏常量求值的失败面。每一条都带原文或位置：静默跳过正是 Swift 那条路失败的方式，这里不重复。
+/// 宏常量求值的失败面。单条宏的失败进失败表，不抛；这里只剩工具链故障与解析细节。
 public enum ForeignMacroError: Error, CustomStringConvertible, LocalizedError {
-    case noHeaders(symbol: String)
     case compilerFailed(command: String, output: String)
     case unparsable(symbol: String, text: String, reason: String)
     case outOfRange(symbol: String, type: String, value: String)
@@ -14,8 +13,6 @@ public enum ForeignMacroError: Error, CustomStringConvertible, LocalizedError {
 
     public var description: String {
         switch self {
-        case .noHeaders(let symbol):
-            return "宏常量 `\(symbol)` 需要在 `pini.toml` 的 `[ffi].headers` 里声明来源头文件"
         case .compilerFailed(let command, let output):
             return "C 预处理器执行失败：`\(command)`\n\(output)"
         case .unparsable(let symbol, let text, let reason):
@@ -26,32 +23,130 @@ public enum ForeignMacroError: Error, CustomStringConvertible, LocalizedError {
     }
 }
 
+/// 一次求值的两路产出：有值的进 IR，没值的随声明进语义层。
+/// 两路互斥，同一个名字不会同时出现在两边。
+public struct ForeignMacroEvaluation {
+    public let values: [IRForeignConstant]
+    public let failures: [String: ForeignConstantFailure]
+
+    public init(values: [IRForeignConstant], failures: [String: ForeignConstantFailure]) {
+        self.values = values
+        self.failures = failures
+    }
+}
+
 /// 宏常量的构建期求值：每个 `|macro` 条目一行探针，一次 `cc -E` 展开，按标记行读回再解析。
 /// 值只能来自 C 的头文件体系——块内写值是另一回事，那会把「来自外部」这条链路切断。
 public enum ForeignMacroEvaluator {
     /// 求值全部 `|macro` 条目。没有宏条目时不碰工具链，模块保持零依赖。
+    /// 单条失败不抛：它进失败表，随声明留给读点；只有工具链故障才抛。
     public static func evaluate(
         symbols: [ForeignSymbol], config: FFIConfig
-    ) throws -> [IRForeignConstant] {
-        let macros = symbols.filter { $0.flags.contains("macro") }
-        guard !macros.isEmpty else { return [] }
+    ) throws -> ForeignMacroEvaluation {
+        let macros = symbols.filter {
+            $0.flags.contains("macro") && scalarIRType(of: $0) != nil
+        }
+        guard !macros.isEmpty else {
+            return ForeignMacroEvaluation(values: [], failures: [:])
+        }
         guard !config.headers.isEmpty else {
-            throw ForeignMacroError.noHeaders(symbol: macros[0].name)
+            var failures: [String: ForeignConstantFailure] = [:]
+            for symbol in macros { failures[symbol.name] = .noHeaders }
+            return ForeignMacroEvaluation(values: [], failures: failures)
         }
 
-        let source = probeSource(headers: config.headers, names: macros.map(\.name))
+        let shapes = try macroShapes(config: config)
+        var values: [IRForeignConstant] = []
+        var failures: [String: ForeignConstantFailure] = [:]
+        var toProbe: [ForeignSymbol] = []
+        for symbol in macros {
+            guard let shapes else {
+                toProbe.append(symbol)
+                continue
+            }
+            switch shapes[symbol.name] {
+            case .some(.functionLike): failures[symbol.name] = .functionLike
+            case .some(.objectLike): toProbe.append(symbol)
+            case .none: failures[symbol.name] = .notDefined
+            }
+        }
+        guard !toProbe.isEmpty else {
+            return ForeignMacroEvaluation(values: values, failures: failures)
+        }
+
+        let source = probeSource(headers: config.headers, names: toProbe.map(\.name))
         let expanded = try runPreprocessor(source: source, config: config)
-        let bodies = extract(expanded, count: macros.count)
-
-        return try zip(macros, bodies).map { symbol, body in
-            let type = try irType(of: symbol)
-            let value = try MacroExpressionParser.evaluate(body, symbol: symbol.name)
-            return IRForeignConstant(
-                name: symbol.name, type: type,
-                value: try coerced(
-                    value, to: type, symbol: symbol.name,
-                    typeName: symbol.annotation.describe()))
+        let bodies = extract(expanded, count: toProbe.count)
+        for (symbol, body) in zip(toProbe, bodies) {
+            do {
+                let type = try irType(of: symbol)
+                let value = try MacroExpressionParser.evaluate(body, symbol: symbol.name)
+                values.append(
+                    IRForeignConstant(
+                        name: symbol.name, type: type,
+                        value: try coerced(
+                            value, to: type, symbol: symbol.name,
+                            typeName: symbol.annotation.describe())))
+            } catch let error as ForeignMacroError {
+                failures[symbol.name] = failure(from: error, body: body, symbol: symbol.name)
+            }
         }
+        return ForeignMacroEvaluation(values: values, failures: failures)
+    }
+
+    /// 宏表：`-dM` 一趟判对象式与函数式；表里没有即「头里没有」，表整体拿不到就退回只探针。
+    private enum MacroShape {
+        case objectLike
+        case functionLike
+    }
+
+    private static func macroShapes(config: FFIConfig) throws -> [String: MacroShape]? {
+        let source = config.headers.map { "#include \($0)" }.joined(separator: "\n") + "\n"
+        guard
+            let output = try? runPreprocessor(
+                source: source, config: config, flags: ["-dM"])
+        else { return nil }
+        var shapes: [String: MacroShape] = [:]
+        for line in output.split(separator: "\n") where line.hasPrefix("#define ") {
+            let rest = line.dropFirst("#define ".count)
+            var name = ""
+            var functionLike = false
+            for ch in rest {
+                if ch == "(" {
+                    functionLike = true
+                    break
+                }
+                if ch.isWhitespace { break }
+                name.append(ch)
+            }
+            guard !name.isEmpty else { continue }
+            shapes[name] = functionLike ? .functionLike : .objectLike
+        }
+        return shapes
+    }
+
+    private static func failure(
+        from error: ForeignMacroError, body: String, symbol: String
+    ) -> ForeignConstantFailure {
+        switch error {
+        case .compilerFailed:
+            return .unparsable(text: truncated(body), detail: "C 预处理器执行失败")
+        case .unparsable(_, let text, let reason):
+            if text.trimmingCharacters(in: .whitespacesAndNewlines) == symbol {
+                return .unparsable(
+                    text: truncated(text),
+                    detail: "展开后仍是它自己：头文件里没有它，或它是函数式宏")
+            }
+            return .unparsable(text: truncated(text), detail: reason)
+        case .outOfRange(_, let type, let value):
+            return .outOfRange(value: value, type: type)
+        }
+    }
+
+    /// 原文截断：诊断与计划都要逐字节确定，长度不随头文件膨胀。
+    private static func truncated(_ text: String, limit: Int = 160) -> String {
+        guard text.count > limit else { return text }
+        return String(text.prefix(limit)) + "…"
     }
 
     /// 探针源码：头文件在前，随后每条一行标记加符号名。
@@ -64,7 +159,9 @@ public enum ForeignMacroEvaluator {
         return lines.joined(separator: "\n") + "\n"
     }
 
-    private static func runPreprocessor(source: String, config: FFIConfig) throws -> String {
+    private static func runPreprocessor(
+        source: String, config: FFIConfig, flags: [String] = ["-P"]
+    ) throws -> String {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("pini-macro-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -75,7 +172,8 @@ public enum ForeignMacroEvaluator {
         /// `Process` 只认可执行文件的绝对路径，不查 PATH，故这里自己按 PATH 找。
         let compiler = preprocessorPath()
         let arguments =
-            ["-E", "-P"] + config.includePaths.map { "-I\($0)" } + config.defines.map { "-D\($0)" }
+            ["-E"] + flags + config.includePaths.map { "-I\($0)" }
+            + config.defines.map { "-D\($0)" }
             + [file.path]
         let process = Process()
         process.executableURL = URL(fileURLWithPath: compiler)
@@ -131,10 +229,9 @@ public enum ForeignMacroEvaluator {
         return Int(rest[..<end])
     }
 
-    private static func irType(of symbol: ForeignSymbol) throws -> IRType {
-        guard case .simple(let name, _) = symbol.annotation else {
-            throw unsupportedMacroType(symbol)
-        }
+    /// 标量白名单：不在表里的宏不进求值，留给声明处的 E4-045 报。
+    private static func scalarIRType(of symbol: ForeignSymbol) -> IRType? {
+        guard case .simple(let name, _) = symbol.annotation else { return nil }
         switch name {
         case "I8": return .i8
         case "U8": return .u8
@@ -143,8 +240,15 @@ public enum ForeignMacroEvaluator {
         case "U64": return .u64
         case "F64": return .f64
         case "Bool": return .boolean
-        default: throw unsupportedMacroType(symbol)
+        default: return nil
         }
+    }
+
+    private static func irType(of symbol: ForeignSymbol) throws -> IRType {
+        guard let type = scalarIRType(of: symbol) else {
+            throw unsupportedMacroType(symbol)
+        }
+        return type
     }
 
     private static func unsupportedMacroType(_ symbol: ForeignSymbol) -> ForeignMacroError {

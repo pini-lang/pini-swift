@@ -233,6 +233,14 @@ suggestion = "take a weak reference only to objects; structs, enums, scalars and
 message = "`UnownedRef` requires an object operand: `{type}` has no object box to borrow"
 suggestion = "take an unowned reference only to objects; structs, enums, scalars and function values have no refcount box and need none"
 
+[E4-044]
+message = "macro constant '{name}' has no value here: {reason}"
+suggestion = "the value can only come from a C header: add `[ffi].headers`, or write a shim; remove the declaration if unused"
+
+[E4-045]
+message = "`|macro` requires a scalar type: '{name}' is declared as '{type}'"
+suggestion = "use one of I8 / U8 / I32 / I64 / U64 / F64 / Bool; C string and struct macros stay outside the constant surface"
+
 [E5-001]
 message = "undefined variable '{name}'"
 suggestion = "Did you mean '{closest}'?"

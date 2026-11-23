@@ -61,6 +61,11 @@ public final class TypeChecker {
     private var readonlyForeignData: Set<String> = []
     /// 声明了 `|macro` 的外部符号：构建期常量，没有存储，故取址一律拒。
     private var macroForeignNames: Set<String> = []
+    /// 宏常量的求值失败表：名字到理由。空表即「要么不是宏，要么都求值成功」。
+    /// 它只在读到该名字时转成诊断，未使用不报。
+    private var foreignConstantFailures: [String: ForeignConstantFailure] = [:]
+    /// 宏常量的声明位置：诊断文案里回指用，读者不必自己找。
+    private var macroDeclarationLocations: [String: SourceLocation] = [:]
     /// 能交给 C 当回调的顶层自由函数：签名与取用位随声明记下，调用点逐位比对。
     /// 方法、闭包、泛型、`main` 与 `|test` 都不在表里 —— 它们的地址要么不是 C ABI，要么不该外泄。
     private var callbackFunctions: [String: (params: [TypeAnnotation], returns: [TypeAnnotation], usingIndices: Set<Int>)] = [:]
@@ -693,7 +698,8 @@ public final class TypeChecker {
         }
     }
 
-    public func check(module: Module) throws {
+    public func check(module: Module, foreignConstantFailures: [String: ForeignConstantFailure]) throws {
+        applyForeignConstantFailures(foreignConstantFailures)
         importAliasNames = Set(module.imports.map { $0.alias })
         collectGivenBlockTypeNames(module)
         collectExportCContext(module.declarations)
@@ -717,14 +723,15 @@ public final class TypeChecker {
     /// 检查包（多文件 / 单文件统一入口）。单文件包直接委托 `check(module:)`，行为等价；
     /// 多文件包把各文件顶级签名全局注册进 `typeEnv`，再逐文件在 `packageContext` 下检查函数体，
     /// 调用点据此 enforce 可见性。跨文件重声明由语义层 `PackageSymbolIndex.build` 先行拦截。
-    public func check(package: Package) throws {
+    public func check(package: Package, foreignConstantFailures: [String: ForeignConstantFailure]) throws {
+        applyForeignConstantFailures(foreignConstantFailures)
         if package.fileUnits.count <= 1 {
             let module =
                 package.fileUnits.first?.module
                 ?? Module(
                     declarations: [], imports: [], exports: [],
                     location: SourceLocation(line: 0, column: 0, fileName: package.name))
-            try check(module: module)
+            try check(module: module, foreignConstantFailures: foreignConstantFailures)
             return
         }
 
@@ -764,14 +771,17 @@ public final class TypeChecker {
 
     /// 整包收集模式：与 `check(package:)` 同一套注册与上下文，逐条捕获而不首错即停。
     /// 供一次收全诊断的调用方使用；单文件包委托 `checkCollecting(module:)`。
-    public func checkCollecting(package: Package) -> [TypeError] {
+    public func checkCollecting(
+        package: Package, foreignConstantFailures: [String: ForeignConstantFailure]
+    ) -> [TypeError] {
+        applyForeignConstantFailures(foreignConstantFailures)
         if package.fileUnits.count <= 1 {
             let module =
                 package.fileUnits.first?.module
                 ?? Module(
                     declarations: [], imports: [], exports: [],
                     location: SourceLocation(line: 0, column: 0, fileName: package.name))
-            return checkCollecting(module: module)
+            return checkCollecting(module: module, foreignConstantFailures: foreignConstantFailures)
         }
         diagnostics = []
         collecting = true
@@ -996,7 +1006,10 @@ public final class TypeChecker {
     /// 收集模式入口（P2-4 收尾）：不抛出，返回模块内全部类型错误。
     /// 复用 `check` 的注册 + 检查逻辑；`report` 在收集态下累积并静默，
     /// 函数体内逐语句恢复（跨语句/跨方法/跨顶级声明均不中断），单文件可一次性报出多错。
-    public func checkCollecting(module: Module) -> [TypeError] {
+    public func checkCollecting(
+        module: Module, foreignConstantFailures: [String: ForeignConstantFailure]
+    ) -> [TypeError] {
+        applyForeignConstantFailures(foreignConstantFailures)
         importAliasNames = Set(module.imports.map { $0.alias })
         collectGivenBlockTypeNames(module)
         collectExportCContext(module.declarations)
@@ -1045,6 +1058,12 @@ public final class TypeChecker {
         } else {
             throw error
         }
+    }
+
+    /// 失败表随检查入口换一次，声明位置表同步清空：同一个 checker 复用到下一个包时不带旧位置。
+    private func applyForeignConstantFailures(_ failures: [String: ForeignConstantFailure]) {
+        foreignConstantFailures = failures
+        macroDeclarationLocations = [:]
     }
 
     // MARK: - Trait 支持
@@ -1830,6 +1849,9 @@ public final class TypeChecker {
                     }
                     if symbol.flags.contains("macro") {
                         macroForeignNames.insert(symbol.name)
+                        if macroDeclarationLocations[symbol.name] == nil {
+                            macroDeclarationLocations[symbol.name] = symbol.location
+                        }
                     }
                 }
             }
@@ -2089,6 +2111,14 @@ public final class TypeChecker {
 
     // MARK: - FFI 类型面：闭合表
 
+    /// 宏常量只收 C 标量：IR 里它是一个字面量，没有存储，也没有指针形态。
+    private static func isScalarFFIType(_ type: FFIType) -> Bool {
+        switch type {
+        case .i8, .u8, .i32, .i64, .u64, .f64, .boolean: return true
+        default: return false
+        }
+    }
+
     /// `[名称|foreign]` 块内每一项都过闭合表：函数项按形参 / 返回两个位置判，数据项按数据位判。
     /// 表本身只有一份（`FFIType`），这里只负责把失败翻成诊断码。
     private func checkForeignDeclSignatures(_ fd: ForeignDecl) throws {
@@ -2106,6 +2136,17 @@ public final class TypeChecker {
                     try report(
                         TypeError.foreignVarargsOnNonFunction(
                             symbol: symbol.name, location: symbol.location))
+                }
+                /// 宏常量只收 C 标量：指针、字符串与句柄在 C 侧都没有「一个值」的形态。
+                /// 只在类型本身可表达时报，表外类型留给 E4-028，免得一处声明两条码。
+                if symbol.flags.contains("macro"),
+                    let resolved = try? FFIType.resolve(symbol.annotation, at: .data),
+                    !Self.isScalarFFIType(resolved)
+                {
+                    try report(
+                        TypeError.foreignMacroTypeNotScalar(
+                            name: symbol.name, type: symbol.annotation.describe(),
+                            location: symbol.location))
                 }
                 try checkFFIType(symbol.annotation, at: .data, symbol: symbol)
             }
@@ -2877,6 +2918,18 @@ public final class TypeChecker {
         {
             try report(TypeError.givenBlockTypeInValuePosition(typeName: givenName, location: givenLoc))
         }
+        /// 宏常量未求值：只有读到它才报；类型仍按声明类型算，下游不因缺值改道。
+        /// 放在 unsafe 门禁之前 —— 宏是常量，读它本来就不需要 unsafe。
+        if case .identifier(let macroName, let macroLoc) = expr,
+            let failure = foreignConstantFailures[macroName]
+        {
+            let declaration = macroDeclarationLocations[macroName]
+            let at = declaration.map { "（声明在 \($0.fileName):\($0.line)）" } ?? ""
+            try report(
+                TypeError.foreignMacroUnavailable(
+                    name: macroName, reason: failure.reasonText + at, location: macroLoc))
+            return
+        }
         // 读外部数据符号与调 foreign 函数是同一条门禁：两者都触碰宿主内存，只应在 unsafe 上下文里发生。
         // 取址（`&符号`）由 `.addressOf` 分支先判上下文，走到这里时深度已 > 0，不会重复报。
         if unsafeContextDepth == 0,
@@ -3401,7 +3454,15 @@ public final class TypeChecker {
                     ))
                 return
             }
-            try checkExpression(operand)
+            /// 外部数据符号的裸名不再递归：unsafe 已在此处判过，它也没有子表达式要查。
+            /// 递归会让未求值的宏在一条表达式上报两条诊断。
+            if case .identifier(let symbolName, _) = operand,
+                typeEnv.lookupForeignData(name: symbolName) != nil
+            {
+                // 无需递归
+            } else {
+                try checkExpression(operand)
+            }
             if case .identifier(let macroName, _) = operand, macroForeignNames.contains(macroName) {
                 try report(
                     TypeError.mismatch(

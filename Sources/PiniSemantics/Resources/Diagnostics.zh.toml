@@ -233,6 +233,14 @@ suggestion = "只对对象取弱引用；结构、枚举、标量与函数值按
 message = "`UnownedRef` 的操作数必须是对象：`{type}` 没有可借的对象箱"
 suggestion = "只对对象取无主引用；结构、枚举、标量与函数值没有计数箱，按值或按引用共享即可"
 
+[E4-044]
+message = "宏常量 '{name}' 在这里取不到值：{reason}"
+suggestion = "值只能来自 C 头文件：补 `[ffi].headers`，或写一个 shim 函数；确定不用就删掉这条声明"
+
+[E4-045]
+message = "`|macro` 的类型必须是标量：'{name}' 声明为 '{type}'"
+suggestion = "改成 I8 / U8 / I32 / I64 / U64 / F64 / Bool 之一；C 的字符串与结构宏不进常量面"
+
 [E5-001]
 message = "未定义变量 '{name}'"
 suggestion = "你是想说 '{closest}' 吗？"

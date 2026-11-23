@@ -608,7 +608,7 @@ enum MacroScanner {
         var output = Output()
         for macro in macros where macro.file == header {
             if macro.isFunctionLike {
-                output.skipped.append(CHeaderSkip(name: macro.name, reason: "函数式宏要展开与求值，本期不生成"))
+                output.skipped.append(CHeaderSkip(name: macro.name, reason: "函数式宏要实参才能展开，不能取成常量；要用请写 C shim"))
             } else if macro.body.isEmpty {
                 output.skipped.append(CHeaderSkip(name: macro.name, reason: "空宏没有值"))
             }

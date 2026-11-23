@@ -195,6 +195,8 @@ public struct DiagnosticPublisher {
         case .foreignCallbackBoolean(let loc): return loc
         case .foreignVarargsOnNonFunction(_, let loc): return loc
         case .foreignVariadicArgument(_, _, _, let loc): return loc
+        case .foreignMacroUnavailable(_, _, let loc): return loc
+        case .foreignMacroTypeNotScalar(_, _, let loc): return loc
         case .stringHandleOutsideCFace(_, let loc): return loc
         case .missingArgumentLabel(_, _, _, _, _, let loc): return loc
         case .unexpectedArgumentLabel(_, _, let loc): return loc

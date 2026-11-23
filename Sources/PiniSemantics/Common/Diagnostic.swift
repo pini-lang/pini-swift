@@ -294,6 +294,8 @@ extension TypeError: DiagnosticProviding {
         case .foreignCallbackBoolean: return "\(DiagnosticDomain.type.rawValue)-032"
         case .foreignVarargsOnNonFunction: return "\(DiagnosticDomain.type.rawValue)-033"
         case .foreignVariadicArgument: return "\(DiagnosticDomain.type.rawValue)-034"
+        case .foreignMacroUnavailable: return "\(DiagnosticDomain.type.rawValue)-044"
+        case .foreignMacroTypeNotScalar: return "\(DiagnosticDomain.type.rawValue)-045"
         case .stringHandleOutsideCFace: return "\(DiagnosticDomain.type.rawValue)-035"
         case .missingArgumentLabel: return "\(DiagnosticDomain.type.rawValue)-036"
         case .unexpectedArgumentLabel: return "\(DiagnosticDomain.type.rawValue)-037"
@@ -329,7 +331,8 @@ extension TypeError: DiagnosticProviding {
         case .foreignTypeNotRepresentable(_, _, let loc), .foreignTypeWidthNotInIR(_, let loc),
             .foreignStringInReturnPosition(let loc), .foreignCallbackNotFreeFunction(_, let loc),
             .foreignCallbackBoolean(let loc), .foreignVarargsOnNonFunction(_, let loc),
-            .foreignVariadicArgument(_, _, _, let loc), .stringHandleOutsideCFace(_, let loc):
+            .foreignVariadicArgument(_, _, _, let loc), .stringHandleOutsideCFace(_, let loc),
+            .foreignMacroUnavailable(_, _, let loc), .foreignMacroTypeNotScalar(_, _, let loc):
             return loc
         case .missingArgumentLabel(_, _, _, _, _, let loc), .unexpectedArgumentLabel(_, _, let loc),
             .duplicateArgumentLabel(_, _, let loc):
