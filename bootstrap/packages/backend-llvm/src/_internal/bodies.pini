@@ -550,6 +550,12 @@ unaryOpText|func(op: I32,) -> (String,):
         return "xor"
     return ""
 
+; 外部名到运行时符号：`toCString` 在边界上换成 shim 名，其余按原名交链接器。
+runtimeSymbolOf|func(name: String,) -> (String,):
+    if name == "toCString":
+        return "bk_cstr"
+    return name
+
 ; 表达式：先按份额判据记账，再发本节点；新份额留给语句收尾归还。
 ; 判据来自中端：节点求值造出份额即入账，借用与不参与不入账，本层不按拼写反推。
 emitExpr|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
@@ -621,29 +627,49 @@ emitExprCore|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
         if target >= 0 && typeTagAt(module = module, typeId = node.typeId) == irFutureTypeTag():
             ; 站点类型是任务句柄：这条调用是派发，不是直呼。
             return emitTaskSpawn(out = out, module = module, node = node, target = target)
+        var declaredAt = -1
         if target < 0:
-            let declared = findExternFunction(module = module, name = callee)
-            if declared < 0 && len(externSignature(name = callee)) == 0:
+            declaredAt = findExternFunction(module = module, name = callee)
+            if declaredAt < 0 && len(externSignature(name = callee)) == 0:
                 out.ctx = addGap(ctx = out.ctx, gap = "外部调用 " + callee)
                 return out
-            useExtern(use = out.ctx.externs, name = callee)
-            symbol = callee
+            symbol = runtimeSymbolOf(name = callee)
+            useExtern(use = out.ctx.externs, name = symbol)
         var args = ""
         var i = 0
         while i < len(node.kids):
             let one = emitExpr(ctx = out.ctx, module = module, nodeId = node.kids[i])
             out.ctx = one.ctx
-            var argType = irNodeAt(pool = module.nodes, id = node.kids[i]).typeId
+            let fromType = irNodeAt(pool = module.nodes, id = node.kids[i]).typeId
+            var argType = fromType
             if target >= 0 && i < len(module.functions[target].params):
                 argType = module.functions[target].params[i].typeId
-            let shaped = storeValue(ctx = out.ctx, module = module, text = one.text, fromType = irNodeAt(pool = module.nodes, id = node.kids[i]).typeId, toType = argType)
-            out.ctx = shaped.ctx
-            if target >= 0:
-                ; 形参归被调方所有：账上有就交出去，没有就另留一份，否则返回后被调方读到的是空壳。
-                out.ctx = adoptValue(ctx = out.ctx, module = module, name = shaped.text, typeId = argType, adopt = 1)
+            elif declaredAt >= 0 && i < len(module.externs[declaredAt].params):
+                ; 外部签名是实参形状的唯一出处：C 函数指针位要的是裸指针，不是闭包聚合。
+                argType = module.externs[declaredAt].params[i]
             if i > 0:
                 args = args + ", "
-            args = args + llvmTypeName(pool = module.types, typeId = argType) + " " + shaped.text
+            if declaredAt >= 0 && i < len(module.externs[declaredAt].params) && typeTagAt(module = module, typeId = argType) == irTypeTag(.irTypeFunction):
+                ; C 函数指针位：直接交具名函数的代码符号，闭包协议在 C 侧不存在。
+                let argNode = irNodeAt(pool = module.nodes, id = node.kids[i])
+                var handed = ""
+                if argNode.kind == irExprTag(.irFunctionValue):
+                    let adapterName = textAt(module = module, id = argNode.text)
+                    let adapterAt = findIrFunctionIndex(module = module, name = adapterName)
+                    if adapterAt >= 0 && len(module.functions[adapterAt].adapterTarget) > 0:
+                        handed = "ptr @" + mangleName(name = module.functions[adapterAt].adapterTarget)
+                if len(handed) == 0:
+                    out.ctx = addGap(ctx = out.ctx, gap = "C 函数指针位只收具名函数")
+                    out.text = ""
+                    return out
+                args = args + handed
+            else:
+                let shaped = storeValue(ctx = out.ctx, module = module, text = one.text, fromType = fromType, toType = argType)
+                out.ctx = shaped.ctx
+                if target >= 0:
+                    ; 形参归被调方所有：账上有就交出去，没有就另留一份，否则返回后被调方读到的是空壳。
+                    out.ctx = adoptValue(ctx = out.ctx, module = module, name = shaped.text, typeId = argType, adopt = 1)
+                args = args + llvmTypeName(pool = module.types, typeId = argType) + " " + shaped.text
             i = i + 1
         let id = out.ctx.temp
         out.ctx.temp = id + 1
@@ -670,6 +696,8 @@ emitExprCore|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
         return out
     if node.kind == 15:
         return emitResultConstruct(out = out, module = module, node = node)
+    if node.kind == 16:
+        return emitOptionalConstruct(out = out, module = module, node = node)
     if node.kind == 52:
         return emitTaskJoin(out = out, module = module, node = node)
     if node.kind == 53:
@@ -726,6 +754,8 @@ emitExprCore|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
         return emitPointerLoad(out = out, module = module, node = node)
     if node.kind == 30:
         return emitPointerStore(out = out, module = module, node = node)
+    if node.kind == 12:
+        return emitFunctionValue(out = out, module = module, node = node)
     if node.kind == 11:
         return emitIndirectCall(out = out, module = module, node = node)
     if node.kind == 13:
@@ -1006,6 +1036,14 @@ emitConvert|func(ctx: BodyCtx, module: IrModule, text: String, srcType: I32, dst
         op = "ptrtoint"
     elif srcWidth > 0 && dstName == "ptr":
         op = "inttoptr"
+    if srcTag == irTypeTag(.irTypeFunction) && dstTag == irTypeTag(.irTypeCFunction):
+        ; 函数值转 C 函数指针：只取代码槽；C 侧没有环境位，有捕获的闭包不该走到这里。
+        let id = out.ctx.temp
+        out.ctx.temp = id + 1
+        let name = tempName(index = id)
+        appendLine(sink = out.ctx.lines, text = "  " + name + " = extractvalue { ptr, ptr } " + text + ", 0")
+        out.text = name
+        return out
     if len(op) == 0:
         out.ctx = addGap(ctx = out.ctx, gap = "转换 " + srcName + " 到 " + dstName)
         return out
@@ -1074,7 +1112,7 @@ emitElementAppend|func(ctx: BodyCtx, module: IrModule, receiverText: String, val
     out.text = name
     return out
 
-; 单参直呼：实参按自身类型传，结果按节点类型出；字符与字节桥共用这一形。
+; 单参直呼：实参按自身类型传，结果按节点类型出；空返回不取临时值。
 emitDirectCall|func(ctx: BodyCtx, module: IrModule, node: IrNode, symbol: String,) -> (ExprOut,):
     var out = ExprOut()
     let argId = node.kids[0]
@@ -1083,6 +1121,10 @@ emitDirectCall|func(ctx: BodyCtx, module: IrModule, node: IrNode, symbol: String
     useExtern(use = out.ctx.externs, name = symbol)
     let argType = llvmTypeName(pool = module.types, typeId = irNodeAt(pool = module.nodes, id = argId).typeId)
     let retType = llvmTypeName(pool = module.types, typeId = node.typeId)
+    if retType == "void":
+        appendLine(sink = out.ctx.lines, text = "  call void @" + symbol + "(" + argType + " " + arg.text + ")")
+        out.text = ""
+        return out
     let id = out.ctx.temp
     out.ctx.temp = id + 1
     let name = tempName(index = id)
@@ -1242,6 +1284,19 @@ emitIndirectCall|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut
     let value = tempName(index = at)
     appendLine(sink = done.ctx.lines, text = "  " + value + " = call " + retType + " " + code + "(" + args + ")")
     done.text = value
+    return done
+
+; 函数值：`{ ptr code, ptr null }`；具名函数没有捕获，环境槽恒为空。
+; 符号按 IR 名编码，与同名函数定义处的符号同源。
+emitFunctionValue|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut,):
+    var done = out
+    let name = textAt(module = module, id = node.text)
+    let symbol = mangleName(name = name)
+    let at = done.ctx.temp
+    done.ctx.temp = at + 1
+    let code = tempName(index = at)
+    appendLine(sink = done.ctx.lines, text = "  " + code + " = insertvalue { ptr, ptr } { ptr @" + symbol + ", ptr null }, ptr @" + symbol + ", 0")
+    done.text = code
     return done
 
 ; 闭包值：`{ ptr code, ptr env }`；有捕获才分配 env，字段按捕获序存外层槽地址。
@@ -1608,35 +1663,37 @@ emitPrintArgs|func(ctx: BodyCtx, module: IrModule, ids: Array<I32>, spaced: Bool
     appendLine(sink = out.lines, text = "  call void @bk_print_unlock()")
     return out
 
-; 展示一个值：按 IR 拼写选格式与加宽方向；字符串载荷与 C 串同形，直接走 `%s`。
-; 浮点走运行时段转换，临时串当场还；聚合与容器未接，落到整数兜底前先记缺口不在此处。
-printValue|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (BodyCtx,):
-    let one = emitExpr(ctx = ctx, module = module, nodeId = nodeId)
-    var out = one.ctx
-    let node = irNodeAt(pool = module.nodes, id = nodeId)
-    let ty = llvmTypeName(pool = module.types, typeId = node.typeId)
+; 标量打印：值文本加类型下标，按 LLVM 拼写选格式与加宽方向。
+; 带标签值没有逐值通道：按整数兜底会印出标签而非用例名，故记缺口不出假值。
+printScalar|func(ctx: BodyCtx, module: IrModule, text: String, typeId: I32,) -> (BodyCtx,):
+    var out = ctx
+    let ty = llvmTypeName(pool = module.types, typeId = typeId)
+    let valueTag = typeTagAt(module = module, typeId = typeId)
+    if valueTag == 15 || valueTag == 13:
+        out = addGap(ctx = out, gap = "打印带标签值 类别码 " + countText(valueTag))
+        return out
     if ty == "i1":
         let id = out.temp
         out.temp = id + 1
         let sel = tempName(index = id)
-        appendLine(sink = out.lines, text = "  " + sel + " = select i1 " + one.text + ", ptr @fmt_bool_true, ptr @fmt_bool_false")
+        appendLine(sink = out.lines, text = "  " + sel + " = select i1 " + text + ", ptr @fmt_bool_true, ptr @fmt_bool_false")
         appendLine(sink = out.lines, text = "  call i32 (ptr, ...) @printf(ptr " + sel + ")")
         return out
     if ty == "i8":
         let id = out.temp
         out.temp = id + 1
         let wide = tempName(index = id)
-        appendLine(sink = out.lines, text = "  " + wide + " = sext i8 " + one.text + " to i32")
+        appendLine(sink = out.lines, text = "  " + wide + " = sext i8 " + text + " to i32")
         appendLine(sink = out.lines, text = "  call i32 (ptr, ...) @printf(ptr @fmt_int, i32 " + wide + ")")
         return out
     if ty == "i32":
-        appendLine(sink = out.lines, text = "  call i32 (ptr, ...) @printf(ptr @fmt_int, i32 " + one.text + ")")
+        appendLine(sink = out.lines, text = "  call i32 (ptr, ...) @printf(ptr @fmt_int, i32 " + text + ")")
         return out
     if ty == "i64":
         let id = out.temp
         out.temp = id + 1
         let narrow = tempName(index = id)
-        appendLine(sink = out.lines, text = "  " + narrow + " = trunc i64 " + one.text + " to i32")
+        appendLine(sink = out.lines, text = "  " + narrow + " = trunc i64 " + text + " to i32")
         appendLine(sink = out.lines, text = "  call i32 (ptr, ...) @printf(ptr @fmt_int, i32 " + narrow + ")")
         return out
     if ty == "double":
@@ -1645,15 +1702,95 @@ printValue|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (BodyCtx,):
         let id = out.temp
         out.temp = id + 1
         let rendered = tempName(index = id)
-        appendLine(sink = out.lines, text = "  " + rendered + " = call ptr @bk_double_to_string(double " + one.text + ")")
+        appendLine(sink = out.lines, text = "  " + rendered + " = call ptr @bk_double_to_string(double " + text + ")")
         appendLine(sink = out.lines, text = "  call i32 (ptr, ...) @printf(ptr @fmt_string, ptr " + rendered + ")")
         appendLine(sink = out.lines, text = "  call void @bk_str_release(ptr " + rendered + ")")
         return out
     if ty == "ptr":
-        appendLine(sink = out.lines, text = "  call i32 (ptr, ...) @printf(ptr @fmt_string, ptr " + one.text + ")")
+        appendLine(sink = out.lines, text = "  call i32 (ptr, ...) @printf(ptr @fmt_string, ptr " + text + ")")
         return out
-    appendLine(sink = out.lines, text = "  call i32 (ptr, ...) @printf(ptr @fmt_int, " + ty + " " + one.text + ")")
+    appendLine(sink = out.lines, text = "  call i32 (ptr, ...) @printf(ptr @fmt_int, " + ty + " " + text + ")")
     return out
+
+; 数组打印：方括号包住、逗号分隔，元素按自身类别逐个出。
+; 索引走栈槽，循环四段与 while 同形；元素从装箱台按自身宽度读回。
+emitArrayPrint|func(ctx: BodyCtx, module: IrModule, arrayText: String, elemType: I32,) -> (BodyCtx,):
+    var out = ctx
+    let elemTag = typeTagAt(module = module, typeId = elemType)
+    let printable = elemTag == 1 || elemTag == 2 || elemTag == 3 || elemTag == 4 || elemTag == 5
+    if !printable && elemTag != 6 && elemTag != 7 && elemTag != 8 && elemTag != 9:
+        out = addGap(ctx = out, gap = "打印数组元素 类别码 " + countText(elemTag))
+        return out
+    useExtern(use = out.externs, name = "bk_array_len")
+    useExtern(use = out.externs, name = "bk_array_get")
+    let elemName = llvmTypeName(pool = module.types, typeId = elemType)
+    let at = out.label
+    out.label = at + 1
+    let condLabel = labelName(prefix = "arr.cond.", index = at)
+    let elemLabel = labelName(prefix = "arr.elem.", index = at)
+    let sepLabel = labelName(prefix = "arr.sep.", index = at)
+    let putLabel = labelName(prefix = "arr.put.", index = at)
+    let incLabel = labelName(prefix = "arr.inc.", index = at)
+    let endLabel = labelName(prefix = "arr.end.", index = at)
+    let idxName = "%arridx" + countText(at)
+    let lenName = "%arrlen" + countText(at)
+    appendLine(sink = out.lines, text = "  " + idxName + " = alloca i32")
+    appendLine(sink = out.lines, text = "  store i32 0, ptr " + idxName)
+    appendLine(sink = out.lines, text = "  call i32 (ptr, ...) @printf(ptr @fmt_lbracket)")
+    appendLine(sink = out.lines, text = "  " + lenName + " = call i32 @bk_array_len(ptr " + arrayText + ")")
+    appendLine(sink = out.lines, text = "  br label %" + condLabel)
+    appendLine(sink = out.lines, text = condLabel + ":")
+    let indexId = out.temp
+    out.temp = indexId + 1
+    let index = tempName(index = indexId)
+    appendLine(sink = out.lines, text = "  " + index + " = load i32, ptr " + idxName)
+    let moreId = out.temp
+    out.temp = moreId + 1
+    let more = tempName(index = moreId)
+    appendLine(sink = out.lines, text = "  " + more + " = icmp slt i32 " + index + ", " + lenName)
+    appendLine(sink = out.lines, text = "  br i1 " + more + ", label %" + elemLabel + ", label %" + endLabel)
+    appendLine(sink = out.lines, text = elemLabel + ":")
+    let firstId = out.temp
+    out.temp = firstId + 1
+    let first = tempName(index = firstId)
+    appendLine(sink = out.lines, text = "  " + first + " = icmp eq i32 " + index + ", 0")
+    appendLine(sink = out.lines, text = "  br i1 " + first + ", label %" + putLabel + ", label %" + sepLabel)
+    appendLine(sink = out.lines, text = sepLabel + ":")
+    appendLine(sink = out.lines, text = "  call i32 (ptr, ...) @printf(ptr @fmt_comma)")
+    appendLine(sink = out.lines, text = "  br label %" + putLabel)
+    appendLine(sink = out.lines, text = putLabel + ":")
+    let boxId = out.temp
+    out.temp = boxId + 1
+    let box = tempName(index = boxId)
+    appendLine(sink = out.lines, text = "  " + box + " = call ptr @bk_array_get(ptr " + arrayText + ", i32 " + index + ")")
+    let valueId = out.temp
+    out.temp = valueId + 1
+    let value = tempName(index = valueId)
+    appendLine(sink = out.lines, text = "  " + value + " = load " + elemName + ", ptr " + box)
+    out = printScalar(ctx = out, module = module, text = value, typeId = elemType)
+    appendLine(sink = out.lines, text = "  br label %" + incLabel)
+    appendLine(sink = out.lines, text = incLabel + ":")
+    let nextId = out.temp
+    out.temp = nextId + 1
+    let next = tempName(index = nextId)
+    appendLine(sink = out.lines, text = "  " + next + " = add i32 " + index + ", 1")
+    appendLine(sink = out.lines, text = "  store i32 " + next + ", ptr " + idxName)
+    appendLine(sink = out.lines, text = "  br label %" + condLabel)
+    appendLine(sink = out.lines, text = endLabel + ":")
+    appendLine(sink = out.lines, text = "  call i32 (ptr, ...) @printf(ptr @fmt_rbracket)")
+    return out
+
+; 展示一个值：数组走循环，其余按标量拼写分派。
+printValue|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (BodyCtx,):
+    let one = emitExpr(ctx = ctx, module = module, nodeId = nodeId)
+    var out = one.ctx
+    let node = irNodeAt(pool = module.nodes, id = nodeId)
+    if typeTagAt(module = module, typeId = node.typeId) == 12:
+        let entry = irTypeAt(pool = module.types, id = node.typeId)
+        if len(entry.kids) == 0:
+            return addGap(ctx = out, gap = "打印数组缺元素类型")
+        return emitArrayPrint(ctx = out, module = module, arrayText = one.text, elemType = entry.kids[0])
+    return printScalar(ctx = out, module = module, text = one.text, typeId = node.typeId)
 
 ; 断言：条件为真直落；为假时测试函数置失败位并立刻返回，其余函数调陷阱。
 ; 消息缺省一句固定串，不空指针；测试态的消息留给报告期打印，故不归还份额。
@@ -1943,6 +2080,41 @@ emitEnumPayloadGet|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprO
         done.text = name
         return done
     done.ctx = addGap(ctx = done.ctx, gap = "载荷读的操作数不是带标签值 类别码 " + countText(tag))
+    return done
+
+; 可选构造：两槽聚合（标签 · 载荷），标签 some 记 0、none 记 1，与匹配面的固定标签同源。
+; 载荷按自身类型入槽，并按求值效果移交份额：聚合持有它，别名先留一份。
+emitOptionalConstruct|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOut,):
+    var done = out
+    let agg = llvmTypeName(pool = module.types, typeId = node.typeId)
+    if node.op != 0:
+        let tagId = done.ctx.temp
+        done.ctx.temp = tagId + 1
+        let tagged = tempName(index = tagId)
+        appendLine(sink = done.ctx.lines, text = "  " + tagged + " = insertvalue " + agg + " zeroinitializer, i64 1, 0")
+        done.text = tagged
+        return done
+    if len(node.kids) == 0:
+        done.ctx = addGap(ctx = done.ctx, gap = "可选构造缺载荷")
+        return done
+    let one = emitExpr(ctx = done.ctx, module = module, nodeId = node.kids[0])
+    done.ctx = one.ctx
+    let tagId = done.ctx.temp
+    done.ctx.temp = tagId + 1
+    let tagged = tempName(index = tagId)
+    appendLine(sink = done.ctx.lines, text = "  " + tagged + " = insertvalue " + agg + " zeroinitializer, i64 0, 0")
+    let payloadType = irNodeAt(pool = module.nodes, id = node.kids[0]).typeId
+    let payloadSpelling = llvmTypeName(pool = module.types, typeId = payloadType)
+    let effect = irShareEffectOf(pool = module.types, nodes = module.nodes, nodeId = node.kids[0])
+    var adopt = 3
+    if effect == 1:
+        adopt = 1
+    done.ctx = adoptValue(ctx = done.ctx, module = module, name = one.text, typeId = payloadType, adopt = adopt)
+    let id = done.ctx.temp
+    done.ctx.temp = id + 1
+    let name = tempName(index = id)
+    appendLine(sink = done.ctx.lines, text = "  " + name + " = insertvalue " + agg + " " + tagged + ", " + payloadSpelling + " " + one.text + ", 1")
+    done.text = name
     return done
 
 ; 负下标尾计数：取长度后加上下标，从尾部数；越界由运行时陷阱，本层不夹界。

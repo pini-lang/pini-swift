@@ -320,6 +320,7 @@ builtinParams|func(pool: TypePool, params: Array<BuiltinParam>,) -> (BuiltinArgs
     return out
 
 ; 内建调用：形参与返回都取自签名表，变参放过个数。
+; 返回形状未定时仍先对个数与标签——签名表的约束不因返回待定而失效。
 checkBuiltinCall|func(world: MemberWorld, out: CallResult, site: CallSite,) -> (CallResult,):
     if site.builtin < 0 || site.builtin >= len(world.functions):
         return deferCall(out)
@@ -328,9 +329,12 @@ checkBuiltinCall|func(world: MemberWorld, out: CallResult, site: CallSite,) -> (
     let ret = builtinShapeType(pool = typed.pool, shape = function.ret, kids = [])
     var ready = out
     ready.pool = ret.pool
+    let matched = matchCall(out = ready, site = site, params = typed.params, variadic = function.variadic, tailStart = -1, retId = ret.id)
+    if matched.failed:
+        return matched
     if ret.id < 0:
-        return deferCall(ready)
-    return matchCall(out = ready, site = site, params = typed.params, variadic = function.variadic, tailStart = -1, retId = ret.id)
+        return deferCall(matched)
+    return matched
 
 ; 指针读写：结果类型由实参的指针元素决定，签名表给不了固定形状，故单独判定。
 ; 两者都是内建，只认位置实参；`store` 无值，判定结果不带类型。

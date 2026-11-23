@@ -407,7 +407,7 @@ module: IrModule = IrModule()
 
 ; 泛型实例：模板不进函数表，实例按类型实参取名，调用点文本指向实例。
 泛型实例发射|test() -> ():
-    let 样例 = 造样例("id|func<T>(value: T,) -> (T,):\n    return value\n\nuse|func() -> (I32,):\n    return id<I32>(1)\n")
+    let 样例 = 造样例("id|func<T>(value: T,) -> (T,):\n    return value\n\nuse|func() -> (I32,):\n    return id<I32>(value = 1)\n")
     assert(len(样例.module.errors) == 0, "泛型实例应降载成功")
     assert(取函数(样例 = 样例, name = "id__I32") >= 0, "I32 实例应进函数表")
     assert(取函数(样例 = 样例, name = "id") < 0, "模板不应进函数表")
@@ -483,4 +483,66 @@ module: IrModule = IrModule()
     assert(解 >= 0, "成员访问前应插解引用节点")
     let 解节点 = irNodeAt(pool = 样例.module.nodes, id = 解)
     assert(irTypeTag(irTypeAt(pool = 样例.module.types, id = 解节点.typeId).kind) == irTypeTag(.irTypeNominal), "解引用结果应是名义类型")
+    return
+
+; 可选构造：`.some(值)` 与 `.none` 都发可选构造节点，标签 some 0 / none 1；
+; 限定写法 `Optional.some` / `Optional.none` 与 nil 字面量同路。
+可选构造降载|test() -> ():
+    let 样例 = 造样例("f|func() -> ():\n    let 甲: ?I32 = .some(42)\n    let 乙: ?I32 = nil\n    let 丙: ?I32 = Optional.none\n    let 丁 = Optional.some(7)\n    print(甲)\n    return\n")
+    assert(len(样例.module.errors) == 0, "可选构造应降载成功")
+    assert(取节点按操作(样例 = 样例, kind = irExprTag(.irOptionalConstruct), op = 0) >= 0, "应发 some 标签 0 的构造")
+    assert(取节点按操作(样例 = 样例, kind = irExprTag(.irOptionalConstruct), op = 1) >= 0, "应发 none 标签 1 的构造")
+    let 一 = 取节点按操作(样例 = 样例, kind = irExprTag(.irOptionalConstruct), op = 0)
+    let 一节点 = irNodeAt(pool = 样例.module.nodes, id = 一)
+    assert(len(一节点.kids) == 1, "some 构造带一个载荷子节点")
+    let 二 = 取节点按操作(样例 = 样例, kind = irExprTag(.irOptionalConstruct), op = 1)
+    let 二节点 = irNodeAt(pool = 样例.module.nodes, id = 二)
+    assert(len(二节点.kids) == 0, "none 构造不带子节点")
+    return
+
+; 限定用例：`枚举.用例` 与 `枚举.用例(载荷)` 都按声明序取标签，接收者不降成值。
+限定用例降载|test() -> ():
+    let 样例 = 造样例("[记号]\n加\n数(I32,)\n\nf|func() -> ():\n    let 甲: 记号 = 记号.加\n    let 乙: 记号 = 记号.数(3)\n    print(甲)\n    return\n")
+    assert(len(样例.module.errors) == 0, "限定用例应降载成功")
+    assert(取节点(样例 = 样例, kind = irExprTag(.irEnumConstruct), text = "加") >= 0, "应发用例 加 的构造")
+    let 数 = 取节点(样例 = 样例, kind = irExprTag(.irEnumConstruct), text = "数")
+    assert(数 >= 0, "应发用例 数 的构造")
+    assert(irNodeAt(pool = 样例.module.nodes, id = 数).op == 1, "标签按声明序")
+    return
+
+; 泛型实例调用：标签实参按模板形参归位，符号取实例名，实参不留源序。
+泛型实例带标签降载|test() -> ():
+    let 样例 = 造样例("身份|func<T>(x: T,) -> (T,):\n    return x\n\nf|func() -> ():\n    print(身份<I32>(x = 100))\n    return\n")
+    assert(len(样例.module.errors) == 0, "泛型实例调用应降载成功")
+    let 调 = 取节点(样例 = 样例, kind = irExprTag(.irCall), text = "身份__I32")
+    assert(调 >= 0, "调用符号应取实例名")
+    assert(len(irNodeAt(pool = 样例.module.nodes, id = 调).kids) == 1, "实参按形参归位后只留一个")
+    return
+
+; 裸函数名作值：发函数值节点并连带一条转发适配器，符号取适配器名。
+; 适配器记目标函数并按闭包协议收环境位，体由发射期拼。
+函数值降载|test() -> ():
+    let 样例 = 造样例("加倍|func(_n: I32,) -> (I32,):\n    return _n * 2\n\n应用|func(f: (I32,) -> (I32,), x: I32,) -> (I32,):\n    return f(x)\n\nf|func() -> ():\n    print(应用(f = 加倍, x = 5))\n    return\n")
+    assert(len(样例.module.errors) == 0, "函数值应降载成功")
+    let 值 = 取节点按类别(样例 = 样例, kind = irExprTag(.irFunctionValue))
+    assert(值 >= 0, "应发函数值节点")
+    let 符号 = textAt(module = 样例.module, id = irNodeAt(pool = 样例.module.nodes, id = 值).text)
+    assert(符号 == "__adapter_加倍", "函数值应指向适配器，实得 " + 符号)
+    let 适配 = 取函数(样例 = 样例, name = 符号)
+    assert(适配 >= 0, "适配器应进函数表")
+    assert(样例.module.functions[适配].adapterTarget == "加倍", "适配器应记目标函数")
+    assert(样例.module.functions[适配].isClosure, "适配器按闭包协议收环境位")
+    return
+
+; 同一函数在多处作值只建一条适配器；重复条目会让同图两处定义撞名。
+函数值适配器去重|test() -> ():
+    let 样例 = 造样例("加倍|func(_n: I32,) -> (I32,):\n    return _n * 2\n\n应用|func(f: (I32,) -> (I32,), x: I32,) -> (I32,):\n    return f(x)\n\nf|func() -> ():\n    print(应用(f = 加倍, x = 1))\n    print(应用(f = 加倍, x = 2))\n    return\n")
+    assert(len(样例.module.errors) == 0, "两次作值应降载成功")
+    var 数 = 0
+    var i = 0
+    while i < len(样例.module.functions):
+        if 样例.module.functions[i].adapterTarget == "加倍":
+            数 = 数 + 1
+        i = i + 1
+    assert(数 == 1, "适配器应只建一条，实得 " + countText(数))
     return

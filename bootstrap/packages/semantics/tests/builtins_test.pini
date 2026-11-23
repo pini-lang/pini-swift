@@ -77,3 +77,28 @@ id: I32 = -1
     assert(builtinShapeName(.builtinPopTuple) == "数组弹出元组", "实得 " + builtinShapeName(.builtinPopTuple))
     assert(builtinShapeName(.builtinOptionalElem) == "元素可选", "实得 " + builtinShapeName(.builtinOptionalElem))
     return
+
+; 错误与并发函数行：五个名字与形参个数，错误构造按形状驻留成各自类型。
+错误与并发函数行|test() -> ():
+    var pool = TypePool()
+    let functions = builtinFunctionTable()
+    let errorAt = findBuiltinFunction(functions = functions, name = "Error")
+    assert(errorAt >= 0, "Error 应在表内")
+    assert(len(functions[errorAt].params) == 1, "Error 收一个消息串")
+    let errorType = builtinShapeType(pool = pool, shape = functions[errorAt].ret, kids = [])
+    assert(typeText(pool = errorType.pool, id = errorType.id) == "Error", "Error 应回 Error")
+    let cancelAt = findBuiltinFunction(functions = functions, name = "CancelError")
+    assert(cancelAt >= 0, "CancelError 应在表内")
+    let cancelType = builtinShapeType(pool = errorType.pool, shape = functions[cancelAt].ret, kids = [])
+    assert(typeText(pool = cancelType.pool, id = cancelType.id) == "CancelError", "CancelError 应回 CancelError")
+    let isCancelAt = findBuiltinFunction(functions = functions, name = "isCancel")
+    assert(isCancelAt >= 0, "isCancel 应在表内")
+    let boolType = builtinShapeType(pool = cancelType.pool, shape = functions[isCancelAt].ret, kids = [])
+    assert(typeText(pool = boolType.pool, id = boolType.id) == "Bool", "isCancel 应回 Bool")
+    let joinAllAt = findBuiltinFunction(functions = functions, name = "joinAll")
+    assert(joinAllAt >= 0, "joinAll 应在表内")
+    assert(len(functions[joinAllAt].params) == 1, "joinAll 收一个数组")
+    let joinWithinAt = findBuiltinFunction(functions = functions, name = "joinWithin")
+    assert(joinWithinAt >= 0, "joinWithin 应在表内")
+    assert(len(functions[joinWithinAt].params) == 2, "joinWithin 收未来与毫秒")
+    return

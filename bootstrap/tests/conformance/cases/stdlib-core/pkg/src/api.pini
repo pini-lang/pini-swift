@@ -4,43 +4,43 @@
     return s.trim()
 
 前缀|func(s: String, p: String,) -> (Bool,):
-    return s.startsWith(prefix = p)
+    return s.startsWith(p)
 
 后缀|func(s: String, p: String,) -> (Bool,):
-    return s.endsWith(suffix = p)
+    return s.endsWith(p)
 
 替换|func(s: String, old: String, replacement: String,) -> (String,):
-    return s.replace(old = old, new = replacement)
+    return s.replace(old, replacement)
 
 重复|func(s: String, times: I32,) -> (String,):
-    return s.repeat(times = times)
+    return s.repeat(times)
 
 左填|func(s: String, width: I32, fill: String,) -> (String,):
-    return s.padLeft(width = width, fill = fill)
+    return s.padLeft(width, fill)
 
 右填|func(s: String, width: I32, fill: String,) -> (String,):
-    return s.padRight(width = width, fill = fill)
+    return s.padRight(width, fill)
 
 末位|func(s: String, needle: String,) -> (I32,):
-    return s.lastIndexOf(needle = needle)
+    return s.lastIndexOf(needle)
 
 判空|func(s: String,) -> (Bool,):
     return s.isEmpty()
 
 计数|func(s: String, sub: String,) -> (I32,):
-    return s.count(sub = sub)
+    return s.count(sub)
 
 去前缀|func(s: String, prefix: String,) -> (String,):
-    return s.stripPrefix(prefix = prefix)
+    return s.stripPrefix(prefix)
 
 去后缀|func(s: String, suffix: String,) -> (String,):
-    return s.stripSuffix(suffix = suffix)
+    return s.stripSuffix(suffix)
 
 补前缀|func(s: String, prefix: String,) -> (String,):
-    return s.ensurePrefix(prefix = prefix)
+    return s.ensurePrefix(prefix)
 
 补后缀|func(s: String, suffix: String,) -> (String,):
-    return s.ensureSuffix(suffix = suffix)
+    return s.ensureSuffix(suffix)
 
 逆序|func(s: String,) -> (String,):
     return s.reversed()
@@ -49,7 +49,7 @@
     return s.capitalized()
 
 居中|func(s: String, width: I32, fill: String,) -> (String,):
-    return s.center(width = width, fill = fill)
+    return s.center(width, fill)
 
 截断|func(s: String, width: I32,) -> (String,):
-    return s.truncate(width = width)
+    return s.truncate(width)

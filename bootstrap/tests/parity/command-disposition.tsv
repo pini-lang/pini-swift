@@ -1,0 +1,30 @@
+﻿# 命令处置：宿主每条命令与自举独有命令的去向；「有」项记 -。
+# 处置取值：自举内部通道 / 待补齐 / 保留差异 / 待核。
+# 每个「无」「部分」「自举独有」行都必须有一行处置，缺行时 parity.py 拒绝生成命令表。
+命令	处置	说明
+backends	-	已收口，--tsv 两侧同形
+bind	待补齐	工具面：C 头翻译，未开工
+build	待补齐	缺 --diagnostics-tsv、--no-stdlib、--print-plan、--shared、-o 五个开关
+check	-	已收口
+compile	待补齐	构建执行组：需 bk_process_* 进运行时，符号先登记 runtime-abi
+dap	待补齐	工具面：调试适配协议，未开工
+debug	待补齐	工具面：调试器，未开工
+emit	待补齐	缺 --backend 与 -o 两个开关
+expand	待补齐	unroll 语义两通道已通，命令入口未做
+fmt	待补齐	工具面：保真打印，未开工
+help	待核	命令面七段未列此条，宿主二十一条命令含它，自举无
+lsp	待补齐	工具面：语言服务，未开工
+mod	待补齐	模块工具组 tidy/refresh/verify/graph，前置是包版本模型
+parse	保留差异	树形描述绑定宿主 AST 词表，逐字对齐等于复刻节点表；先定共同结构签名
+repl	待补齐	解释执行：增量求值与补全，随求值器落地
+run	待补齐	解释执行：与 check 共用同一份世界的树遍历求值器
+run-llvm	待补齐	构建执行组：需 bk_process_* 起外部 clang 或 lli
+test	-	已收口
+test-llvm	待补齐	构建执行组：发射原生程序再跑，需 bk_process_*
+tokens	-	已收口，含转义标本
+version	-	已收口
+cases	自举内部通道	只列裸名用例的位置，不改写源码；宿主无对应命令
+dump	自举内部通道	单层 IR 的结构转储，作模块自足的见证；宿主无对应命令
+interfaces	自举内部通道	逐包导出接口文本与工作区记录；宿主写 interfaces.host.toml，两侧不互读
+lower	自举内部通道	降载腿单独暴露，供程序表与普查取读数；宿主无对应命令
+plan	自举内部通道	只出构建计划不执行，供外部按波调度；宿主无对应命令

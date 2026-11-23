@@ -13,6 +13,6 @@
 main|func() -> ():
     print(应用(f = 加倍, x = 5)) ; 10：传入具名函数
     print(应用(f = 加一, x = 20)) ; 21：再传入另一个函数
-    var g = func (n,) -> (I32,): return n * n
+    var g = func (n: I32,) -> (I32,): return n * n
     print(g(6)) ; 36：匿名函数直接调用
     return

@@ -8,7 +8,7 @@
 北
 
 main|func() -> ():
-    var d = 北
+    var d: 方向 = .北
     match d:
         case 东:
             print("向东")

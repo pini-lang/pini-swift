@@ -6,30 +6,30 @@
 trim|self() -> (String,):
     return self.trimLeft().trimRight()
 ; 前缀判定：长度不足即假，否则按 slice 逐字素比较；空前缀恒真（slice(0, 0) 得空串）。
-startsWith|self(prefix: String,) -> (Bool,):
-    var m = len(prefix)
+startsWith|self(_prefix: String,) -> (Bool,):
+    var m = len(_prefix)
     if m > len(self):
         return false
-    return self.slice(0, m) == prefix
+    return self.slice(0, m) == _prefix
 ; 后缀判定：与前缀同规，比较尾部切片；空后缀恒真。
-endsWith|self(suffix: String,) -> (Bool,):
+endsWith|self(_suffix: String,) -> (Bool,):
     var n = len(self)
-    var m = len(suffix)
+    var m = len(_suffix)
     if m > n:
         return false
-    return self.slice(n - m, n) == suffix
+    return self.slice(n - m, n) == _suffix
 ; 全部替换：按子串匹配，不做字符集解释；空模板原样返回，不插入也不删除。
-replace|self(old: String, new: String,) -> (String,):
+replace|self(_old: String, _new: String,) -> (String,):
     var n = len(self)
-    var m = len(old)
+    var m = len(_old)
     if m == 0:
         return self
     var out = ""
     var i = 0
     while i < n:
         if i + m <= n:
-            if self.slice(i, i + m) == old:
-                out = out + new
+            if self.slice(i, i + m) == _old:
+                out = out + _new
                 i = i + m
             else:
                 out = out + self.slice(i, i + 1)
@@ -39,52 +39,52 @@ replace|self(old: String, new: String,) -> (String,):
             i = i + 1
     return out
 ; 重复拼接：次数非正得空串；次数按入参原样消费，不夹取上限。
-repeat|self(times: I32,) -> (String,):
+repeat|self(_times: I32,) -> (String,):
     var out = ""
     var i = 0
-    while i < times:
+    while i < _times:
         out = out + self
         i = i + 1
     return out
 ; 左填充：目标宽度按字素计，填充串整体重复到够宽再截断；空填充串原样返回。
-padLeft|self(width: I32, fill: String,) -> (String,):
+padLeft|self(_width: I32, _fill: String,) -> (String,):
     var n = len(self)
-    var m = len(fill)
+    var m = len(_fill)
     if m == 0:
         return self
-    if n >= width:
+    if n >= _width:
         return self
     var out = ""
-    var need = width - n
+    var need = _width - n
     while len(out) < need:
-        out = out + fill
+        out = out + _fill
     if len(out) > need:
         out = out.slice(0, need)
     return out + self
 ; 右填充：与左填充同规，填充串接在接收者之后。
-padRight|self(width: I32, fill: String,) -> (String,):
+padRight|self(_width: I32, _fill: String,) -> (String,):
     var n = len(self)
-    var m = len(fill)
+    var m = len(_fill)
     if m == 0:
         return self
-    if n >= width:
+    if n >= _width:
         return self
     var out = ""
-    var need = width - n
+    var need = _width - n
     while len(out) < need:
-        out = out + fill
+        out = out + _fill
     if len(out) > need:
         out = out.slice(0, need)
     return self + out
 ; 末次出现：与 indexOf 同规取字素下标；空模板答 len(self)，缺席答 -1。
-lastIndexOf|self(needle: String,) -> (I32,):
+lastIndexOf|self(_needle: String,) -> (I32,):
     var n = len(self)
-    var m = len(needle)
+    var m = len(_needle)
     if m == 0:
         return n
     var i = n - m
     while i >= 0:
-        if self.slice(i, i + m) == needle:
+        if self.slice(i, i + m) == _needle:
             return i
         i = i - 1
     return -1
@@ -92,54 +92,54 @@ lastIndexOf|self(needle: String,) -> (I32,):
 isEmpty|self() -> (Bool,):
     return len(self) == 0
 ; 计数：按子串非重叠匹配；空模板答零，与 replace 的空模板口径一致。
-count|self(sub: String,) -> (I32,):
+count|self(_sub: String,) -> (I32,):
     var n = len(self)
-    var m = len(sub)
+    var m = len(_sub)
     if m == 0:
         return 0
     var total = 0
     var i = 0
     while i + m <= n:
-        if self.slice(i, i + m) == sub:
+        if self.slice(i, i + m) == _sub:
             total = total + 1
             i = i + m
         else:
             i = i + 1
     return total
 ; 去前缀：首段相等才剥，未命中原样返回；空前缀剥出空段，结果仍是原串。
-stripPrefix|self(prefix: String,) -> (String,):
-    var m = len(prefix)
+stripPrefix|self(_prefix: String,) -> (String,):
+    var m = len(_prefix)
     if m > len(self):
         return self
-    if self.slice(0, m) == prefix:
+    if self.slice(0, m) == _prefix:
         return self.slice(m, len(self))
     return self
 ; 去后缀：尾段相等才剥，未命中原样返回；尾部切片按字素下标。
-stripSuffix|self(suffix: String,) -> (String,):
+stripSuffix|self(_suffix: String,) -> (String,):
     var n = len(self)
-    var m = len(suffix)
+    var m = len(_suffix)
     if m > n:
         return self
-    if self.slice(n - m, n) == suffix:
+    if self.slice(n - m, n) == _suffix:
         return self.slice(0, n - m)
     return self
 ; 补前缀：已带前缀则原样返回，否则拼在前面；空前缀恒判为已带。
-ensurePrefix|self(prefix: String,) -> (String,):
-    var m = len(prefix)
+ensurePrefix|self(_prefix: String,) -> (String,):
+    var m = len(_prefix)
     if m > len(self):
-        return prefix + self
-    if self.slice(0, m) == prefix:
+        return _prefix + self
+    if self.slice(0, m) == _prefix:
         return self
-    return prefix + self
+    return _prefix + self
 ; 补后缀：已带后缀则原样返回，否则拼在后面；空后缀恒判为已带。
-ensureSuffix|self(suffix: String,) -> (String,):
+ensureSuffix|self(_suffix: String,) -> (String,):
     var n = len(self)
-    var m = len(suffix)
+    var m = len(_suffix)
     if m > n:
-        return self + suffix
-    if self.slice(n - m, n) == suffix:
+        return self + _suffix
+    if self.slice(n - m, n) == _suffix:
         return self
-    return self + suffix
+    return self + _suffix
 ; 逆序：按字素倒拼成新串，接收者不动；空串得空串。
 reversed|self() -> (String,):
     var out = ""
@@ -154,31 +154,31 @@ capitalized|self() -> (String,):
         return self
     return self.slice(0, 1).upper() + self.slice(1, len(self))
 ; 居中：左右均分填充，奇数余量给右侧；空填充或已够宽原样返回。
-center|self(width: I32, fill: String,) -> (String,):
+center|self(_width: I32, _fill: String,) -> (String,):
     var n = len(self)
-    var m = len(fill)
+    var m = len(_fill)
     if m == 0:
         return self
-    if n >= width:
+    if n >= _width:
         return self
-    var need = width - n
+    var need = _width - n
     var left = need / 2
     var right = need - left
     var lpad = ""
     while len(lpad) < left:
-        lpad = lpad + fill
+        lpad = lpad + _fill
     if len(lpad) > left:
         lpad = lpad.slice(0, left)
     var rpad = ""
     while len(rpad) < right:
-        rpad = rpad + fill
+        rpad = rpad + _fill
     if len(rpad) > right:
         rpad = rpad.slice(0, right)
     return lpad + self + rpad
 ; 截断：取前 width 个字素；非正宽度得空串，越界得原串。
-truncate|self(width: I32,) -> (String,):
-    if width <= 0:
+truncate|self(_width: I32,) -> (String,):
+    if _width <= 0:
         return ""
-    if width >= len(self):
+    if _width >= len(self):
         return self
-    return self.slice(0, width)
+    return self.slice(0, _width)

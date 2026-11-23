@@ -217,6 +217,11 @@ parseTopLevel|self() -> ():
         if id >= 0:
             self.ast.addItem(id)
         return
+    if self.at(.identifier) && self.isKindAt(offset = 1, kind = .leftParen):
+        let bare = self.parseFunctionDecl()
+        if bare >= 0:
+            self.ast.addItem(bare)
+        return
     self.report(code = "E2-005", message = "无效的顶级声明")
     self.recover()
     return
@@ -831,35 +836,34 @@ parseFunctionDecl|self() -> (I32,):
     let nameStart: I32 = self.current().nameStart
     let nameEnd: I32 = self.current().nameEnd
     self.advance()
-    if !self.expect(kind = .opBitOr, what = "`|`"):
-        self.recover()
-        return -1
     var isTest = false
     var isSelf = false
     var isOwn = false
     var isForeign = false
     var isUnsafe = false
-    if self.at(.kwTest):
-        isTest = true
+    if self.at(.opBitOr):
         self.advance()
-    elif self.at(.kwSelf):
-        isSelf = true
-        self.advance()
-    elif self.at(.kwOwn):
-        isOwn = true
-        self.advance()
-    elif self.at(.kwForeign):
-        isForeign = true
-        self.advance()
-    elif self.at(.kwUnsafe):
-        isUnsafe = true
-        self.advance()
-    elif !self.at(.kwFunc):
-        self.report(code = "E2-001", message = "期望 `func`、`test`、`self`、`own`、`foreign` 或 `unsafe`")
-        self.recover()
-        return -1
-    else:
-        self.advance()
+        if self.at(.kwTest):
+            isTest = true
+            self.advance()
+        elif self.at(.kwSelf):
+            isSelf = true
+            self.advance()
+        elif self.at(.kwOwn):
+            isOwn = true
+            self.advance()
+        elif self.at(.kwForeign):
+            isForeign = true
+            self.advance()
+        elif self.at(.kwUnsafe):
+            isUnsafe = true
+            self.advance()
+        elif self.at(.kwFunc):
+            self.advance()
+        else:
+            self.report(code = "E2-001", message = "期望 `func`、`test`、`self`、`own`、`foreign` 或 `unsafe`")
+            self.recover()
+            return -1
     let generics: Array<I32> = self.parseGenericParams()
     var genericIndex: I32 = 0
     while genericIndex < len(generics):
@@ -899,6 +903,11 @@ parseFunctionDecl|self() -> (I32,):
     self.setDeclAsync(id = id, value = isAsync)
     self.setDeclGeneric(id = id, kids = generics)
     return id
+; 参数位的 self：后跟逗号、右括号、冒号或等号时它是参数名，不是修饰符。
+selfAsParamName|self() -> (Bool,):
+    if self.isKindAt(offset = 1, kind = .comma) || self.isKindAt(offset = 1, kind = .rightParen):
+        return true
+    return self.isKindAt(offset = 1, kind = .colon) || self.isKindAt(offset = 1, kind = .opAssign)
 ; 参数表：`(` 到 `)`，每项可带 own / using / self 前缀与默认值。
 parseParams|self() -> (Array<I32>,):
     var params: Array<I32> = []
@@ -915,7 +924,7 @@ parseParams|self() -> (Array<I32>,):
         elif self.at(.kwUsing):
             isUsing = true
             self.advance()
-        elif self.at(.kwSelf):
+        elif self.at(.kwSelf) && !self.selfAsParamName():
             isSelf = true
             self.advance()
         var nameStart = self.current().start
@@ -946,7 +955,7 @@ parseParams|self() -> (Array<I32>,):
         self.skipNewlines()
     self.expect(kind = .rightParen, what = "`)`")
     return params
-; 类型：前缀星号与结果糖、圆括号元组或函数、方括号与花括号容器、具名与泛型实参、后缀问号。
+; 类型：前缀星号、问号与结果糖、圆括号元组或函数、方括号与花括号容器、具名与泛型实参、后缀问号。
 parseType|self() -> (I32,):
     if self.at(.opMul):
         let start: I32 = self.current().start
@@ -955,6 +964,13 @@ parseType|self() -> (I32,):
         let id: I32 = self.newType(kind = .typePointer, start = start, end = self.previousEnd())
         self.pushTypeKid(id = id, kid = inner)
         return id
+    if self.at(.question):
+        let start: I32 = self.current().start
+        self.advance()
+        let inner: I32 = self.parseType()
+        let id: I32 = self.newType(kind = .typeOptional, start = start, end = self.previousEnd())
+        self.pushTypeKid(id = id, kid = inner)
+        return self.maybeOptional(id)
     if self.at(.opBitXor):
         return self.parseResultType()
     if self.at(.leftBracket):
@@ -1930,32 +1946,32 @@ atStatementEnd|self() -> (Bool,):
 parseContinue|self() -> (I32,):
     let start: I32 = self.current().start
     self.advance()
-    var label = -1
+    var nameStart = -1
+    var nameEnd = -1
     if self.at(.identifier):
-        let token = self.current()
+        nameStart = self.current().nameStart
+        nameEnd = self.current().nameEnd
         self.advance()
-        label = self.newExpr(kind = .exprIdentifier, start = token.start, end = token.end)
-        self.setExprName(id = label, start = token.nameStart, end = token.nameEnd)
     let id: I32 = self.newStmt(kind = .stmtContinue, start = start, end = self.previousEnd())
-    self.pushStmtKid(id = id, kid = label)
+    self.setStmtName(id = id, start = nameStart, end = nameEnd)
     return id
 ; 通过语句：空语句，处理器里的显式吞错。
 parsePass|self() -> (I32,):
     let start: I32 = self.current().start
     self.advance()
     return self.newStmt(kind = .stmtPass, start = start, end = self.previousEnd())
-; 跳出语句：可带标签，标签按标识符表达式登记。
+; 跳出语句：可带标签，标签记在语句名位，不进表达式池。
 parseBreak|self() -> (I32,):
     let start: I32 = self.current().start
     self.advance()
-    var label = -1
+    var nameStart = -1
+    var nameEnd = -1
     if self.at(.identifier):
-        let token: Token = self.current()
+        nameStart = self.current().nameStart
+        nameEnd = self.current().nameEnd
         self.advance()
-        label = self.newExpr(kind = .exprIdentifier, start = token.start, end = token.end)
-        self.setExprName(id = label, start = token.nameStart, end = token.nameEnd)
     let id: I32 = self.newStmt(kind = .stmtBreak, start = start, end = self.previousEnd())
-    self.pushStmtKid(id = id, kid = label)
+    self.setStmtName(id = id, start = nameStart, end = nameEnd)
     return id
 ; 表达式语句：先读表达式，紧跟赋值运算符时改记赋值语句。
 parseExprStatement|self() -> (I32,):

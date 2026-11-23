@@ -11,7 +11,7 @@
 
 ((狗))
 描述|self() -> (String,):
-    return 名字
+    return self.名字
 
 main|func() -> ():
     var d = 狗()

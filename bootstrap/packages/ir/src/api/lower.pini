@@ -45,6 +45,8 @@ sourceFile: String = ""
 isClosure: Bool = false
 closureId: I32 = -1
 captures: Array<IrCaptureSlot> = []
+; 函数值适配器：非空即目标函数名；体由发射期按目标签名拼，不走语句表。
+adapterTarget: String = ""
 
 ; 外部数据符号：名字与 IR 类型；发射期按它出 `external global` 声明。
 (IrExternData)
@@ -204,7 +206,9 @@ lowerFunction|func(state: LowerState, unit: CompilationUnit, declId: I32, owner:
         out.externs = mergeExternFunction(table = out.externs, more = body.frame.externs)
         var c = 0
         while c < len(body.frame.closures):
-            out.functions = out.functions.append(body.frame.closures[c])
+            let produced = body.frame.closures[c]
+            if !functionNameTaken(functions = out.functions, name = produced.name):
+                out.functions = out.functions.append(produced)
             c = c + 1
         out.closureSerial = body.frame.closureSerial
     out.functions = out.functions.append(fn)
@@ -390,11 +394,21 @@ functionNames|func(module: IrModule,) -> (Array<String>,):
 
 ; 空体函数数：它与 `errors` 条数应当相等；`typeErrors` 没有对应函数，不进这条对照。
 ; 远小于即有函数没报缺口就吞了体，远大于即有函数报了缺口却留下了体。
+; 函数名占用：适配器按目标签名一处一份，跨函数降载可能各建一次，并入时按名收口。
+functionNameTaken|func(functions: Array<IrFunction>, name: String,) -> (Bool,):
+    var i = 0
+    while i < len(functions):
+        if functions[i].name == name:
+            return true
+        i = i + 1
+    return false
+
+; 空体计数：体由发射期拼的适配器不算缺口，故不计数。
 emptyBodyCount|func(module: IrModule,) -> (I32,):
     var total = 0
     var i = 0
     while i < len(module.functions):
-        if len(module.functions[i].body) == 0:
+        if len(module.functions[i].body) == 0 && len(module.functions[i].adapterTarget) == 0:
             total = total + 1
         i = i + 1
     return total

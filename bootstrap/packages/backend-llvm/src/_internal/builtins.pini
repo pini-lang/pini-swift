@@ -60,6 +60,10 @@ builtinTable|func() -> (Array<BuiltinEntry>,):
     out = out.append(makeBuiltinOf(name = "isDir", receiver = 8, symbol = "bk_is_dir", shape = 5))
     out = out.append(makeBuiltinOf(name = "argv", receiver = -1, symbol = "bk_argv", shape = 4))
     out = out.append(makeBuiltinOf(name = "moduleRoot", receiver = -1, symbol = "bk_module_root", shape = 4))
+    ; 片睡：并发内建里唯一降载成普通调用的一个，落点是运行时入口而不是 libc。
+    out = out.append(makeBuiltinOf(name = "sleep", receiver = 1, symbol = "bk_sleep", shape = 3))
+    ; 取回：C 串按 NUL 读成 Pini 串，入参是指针、出参是字串句柄，与单参直呼同形。
+    out = out.append(makeBuiltinOf(name = "fromCString", receiver = 21, symbol = "bk_str_from_cstr", shape = 3))
     out = out.append(makeBuiltinOf(name = "Array.append", receiver = 12, symbol = "bk_array_append", shape = 2))
     return out
 

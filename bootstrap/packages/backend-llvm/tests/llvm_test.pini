@@ -434,6 +434,46 @@ _backend_kit = "../../backend-kit"
     assert(发射含子串(text = result.text, needle = "declare ptr @bk_temp_utf8_bytes(ptr)"), "字节桥声明应与调用同形")
     return
 
+; 睡眠模块：main 里一条睡眠调用、一条返回；调用节点无类型即空返回。
+发射造睡眠模块|func() -> (IrModule,):
+    var module = IrModule()
+    module.types = 发射造类型池()
+    module.texts = module.texts.append("sleep")
+    var nodes = IrNodePool()
+    var span = irMakeNode(kind = tagOfName(name = "intConst"), typeId = 0)
+    span.intValue = 5
+    let placedSpan = irAppendNode(pool = nodes, node = span)
+    nodes = placedSpan.pool
+    var nap = irMakeNode(kind = tagOfName(name = "call"), typeId = -1)
+    nap.text = 0
+    nap.kids = [placedSpan.id]
+    let placedNap = irAppendNode(pool = nodes, node = nap)
+    nodes = placedNap.pool
+    var statement = irMakeNode(kind = tagOfName(name = "exprStmt"), typeId = -1)
+    statement.kids = [placedNap.id]
+    let placedStatement = irAppendNode(pool = nodes, node = statement)
+    nodes = placedStatement.pool
+    var back = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    let placedBack = irAppendNode(pool = nodes, node = back)
+    nodes = placedBack.pool
+    module.nodes = nodes
+    var fn = IrFunction()
+    fn.name = "main"
+    fn.returnType = -1
+    fn.body = [placedStatement.id, placedBack.id]
+    module.functions = module.functions.append(fn)
+    return module
+
+; 睡眠直呼：空返回的单参内建不出临时值，声明与调用同形。
+睡眠直呼|test() -> ():
+    let module = 发射造睡眠模块()
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    if result.failed:
+        assert(false, "缺口：" + result.gaps[0])
+    assert(发射含子串(text = result.text, needle = "call void @bk_sleep(i32 5)"), "睡眠应按空返回直呼")
+    assert(发射含子串(text = result.text, needle = "declare void @bk_sleep(i32)"), "睡眠声明应与调用同形")
+    return
+
 ; 名义模块的类型池：i32 与值语义名义类型 Point；对象位为零。
 发射造名义类型池|func() -> (IrTypePool,):
     var pool = IrTypePool()
@@ -1334,4 +1374,161 @@ _backend_kit = "../../backend-kit"
     assert(发射含子串(text = result.text, needle = "define ptr @__copy_box_\(boxType.id)(ptr %src)"), "值语义结构体应出拷贝胶水")
     assert(发射含子串(text = result.text, needle = "call ptr @__copy_box_\(boxType.id)(ptr "), "别名落槽要走拷贝")
     assert(!发射含子串(text = result.text, needle = "__copy_box_\(refType.id)"), "对象是引用语义，不出拷贝胶水")
+    return
+
+; 可选构造：两槽聚合，标签 some 记 0 / none 记 1，载荷按自身类型进第二槽。
+可选构造发射|test() -> ():
+    var module = IrModule()
+    var pool = IrTypePool()
+    let intType = irScalarTypeOfCode(pool = pool, code = 1, name = "i32")
+    pool = intType.pool
+    let optional = irInternType(pool = pool, kind = irTypeClassOf(code = 13), name = "", kids = [0], ret = -1, uses = [], flags = 0)
+    module.types = optional.pool
+    var nodes = IrNodePool()
+    var fortyTwo = irMakeNode(kind = tagOfName(name = "intConst"), typeId = 0)
+    fortyTwo.intValue = 42
+    let placedValue = irAppendNode(pool = nodes, node = fortyTwo)
+    nodes = placedValue.pool
+    var some = irMakeNode(kind = tagOfName(name = "optionalConstruct"), typeId = optional.id)
+    some.op = 0
+    some.kids = [placedValue.id]
+    let placedSome = irAppendNode(pool = nodes, node = some)
+    nodes = placedSome.pool
+    var none = irMakeNode(kind = tagOfName(name = "optionalConstruct"), typeId = optional.id)
+    none.op = 1
+    let placedNone = irAppendNode(pool = nodes, node = none)
+    nodes = placedNone.pool
+    var backSome = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    backSome.kids = [placedSome.id]
+    let placedBackSome = irAppendNode(pool = nodes, node = backSome)
+    nodes = placedBackSome.pool
+    var backNone = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    backNone.kids = [placedNone.id]
+    let placedBackNone = irAppendNode(pool = nodes, node = backNone)
+    nodes = placedBackNone.pool
+    var fnSome = IrFunction()
+    fnSome.name = "甲"
+    fnSome.returnType = optional.id
+    fnSome.body = [placedBackSome.id]
+    module.functions = module.functions.append(fnSome)
+    var fnNone = IrFunction()
+    fnNone.name = "乙"
+    fnNone.returnType = optional.id
+    fnNone.body = [placedBackNone.id]
+    module.functions = module.functions.append(fnNone)
+    module.nodes = nodes
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    assert(!result.failed, "可选构造应发得出来")
+    assert(发射含子串(text = result.text, needle = "insertvalue { i64, i32 } zeroinitializer, i64 0, 0"), "some 标签记 0")
+    assert(发射含子串(text = result.text, needle = "insertvalue { i64, i32 }"), "载荷进聚合")
+    assert(发射含子串(text = result.text, needle = ", i32 42, 1"), "载荷按自身类型进第二槽")
+    assert(发射含子串(text = result.text, needle = "insertvalue { i64, i32 } zeroinitializer, i64 1, 0"), "none 标签记 1")
+    return
+
+; 带标签值的打印：枚举与可选没有逐值打印通道，按整数兜底会印出标签，须记缺口。
+打印带标签值记缺口|test() -> ():
+    var module = IrModule()
+    var pool = IrTypePool()
+    let intType = irScalarTypeOfCode(pool = pool, code = 1, name = "i32")
+    pool = intType.pool
+    let optional = irInternType(pool = pool, kind = irTypeClassOf(code = 13), name = "", kids = [0], ret = -1, uses = [], flags = 0)
+    module.types = optional.pool
+    var nodes = IrNodePool()
+    var fortyTwo = irMakeNode(kind = tagOfName(name = "intConst"), typeId = 0)
+    fortyTwo.intValue = 42
+    let placedValue = irAppendNode(pool = nodes, node = fortyTwo)
+    nodes = placedValue.pool
+    var some = irMakeNode(kind = tagOfName(name = "optionalConstruct"), typeId = optional.id)
+    some.op = 0
+    some.kids = [placedValue.id]
+    let placedSome = irAppendNode(pool = nodes, node = some)
+    nodes = placedSome.pool
+    var show = irMakeNode(kind = tagOfName(name = "printCall"), typeId = -1)
+    show.kids = [placedSome.id]
+    let placedShow = irAppendNode(pool = nodes, node = show)
+    nodes = placedShow.pool
+    var stmt = irMakeNode(kind = tagOfName(name = "exprStmt"), typeId = -1)
+    stmt.kids = [placedShow.id]
+    let placedStmt = irAppendNode(pool = nodes, node = stmt)
+    nodes = placedStmt.pool
+    var back = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    back.kids = [placedSome.id]
+    let placedBack = irAppendNode(pool = nodes, node = back)
+    nodes = placedBack.pool
+    var fn = IrFunction()
+    fn.name = "main"
+    fn.returnType = optional.id
+    fn.body = [placedStmt.id, placedBack.id]
+    module.functions = module.functions.append(fn)
+    module.nodes = nodes
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    assert(result.failed, "打印带标签值应记缺口")
+    var hit = false
+    var i = 0
+    while i < len(result.gaps):
+        if 发射含子串(text = result.gaps[i], needle = "打印带标签值"):
+            hit = true
+        i = i + 1
+    assert(hit, "缺口不是打印面")
+    return
+
+; 函数值：具名函数作值发适配器上的两槽值，适配器体自己转发到真实函数。
+; 环境槽恒空，代码槽取适配器符号；真函数不带环境位，故必须经这一层。
+函数值发射|test() -> ():
+    var module = IrModule()
+    var pool = IrTypePool()
+    let intType = irScalarTypeOfCode(pool = pool, code = 1, name = "i32")
+    pool = intType.pool
+    let fnType = irFunctionType(pool = pool, params = [0], ret = 0, uses = [])
+    module.types = fnType.pool
+    var nodes = IrNodePool()
+    var fortyTwo = irMakeNode(kind = tagOfName(name = "intConst"), typeId = 0)
+    fortyTwo.intValue = 42
+    let placedValue = irAppendNode(pool = nodes, node = fortyTwo)
+    nodes = placedValue.pool
+    var backValue = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    backValue.kids = [placedValue.id]
+    let placedBackValue = irAppendNode(pool = nodes, node = backValue)
+    nodes = placedBackValue.pool
+    var holder = irMakeNode(kind = tagOfName(name = "functionValue"), typeId = fnType.id)
+    holder.text = len(module.texts)
+    module.texts = module.texts.append("__adapter_x")
+    let placedHolder = irAppendNode(pool = nodes, node = holder)
+    nodes = placedHolder.pool
+    var show = irMakeNode(kind = tagOfName(name = "exprStmt"), typeId = -1)
+    show.kids = [placedHolder.id]
+    let placedShow = irAppendNode(pool = nodes, node = show)
+    nodes = placedShow.pool
+    var realParam = IrParam()
+    realParam.name = "n"
+    realParam.typeId = 0
+    realParam.slot = 0
+    var realFn = IrFunction()
+    realFn.name = "x"
+    realFn.params = realFn.params.append(realParam)
+    realFn.returnType = 0
+    realFn.body = realFn.body.append(placedBackValue.id)
+    var adapterParam = IrParam()
+    adapterParam.name = "n"
+    adapterParam.typeId = 0
+    adapterParam.slot = 0
+    var adapter = IrFunction()
+    adapter.name = "__adapter_x"
+    adapter.params = adapter.params.append(adapterParam)
+    adapter.returnType = 0
+    adapter.isClosure = true
+    adapter.adapterTarget = "x"
+    var mainFn = IrFunction()
+    mainFn.name = "main"
+    mainFn.returnType = -1
+    mainFn.body = mainFn.body.append(placedShow.id)
+    module.functions = module.functions.append(realFn)
+    module.functions = module.functions.append(adapter)
+    module.functions = module.functions.append(mainFn)
+    module.nodes = nodes
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    assert(!result.failed, "函数值应发得出来")
+    assert(发射含子串(text = result.text, needle = "define i32 @__adapter_x(ptr %env, i32 %p0)"), "适配器按闭包协议出签名")
+    assert(发射含子串(text = result.text, needle = "%r = call i32 @x(i32 %p0)"), "适配器体转发到真实函数")
+    assert(发射含子串(text = result.text, needle = "{ ptr @__adapter_x, ptr null }"), "代码槽取适配器，环境槽为空")
     return

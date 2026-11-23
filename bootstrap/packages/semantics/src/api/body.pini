@@ -128,10 +128,11 @@ ownerTypeOf|func(world: MemberWorld, unitIndex: I32, declId: I32, bytes: Array<U
     return -1
 
 ; 值文本：类型未定时答占位，诊断不因未定而空着。
+; 右值类型文本：取不到类型答空串，调用方据此省掉「实得」半句。
 bodyValueText|func(unit: CompilationUnit, unitIndex: I32, node: I32, types: ExprTypes, pool: TypePool,) -> (String,):
     let valueType = exprTypeAt(table = types, unit = unitIndex, node = node)
     if valueType < 0 || valueType >= len(pool.entries):
-        return "<未定>"
+        return ""
     return typeText(pool = pool, id = valueType)
 
 ; 单条返回：空返回类型不许带值，非空必须带值且可赋值。
