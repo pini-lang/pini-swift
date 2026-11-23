@@ -64,6 +64,8 @@ builtinTable|func() -> (Array<BuiltinEntry>,):
     out = out.append(makeBuiltinOf(name = "listDir", receiver = 8, symbol = "bk_list_dir", shape = 3))
     out = out.append(makeBuiltinOf(name = "exists", receiver = 8, symbol = "bk_exists", shape = 5))
     out = out.append(makeBuiltinOf(name = "isDir", receiver = 8, symbol = "bk_is_dir", shape = 5))
+    ; 建目录：无返回，落单参直呼；与 `sleep` 同一形状，发射面按空返回出 `call void`。
+    out = out.append(makeBuiltinOf(name = "ensureDir", receiver = 8, symbol = "bk_ensure_dir", shape = 3))
     out = out.append(makeBuiltinOf(name = "argv", receiver = -1, symbol = "bk_argv", shape = 4))
     out = out.append(makeBuiltinOf(name = "moduleRoot", receiver = -1, symbol = "bk_module_root", shape = 4))
     ; 片睡：并发内建里唯一降载成普通调用的一个，落点是运行时入口而不是 libc。

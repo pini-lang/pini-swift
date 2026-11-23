@@ -2070,6 +2070,23 @@ public func bk_is_dir(_ path: UnsafePointer<CChar>?) -> Int32 {
     return present && isDirectory.boolValue ? 1 : 0
 }
 
+/// `ensureDir(String)` —— 幂等建目录，中间层一并创建。没有返回值：建不出来即陷阱，
+/// 调用方没有「可以继续」的分支可走，故不返布尔。
+@_cdecl("bk_ensure_dir")
+public func bk_ensure_dir(_ path: UnsafePointer<CChar>?) {
+    guard let path else {
+        bk_panic("Pini runtime error: ensureDir: 路径为空")
+        return
+    }
+    let target = _bkResolveIOPath(String(cString: path))
+    do {
+        try FileManager.default.createDirectory(
+            atPath: target, withIntermediateDirectories: true)
+    } catch {
+        bk_panic("Pini runtime error: IO 错误: 无法创建目录 \(target): \(error.localizedDescription)")
+    }
+}
+
 // MARK: - IO 内核（陷阱版与可接住版共用）
 
 /// 写 / 追加的共用内核：结局只有「成了」与「没成」，没成的那条带诊断文案。

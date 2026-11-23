@@ -741,6 +741,28 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
                 }
                 return .bool(present && isDirectory.boolValue)
             }
+            // 建目录：幂等、中间层一并创建；失败即抛 —— 与运行时段 `bk_ensure_dir` 的陷阱姿态同源，
+            // 两条通道因此对同一输入要么都成功、要么都报错。无值，返回空元组。
+            if name == "ensureDir" {
+                guard arguments.count == 1 else {
+                    throw RuntimeError.invalidOperation(
+                        reason: "IR executor: ensureDir expects exactly one argument",
+                        location: IRExecutor.noLocation
+                    )
+                }
+                let rawPath = try requireString(try evaluate(arguments[0]), for: name)
+                let path = RuntimeOps.resolveIOPath(rawPath, programBase: programBase)
+                do {
+                    try FileManager.default.createDirectory(
+                        atPath: path, withIntermediateDirectories: true)
+                } catch {
+                    throw RuntimeError.invalidOperation(
+                        reason: "IO 错误: 无法创建目录 \(path): \(error.localizedDescription)",
+                        location: IRExecutor.noLocation
+                    )
+                }
+                return .tuple(labels: [], elements: [])
+            }
             throw RuntimeError.invalidOperation(
                 reason: "IR executor: no module-level function named '\(name)' and no "
                     + "type method lowered under that name. Builtin callees are not "

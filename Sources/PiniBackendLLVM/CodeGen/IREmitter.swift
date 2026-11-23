@@ -711,6 +711,7 @@ public final class IREmitter {
             // 探测类：`i32` 返回（0/1），收敛到 `i1` 由调用点做 —— 同谓词那条。
             tail += Builtins.declaration(for: "bk_exists")
             tail += Builtins.declaration(for: "bk_is_dir")
+            tail += Builtins.declaration(for: "bk_ensure_dir")
         }
         if usesModuleRootShim {
             tail += Builtins.declaration(for: "bk_module_root")
@@ -2671,6 +2672,14 @@ public final class IREmitter {
                 bodyIR += " \(flag) = icmp ne i32 \(raw), 0\n"
                 releaseCallArguments(args)
                 return IRValue(llvmType: "i1", ssaName: flag)
+            }
+            /// 建目录：无值，`call void` 收场。与 `writeFile` 的收口同形（那里也只有副作用），
+            /// 返回值给空拼写，调用点若把它当值用会由语义层先拒。
+            if function == "ensureDir" {
+                usesProcessShims = true
+                bodyIR += " call void @bk_ensure_dir(\(argList))\n"
+                releaseCallArguments(args)
+                return IRValue(llvmType: "void", ssaName: "")
             }
             /// 运行时段命名的外呼符号（G14 的 shim）在其 `bk_` 名字上调用，declare 由声明段按同一开关发。
             /// `isCancel` 同规：运行时段回 `i32`（0/1），到 `i1` 在这里显式转 —— `call i1` 对 `declare i32`

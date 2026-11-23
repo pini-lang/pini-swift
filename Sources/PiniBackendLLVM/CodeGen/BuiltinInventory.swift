@@ -378,6 +378,10 @@ public enum Builtins {
             family: .io, lowerings: ["call"]
         ),
         BuiltinSpec(
+            symbol: "bk_ensure_dir", signature: .init(result: "void", parameters: ["ptr"]),
+            family: .io, lowerings: ["call"]
+        ),
+        BuiltinSpec(
             symbol: "bk_exists", signature: .init(result: "i32", parameters: ["ptr"]),
             family: .io, lowerings: ["call"]
         ),

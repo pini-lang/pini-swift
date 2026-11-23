@@ -21,7 +21,7 @@
 
 ### 0.3 量具口径
 
-**127 = `@_cdecl("bk_…")` 的匹配数**，即导出符号数，不是 `@_cdecl` 的字样出现数。
+**128 = `@_cdecl("bk_…")` 的匹配数**，即导出符号数，不是 `@_cdecl` 的字样出现数。
 两者相差 2：正文有两处注释提到 `@_cdecl` 却不导出符号。数出来差 1 或 2 时，先分清数的是哪一个。
 器械是 `tools/runtime-abi-check.py`。
 
@@ -32,7 +32,7 @@
 - 集合、并发、LazyRef、FFI 共用同一个运行时段，不另设独立 shim。
 - 新增符号同批登记本件，等式「清单数 = 导出数」是它唯一的自检方式。
 
-## 2. 符号清单（127 个）
+## 2. 符号清单（128 个）
 
 | 族 | 符号 | 数 |
 |---|---|---|
@@ -50,13 +50,13 @@
 | 字符串面 | `bk_str_alloc` `bk_str_append_cstr` `bk_str_concat` `bk_str_dup` `bk_str_from_cstr` `bk_str_header_bytes` `bk_str_refcount` `bk_str_table_min_cap` `bk_str_release` `bk_str_retain` `bk_string_char_at` `bk_string_contains` `bk_string_count` `bk_string_index_of` `bk_string_lower` `bk_string_slice` `bk_string_split` `bk_string_trim_left` `bk_string_trim_right` `bk_string_upper` `bk_substring` | 21 |
 | 字符串句柄 | `bk_str_handle_bytes` `bk_str_handle_len` `bk_str_handle_new` `bk_str_handle_release` `bk_str_handle_retain` | 5 |
 | 闭包 / 结构体胶水 | `bk_nominal_alloc` `bk_nominal_release` `bk_nominal_retain` `bk_slot_alloc` | 4 |
-| IO / 宿主查询 | `bk_append_file` `bk_argv` `bk_exists` `bk_is_dir` `bk_list_dir` `bk_module_root` `bk_read_file` `bk_set_program_base` `bk_try_append_file` `bk_try_read_file` `bk_try_write_file` `bk_write_file` | 12 |
+| IO / 宿主查询 | `bk_append_file` `bk_argv` `bk_ensure_dir` `bk_exists` `bk_is_dir` `bk_list_dir` `bk_module_root` `bk_read_file` `bk_set_program_base` `bk_try_append_file` `bk_try_read_file` `bk_try_write_file` `bk_write_file` | 13 |
 | 任务 / 并发 | `bk_capabilities` `bk_scope_close` `bk_task_cancel` `bk_task_detach` `bk_task_is_cancelled` `bk_task_join` `bk_task_join_all` `bk_task_join_all_box` `bk_task_join_within` `bk_task_spawn` `bk_task_yield` | 11 |
 | 阻塞内建 | `bk_sleep` | 1 |
 | 让出族 | `bk_task_await` `bk_task_frame` `bk_task_slot` | 3 |
 | 调度驱动面 | `bk_task_bind_sched` `bk_task_state` | 2 |
 | 错误载荷 | `bk_cancel_error_create` `bk_error_code` `bk_error_create` `bk_error_from_enum` `bk_error_is_cancel` `bk_error_lookup` `bk_error_message` `bk_error_with_code` | 8 |
-| **合计** | | **127** |
+| **合计** | | **128** |
 
 ## 3. 语义约束
 
@@ -105,6 +105,13 @@
 - Pini 侧不参与这套计数：句柄在 IR 里是 `stringHandle`（份额归 inert），创建点交出那一份，
   C 拿到后自己收账。
 
+### 3.8 建目录
+
+- `bk_ensure_dir` 幂等：目录已存在即成功，不报错也不清空。
+- 中间层一并创建；建不出来（权限不足、某个路径分量已是文件）时 `bk_panic`，不返回布尔 ——
+  调用方没有「可以继续」的分支可走。
+- 路径按 3.5 的基准解析，与 IO 族其余成员同规。
+
 ## 4. 零调用点登记
 
 以下符号当前没有发射器调用点。**零调用点不等于该删** —— 每个都是某条路线的锚点。
@@ -117,8 +124,8 @@
 | `bk_str_handle_bytes` `bk_str_handle_len` `bk_str_handle_retain` `bk_str_handle_release` | 4 | C 侧读字节与收账的入口；发射器只发 `bk_str_handle_new` |
 | `bk_double_bits` `bk_parse_double` | 2 | 只由自举编译器在编译期调用，发射器不产出 |
 
-本表与编译器侧清单互补：`BuiltinInventory.swift` 列出已接线的 104 条，本表列出其余 23 条，
-两者合计即第 2 节的 127。互补关系由 `tools/builtin-inventory-check.py` 校验。
+本表与编译器侧清单互补：`BuiltinInventory.swift` 列出已接线的 106 条，本表列出其余 22 条，
+两者合计即第 2 节的 128。互补关系由 `tools/builtin-inventory-check.py` 校验。
 
 ## 5. 维护条款
 

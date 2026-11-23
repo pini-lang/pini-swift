@@ -191,6 +191,11 @@ public enum BuiltinRegistry {
         BuiltinDecl(
             name: "isDir", group: .io, paramNames: ["path"],
             params: [t("String")], returns: [t("Bool")]),
+        /// 建目录：幂等，中间层一并创建；建不出来即陷阱，故不返布尔，也没有可接住的变体。
+        /// 构建器靠它把 `.build/<profile>` 从无到有建出来 —— 那条路径不存在是常态，不是错误。
+        BuiltinDecl(
+            name: "ensureDir", group: .io, paramNames: ["path"],
+            params: [t("String")], returns: []),
         /// 可接住的 IO：三个 `try*` 与陷阱版并存，不是替代——失败形态由调用点写的名字决定，不是运行时开关。
         /// 载荷：读是文件内容，写与追加是空元组（写成功不产生值，不编造字节数——它恒为入参的 UTF-8 长度）。
         /// 与 `ok`/`err` 同族：走专属降载，不登记解释器函数值。

@@ -3816,6 +3816,25 @@ public enum IRLowerer {
                     type: .boolean
                 )
             }
+            // 建目录：与探测类同形（`call` 节点，不新增 IR 节点），差在无值 —— 发射时是
+            // `call void`。`IRType` 没有 void 成员，返回类型照 `writeFile` 的成例记 `.i32` 占位，
+            // 该字段对无值调用点不参与任何判定。
+            if functionName == "ensureDir" {
+                guard loweredArgs.count == 1 else {
+                    throw unsupported("ensureDir expects (path)", at: location)
+                }
+                guard loweredArgs[0].type == .string else {
+                    throw unsupported("ensureDir expects a String path", at: location)
+                }
+                return LoweredExpr(
+                    node: .call(
+                        function: functionName,
+                        arguments: loweredArgs.map { $0.node },
+                        returnType: .i32
+                    ),
+                    type: .i32
+                )
+            }
             // The character builtins. Same shape as the other intrinsics — lowered to a `call` the executor answers
             // by name — and the name whitelist is the table itself, so a builtin cannot be lowered here and then
             // go unanswered there.

@@ -220,6 +220,7 @@ builtinFunctionTable|func() -> (Array<BuiltinFunction>,):
     out = out.append(makeFunction(name = "listDir", params = oneParam(name = "path", shape = .builtinString), ret = .builtinArrayString, variadic = false))
     out = out.append(makeFunction(name = "exists", params = oneParam(name = "path", shape = .builtinString), ret = .builtinBool, variadic = false))
     out = out.append(makeFunction(name = "isDir", params = oneParam(name = "path", shape = .builtinString), ret = .builtinBool, variadic = false))
+    out = out.append(makeFunction(name = "ensureDir", params = oneParam(name = "path", shape = .builtinString), ret = .builtinVoid, variadic = false))
     out = out.append(makeFunction(name = "tryReadFile", params = oneParam(name = "path", shape = .builtinString), ret = .builtinResultString, variadic = false))
     out = out.append(makeFunction(name = "tryWriteFile", params = twoParams(first = "path", firstShape = .builtinString, second = "content", secondShape = .builtinString), ret = .builtinResultVoid, variadic = false))
     out = out.append(makeFunction(name = "tryAppendFile", params = twoParams(first = "path", firstShape = .builtinString, second = "content", secondShape = .builtinString), ret = .builtinResultVoid, variadic = false))

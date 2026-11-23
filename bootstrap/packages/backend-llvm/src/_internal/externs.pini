@@ -201,6 +201,8 @@ externSignature|func(name: String,) -> (String,):
         return "declare i32 @bk_exists(ptr)"
     if name == "bk_is_dir":
         return "declare i32 @bk_is_dir(ptr)"
+    if name == "bk_ensure_dir":
+        return "declare void @bk_ensure_dir(ptr)"
     if name == "bk_try_read_file":
         return "declare ptr @bk_try_read_file(ptr, ptr)"
     if name == "bk_argv":

@@ -474,6 +474,50 @@ _backend_kit = "../../backend-kit"
     assert(发射含子串(text = result.text, needle = "declare void @bk_sleep(i32)"), "睡眠声明应与调用同形")
     return
 
+; 建目录直呼：无返回的单参内建与睡眠同形，声明与调用都按 `void` 出。
+建目录直呼|test() -> ():
+    let module = 发射造建目录模块()
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    if result.failed:
+        assert(false, "缺口：" + result.gaps[0])
+    assert(发射含子串(text = result.text, needle = "call void @bk_ensure_dir(ptr"), "建目录应按空返回直呼")
+    assert(发射含子串(text = result.text, needle = "declare void @bk_ensure_dir(ptr)"), "建目录声明应与调用同形")
+    return
+
+; 建目录模块：main 里一条建目录调用、一条返回；实参是串常量，调用节点无类型即空返回。
+发射造建目录模块|func() -> (IrModule,):
+    var module = IrModule()
+    var pool = IrTypePool()
+    let intType = irScalarTypeOfCode(pool = pool, code = 1, name = "i32")
+    let textType = irScalarTypeOfCode(pool = intType.pool, code = 8, name = "String")
+    module.types = textType.pool
+    module.texts = module.texts.append("ensureDir")
+    module.texts = module.texts.append(".build")
+    var nodes = IrNodePool()
+    var literal = irMakeNode(kind = tagOfName(name = "stringConst"), typeId = textType.id)
+    literal.text = 1
+    let placedLiteral = irAppendNode(pool = nodes, node = literal)
+    nodes = placedLiteral.pool
+    var ask = irMakeNode(kind = tagOfName(name = "call"), typeId = -1)
+    ask.text = 0
+    ask.kids = [placedLiteral.id]
+    let placedAsk = irAppendNode(pool = nodes, node = ask)
+    nodes = placedAsk.pool
+    var statement = irMakeNode(kind = tagOfName(name = "exprStmt"), typeId = -1)
+    statement.kids = [placedAsk.id]
+    let placedStatement = irAppendNode(pool = nodes, node = statement)
+    nodes = placedStatement.pool
+    var back = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    let placedBack = irAppendNode(pool = nodes, node = back)
+    nodes = placedBack.pool
+    module.nodes = nodes
+    var fn = IrFunction()
+    fn.name = "main"
+    fn.returnType = -1
+    fn.body = [placedStatement.id, placedBack.id]
+    module.functions = module.functions.append(fn)
+    return module
+
 ; 名义模块的类型池：i32 与值语义名义类型 Point；对象位为零。
 发射造名义类型池|func() -> (IrTypePool,):
     var pool = IrTypePool()
