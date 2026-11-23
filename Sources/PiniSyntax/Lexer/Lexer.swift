@@ -22,18 +22,18 @@ public class Lexer {
     /// 边界：`< >` 不跟踪深度，前瞻仅限同行，反引号转义的 `func` 不算块携带，未闭合到 EOF 静默，不匹配 closer 一律 pop。
     private var bracketStack: [(char: Character, blockCarrying: Bool)] = []
 
-/// 词法旁路表：注释不进 token 流，只在跳过时登记，供打印器锚回原位。
-/// 顺序即出现顺序；一次 `tokenize()` 之内只增不改。
+    /// 词法旁路表：注释不进 token 流，只在跳过时登记，供打印器锚回原位。
+    /// 顺序即出现顺序；一次 `tokenize()` 之内只增不改。
     public private(set) var comments: [CommentEntry] = []
 
-/// 字面量原拼写：AST 只存值，打印器要原文只能在这里取。
+    /// 字面量原拼写：AST 只存值，打印器要原文只能在这里取。
     public private(set) var spellings: [PrintHints.Spelling] = []
 
-/// 每行前导空格数：缩进块还原宽度的依据。只登记代码行。
+    /// 每行前导空格数：缩进块还原宽度的依据。只登记代码行。
     public private(set) var indents: [Int: Int] = [:]
 
-/// 词法警告：扫描不中断。与 `comments` 同生命周期，一次 `tokenize()` 之内只增不改。
-/// 只承载「看见了但继续编译」的事实；是否阻断由调用方按严重度决定。
+    /// 词法警告：扫描不中断。与 `comments` 同生命周期，一次 `tokenize()` 之内只增不改。
+    /// 只承载「看见了但继续编译」的事实；是否阻断由调用方按严重度决定。
     public private(set) var warnings: [LexerWarning] = []
 
     /// 本次扫描的位置旁路。词法失败时只含失败点之前的部分。

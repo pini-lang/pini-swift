@@ -20,7 +20,7 @@ public final class SemanticAnalyzer {
     /// 类型字段表（登记阶段填充），供扩展块方法体检查时注入 self 字段作用域。
     private var typeFields: [String: [FieldDecl]] = [:]
 
-/// 语义警告（非致命）：目前只含未使用局部变量，检测点在块作用域。
+    /// 语义警告（非致命）：目前只含未使用局部变量，检测点在块作用域。
     public private(set) var warnings: [SemanticWarning] = []
 
     // 当前文件的注入导入（`_` 前缀别名 → 目标 public 符号集）与裸名集。
