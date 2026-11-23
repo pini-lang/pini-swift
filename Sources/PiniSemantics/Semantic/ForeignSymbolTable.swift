@@ -54,8 +54,8 @@ struct ForeignSymbolTable {
         guard Self.isCIdentifier(symbol.name) else {
             throw SemanticError.foreignSymbolNotCIdentifier(name: symbol.name, location: symbol.location)
         }
-        /// 与本模块既有名字同名：类型、函数、给定块、顶层变量都算。C 名占了这个名，
-        /// 本地声明就没有可用的拼写，且链接期两侧会指向同一符号。
+        // 与本模块既有名字同名：类型、函数、给定块、顶层变量都算。C 名占了这个名，
+        // 本地声明就没有可用的拼写，且链接期两侧会指向同一符号。
         if declaredFiles[symbol.name] != nil || exportedCNames.contains(symbol.name) {
             throw SemanticError.redeclaredSymbol(name: symbol.name, location: symbol.location)
         }

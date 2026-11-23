@@ -46,7 +46,7 @@ public enum FFIType: Equatable, Sendable {
                 return .cString
             }
             if name == "StringHandle" {
-                /// 数据符号是存储，不是值：句柄的计数归运行时段，读写一个存储位说不清归属。
+                // 数据符号是存储，不是值：句柄的计数归运行时段，读写一个存储位说不清归属。
                 guard position != .data else {
                     throw FFITypeError.notRepresentable(
                         type: name, reason: "外部数据符号只能是标量或指针")
@@ -58,8 +58,8 @@ public enum FFIType: Equatable, Sendable {
         case .pointer(let element, _):
             return .pointer(try pointerTarget(element))
         case .function(let params, let returns, let captured, let usingIndices, _):
-            /// 函数类型只在形参位成立：返回位需要一个可持有、可比较、可空的一等函数指针值，
-            /// 而当前没有这样的值类型 —— 放行只会把「指针存进变量」的坑留给用户。
+            // 函数类型只在形参位成立：返回位需要一个可持有、可比较、可空的一等函数指针值，
+            // 而当前没有这样的值类型——放行只会把「指针存进变量」的坑留给用户。
             guard position == .parameter else {
                 throw FFITypeError.callbackOutsideParameter
             }

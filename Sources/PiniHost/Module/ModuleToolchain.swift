@@ -24,7 +24,7 @@ public enum ModuleToolchain {
         case resolutionDidNotConverge(limit: Int)
         /// 约束不可满足：可用版本不满足某个（或多个）requirer 的约束。
         case unsatisfiable(name: String, available: String, conflicts: [String])
-        /// 平表 [require] 条目但清单未声明 [tap] default（D11：org 显式书写）。
+        /// 平表 [require] 条目，但清单未声明 [tap] default；组织名须显式书写。
         case missingDefaultTap(name: String)
         /// replace 指向的本地路径不存在。
         case replaceTargetMissing(name: String, path: String)
@@ -40,7 +40,7 @@ public enum ModuleToolchain {
     final class FetchSession {
         /// name → 选中的版本（无版本 tag 的仓库为 `nil`，表示取默认分支 HEAD）。
         private(set) var selections: [String: String?] = [:]
-        /// name → 落地的 commit（G52 D12 来源定位符）。
+        /// name → 落地的 commit，是锁文件 `commit` 字段的来源定位符。
         private(set) var commits: [String: String] = [:]
         /// name → 展开后的源（写进锁文件的 `source` 字段）。
         private(set) var sources: [String: String] = [:]
@@ -71,7 +71,7 @@ public enum ModuleToolchain {
     /// 写回原 tap 名会让锁文件自相矛盾（`tap = "vendor"` 但 `source` 并非 vendor 的展开结果）。
     static let replaceTapName = "replace"
 
-    // MARK: - [replace] 三种形态（G52 D13）
+    // MARK: - [replace] 的三种形态
 
     /// `[replace]` 值的形态：`.version` 只换版本、来源不变；`.local` 换成本地目录（不动远端、也不抓取）；
     /// `.fork` 换来源为 fork 或镜像，`@` 后为版本。三者只读主模块的清单，依赖清单里的 `[replace]` 一概不认。
@@ -111,7 +111,7 @@ public enum ModuleToolchain {
         (s.hasPrefix("v") || s.hasPrefix("V")) ? String(s.dropFirst()) : s
     }
 
-    // MARK: - 版本约束（G52 §3.2：^ / ~ / = / 区间 / * / 裸版本）
+    // MARK: - 版本约束（`^` / `~` / `=` / 区间 / `*` / 裸版本）
 
     /// 约束 = 原子列表（全部满足才算满足）。
     public struct Constraint: Equatable, Sendable {
@@ -212,15 +212,15 @@ public enum ModuleToolchain {
         public let tapName: String
         /// 展开后的源（file: → 绝对路径；`<name>` 占位符已替换）。
         public let source: String
-        /// 来源定位符（file: → `-`，G52 D12）；**永不作校验凭证**。
+        /// 来源定位符（`file:` 来源记为 `-`）；**永不作校验凭证**，可信字段是 `sum`。
         public let commit: String
         /// pini.toml 摘要（MVS 可复现性）。
         public let manifestSum: String
-        /// 内容树摘要（唯一可信字段，G52 D6）。
+        /// 内容树摘要 —— 唯一可信的校验字段。
         public let sum: String
         /// 相对模块根的落地路径（deps/<name>）。
         public let path: String
-        /// 谁 import/require 了它（含 `<root>`；D16）。
+        /// 哪些 requirer 引入了它（含根模块的 `<root>`）。
         public let importedBy: [String]
     }
 
@@ -232,7 +232,7 @@ public enum ModuleToolchain {
         public let source: String
         public let commit: String
         public let sum: String
-        /// 相对模块根的落地路径（.pini/resources/<name>，R6）。
+        /// 相对模块根的落地路径（`.pini/resources/<name>`）。
         public let path: String
     }
 
@@ -248,7 +248,7 @@ public enum ModuleToolchain {
 
     // MARK: - 求解
 
-    /// 在 require 传递闭包上求解（R3）。
+    /// 在 require 传递闭包上求解。
     /// - Parameters:
     ///   - rootDir: 主模块根（绝对路径；deps/ 与 .pini/resources/ 相对它落定）。
     ///   - manifest: 主模块清单。
@@ -270,14 +270,14 @@ public enum ModuleToolchain {
 
         // 待处理边 = (依赖名, requirer, requirer 侧约束, 来源 spec)。
         // spec 在入队时按 **requirer 自己的清单**解析（平表 → 其 [tap] default，具名子表 → 对应 tap；
-        // D11：缺 [tap] 即报错，带 requirer 信息）。
+        // 缺 [tap] 即报错，并带上 requirer 信息）。
         var pending: [(name: String, from: String, constraint: String?, spec: String, tap: String)] = []
         // 写进 summary 的「谁声明了这个依赖」。不能让每条边都覆写：遍历是 LIFO，最后遍历到的边即最先入队，
         // 与「离根最近」相反，且遍历策略一改锁文件就变，结果不可复现。
         // 故另以 requirer 名的字典序定胜者（见下），与遍历顺序无关。
         var sourceByName: [String: String] = [:]
         var tapNameByName: [String: String] = [:]
-        /// 上面两个字段取自哪条边（requirer 名），用于实现定序规则。
+        // 上面两个字段取自哪条边（requirer 名），用于实现定序规则。
         var sourceRequirerByName: [String: String] = [:]
         func enqueueDeps(of m: ModuleManifest, from: String) throws {
             let defaultSpec = m.taps["default"]
@@ -294,7 +294,7 @@ public enum ModuleToolchain {
         }
         try enqueueDeps(of: manifest, from: "<root>")
 
-        // D13 作用域：`[replace]` **仅主模块生效**——`enqueueDeps` 只读依赖的 [require]，
+        // `[replace]` **仅主模块生效** —— `enqueueDeps` 只读依赖的 [require]，
         // 依赖清单里的 [replace] 一概不进 `replacements`，故结构上无法劫持根构建（Go 同规则）。
         let replacements: [String: Replacement] = manifest.replaces
             .reduce(into: [:]) { $0[$1.key] = parseReplace($1.value, name: $1.key) }
@@ -422,7 +422,7 @@ public enum ModuleToolchain {
                     importedBy: importedBy[name] ?? []))
         }
 
-        // 资源（不参与 MVS，同样受校验和约束；R6 落地 .pini/resources/<name>）。
+        // 资源（不参与 MVS，同样受校验和约束，落地在 `.pini/resources/<name>`）。
         var resolvedResources: [ResolvedResource] = []
         var resourceEntries: [(name: String, tap: String?, spec: String)] = []
         for (name, spec) in manifest.resources.sorted(by: { $0.key < $1.key }) {
@@ -563,7 +563,7 @@ public enum ModuleToolchain {
         throw ToolchainError.resolutionDidNotConverge(limit: fetchIterationLimit)
     }
 
-    // MARK: - 校验和（G52 §3.6：SHA-256；TOFU）
+    // MARK: - 校验和（SHA-256；首次取用时信任，此后逐次比对）
 
     /// 单文件摘要。
     public static func fileSum(_ path: String) -> String {
@@ -573,7 +573,7 @@ public enum ModuleToolchain {
 
     /// 内容树摘要：相对路径字典序遍历（对齐 loadDirectory 的排序），路径与字节先后入摘要。
     /// 排除：`.git/`、`pini-summary.toml` 自身、`.build/`（构建产物）、`.DS_Store`。
-    /// `.pini/` **不排除**——resources 落地其中且受校验和约束（R6/D6）。
+    /// `.pini/` **不排除**——resources 落地其中且受校验和约束。
     public static func treeSum(_ root: String) -> String {
         var entries: [(rel: String, data: Data)] = []
         let rootURL = URL(fileURLWithPath: root)
@@ -606,9 +606,9 @@ public enum ModuleToolchain {
         SHA256.hexDigest(data)
     }
 
-    // MARK: - 锁文件（G52 §3.5：生成物，必须提交）
+    // MARK: - 锁文件（生成物，必须提交）
 
-    /// 生成 `pini-summary.toml` 文本（G52 §3.5 格式）。
+    /// 生成 `pini-summary.toml` 文本。
     public static func renderSummary(
         resolution: Resolution, toolchainVersion: String,
         generated: Date = Date()
@@ -741,7 +741,7 @@ extension ModuleToolchain {
     }
 
     public enum ToolchainFailure: Error, Equatable {
-        /// import 目标根无 pini.toml——不是 Pini 模块（R7 双向强制：资源应写 [resources]）。
+        /// import 目标根无 pini.toml —— 不是 Pini 模块，这类数据应写进 [resources]。
         case importTargetNotModule(packagePath: String, sourceFile: String)
     }
 
@@ -784,9 +784,9 @@ extension ModuleToolchain {
         public var isEmpty: Bool { added.isEmpty && removed.isEmpty }
     }
 
-    /// `pini mod tidy`：令 [require]（含子表）条目集合与代码 import 一致（G52 §4.1，D21 离线）。
+    /// `pini mod tidy`：让 [require]（含子表）的条目集合与代码 import 一致，全程离线。
     /// 新增条目约束写 `*`（回填由 refresh）；既有条目的约束与 tap 位置**原样保留**；
-    /// 多余条目删除。经文本段落替换写回（require 区段外的注释不受影响）。
+    /// 多余条目删除。经文本段落替换写回，require 区段外的注释不受影响。
     @discardableResult
     public static func tidy(rootDir: String, manifest: ModuleManifest, package: Package) throws -> TidyReport {
         let facts = try collectImports(package: package)
@@ -892,7 +892,7 @@ extension ModuleToolchain {
         public var isOK: Bool { mismatches.isEmpty }
     }
 
-    /// `pini mod verify`：落地内容与锁文件的 sum/manifest_sum 比对（G52 §4.3，D6 执行点）。
+    /// `pini mod verify`：把落地内容与锁文件的 sum / manifest_sum 逐项比对。
     public static func verify(rootDir: String) throws -> VerifyReport {
         let summaryPath = rootDir + "/pini-summary.toml"
         guard FileManager.default.fileExists(atPath: summaryPath) else {
@@ -933,7 +933,7 @@ extension ModuleToolchain {
 
     // MARK: graph（依赖图展示与环诊断）
 
-    /// `pini mod graph`：默认缩进树（D-C）；`--cycles` 输出环路径列表（R2 诊断入口）。
+    /// `pini mod graph`：默认输出缩进树；`--cycles` 列出环路径。
     public static func graph(rootDir: String, manifest: ModuleManifest) throws
         -> (tree: String, cycles: [[String]])
     {
@@ -993,7 +993,7 @@ extension ModuleToolchain {
         return (lines.joined(separator: "\n"), cycles)
     }
 
-    // MARK: build 漂移检查（G52 §4.3：每次 build；与 verify 是两个检查）
+    // MARK: build 漂移检查（每次 build 都做，与 verify 是两个检查）
 
     public struct Drift: Equatable {
         public let missingInRequire: [String]  // import 了但 require 没有

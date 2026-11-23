@@ -1,4 +1,4 @@
-; 匿名函数 func：绑定与调用（spec G29：lambda 已统一为 func）
+; 匿名函数 func：绑定与调用 —— 语言里没有单独的 lambda 写法，匿名函数就是 func
 ; 运行：pini run examples/lambda.pini
 ; 预期：42
 main|func() -> ():

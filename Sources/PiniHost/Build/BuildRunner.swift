@@ -51,7 +51,7 @@ public enum BuildRunner {
             layout = BuildLayout(root: workspace.rootPath, profile: workspace.profile)
         } else if let manifest = try FileLoader.loadManifest(directory: root) {
             members = [(manifest.name, root)]
-            /// 成员单独构建时计划仍落工作区根：布局只有一处定义，装载器按同一处去找。
+            // 成员单独构建时计划仍落工作区根：布局只有一处定义，装载器按同一处去找。
             layout = try BuildLayout.locate(packageRoot: root)
         } else {
             return nil
@@ -104,7 +104,7 @@ public enum BuildRunner {
                 outcomes.append(
                     BuildStepOutcome(
                         step: step, translated: false, skipped: [], fromIncludedHeaders: 0))
-                /// 复用步不重翻，跳过表沿用旧计划里这一步的行：丢了它们，E4-046 会随增量构建消失。
+                // 复用步不重翻，跳过表沿用旧计划里这一步的行：丢了它们，E4-046 会随增量构建消失。
                 skips += (previous?.skips ?? []).filter {
                     $0.package == step.planned.package && $0.step == step.planned.name
                 }
@@ -123,7 +123,7 @@ public enum BuildRunner {
             }
             steps.append(step.planned.with(inputHash: digest))
         }
-        /// 只构建一个成员时，计划里别的包必须原样留住：覆盖写会让它们的检查凭空要求重跑。
+        // 只构建一个成员时，计划里别的包必须原样留住：覆盖写会让它们的检查凭空要求重跑。
         let owned = Set(configured.packages.map(\.name))
         let keptPackages = previous?.packages.filter { !owned.contains($0.name) } ?? []
         let keptSteps = previous?.steps.filter { !owned.contains($0.package) } ?? []
@@ -132,7 +132,7 @@ public enum BuildRunner {
         let plan = BuildPlan(
             packages: keptPackages + configured.packages, steps: keptSteps + steps,
             macros: keptMacros, skips: keptSkips + skips)
-        /// 没有翻译步也不曾有计划时不落盘：没构建面的包不该多个空文件。
+        // 没有翻译步也不曾有计划时不落盘：没构建面的包不该多个空文件。
         if !steps.isEmpty || previous != nil {
             try write(try plan.render(layout: configured.layout), to: configured.layout.planPath)
         }
@@ -176,11 +176,11 @@ public enum BuildRunner {
                             package: entry.name, name: symbol.name, type: type,
                             reason: failure.planReason, detail: failure.planDetail))
                 }
-                /// 两边都没有的是非标量声明：它归 E4-045，不在这里编一条「缺计划」。
+                // 两边都没有的是非标量声明：它归 E4-045，不在这里编一条「缺计划」。
             }
         }
         let updated = plan.replacing(macros: rows)
-        /// 没有翻译步、没有任何宏条目、盘上也没有旧计划时不落盘：没构建面的包不该多个空计划。
+        // 没有翻译步、没有任何宏条目、盘上也没有旧计划时不落盘：没构建面的包不该多个空计划。
         let existed = FileManager.default.fileExists(atPath: layout.planPath)
         if !updated.steps.isEmpty || !updated.macros.isEmpty || !updated.skips.isEmpty || existed {
             try write(try updated.render(layout: layout), to: layout.planPath)

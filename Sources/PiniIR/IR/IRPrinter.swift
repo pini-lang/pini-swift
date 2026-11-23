@@ -1,8 +1,7 @@
 import Foundation
 
-/// Human-readable dump of a lowered IR module. Debug aid for differential
-/// troubleshooting: when the new pipeline and the interpreter disagree, this
-/// dump shows exactly what the lowerer produced before emission.
+/// 降载后 IR 模块的可读转储。差分排查用：管线与解释器结果不一致时，
+/// 这份转储能看出降载器在发射之前究竟产出了什么。
 public enum IRPrinter {
 
     public static func dump(module: IRModule) -> String {
@@ -111,7 +110,7 @@ public enum IRPrinter {
         case .captureMarker(let name):
             return ["\(pad)capture \(name)"]
         case .detachStmt(let inner):
-            // Mirrors the source form `detach <expr>` verbatim.
+            // 原样照抄源码写法 `detach <expr>`。
             return ["\(pad)detach \(exprText(inner))"]
         }
     }
@@ -260,8 +259,8 @@ public enum IRPrinter {
             // dump 就得回显哪个词，否则两种形态在唯一能看见降载结果的地方又混成一样。
             return "\(form.keyword)(\(exprText(future)))"
         case .givenInstance(let type):
-            /// 内部节点，**无源形态**（默认实例在源语言里由 `using` 参数省略实参时
-            /// **隐式**取用）⇒ 打印成内部名 + 类型，供 `--dump-ir` 读。
+            // 内部节点，**无源形态**（默认实例在源语言里由 `using` 参数省略实参时
+            // **隐式**取用）⇒ 打印成内部名 + 类型，供 `--dump-ir` 读。
             return "givenInstance(\(type.llvmSpelling))"
         }
     }

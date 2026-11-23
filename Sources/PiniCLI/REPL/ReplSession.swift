@@ -115,7 +115,6 @@ final class ReplSession {
         guard let colonIdx = colonLineIdx else { return false }
 
         // `:` 之后的行必须缩进才算续行
-        // DEBUG
         var allIndented = true
         for i in (colonIdx + 1)..<lines.count {
             let line = lines[i]
@@ -125,7 +124,7 @@ final class ReplSession {
             break
         }
         if !allIndented { return false }
-        // DEBUG
+        // 全部续行都带缩进 ⇒ 这是未闭合的缩进块。
         return true
     }
 

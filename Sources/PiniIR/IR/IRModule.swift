@@ -1,24 +1,23 @@
 import Foundation
 import PiniSemantics
 
-/// A lowered function. `returnType` nil = void; slice set allows at most one
-/// scalar return type (tuple returns are a later grid).
+/// 降载后的函数。`returnType` 为 nil 表示 void；切片集合至多允许一个标量返回类型
+/// （元组返回尚未纳入）。
 public struct IRFunction: Equatable {
     public let name: String
     public let params: [IRParam]
     public let returnType: IRType?
     public let body: IRBlock
-    /// `=>` dispatch: the body runs on a worker thread and the caller receives a pending `Future`, not the body's value.
-    /// The flag stays on the callee instead of being re-derived from `returnType`: a call node carries the body protocol
-    /// rather than the signature, and an unannotated parameter has no type at all — so a type cannot answer it.
+    /// `=>` 调度：函数体在工作线程上跑，调用方拿到的是未决的 `Future`，不是函数体的返回值。
+    /// 该标记留在被调方而不从 `returnType` 反推：调用节点带的是函数体协议而非签名，
+    /// 且未标注形参根本没有类型 —— 类型答不出这个问题。
     public let isAsync: Bool
-    /// `|test`: the block is a language-level test case, not a callee. `pini test` collects exactly these and nothing else
-    /// calls them. The fact must travel in the IR because the collection rule lives on `FuncDecl.modifiers`, which has no
-    /// IR counterpart; the name is no substitute — a program may name a function `测试` and mean it as production code.
+    /// `|test`：这个块是语言级测试用例而非被调函数，`pini test` 只收集它、也只收集它。
+    /// 该事实必须进 IR，因为收集规则长在 `FuncDecl.modifiers` 上而它在 IR 没有对应物；
+    /// 名字不能替代 —— 程序完全可以写一个叫 `测试` 的正式函数。
     public let isTest: Bool
-    /// The file this function was declared in. Carried because `lower(package:)` merges every file's declarations into one
-    /// virtual module, and the merge erases which file each one came from; `pini test <path>` narrows by file, so the
-    /// merged module has to keep it or the narrowing cannot be honoured.
+    /// 声明该函数的文件。`lower(package:)` 把各文件的声明并进一个虚拟模块，合并会抹掉来源，
+    /// 而 `pini test <path>` 要按文件收窄，故合并后的模块必须留着它，否则收窄无从谈起。
     public let sourceFile: String
     /// 本函数的物化依赖：函数体里出现的默认实例取用所指向的给定块类型，降载时逐点收集
     /// （`FunctionContext.givenReferenceNames`）后在构造时取出。留痕是给后置的环检测用的
@@ -64,12 +63,12 @@ public struct IRFunction: Equatable {
     }
 }
 
-/// One enum case (G4): declaration-order tag + typed associated values.
+/// 一个枚举用例：按声明顺序的 tag 加带类型的关联值。
 public struct IREnumCase: Equatable {
     public let name: String
     public let tag: Int
-    /// Associated-parameter names (`nil` = positional declaration); parallel
-    /// to payloadTypes. Labeled constructor arguments resolve through these.
+    /// 关联形参名（`nil` 表示按位置声明），与 `payloadTypes` 一一对应。
+    /// 带标签的构造实参靠它解析。
     public let paramNames: [String?]
     public let payloadTypes: [IRType]
 
@@ -81,8 +80,8 @@ public struct IREnumCase: Equatable {
     }
 }
 
-/// A lowered enum declaration (G4): tagged union layout — the emitter emits
-/// `%enum.Name = type { i32, <max-arity case payload types> }`.
+/// 降载后的枚举声明：标签联合布局，发射器出
+/// `%enum.Name = type { i32, <最大元数用例的载荷类型> }`。
 public struct IREnumDecl: Equatable {
     public let name: String
     public let cases: [IREnumCase]
@@ -92,14 +91,14 @@ public struct IREnumDecl: Equatable {
         self.cases = cases
     }
 
-    /// The payload types of the max-arity case (the union's slot layout).
+    /// 最大元数用例的载荷类型（联合的槽布局）。
     public var slotTypes: [IRType] {
         cases.max { $0.payloadTypes.count < $1.payloadTypes.count }?.payloadTypes ?? []
     }
 }
 
-/// One foreign function binding (G14, FFI 子系统): a signature-only entry from a `[库|foreign]` block.
-/// The emitter forwards its declare; the call site is a plain `.call` resolved through the signature table.
+/// 一条 foreign 函数绑定（FFI 子系统）：`[库|foreign]` 块里只要签名、不要体的条目。
+/// 发射器转发它的 declare；调用点就是一次普通 `.call`，经签名表解析。
 /// 签名只用 `FFIType`：闭合集之外的类型到不了这里，两个通道读的是同一份判据。
 public struct IRForeignFunction: Equatable {
     public let name: String
@@ -173,9 +172,8 @@ public struct IRForeignConstant: Equatable {
     }
 }
 
-/// A lowered foreign block: the group name (the label left of `|` in `[libc|foreign]`) plus its signature-only
-/// bindings. Symbol resolution happens on the interpreter/ffi side (shim whitelist first, then dlsym); the IR layer
-/// only carries the declare surface.
+/// 降载后的 foreign 块：组名（`[libc|foreign]` 里 `|` 左侧的标签）加它的纯签名绑定。
+/// 符号解析在解释器 / ffi 侧完成（先查 shim 白名单再 dlsym）；IR 层只承载 declare 面。
 public struct IRForeignBlock: Equatable {
     public let name: String
     public let funcs: [IRForeignFunction]
@@ -285,13 +283,13 @@ public struct IRExportBlock: Equatable {
     }
 }
 
-/// A lowered module: the ordered functions plus the nominal type and enum declarations. The entry function is `main`
-/// (required by the slice emitter); methods live inside their `IRTypeDecl` and are emitted as regular functions.
+/// 降载后的模块：有序的函数，加名义类型与枚举声明。入口函数是 `main`（切片发射器要求）；
+/// 方法存在各自的 `IRTypeDecl` 里，按普通函数发射。
 public struct IRModule: Equatable {
     public let functions: [IRFunction]
     public let types: [IRTypeDecl]
     public let enums: [IREnumDecl]
-    /// Foreign blocks (G14): declare-only surface, no bodies.
+    /// foreign 块：只有 declare 面，没有函数体。
     public let foreigns: [IRForeignBlock]
 
     /// C 面：至多一块，条目名字已转成 C 标识符。

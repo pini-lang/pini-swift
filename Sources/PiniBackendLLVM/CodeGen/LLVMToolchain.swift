@@ -23,7 +23,7 @@ public struct LLVMToolchain {
                 return candidate
             }
         }
-        // 2. llvm-config --bindir
+        // 2. `llvm-config --bindir` 报出的 bin 目录。
         if let bindir = runCommand("/usr/bin/env", args: ["llvm-config", "--bindir"]),
             !bindir.isEmpty
         {
@@ -32,7 +32,7 @@ public struct LLVMToolchain {
                 return candidate
             }
         }
-        // 3. PATH which
+        // 3. PATH 里的 `which <tool>`。
         if let which = runCommand("/usr/bin/env", args: ["which", tool]),
             !which.isEmpty,
             FileManager.default.isExecutableFile(atPath: which)

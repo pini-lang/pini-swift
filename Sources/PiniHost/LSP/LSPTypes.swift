@@ -1,7 +1,7 @@
 import Foundation
 import PiniSemantics
 
-// MARK: - Scope Extension (Phase 1: Core Enhancement)
+// MARK: - Scope 扩展
 
 extension Scope {
     /// 返回当前作用域所有已定义符号
@@ -24,7 +24,7 @@ extension Scope {
     }
 }
 
-// MARK: - JSON-RPC Base Types
+// MARK: - JSON-RPC 基础类型
 
 public enum JSONValue: Codable, Equatable, Sendable {
     case string(String)
@@ -106,7 +106,7 @@ public struct NotificationMessage: Codable, Sendable {
     let params: JSONValue?
 }
 
-// MARK: - LSP Protocol Types
+// MARK: - LSP 协议类型
 
 public struct Position: Codable, Sendable {
     let line: Int  // 0-based
@@ -159,7 +159,7 @@ public struct TextDocumentContentChangeEvent: Codable, Sendable {
     let text: String
 }
 
-// MARK: - Completion Types
+// MARK: - 补全类型
 
 public struct CompletionParams: Codable, Sendable {
     let textDocument: TextDocumentIdentifier
@@ -213,14 +213,14 @@ public struct CompletionList: Codable, Sendable {
     let items: [CompletionItem]
 }
 
-// MARK: - Definition Types
+// MARK: - 跳转定义类型
 
 public struct DefinitionParams: Codable, Sendable {
     let textDocument: TextDocumentIdentifier
     let position: Position
 }
 
-// MARK: - Capabilities
+// MARK: - 能力声明
 
 public struct TextDocumentSyncOptions: Codable, Sendable {
     let openClose: Bool
@@ -253,12 +253,12 @@ public struct ServerCapabilities: Codable, Sendable {
     )
 }
 
-// MARK: - Initialize
+// MARK: - 初始化
 
 public struct InitializeParams: Codable, Sendable {
     let processId: Int?
     let capabilities: JSONValue?
-    /// LSP 规范：客户端 locale（如 "en-US" / "zh-CN"）。Pini 据此决定诊断消息语言（T11 解耦，不随 CLI --lang）。
+    /// LSP 规范：客户端 locale（如 "en-US" / "zh-CN"）；诊断消息语言据此决定，不随 CLI 的 --lang。
     let locale: String?
 }
 
@@ -272,7 +272,7 @@ public struct ServerInfo: Codable, Sendable {
     let version: String?
 }
 
-// MARK: - Diagnostics Publish
+// MARK: - 诊断发布
 
 public struct PublishDiagnosticsParams: Codable, Sendable {
     let uri: String

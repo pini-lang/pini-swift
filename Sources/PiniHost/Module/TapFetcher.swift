@@ -10,7 +10,7 @@ public enum TapFetcher {
     public enum TapError: Error, Equatable {
         /// 协议前缀不是 `github:` / `git:` / `file:`。
         case unsupportedScheme(String)
-        /// `github:` 后未写 org（G52 D11：禁止从全局配置或环境变量推断）。
+        /// `github:` 后未写 org；不接受从全局配置或环境变量推断。
         case missingOrg(String)
         /// `git:` 后未写 URL。
         case missingURL(String)
@@ -67,7 +67,7 @@ public enum TapFetcher {
     /// 可用版本：远端 tag 剥掉 `v` 前缀后能解析为版本号者，去重并按版本升序；经 `git ls-remote --tags`。
     /// 剥不出的 tag（如 `nightly`、带非数字段的）不进候选：它们无法参与 MVS 比较。
     public static func availableVersions(_ source: Source) throws -> [String] {
-        guard source.scheme != .file else { return [] }  // file: 无版本图可解（G52 §3.3）
+        guard source.scheme != .file else { return [] }  // file: 无版本图可解
         let out = try runGit(["ls-remote", "--tags", source.url])
         var seen = Set<String>()
         var versions: [String] = []
@@ -91,7 +91,7 @@ public enum TapFetcher {
         }
     }
 
-    // MARK: - 经典 MVS（G52 R3）
+    // MARK: - 经典 MVS
 
     /// 经典 MVS：升序候选里第一个满足全部约束的版本——每个约束给一个下界，取最大下界再向上对齐。
     /// 约束不可解析返回 `nil`（宁严勿纵，不当作 `*`）；全为 `*` 或空约束返回最高可用版本。
@@ -117,8 +117,7 @@ public enum TapFetcher {
     // MARK: - 落地（clone / fetch + checkout）
 
     /// 把 `source` 的 `version` 落地到 `dir`：首次 clone，已有 `.git` 则 fetch 后 checkout。
-    ///
-    /// - Returns: 检出后的 HEAD commit（G52 D12：来源定位符，**不是**校验凭证）。
+    /// - Returns: 检出后的 HEAD commit，是来源定位符而**不是**校验凭证。
     @discardableResult
     public static func materialize(_ source: Source, version: String?, into dir: String) throws -> String {
         guard source.scheme != .file else { throw TapError.fileTapNotMaterialized(path: source.url) }

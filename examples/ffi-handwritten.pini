@@ -6,8 +6,8 @@
 ; 运行：pini run examples/ffi-handwritten.pini
 ; 预期：取消闹钟后剩余 = 0 / 微睡零微秒返回 = 0
 [libc|foreign]
-alarm: (I32,) -> (I32,) ; C: unsigned int alarm(unsigned int)
-usleep: (I32,) -> (I32,) ; C: int usleep(unsigned int)
+alarm: (I32,) -> (I32,) ; C 原型：unsigned int alarm(unsigned int)
+usleep: (I32,) -> (I32,) ; C 原型：int usleep(unsigned int)
 
 main|func() -> ():
     print("取消闹钟后剩余 =", unsafe alarm(0))

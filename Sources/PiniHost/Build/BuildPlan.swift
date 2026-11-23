@@ -200,7 +200,7 @@ public struct BuildPlan: Equatable, Sendable {
             lines.append(try pair("output", step.output, layout: layout))
             lines.append(try pair("input_hash", step.inputHash, layout: layout))
         }
-        /// 宏段与跳过段排在步骤之后：旧读取器只认前两段，多余的表原样忽略。
+        // 宏段与跳过段排在步骤之后：旧读取器只认前两段，多余的表原样忽略。
         for macro in macros {
             lines.append("")
             lines.append("[[macro]]")

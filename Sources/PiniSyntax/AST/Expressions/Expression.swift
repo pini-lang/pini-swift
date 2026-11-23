@@ -60,11 +60,11 @@ public indirect enum Expression: Equatable, Sendable {
     case unary(op: UnaryOperator, operand: Expression, location: SourceLocation)
     case call(callee: Expression, arguments: [CallArgument], location: SourceLocation)
     case member(object: Expression, name: String, location: SourceLocation)
-    /// 元组位置访问 `.0` / `.1`（草稿 A2，批次 1）：`object.index` 取元组第 index 个元素。
-    /// 与 `member` 的区分：`.名称` 走 member（字段/方法/命名元组标签），`.数字` 走 tupleIndex（位置访问）。
+    /// 元组位置访问 `.0` / `.1`：`object.index` 取元组第 index 个元素。
+    /// 与 `member` 的区分：`.名称` 走 member（字段 / 方法 / 命名元组标签），`.数字` 走 tupleIndex。
     case tupleIndex(object: Expression, index: Int, location: SourceLocation)
     /// 元组字面量。labels[i] 对应 elements[i] 的可选标签（nil = 位置元素）；
-    /// 命名元组 `(a: 1, b: 2,)` 的 labels = ["a", "b"]（草稿 A2，批次 1.3，D1）。
+    /// 命名元组 `(a: 1, b: 2,)` 的 labels = ["a", "b"]。
     case tuple(labels: [String?], elements: [Expression], location: SourceLocation)
     case arrayLiteral(elements: [Expression], location: SourceLocation)
     case dictionaryLiteral(entries: [DictEntry], location: SourceLocation)
@@ -72,8 +72,8 @@ public indirect enum Expression: Equatable, Sendable {
     /// 括号分组 `paren` 已在语法边界（Parser.parseTupleOrParen）消解，不再作为核心节点：
     /// 语义为零的纯语法构造，不进入类型检查 / 解释 / 代码生成。
     case `subscript`(expr: Expression, index: Expression, location: SourceLocation)
-    /// 匿名函数（spec G29：统一为 `func` 关键字 + 块体，与具名函数 FuncDecl 同构）。
-    /// `decl.name` 为占位（无名字），`decl.params`/`decl.returnTypes`/`decl.isAsync`/`decl.body` 完整复用。
+    /// 匿名函数（统一为 `func` 关键字 + 块体，与具名函数 FuncDecl 同构）。
+    /// `decl.name` 为占位（无名字），`decl.params` / `decl.returnTypes` / `decl.isAsync` / `decl.body` 完整复用。
     case funcLiteral(decl: FuncDecl, location: SourceLocation)
     case selfKeyword(location: SourceLocation)
     case selfTypeKeyword(location: SourceLocation)
@@ -86,10 +86,10 @@ public indirect enum Expression: Equatable, Sendable {
     /// operand 静态要求 `Result<T, E>`：`ok(v)` 得值 v；`err(e)` 绑定 errorVar 后执行 handler
     /// （限控制流：return/break/continue/pass，pass 仅语句位吞错）。`^e` 是定义性脱糖，Parser 层展开。
     case tryExpression(operand: Expression, errorVar: String, handler: Block, location: SourceLocation)
-    /// Phase 2a（FFI 子系统， `unsafe`）：不安全消耗点前缀。
+    /// 不安全消耗点前缀 `unsafe`。
     /// 标记紧随其后的单次函数调用或指针操作；复合表达式须括号 `unsafe (加载(p) + 1)`。
     case unsafe(operand: Expression, location: SourceLocation)
-    /// Phase 2a（FFI 子系统， `&`）：不安全取地址前缀。
+    /// 不安全取地址前缀 `&`。
     /// 仅在 unsafe 上下文可用（`|unsafe` 函数体或 `unsafe (...)` 消耗点内）。
     case addressOf(operand: Expression, location: SourceLocation)
     /// 弱引用前缀 `weak 对象`：求值为 `WeakRef<T>`，不增加对象的强计数。

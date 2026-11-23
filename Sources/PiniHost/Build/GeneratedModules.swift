@@ -40,7 +40,7 @@ public enum GeneratedModules {
             return package
         }
         guard !plan.packages.isEmpty else { return package }
-        /// 计划在、但里面没有这个包：包名改过或计划属于别处。静默跳过会让生成模块凭空消失。
+        // 计划在、但里面没有这个包：包名改过或计划属于别处。静默跳过会让生成模块凭空消失。
         guard let entry = plan.package(named: package.name) else {
             throw GeneratedModulesError.staleScript(
                 package: package.name, planPath: layout.planPath)
@@ -64,7 +64,7 @@ public enum GeneratedModules {
                     path: step.output, reason: error.localizedDescription)
             }
         }
-        /// 跳过名只收宏：它们没有声明可查，但用户写下去时该得到「翻译没产出」而不是「没定义」。
+        // 跳过名只收宏：它们没有声明可查，但用户写下去时该得到「翻译没产出」而不是「没定义」。
         var unavailable: [String: String] = [:]
         for skip in plan.skips(for: package.name) { unavailable[skip.name] = skip.reason }
         return Package(

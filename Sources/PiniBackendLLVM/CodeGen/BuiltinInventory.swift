@@ -43,7 +43,7 @@ extension BuiltinSpec {
 public enum Builtins {
     public static let all: [BuiltinSpec] = [
 
-        // MARK: array
+        // MARK: 数组族
         BuiltinSpec(
             symbol: "bk_array_append",
             signature: .init(result: "ptr", parameters: ["ptr", "ptr", "i32", "i32"]),
@@ -80,7 +80,7 @@ public enum Builtins {
             family: .array, lowerings: ["arrayLiteral", "sliceCall"]
         ),
 
-        // MARK: dictionary
+        // MARK: 字典族
         BuiltinSpec(
             symbol: "bk_dict_create", signature: .init(result: "ptr", parameters: []),
             family: .dictionary, lowerings: ["dictLiteral"]
@@ -121,7 +121,7 @@ public enum Builtins {
             family: .dictionary, lowerings: ["forInStmt"]
         ),
 
-        // MARK: set
+        // MARK: 集合族
         BuiltinSpec(
             symbol: "bk_set_add", signature: .init(result: "ptr", parameters: ["ptr", "ptr", "i32", "i32"]),
             family: .set, lowerings: ["setLiteral"]
@@ -143,7 +143,7 @@ public enum Builtins {
             family: .set, lowerings: ["lenCall", "forInStmt"]
         ),
 
-        // MARK: handle
+        // MARK: 句柄
         BuiltinSpec(
             symbol: "bk_handle_ensure_unique", signature: .init(result: "ptr", parameters: ["ptr"]),
             family: .handle, lowerings: ["subscriptStore", "fieldStore"]
@@ -157,7 +157,7 @@ public enum Builtins {
             family: .handle, lowerings: ["<retain>"]
         ),
 
-        // MARK: lazyRef
+        // MARK: 惰性引用
         BuiltinSpec(
             symbol: "bk_lazyref_create",
             signature: .init(result: "ptr", parameters: ["ptr", "ptr", "ptr", "i32", "i32"]),
@@ -172,7 +172,7 @@ public enum Builtins {
             family: .lazyRef, lowerings: ["lazyRefValue"]
         ),
 
-        // MARK: weakRef
+        // MARK: 弱引用
         BuiltinSpec(
             symbol: "bk_weak_create", signature: .init(result: "ptr", parameters: ["ptr"]),
             family: .weakRef, lowerings: ["weakRefConstruct"]
@@ -186,13 +186,13 @@ public enum Builtins {
             family: .weakRef, lowerings: ["weakRefValue"]
         ),
 
-        // MARK: given
+        // MARK: 给定块
         BuiltinSpec(
             symbol: "bk_given_get", signature: .init(result: "ptr", parameters: ["ptr", "ptr", "i64"]),
             family: .given, lowerings: ["givenInstance", "fieldGet"]
         ),
 
-        // MARK: display
+        // MARK: 显示
         BuiltinSpec(
             symbol: "bk_cstr", signature: .init(result: "ptr", parameters: ["ptr"]),
             family: .display, lowerings: ["call"]
@@ -215,7 +215,7 @@ public enum Builtins {
             family: .display, lowerings: ["<print>"]
         ),
 
-        // MARK: character
+        // MARK: 字符
         BuiltinSpec(
             symbol: "bk_char_retain", signature: .init(result: "i64", parameters: ["i64"]),
             family: .character, lowerings: ["<retain>"]
@@ -350,7 +350,7 @@ public enum Builtins {
             family: .string, lowerings: ["stringSubstring"]
         ),
 
-        // MARK: nominal
+        // MARK: 名义类型
         BuiltinSpec(
             symbol: "bk_nominal_alloc", signature: .init(result: "ptr", parameters: ["i64", "i32"]),
             family: .nominal, lowerings: ["construct", "enumConstruct"]
@@ -368,7 +368,7 @@ public enum Builtins {
             family: .nominal, lowerings: ["<closure>"]
         ),
 
-        // MARK: io
+        // MARK: 文件 IO
         BuiltinSpec(
             symbol: "bk_append_file", signature: .init(result: "void", parameters: ["ptr", "ptr"]),
             family: .io, lowerings: ["fileAppend"]
@@ -422,7 +422,7 @@ public enum Builtins {
             family: .io, lowerings: ["fileWrite"]
         ),
 
-        // MARK: task
+        // MARK: 任务
         BuiltinSpec(
             symbol: "bk_task_cancel", signature: .init(result: "void", parameters: ["ptr"]),
             family: .task, lowerings: ["call"]
@@ -453,13 +453,13 @@ public enum Builtins {
             family: .task, lowerings: ["call"]
         ),
 
-        // MARK: blocking
+        // MARK: 阻塞等待
         BuiltinSpec(
             symbol: "bk_sleep", signature: .init(result: "void", parameters: ["i32"]),
             family: .blocking, lowerings: ["call"]
         ),
 
-        // MARK: yielding
+        // MARK: 让出
         BuiltinSpec(
             symbol: "bk_task_await", signature: .init(result: "i32", parameters: ["ptr", "ptr"]),
             family: .yielding, lowerings: ["<yield>"]
@@ -473,19 +473,19 @@ public enum Builtins {
             family: .yielding, lowerings: ["<frame>"]
         ),
 
-        // MARK: scheduler
+        // MARK: 调度器
         BuiltinSpec(
             symbol: "bk_task_bind_sched", signature: .init(result: "i32", parameters: ["ptr", "ptr"]),
             family: .scheduler, lowerings: ["<entry>"]
         ),
 
-        // MARK: runtime
+        // MARK: 运行时
         BuiltinSpec(
             symbol: "bk_runtime_cleanup", signature: .init(result: "void", parameters: []),
             family: .runtime, lowerings: ["<cleanup>"]
         ),
 
-        // MARK: error
+        // MARK: 错误
         BuiltinSpec(
             symbol: "bk_cancel_error_create", signature: .init(result: "i64", parameters: ["ptr"]),
             family: .error, lowerings: ["call"]

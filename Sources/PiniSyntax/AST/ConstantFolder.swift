@@ -10,7 +10,7 @@ public enum ConstantFolder {
         return Module(declarations: decls, imports: module.imports, exports: module.exports, location: module.location)
     }
 
-    // MARK: - TopLevelDecl
+    // MARK: - 顶级声明
 
     private static func fold(_ decl: TopLevelDecl) -> TopLevelDecl {
         switch decl {
@@ -52,7 +52,7 @@ public enum ConstantFolder {
                     targetTypeAnnotation: x.targetTypeAnnotation,
                     methods: x.methods.map(fold), location: x.location))
         case .foreignDecl(let fd):
-            // Phase 2a（FFI 子系统）：仅签名，无函数体，无需折叠。
+            // 仅签名，无函数体，无需折叠。
             return .foreignDecl(fd)
         case .varDecl(let stmt):
             return .varDecl(fold(stmt))
@@ -65,7 +65,7 @@ public enum ConstantFolder {
         }
     }
 
-    // MARK: - FuncDecl
+    // MARK: - 函数声明
 
     private static func fold(_ f: FuncDecl) -> FuncDecl {
         let body = f.body.map { fold($0) }
@@ -75,14 +75,14 @@ public enum ConstantFolder {
             isAsync: f.isAsync, body: body, location: f.location)
     }
 
-    // MARK: - Statement
+    // MARK: - 语句
 
     private static func fold(_ stmt: Statement) -> Statement {
         switch stmt {
         case .varDecl(let name, let ta, let init_, let mut, let loc):
             return .varDecl(name: name, typeAnnotation: ta, initializer: init_.map(fold), isMutable: mut, location: loc)
         case .varDestructure(let names, let ta, let init_, let mut, let loc):
-            // 草稿 A1（批次 1）：递归折叠初始值；names/typeAnnotation 为结构不动。
+            // 递归折叠初始值；names / typeAnnotation 属结构，不动。
             return .varDestructure(names: names, typeAnnotation: ta, initializer: init_.map(fold), isMutable: mut, location: loc)
         case .assign(let target, let value, let loc):
             return .assign(target: fold(target), value: fold(value), location: loc)
@@ -140,7 +140,7 @@ public enum ConstantFolder {
         }
     }
 
-    // MARK: - Expression
+    // MARK: - 表达式
 
     private static func fold(_ expr: Expression) -> Expression {
         switch expr {
@@ -158,14 +158,14 @@ public enum ConstantFolder {
                 operand: fold(operand), errorVar: errorVar,
                 handler: fold(handler), location: loc)
         case .tupleIndex(let obj, let index, let loc):
-            // 草稿 A2（批次 1）：递归折叠 object；常量元组字面量可折叠为对应字面量。
+            // 递归折叠 object；常量元组字面量可折叠为对应字面量。
             let folded = fold(obj)
             if case .tuple(_, let elems, _) = folded, index >= 0 && index < elems.count {
                 return elems[index]
             }
             return .tupleIndex(object: folded, index: index, location: loc)
         case .tuple(let labels, let elems, let loc):
-            // 草稿 A2（批次 1.3，D1）：保留命名元组标签。
+            // 保留命名元组标签，元素逐个折叠。
             return .tuple(labels: labels, elements: elems.map(fold), location: loc)
         case .arrayLiteral(let elems, let loc):
             return .arrayLiteral(elements: elems.map(fold), location: loc)
@@ -179,7 +179,7 @@ public enum ConstantFolder {
         case .subscript(let e, let idx, let loc):
             return .subscript(expr: fold(e), index: fold(idx), location: loc)
         case .unsafe(let operand, let loc):
-            // Phase 2a（FFI 子系统）：不安全消耗点——递归折叠操作数。
+            // 不安全消耗点——递归折叠操作数。
             return .unsafe(operand: fold(operand), location: loc)
         case .weakRef(let operand, let loc):
             // 弱引用：递归折叠操作数；句柄本身在求值期才建，不参与常量归约。
@@ -188,7 +188,7 @@ public enum ConstantFolder {
             // 显式转换：折叠操作数；数值变换留给语义层按目标类型定型，此处不改类型。
             return .cast(operand: fold(operand), target: target, location: loc)
         case .addressOf(let operand, let loc):
-            // Phase 2a（FFI 子系统）：取地址——递归折叠操作数（折叠只做常量归约，地址不变）。
+            // 取地址——递归折叠操作数（折叠只做常量归约，地址不变）。
             return .addressOf(operand: fold(operand), location: loc)
         case .stringInterpolation(let segs, let loc):
             let fsegs = segs.map { (seg) -> InterpolationSegment in

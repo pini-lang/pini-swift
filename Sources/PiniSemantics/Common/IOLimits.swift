@@ -1,18 +1,16 @@
-/// IO builtin limits — the A-group semantics the contract pins for the IO nodes. These numbers are
-/// language semantics, not accidents: interpreter and LLVM emitter must agree, so they live here
-/// once. `readFile` reads whole files on both sides; only `readLine`'s `fgets` cap is bounded (`A1`).
+/// IO 内建的上限：解释器与 LLVM 后端必须给出同一组数字，故只在这里声明一次。
+/// `readFile` 两端都整文件读入，不受限；只有 `readLine` 的 `fgets` 缓冲有上界。
 package enum IOLimits {
 
-    /// `readLine` — the `fgets` buffer size, in bytes. `fgets` yields at most `size - 1` characters
-    /// plus a terminator, so the observable cap on a returned line is `lineBufferSize - 1`.
+    /// `readLine` 的 `fgets` 缓冲字节数。`fgets` 至多产出 `size - 1` 个字符加一个终止符，
+    /// 故一行可见的上限是 `lineBufferSize - 1`。
     package static let lineBufferSize = 256
 
-    /// The largest line `readLine` can return, in bytes.
+    /// `readLine` 能返回的最长一行，按字节计。
     package static let maxLineBytes = lineBufferSize - 1
 
-    /// Truncate a line to the `fgets`-equivalent cap, **by byte**. When the cut lands inside a
-    /// multi-byte character the LLVM side emits the raw bytes (an invalid UTF-8 sequence); a Swift
-    /// `String` cannot hold those, so this side represents the same prefix with lenient decoding.
+    /// 按字节把一行截到 `fgets` 等价上限。切点落在多字节字符中间时，LLVM 侧照原样发出这些字节
+    /// （一段非法 UTF-8），而 Swift 的 `String` 存不住，故这一侧用宽容解码表示同一段前缀。
     package static func truncateToLineLimit(_ text: String) -> String {
         let bytes = text.utf8
         guard bytes.count > maxLineBytes else { return text }

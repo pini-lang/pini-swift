@@ -70,9 +70,8 @@ enum SubscriptReadStrategy {
         case .array: return .array
         case .string: return .string
         case .dictionary: return .dictionary
-        /// `Char` (P0d) is declared, not defaulted, on purpose: it shares
-        /// `String`'s representation but is not a container, and the default arm
-        /// that would have caught it silently is exactly what phase A warned about.
+        // `Char` 单列一支而非落到 default，是有意的：它与 `String` 同表示却不是容器，
+        // 而默认分支会把它悄悄吃掉。
         case .char: return nil
         default: return nil
         }

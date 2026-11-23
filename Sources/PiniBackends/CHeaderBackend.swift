@@ -150,7 +150,7 @@ public struct CHeaderBackend: PiniBackend {
         case .i8, .u8, .boolean: return (1, 1)
         case .i32: return (4, 4)
         case .i64, .u64, .f64: return (8, 8)
-        /// 指针宽度取自运行时：C 侧的布局断言与 `RawPointerValue` 的步长必须同源。
+        // 指针宽度取自运行时：C 侧的布局断言与 `RawPointerValue` 的步长必须同源。
         case .pointer:
             return (MemoryLayout<UnsafeMutableRawPointer>.size, MemoryLayout<UnsafeMutableRawPointer>.alignment)
         case .nominal, .enumeration: return (8, 8)
@@ -190,18 +190,18 @@ public struct CHeaderBackend: PiniBackend {
         case .u64: return "uint64_t"
         case .f64: return "double"
         case .boolean: return "bool"
-        /// 导出形参的 `String`：借出的 UTF-8 C 串，只在本次调用期间有效。
+        // 导出形参的 `String`：借出的 UTF-8 C 串，只在本次调用期间有效。
         case .string: return "const char*"
-        /// 句柄：不透明指针。形参与返回同形，计数由 C 自己 retain / release。
+        // 句柄：不透明指针。形参与返回同形，计数由 C 自己 retain / release。
         case .stringHandle: return "bk_str_handle*"
-        /// 回调形参：C 侧写成一个函数指针，转发层把裸地址包成 Pini 函数值。
+        // 回调形参：C 侧写成一个函数指针，转发层把裸地址包成 Pini 函数值。
         case .function(let params, let returnType, _):
             let returned = returnType.map { cType($0) } ?? "void"
             let inner = params.map { cType($0) }.joined(separator: ", ")
             return "\(returned) (*)(\(inner.isEmpty ? "void" : inner))"
         case .pointer(let element):
-            /// 指针目标只能是标量：导出面在检查期已拒掉其余形状，能走到这里说明两层判据对不上。
-            /// 不退回 `void*` —— 那会让 C 侧看到的类型与 Pini 写的类型静默分叉。
+            // 指针目标只能是标量：导出面在检查期已拒掉其余形状，能走到这里说明两层判据对不上。
+            // 不退回 `void*` —— 那会让 C 侧看到的类型与 Pini 写的类型静默分叉。
             guard let spelling = cScalar(element) else {
                 preconditionFailure("C 头文件的指针目标只能是标量，实际 `\(element.describe())`")
             }

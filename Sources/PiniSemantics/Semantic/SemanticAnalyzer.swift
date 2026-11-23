@@ -17,7 +17,7 @@ public final class SemanticAnalyzer {
     /// 进入块 / 函数时快照、离开时回滚，使同名遮蔽不把外层类型带给内层之后的判断。
     private var declaredTypes: [String: String] = [:]
 
-    /// 声明上下文收紧·规则 3.2/3.14：类型字段表（register 阶段填充），供扩展块方法体检查时注入 self 字段作用域。
+    /// 类型字段表（登记阶段填充），供扩展块方法体检查时注入 self 字段作用域。
     private var typeFields: [String: [FieldDecl]] = [:]
 
     /// 语义警告（非致命）：目前只含未使用局部变量，检测点在块作用域。
@@ -34,12 +34,12 @@ public final class SemanticAnalyzer {
     private var currentInjectNames: Set<String> = []
     private var deferredInjectConflict: SemanticError? = nil
 
-    /// B2：已被读取引用的符号名集合（`requireDefined` 解析命中时记录）。
-    /// 已知限制：name 级键，跨作用域同名符号会互相"洗白"未使用判定——当前接受，待符号表结构化（唯一 id）后升级。
+    /// 已被读取引用的符号名集合（`requireDefined` 解析命中时记录）。
+    /// 已知限制：name 级键，跨作用域同名符号会互相「洗白」未使用判定；符号表结构化（唯一 id）后升级。
     private var usedSymbols: Set<String> = []
 
     /// import 别名登记表：别名 → (publicSymbols 跨模块可引入集, allSymbols 全部顶级符号)。
-    /// D-2 静态互斥：本地符号声明与别名同名即重声明错误。
+    /// 静态互斥：本地符号声明与别名同名即重声明错误。
     private var importAliasInfos: [String: (publicSymbols: Set<String>, allSymbols: Set<String>)] = [:]
     /// 点号用例构造（成员意图）的名字登记集：全部已见枚举用例名（含内建 Optional 的
     /// some/none）。与前导点解析配套——`.name` 只要求名字是某枚举的用例，不受本地位
@@ -49,13 +49,13 @@ public final class SemanticAnalyzer {
     /// 本单元只需要「这个名字存在」这一关，故与本地用例名分开放，不并进 `enumCaseNames`。
     private var importedCaseNames: Set<String> = []
 
-    /// H-1 capture 校验上下文栈：每个活跃匿名函数字面量一层
+    /// capture 校验上下文栈：每个活跃匿名函数字面量一层
     ///（boundary = 字面量体作用域边界；captured = 已先行声明的捕获名集合）。
     /// ①引用外层局部未捕获 → captureWithoutDeclaration；嵌套字面量各持独立一层。
     private var captureContexts: [(boundary: Scope, captured: Set<String>)] = []
 
-    /// P4 Phase 3：多文件包分析时的包级符号索引与「当前正在分析的文件」。
-    /// 单文件模式（`analyze(module:)`）下恒为 `nil`，故单文件行为零回归。
+    /// 多文件包分析时的包级符号索引与当前正在分析的文件名。
+    /// 单文件模式（`analyze(module:)`）下恒为 `nil`，故单文件路径不受影响。
     private var packageContext: (index: PackageSymbolIndex, currentFileName: String)? = nil
 
     /// 生成面跳过名：`pini bind` 看见却没有产出声明的宏名与理由。
@@ -94,9 +94,9 @@ public final class SemanticAnalyzer {
 
     private func registerBuiltins() {
         let dummyLoc = SourceLocation(line: 0, column: 0, fileName: "<builtin>")
-        /// 内建符号从单点登记表（BuiltinRegistry）派生：名字与归组只声明一次，解释器 / 类型检查 /
-        /// 本层各自取用。本层不登记则示例或用户代码调用这些自由函数会被误报 undefinedFunction；
-        /// 字符串成员方法走成员调用路径、不经符号表，无需登记。表里除函数还有值，按值类型分流登记。
+        // 内建符号从单点登记表（BuiltinRegistry）派生：名字与归组只声明一次，解释器 / 类型检查 /
+        // 本层各自取用。本层不登记则示例或用户代码调用这些自由函数会被误报 undefinedFunction；
+        // 字符串成员方法走成员调用路径、不经符号表，无需登记。表里除函数还有值，按值类型分流登记。
         for decl in BuiltinRegistry.decls where decl.definesSymbol {
             let kind: SymbolKind =
                 decl.valueType == nil
@@ -116,7 +116,7 @@ public final class SemanticAnalyzer {
     private func analyzeModule(_ module: Module) throws {
         warnings = []  // B2：每次分析重置（实例可复用）
         usedSymbols = []
-        // 登记 import 别名（加载被引入模块，R1 边界 + R2 禁环由加载器负责）
+        // 登记 import 别名（被引入模块的加载与环检测由加载器负责）。
         importAliasInfos = [:]
         importedCaseNames = []
         for imp in module.imports {
@@ -129,15 +129,15 @@ public final class SemanticAnalyzer {
 
         try setupInjections(for: module)
         defer { teardownInjections() }
-        /// 外部符号先建表：同名同型合并、异型与同名冲突都在声明处定案，注册阶段才有一份确定的名字。
+        // 外部符号先建表：同名同型合并、异型与同名冲突都在声明处定案，注册阶段才有一份确定的名字。
         foreignSymbols = try ForeignSymbolTable.build(
             units: [
                 (fileName: module.location.fileName, declarations: module.declarations, exports: module.exports)
             ])
         registeredForeignNames = []
-        /// 预置声明（宿主提供）先注册，让语言预置的名字在本文件里存在——缺了这步，该名字落在值位会被
-        /// 判「未定义变量」，而它确实存在、只是不能作值。只注册未被本模块占名的那些：用户已占名时
-        /// 再注册会被判重声明，而这类名字的处置承诺是用户声明优先（让位规则，与降载层同源）。
+        // 预置声明（宿主提供）先注册，让语言预置的名字在本文件里存在——缺了这步，该名字落在值位会被
+        // 判「未定义变量」，而它确实存在、只是不能作值。只注册未被本模块占名的那些：用户已占名时
+        // 再注册会被判重声明，而这类名字的处置承诺是用户声明优先（让位规则，与降载层同源）。
         for decl in PredefinedDecls.effective(in: module.declarations) {
             try registerTopLevelDecl(decl)
         }
@@ -174,8 +174,8 @@ public final class SemanticAnalyzer {
         }
 
         let index = try PackageSymbolIndex.build(package: package)
-        /// 建表覆盖全包：外部符号是模块级资源，跨文件同名必须在这里定案，
-        /// 晚一步就退回「后注册者覆盖前者」的老行为。
+        // 建表覆盖全包：外部符号是模块级资源，跨文件同名必须在这里定案，
+        // 晚一步就退回「后注册者覆盖前者」的松口径。
         foreignSymbols = try ForeignSymbolTable.build(
             units: package.fileUnits.map {
                 (fileName: $0.fileName, declarations: $0.module.declarations, exports: $0.module.exports)
@@ -213,8 +213,8 @@ public final class SemanticAnalyzer {
             appendForeignPortabilityWarnings(unit.module)
             if let c = deferredInjectConflict { throw c }
         }
-        /// 导出面与错误类型可能分处两个文件，逐文件算码表只能看到一半；合成一次再发警告，
-        /// 否则「导出函数与错误类型分处两文件」的包永远不提醒。
+        // 导出面与错误类型可能分处两个文件，逐文件算码表只能看到一半；合成一次再发警告，
+        // 否则「导出函数与错误类型分处两文件」的包永远不提醒。
         appendErrorCodeWarnings(
             Module(
                 declarations: package.fileUnits.flatMap { $0.module.declarations },
@@ -244,7 +244,7 @@ public final class SemanticAnalyzer {
                     warnings.append(
                         .variadicForeignSymbol(name: symbol.name, location: symbol.location))
                 }
-                /// 句柄只看函数条目：数据符号的标注位在 `ffiType(.data)` 那一层就已被拒。
+                // 句柄只看函数条目：数据符号的标注位在 `ffiType(.data)` 那一层就已被拒。
                 if symbol.isFunction,
                     (symbol.paramTypes + symbol.returnTypes).contains(where: \.mentionsStringHandle)
                 {
@@ -363,14 +363,14 @@ public final class SemanticAnalyzer {
     }
 
     /// 引用点解析单点：先查当前文件作用域；未命中且处于多文件包时查包级索引，
-    /// 按 spec enforce 可见性（private/internal 跨文件不可见 → `inaccessibleSymbol`）。
-    /// 单文件模式下 `packageContext` 为 nil，行为与原 `symbolTable.resolve` 判定完全一致。
+    /// 按符号的可见性级别判定（private / internal 跨文件不可见 → `inaccessibleSymbol`）。
+    /// 单文件模式下 `packageContext` 为 nil，判据与单纯的符号表解析一致。
     private func requireDefined(_ name: String, _ location: SourceLocation, isFunction: Bool) throws {
         // 内建类型名静态层无需注册：裸 `Optional` / `Optional.none` 与解释器特判对齐；
         // `LazyRef`、`UnownedRef` 是类型构造器而不是用户函数，省略类型实参的写法没有声明可查。
         if name == "Optional" || name == "LazyRef" || name == "UnownedRef" { return }
         if let hit = symbolTable.resolveWithScope(name) {
-            // H-1①：匿名函数体内引用外层局部变量，其 capture 声明须先于本使用出现
+            // ①：匿名函数体内引用外层局部变量时，其 capture 声明须先于本使用出现
             if let ctx = captureContexts.last,
                 !hit.scope.isWithin(ctx.boundary),
                 Self.isCapturableKind(hit.symbol.kind),
@@ -391,7 +391,7 @@ public final class SemanticAnalyzer {
         }
         // 未命中本地/包级时，注入的 public 符号可裸引用（文件级全导入；冲突已由哨兵排除）
         if currentInjectNames.contains(name) { return }
-        /// 生成面见过这个名字却没产出声明：报「翻译没做」比报「没定义」多给一条出路。
+        // 生成面见过这个名字却没产出声明：报「翻译没做」比报「没定义」多给一条出路。
         if let reason = unavailableForeignNames[name] {
             throw SemanticError.untranslatedForeignMacro(
                 name: name, reason: reason, location: location)
@@ -426,7 +426,7 @@ public final class SemanticAnalyzer {
             }
         }
 
-        /// 外部符号建表：失败收成一条诊断并把表置空，后续按原样登记，其它问题照旧报得出来。
+        // 外部符号建表：失败收成一条诊断并把表置空，后续按原样登记，其它问题照旧报得出来。
         do {
             foreignSymbols = try ForeignSymbolTable.build(
                 units: [
@@ -485,7 +485,7 @@ public final class SemanticAnalyzer {
     }
 
     /// 重声明导致 registerTopLevelDecl 中途失败时，尽力把该声明头登记进符号表，
-    /// 以免后续合法引用被误报为未定义（P2-4.3 收集模式专用）。
+    /// 以免后续合法引用被误报为未定义（仅收集模式走这条路径）。
     private func recoverRegister(_ decl: TopLevelDecl) {
         switch decl {
         case .structDecl(let s):
@@ -514,7 +514,7 @@ public final class SemanticAnalyzer {
         }
     }
 
-    // MARK: - 注册阶段（P2-3 重声明检测）
+    // MARK: - 注册阶段（重声明检测）
 
     // 第一遍预注册：若同名顶级符号已存在则抛出 redeclaredSymbol。
     // 注：当前为「遇错即抛」单错误模式；错误收集接入后可累积多错误。
@@ -532,9 +532,9 @@ public final class SemanticAnalyzer {
             return try registerStructLike(g.name, fields: g.fields, methods: g.methods, location: g.location)
         case .enumDecl(let e):
             try defineUnique(name: e.name, kind: .enum, location: e.location)
-            /// case 名按枚举命名空间隔离，只检测同一枚举内重名；跨枚举同名 case 允许共存。
-            /// case 名仍以 `symbolTable.define` 登记（覆盖、不抛错），保证未限定构造 `圆(5.0)` 的
-            /// requireDefined 能解析通过。
+            // case 名按枚举命名空间隔离，只检测同一枚举内重名；跨枚举同名 case 允许共存。
+            // case 名仍以 `symbolTable.define` 登记（覆盖、不抛错），保证未限定构造 `圆(5.0)` 的
+            // requireDefined 能解析通过。
             var seenInEnum: Set<String> = []
             for enumCase in e.cases {
                 if seenInEnum.contains(enumCase.name) {
@@ -544,7 +544,7 @@ public final class SemanticAnalyzer {
                 symbolTable.define(Symbol(name: enumCase.name, kind: .enumCase, location: enumCase.location))
                 enumCaseNames.insert(enumCase.name)
             }
-            // P3/P5-5：填充本模块枚举映射，供 validated 匹配模式做 best-effort 穷尽性校验。
+            // 填充本模块枚举映射，供 validated 匹配模式做 best-effort 穷尽性校验。
             for enumCase in e.cases {
                 enumCaseParents[enumCase.name, default: []].append(e.name)
             }
@@ -554,7 +554,7 @@ public final class SemanticAnalyzer {
         case .traitDecl(let t):
             try defineUnique(name: t.name, kind: .trait, location: t.location)
         case .extensionDecl(let x):
-            // 扩展块不引入新符号；方法名须与目标类型字段/其它方法不冲突（声明上下文收紧·规则 3.2/3.14）。
+            // 扩展块不引入新符号；方法名须与目标类型字段 / 其它方法不冲突。
             let targetFields = typeFields[x.targetType] ?? []
             var seen: [String: SourceLocation] = [:]
             for f in targetFields { seen[f.name] = f.location }
@@ -587,14 +587,14 @@ public final class SemanticAnalyzer {
         if symbolTable.resolve(name) != nil {
             throw SemanticError.redeclaredSymbol(name: name, location: location)
         }
-        // G52 D-2 静态互斥：本地顶级符号不得与 import 别名同名
+        // 静态互斥：本地顶级符号不得与 import 别名同名。
         if importAliasInfos[name] != nil {
             throw SemanticError.redeclaredSymbol(name: name, location: location)
         }
         symbolTable.define(Symbol(name: name, kind: kind, location: location))
     }
 
-    /// 类型成员名冲突检测（P2-3.3）：结构体/对象内部的字段与字段、方法与字段、
+    /// 类型成员名冲突检测：结构体 / 对象内部的字段与字段、方法与字段、
     /// 方法与方法之间不允许同名。名字在「类型自身」范围内唯一，不污染全局符号表。
     private func checkMemberNameConflicts(fields: [FieldDecl], methods: [FuncDecl]) throws {
         var seen: [String: SourceLocation] = [:]
@@ -698,7 +698,7 @@ public final class SemanticAnalyzer {
                 try checkFuncDecl(method, fields: g.fields)
             }
         case .foreignDecl:
-            // Phase 2a（FFI 子系统）：仅签名、无函数体，无检查项。
+            // 仅签名、无函数体，无检查项。
             break
         case .traitDecl, .varDecl, .statement, .importDecl, .exportDecl:
             break
@@ -714,8 +714,7 @@ public final class SemanticAnalyzer {
         }
 
         // 方法体作用域：注册 self 与所属类型的字段，使方法体可直接引用字段
-        // （P3-1 示例 trait.pini 的 `描述|self() -> (String,)` 返回 `名字` 字段触发此需求）。
-        // 字段先于参数注册，参数可遮蔽同名字段。
+        // （如 trait 方法体里返回 `名字` 字段）。字段先于参数注册，参数可遮蔽同名字段。
         if !fields.isEmpty {
             symbolTable.define(Symbol(name: "self", kind: .variable(isMutable: false), location: funcDecl.location))
             for field in fields {
@@ -732,7 +731,7 @@ public final class SemanticAnalyzer {
             }
         }
 
-        // 检查函数体：包一层 body scope，使局部 var 在独立作用域——B2 未使用检测只在此与嵌套块
+        // 检查函数体：包一层 body scope，使局部 var 在独立作用域——未使用检测只在此与嵌套块
         // （checkBlock）执行，参数（函数 scope）、方法字段（函数 scope）、for 模式变量（for-loop scope）天然排除。
         if let body = funcDecl.body {
             symbolTable.enterScope(name: "body")
@@ -750,7 +749,7 @@ public final class SemanticAnalyzer {
 
     private func checkStatement(_ stmt: Statement) throws {
         if case .captureStatement(let name, let location) = stmt {
-            // H-1：解析器已把 capture 限制在匿名函数体缩进体顶层；此处防御非常规构造路径
+            // 解析器已把 capture 限制在匿名函数体缩进体顶层；此处防御非常规构造路径
             guard !captureContexts.isEmpty else {
                 throw SemanticError.invalidCaptureTarget(
                     name: name, reason: "capture 仅允许出现在匿名函数体顶层语句位", location: location)
@@ -789,7 +788,7 @@ public final class SemanticAnalyzer {
             recordDeclaredType(name, declaredTypeName(annotation: annotation, initializer: initializer))
 
         case .varDestructure(let names, _, let initializer, let isMutable, let location):
-            // 草稿 A1（批次 1）：逐个定义非 `_` 分量（`_` 为占位不定义）；先检查初始值子表达式。
+            // 逐个定义非 `_` 分量（`_` 为占位不定义）；先检查初始值子表达式。
             if let initExpr = initializer {
                 try checkExpression(initExpr)
             }
@@ -874,7 +873,7 @@ public final class SemanticAnalyzer {
                 try checkBlock(matchCase.block)
                 symbolTable.exitScope()
             }
-            /// 穷尽性 / 可达性检查总是开启，`case _:` 通配兜底豁免；`default:` / `pass` 通配子块不受支持。
+            // 穷尽性 / 可达性检查总是开启，`case _:` 通配兜底豁免；`default:` / `pass` 通配子块不受支持。
             try checkMatchExhaustive(value: value, cases: cases, location: location)
 
         case .expressionStmt(let expr, _):
@@ -984,7 +983,7 @@ public final class SemanticAnalyzer {
         }
     }
 
-    // MARK: - R1 穷尽性/可达性检查
+    // MARK: - 穷尽性 / 可达性检查
 
     /// 穷尽性 / 可达性校验，总是开启，`case _:` 通配兜底豁免。父枚举的唯一判据是被匹配值的类型
     /// （`typeNameOf`）——按 case 名全局反查会把裸值误判成某枚举的 match。已知枚举则逐臂校验可达性
@@ -1076,7 +1075,7 @@ public final class SemanticAnalyzer {
         }
     }
 
-    // MARK: - B2 未使用变量检测
+    // MARK: - 未使用变量检测
 
     /// 块作用域退出时：对当前作用域内 `kind == .variable` 且未被读取、非 `_`/`_xxx` 前缀的局部变量发 warning。
     private func emitUnusedWarnings() {
@@ -1155,7 +1154,7 @@ public final class SemanticAnalyzer {
             try checkExpression(object)
 
         case .tupleIndex(let object, _, _):
-            // 草稿 A2（批次 1）：`.0` 位置访问——递归检查 object 内的标识符定义。
+            // `.0` 位置访问——递归检查 object 内的标识符定义。
             try checkExpression(object)
 
         case .tuple(_, let elements, _):
@@ -1181,7 +1180,7 @@ public final class SemanticAnalyzer {
             for param in decl.params {
                 symbolTable.define(Symbol(name: param.name, kind: .parameter, location: decl.location))
             }
-            // H-1：作用域边界——此之后解析命中点若在边界之外，即为「外层局部」。
+            // 作用域边界：此之后解析命中点若在边界之外，即为「外层局部」。
             // captured 集**按语句序增量**填充（checkStatement 的 captureStatement 分支），
             // 使「先用后 capture」（①）在语句序上可判定。
             let captureBoundary = symbolTable.current
@@ -1212,13 +1211,13 @@ public final class SemanticAnalyzer {
             try checkExpression(inner)
 
         case .unsafe(let operand, _):
-            // Phase 2a（FFI 子系统）：不安全消耗点——递归检查操作数。
+            // 不安全消耗点——递归检查操作数。
             try checkExpression(operand)
         case .weakRef(let operand, _):
             // 弱引用：操作数递归检查；对象约束与结果类型由类型检查阶段判。
             try checkExpression(operand)
         case .addressOf(let operand, _):
-            // Phase 2a（FFI 子系统）：取地址——递归检查操作数。
+            // 取地址——递归检查操作数。
             try checkExpression(operand)
         case .cast(let operand, _, _):
             // 显式转换：递归检查操作数；可转类型对由类型检查阶段判。
@@ -1226,7 +1225,7 @@ public final class SemanticAnalyzer {
         }
     }
 
-    /// H-1：可捕获的符号种类——外层局部变量（含外层函数参数）。
+    /// 可捕获的符号种类：外层局部变量（含外层函数参数）。
     /// 函数/类型/枚举用例等按名字即可引用，不属于「捕获的外部对象」。
     private static func isCapturableKind(_ kind: SymbolKind) -> Bool {
         switch kind {
@@ -1235,7 +1234,7 @@ public final class SemanticAnalyzer {
         }
     }
 
-    /// G52 D-2 静态互斥：局部符号不得与 import 别名同名。
+    /// 静态互斥：局部符号不得与 import 别名同名。
     private func checkAliasNameConflict(_ name: String, _ location: SourceLocation) throws {
         if importAliasInfos[name] != nil {
             throw SemanticError.redeclaredSymbol(name: name, location: location)

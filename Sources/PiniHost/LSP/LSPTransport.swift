@@ -16,7 +16,7 @@ public final class LSPTransport {
     public init(input: FileHandle = .standardInput, output: FileHandle = .standardOutput) {
         self.inputHandle = input
         self.outputHandle = output
-        // FileHandle is unbuffered on Unix — no explicit flush needed
+        // Unix 上 FileHandle 不带缓冲，无需显式 flush。
     }
 
     /// 阻塞读取一条完整消息
@@ -58,7 +58,7 @@ public final class LSPTransport {
     /// JSON 编码 + 写入通知
     public func sendNotification<T: Encodable>(method: String, params: T) throws {
         let notif = NotificationMessage(jsonrpc: "2.0", method: method, params: nil)
-        // Encode params via JSONEncoder, then merge into notification dict
+        // 先用 JSONEncoder 编码 params，再并入通知字典。
         let notifData = try encoder.encode(notif)
         let paramsData = try encoder.encode(params)
         var notifDict = try JSONSerialization.jsonObject(with: notifData) as! [String: Any]
@@ -88,7 +88,7 @@ public final class LSPTransport {
         return try decoder.decode(NotificationMessage.self, from: data)
     }
 
-    // MARK: - Private
+    // MARK: - 私有
 
     private func readHeaderLine() -> String? {
         var line = ""
@@ -139,7 +139,7 @@ public final class LSPTransport {
     }
 }
 
-// MARK: - Transport Error
+// MARK: - 传输错误
 
 public enum TransportError: Error {
     case invalidHeader(String)

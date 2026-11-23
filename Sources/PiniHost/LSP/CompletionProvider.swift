@@ -69,7 +69,7 @@ public struct CompletionProvider {
     }
 }
 
-// MARK: - Static Data
+// MARK: - 静态数据
 
 private let keywords: [CompletionItem] = [
     CompletionItem(label: "let", kind: .keyword, detail: "不可变变量"),

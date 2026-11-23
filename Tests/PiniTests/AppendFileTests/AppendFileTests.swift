@@ -48,8 +48,8 @@ struct AppendFileTests: Sendable {
 
     @Test("追加到已存在的文件：原内容保留、新内容接在末尾，两通道各与手写期望相符")
     func appendKeepsExistingContentAndAddsAtTheEnd() throws {
-        /// 意图：`appendFile` 与 `writeFile` 在「目标已存在」这一点上语义**相反** —— 前者不截断。
-        /// 驳回性：把 `appendFile` 实现成截断写的实现，读回只剩 `"B"`，与期望 `"AB"` 不符。
+        // 意图：`appendFile` 与 `writeFile` 在「目标已存在」这一点上语义**相反** —— 前者不截断。
+        // 驳回性：把 `appendFile` 实现成截断写的实现，读回只剩 `"B"`，与期望 `"AB"` 不符。
         guard let cli = cliPath() else { return }
         let sandbox = try makeSandbox()
         defer { try? FileManager.default.removeItem(at: sandbox) }
@@ -84,8 +84,8 @@ struct AppendFileTests: Sendable {
 
     @Test("目标不存在时创建它：日志程序的首行不该因文件不存在而失败")
     func appendCreatesTheTargetWhenMissing() throws {
-        /// 意图：钉住 POSIX `"a"` 的创建语义 —— 这是 `appendFile` 能被当日志用的前提。
-        /// 驳回性：先 require-exists 再追加的实现，在这里直接陷阱、退出码非 0。
+        // 意图：钉住 POSIX `"a"` 的创建语义 —— 这是 `appendFile` 能被当日志用的前提。
+        // 驳回性：先 require-exists 再追加的实现，在这里直接陷阱、退出码非 0。
         guard let cli = cliPath() else { return }
         let sandbox = try makeSandbox()
         defer { try? FileManager.default.removeItem(at: sandbox) }
@@ -118,8 +118,8 @@ struct AppendFileTests: Sendable {
 
     @Test("追加到打不开的目标（目录）⇒ 两通道都陷阱且退出码为 1")
     func appendFailureTrapsWithExitCodeOne() throws {
-        /// 意图：失败形态与 `writeFile` 同姿态 —— 不返回结果码、不静默。
-        /// 驳回性：吞掉错误的实现退出码为 0；只在一侧统一的实现会出现 1 / 其它码并存。
+        // 意图：失败形态与 `writeFile` 同姿态 —— 不返回结果码、不静默。
+        // 驳回性：吞掉错误的实现退出码为 0；只在一侧统一的实现会出现 1 / 其它码并存。
         guard let cli = cliPath() else { return }
         let sandbox = try makeSandbox()
         defer { try? FileManager.default.removeItem(at: sandbox) }
@@ -146,8 +146,8 @@ struct AppendFileTests: Sendable {
 
     @Test("appendFile 不可作值使用：出现在变量初值处由类型层拒绝")
     func appendFileIsNotUsableAsAValue() throws {
-        /// 意图：`appendFile` 的返回是 `()` —— 与 `writeFile` 同一条 void 纪律。
-        /// 驳回性：把返回类型登记成 `I32` 的实现会让这条通过检查（并可能在 LLVM 侧生成非法 IR）。
+        // 意图：`appendFile` 的返回是 `()` —— 与 `writeFile` 同一条 void 纪律。
+        // 驳回性：把返回类型登记成 `I32` 的实现会让这条通过检查（并可能在 LLVM 侧生成非法 IR）。
         guard let cli = cliPath() else { return }
         let sandbox = try makeSandbox()
         defer { try? FileManager.default.removeItem(at: sandbox) }
@@ -169,8 +169,8 @@ struct AppendFileTests: Sendable {
 
     @Test("路径解析与其余内建同口径：无前缀落脚本目录、`./` 落 CWD")
     func appendFollowsTheSamePathRule() throws {
-        /// 意图：新增的写内建不许自成一套路径规则。驳回性：只认字面量或只认 CWD 的实现会把两处之一写到错目录，
-        /// 盘上断言随即失败。前提：CWD 与脚本目录必须不同，否则两条分支落到同一处、测不出差别。
+        // 意图：新增的写内建不许自成一套路径规则。驳回性：只认字面量或只认 CWD 的实现会把两处之一写到错目录，
+        // 盘上断言随即失败。前提：CWD 与脚本目录必须不同，否则两条分支落到同一处、测不出差别。
         guard let cli = cliPath() else { return }
         let sandbox = try makeSandbox()
         defer { try? FileManager.default.removeItem(at: sandbox) }

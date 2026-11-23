@@ -34,7 +34,7 @@ public final class DAPDebugDriver: DebugDriver {
     }
 }
 
-// MARK: - DAP 调试适配器（P7-4 P4）
+// MARK: - DAP 调试适配器
 
 /// VS Code / 任意 DAP 客户端的调试适配器：stdio + `Content-Length` 分帧（与 LSP 同形），协议流与 debuggee 输出严格分离 ——
 /// 引擎 output sink 把 `print` 重定向成 `output` 事件。生命周期：initialize → launch（只装配）→ setBreakpoints → configurationDone。

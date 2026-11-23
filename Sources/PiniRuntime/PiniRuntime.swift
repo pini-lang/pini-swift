@@ -12,7 +12,7 @@ import Synchronization
     import Glibc
 #endif
 
-// MARK: - 并发后端抽象 阶段1：集合/COW 运行时 shim（Swift 实现，C ABI 边界）
+// MARK: - 并发后端抽象：集合 / COW 运行时 shim（Swift 实现，C ABI 边界）
 
 // MARK: - 显式 share count 与写时复制（COW）基础设施
 // 句柄的 share count 住在运行时而非 ARC：LLVM 后端里 `var b = a` 只把不透明句柄（裸 `ptr`）复制到另一个
@@ -251,7 +251,7 @@ private func _bkArraySplitStorage(_ box: _BkArrayBox) {
     old.refs -= 1
 }
 
-// MARK: - 数组运行时（D0 最小覆盖：I32 元素特化）
+// MARK: - 数组运行时（I32 元素特化）
 
 /// 运行时致命错误：消息写到 stderr，进程以退出码 1 终止（解释器通道同码）。
 /// `exit` 会 flush 标准流 ⇒ 陷阱之前的输出必然落地；`abort` 不 flush；`PINI_PANIC_ABORT` 非空时改走它。
@@ -802,11 +802,11 @@ private func _bkBoxesEqual(_ a: UnsafeRawPointer, _ aTag: Int32, _ b: UnsafeRawP
     case .rawPtr:
         return a.load(as: UnsafeRawPointer.self) == b.load(as: UnsafeRawPointer.self)
     case .char:
-        /// `Char` 按值比较：内联形态整字相等，指针形态要按字节内容判，不能比地址。
+        // `Char` 按值比较：内联形态整字相等，指针形态要按字节内容判，不能比地址。
         return a.load(as: Int64.self) == b.load(as: Int64.self)
             || bk_char_equal(a.load(as: Int64.self), b.load(as: Int64.self)) == 1
     case .aggregate:
-        /// 聚合按字节判等要宽度，而这里只有 tag ⇒ 字典 / 集合的键不收聚合（发射层已拒绝）。
+        // 聚合按字节判等要宽度，而这里只有 tag ⇒ 字典 / 集合的键不收聚合（发射层已拒绝）。
         return false
     }
 }
@@ -815,7 +815,7 @@ private func _bkBoxesEqual(_ a: UnsafeRawPointer, _ aTag: Int32, _ b: UnsafeRawP
 
 /// 字典真实存储：每条目记「键 box（运行时拥有、稳定指针）+ 键 tag + 值 box + 值宽度」。
 /// 键/值查找走 `_bkBoxesEqual`（tag + 字节内容），与 LLVM 端 boxed-raw 模型一致，天然支持任意宽度键/值。
-/// 键/值各以「运行时拥有的稳定 `ptr`」承载，使 `bk_dict_key_at`/`bk_dict_val_at`（D3 容器格式化迭代）可安全返回指针。
+/// 键/值各以「运行时拥有的稳定 `ptr`」承载，使 `bk_dict_key_at`/`bk_dict_val_at` 可安全返回指针。
 private final class _BkDictBox: _BkBox {
     struct Entry {
         let key: UnsafeMutableRawPointer
@@ -905,8 +905,7 @@ public func bk_dict_set_unsafe(
 }
 
 /// 读取键对应的值 box（命中返回运行时拥有的稳定 `ptr`，调用方据此 `load T`）。
-/// 缺失即 panic（G48 三通道：字典缺失键与越界同义，安全断言通道 panic——
-/// 与 `bk_array_get` 越界 panic 对齐，也消除与解释器缺键 panic 的分歧）。
+/// 缺失即 panic：字典缺键与数组越界同义，安全断言通道 panic，与 `bk_array_get` 及解释器同口径。
 @_cdecl("bk_dict_get")
 public func bk_dict_get(
     _ dict: UnsafeMutableRawPointer?,
@@ -968,7 +967,7 @@ public func bk_dict_destroy(_ dict: UnsafeMutableRawPointer?) {
 // MARK: 集合（保序去重）
 
 /// 集合真实存储：元素以 (稳定 box 指针, tag) 记录，插入时按 `_bkBoxesEqual` 去重。
-/// 稳定指针使 `bk_set_at`（D3 容器格式化迭代）可安全返回元素 box。
+/// 稳定指针使 `bk_set_at` 可安全返回元素 box。
 private final class _BkSetBox: _BkBox {
     var elems: [(ptr: UnsafeMutableRawPointer, tag: Int32, bytes: Int)] = []
 
@@ -1084,7 +1083,7 @@ public func bk_dict_contains(_ dict: UnsafeMutableRawPointer?, _ key: UnsafeRawP
     return found ? 1 : 0
 }
 
-// MARK: - Phase 2a（FFI 子系统）：指针原语（C-ABI 面）
+// MARK: - FFI 指针原语（C-ABI 面）
 
 /// `*T` 原始指针的 load/store 原语，供 LLVM 后端接 FFI：在 `p + offsetBytes` 处读写标量，
 /// 字节宽度按类型固定（C ABI 纪律，不泄漏 Swift 类型）。语言层的 `load` / `store` 不经过本族
@@ -1233,7 +1232,7 @@ private let _bkStrSlotReserve = 16
 ) -> UnsafeMutablePointer<UnsafeMutableRawPointer?>? {
     let cap = Int(_bkStrCap(p).pointee)
     guard cap >= _bkStrTableMinCap else { return nil }
-    /// 载荷长度任意，`p + cap + 8` 不保证对齐；未对齐的 8 字节写会崩在 arm64 上。
+    // 载荷长度任意，`p + cap + 8` 不保证对齐；未对齐的 8 字节写会崩在 arm64 上。
     let address = (UInt(bitPattern: p) + UInt(cap) + 8) & ~UInt(7)
     return UnsafeMutableRawPointer(bitPattern: address)!
         .assumingMemoryBound(to: UnsafeMutableRawPointer?.self)
@@ -1263,8 +1262,8 @@ private let _bkStrTableLock = NSLock()
 ///  注意  建表前先验「Swift 视角的字节数等于头里的长度」：串里有非法 UTF-8 时 `String(decoding:)` 会折成替换符，偏移就对不上。
 private func _bkStrGraphemeTable(_ p: UnsafeMutablePointer<CChar>) -> UnsafePointer<UInt32>? {
     guard let slot = _bkStrTableSlot(p) else { return nil }
-    /// 快速路径不取锁：槽只在锁内从 nil 写成一块表，之后不再变；对齐 8 字节读在目标平台上不可撕裂。
-    ///  注意  这是刻意的无锁读，TSan 会报 data race；换 CAS 前不要移除这条注记。
+    // 快速路径不取锁：槽只在锁内从 nil 写成一块表，之后不再变；对齐 8 字节读在目标平台上不可撕裂。
+    //  注意  这是刻意的无锁读，TSan 会报 data race；换 CAS 前不要移除这条注记。
     if let existing = slot.pointee {
         return UnsafePointer(existing.assumingMemoryBound(to: UInt32.self))
     }
@@ -1529,18 +1528,18 @@ private func _bkStrJoin(
         let rc = _bkStrRefCount(lhs)
         if rc == 1, Int(_bkStrCap(lhs).pointee) >= need {
             let base = UnsafeMutableRawPointer(mutating: lhs)
-            /// 用 `memmove` 而非 `memcpy`：`s = s + s` 时右操作数就是这块载荷本身，两者重叠。
+            // 用 `memmove` 而非 `memcpy`：`s = s + s` 时右操作数就是这块载荷本身，两者重叠。
             if rhsLength > 0, let rhs { memmove(base.advanced(by: lhsLength), rhs, rhsLength) }
             base.advanced(by: need).storeBytes(of: 0, as: CChar.self)
             _bkStrLen(lhs).pointee = Int32(need)
             _bkStrGraphemes(lhs).pointee = _bkStrMergedGraphemes(
                 lhs, lhsLength, lhsGraphemes, rhs, rhsLength, rhsGraphemes)
-            /// 内容变了，索引表里的偏移全部作废 —— 不丢就是拿旧块去切新载荷。
+            // 内容变了，索引表里的偏移全部作废 —— 不丢就是拿旧块去切新载荷。
             _bkStrDropTable(lhs)
             return base
         }
     }
-    /// 新分配按倍增：容量至少两倍左半，保证「每次重分配后能容纳若干次追加」，累加总代价 O(n)。
+    // 新分配按倍增：容量至少两倍左半，保证「每次重分配后能容纳若干次追加」，累加总代价 O(n)。
     let capacity = _bkStrGrowthCapacity(lhsLength: lhsLength, need: need)
     let out = _bkStrAlloc(capacity)
     if lhsLength > 0, let lhs { memcpy(out, lhs, lhsLength) }
@@ -1654,11 +1653,11 @@ public func bk_double_bits(_ value: Double) -> Int64 {
     return Int64(bitPattern: value.bitPattern)
 }
 
-// MARK: - G15: whole-file read for the LLVM leg
+// MARK: - 整文件读取（LLVM 腿）
 
-/// `readFile(path)`: the whole file as a NUL-terminated, malloc-allocated UTF-8 C string, or NULL if it
-/// cannot be read (missing, unreadable, not valid UTF-8). Runs in the runtime because the size is unknowable
-/// before the read under LLI's JIT; `strdup` contract, caller frees; same Foundation decode as interpreter.
+/// `readFile(path)`：把整个文件读成 NUL 结尾、`malloc` 分配的 UTF-8 C 串；缺失、不可读或
+/// 非法 UTF-8 时返回 NULL。放在运行时段是因为 LLI 的 JIT 在读之前无从得知大小；契约同 `strdup`，
+/// 调用方负责 free；解码走与解释器同一份 Foundation 逻辑。
 @_cdecl("bk_read_file")
 public func bk_read_file(_ path: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {
     // 失败仍返 nil（发射侧把它折成陷阱），而陷阱文案是**不带路径**的通用句：
@@ -1668,11 +1667,10 @@ public func bk_read_file(_ path: UnsafePointer<CChar>?) -> UnsafeMutablePointer<
     return _bkStrDup(text)
 }
 
-// MARK: - G14 FFI: Pini String -> C string (interpreter "toCString" shim parity)
+// MARK: - FFI：Pini String → C 串
 
-/// Materializes a Swift String as a NUL-terminated, malloc-allocated UTF-8 C string: the caller
-/// frees it, same as the interpreter's `toCString` shim. A counted `_bkStrAlloc` block would return an
-/// interior pointer, which libc `free` rejects.
+/// 把 Swift String 落成 NUL 结尾、`malloc` 分配的 UTF-8 C 串：调用方负责 free，与解释器的
+/// `toCString` 桥同契约。不能返回 `_bkStrAlloc` 块的内部指针 —— libc 的 `free` 拒绝非基址。
 @_cdecl("bk_cstr")
 public func bk_cstr(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {
     guard let s else { return nil }
@@ -1955,8 +1953,8 @@ public func bk_temp_int_to_byte(_ value: Int32) -> Int8 {
     return Int8(truncatingIfNeeded: value)
 }
 
-/// `chr(I32) -> Char` —— 码点到单字符。越界（负数 / 超标量上界 / 代理区）**panic**，
-/// 与解释器 `builtinChr` 同口径（G67：不再回空串哨兵）。单标量最多四字节，故必定内联。
+/// `chr(I32) -> Char` —— 码点到单字符。越界（负数 / 超上界 / 代理区）**panic**，不回哨兵值，
+/// 与解释器 `builtinChr` 同口径。单标量最多四字节，故必定内联。
 @_cdecl("bk_chr")
 public func bk_chr(_ code: Int32) -> Int64 {
     guard code >= 0, let scalar = Unicode.Scalar(UInt32(code)) else {
@@ -2394,7 +2392,7 @@ public func bk_string_char_at(
     if Int(_bkStrLen(s).pointee) == count {
         return _bkCharPack(s + idx, 1)
     }
-    /// 有索引表时只在目标所在的那一块里走：顺序访问命中游标，每步前进一个字素。
+    // 有索引表时只在目标所在的那一块里走：顺序访问命中游标，每步前进一个字素。
     if let table = _bkStrGraphemeTable(UnsafeMutablePointer(mutating: s)) {
         return _bkStrCharAtBlocked(UnsafeMutablePointer(mutating: s), idx, table: table)
     }
@@ -2587,7 +2585,7 @@ private final class _BkTaskBox: _BkBox {
     weak var parent: _BkTaskBox?
     var children: [_BkTaskBox] = []
 
-    // MARK: 任务体（`B-3` 的 `bk_task_spawn` 记入）
+    // MARK: 任务体（`bk_task_spawn` 记入）
 
     /// 体的 wrapper / code / env（任务体实参，原样存下）。
     var wrapper: UnsafeMutableRawPointer?
@@ -2834,9 +2832,9 @@ private func _bkTaskCancelBox(_ box: _BkTaskBox) {
     let wasSuspended = box.suspended
     box.cond.broadcast()   // 唤醒阻塞中的 join —— 它读到标志后归一为 err(CancelError)
     box.cond.unlock()
-    /// **让出态被取消 ⇒ 体不会再被进入** ⇒ 帧必须由运行时交还。
-    ///  行不通  落地顺序有讲究：先把取消位置起（上面的锁内），再交还帧 —— 反过来的话，一条已经在
-    /// 「续跑」路上的线程会带着已释放的帧进入体，而那是**静默内存错**，不是崩溃。
+    // **让出态被取消 ⇒ 体不会再被进入** ⇒ 帧必须由运行时交还。
+    //  行不通  落地顺序有讲究：先把取消位置起（上面的锁内），再交还帧 —— 反过来的话，一条已经在
+    // 「续跑」路上的线程会带着已释放的帧进入体，而那是**静默内存错**，不是崩溃。
     if wasSuspended { _bkTaskReleaseFrame(box) }
     // 等我的那些任务：我已经被取消 ⇒ 它们的等待应当**现在**归约为 `err(CancelError)`，
     // 而不是等我（永不）决出。它们醒来后走的是 `bk_task_await` 的「已决 ⇒ 直线取值」那条路。
@@ -3041,7 +3039,7 @@ private func _bkTaskRunBody(_ h: UnsafeMutableRawPointer) {
         let tag = out.load(fromByteOffset: 0, as: Int64.self)
         let ok = out.load(fromByteOffset: 8, as: Int64.self)
         let err = out.load(fromByteOffset: 16, as: Int64.self)
-        /// 真跑完才交还帧；先读三槽再交还，免得交还后又去读它。
+        // 真跑完才交还帧；先读三槽再交还，免得交还后又去读它。
         _bkTaskReleaseFrame(box)
         if tag == 0 {
             _bkTaskResolveOk(h, ok)
@@ -3060,9 +3058,9 @@ private func _bkTaskRunBody(_ h: UnsafeMutableRawPointer) {
     box.cond.broadcast()
     box.cond.unlock()
     if resumeNow {
-        /// 兑现方式是**入队**：「谁跑下一个」归策略层，
-        ///  行不通  不在这里抢跑。 注意  这一处与 `_bkTaskResume` 的那一处是**同一个入队路径的两侧**：
-        /// 漏掉任何一侧，被漏的那条路上挑选顺序就退回决出顺序。
+        // 兑现方式是**入队**：「谁跑下一个」归策略层，
+        //  行不通  不在这里抢跑。 注意  这一处与 `_bkTaskResume` 的那一处是**同一个入队路径的两侧**：
+        // 漏掉任何一侧，被漏的那条路上挑选顺序就退回决出顺序。
         if _bkTaskOffer(box) { _bkTaskScheduleDrain() }
     }
 }
@@ -3123,8 +3121,8 @@ public func bk_task_await(
     guard let target = _bkTaskBox(handle) else {
         bk_panic("Pini runtime error: task await got a null handle")
     }
-    ///  行不通  两处**合规降级**（都不是错误）：不在任何任务里 ⇒ 没有「当前任务」可让出；
-    /// L1 位缺席 ⇒ 后端不能真让出（降级，不失败）。
+    //  行不通  两处**合规降级**（都不是错误）：不在任何任务里 ⇒ 没有「当前任务」可让出；
+    // L1 位缺席 ⇒ 后端不能真让出（降级，不失败）。
     guard let current = _bkTaskCurrent,
         (_bkCapabilities & ConcurrencyTierBits.yield) != 0
     else {
@@ -3159,7 +3157,7 @@ public func bk_sleep(_ ms: Int32) {
     }
 }
 
-// MARK: join
+// MARK: 等待任务（join）
 
 /// 阻塞 join（现行唯一形态）。`out` 收 `Result`（三槽，见 `_bkWriteResult`）。
 /// - Returns: 见段首 `status` 取值表。
@@ -3356,8 +3354,8 @@ func _bkTaskResolveOk(_ h: UnsafeMutableRawPointer?, _ payload: Int64) {
         box.cond.broadcast()
     }
     box.cond.unlock()
-    /// 决出方**续跑**在等我的那些任务 —— 这是 L1 的驱动侧（「决出方触发」）。
-    /// 放在锁外：续跑会起线程，不该持锁做。
+    // 决出方**续跑**在等我的那些任务 —— 这是 L1 的驱动侧（「决出方触发」）。
+    // 放在锁外：续跑会起线程，不该持锁做。
     _bkTaskResumeAwaiters(box)
 }
 
@@ -3556,9 +3554,9 @@ private func _bkTaskOffer(_ box: _BkTaskBox) -> Bool {
     let binding = _bkSchedBinding
     guard let binding else {
         _bkReadyLock.unlock()
-        ///  注意  没有策略层 ⇒ 降级为直接续跑， 行不通  不是把任务归约掉（纪律：无合格版本则降级，不失败）。
-        /// 具体用处：进程内直接调这一族符号的用法（判据就是这么做的）从不绑策略，归约会让他们从能跑变成不能跑。
-        ///  注意  ① 这条路上不置 `queued` ⇒ 可观测面读作「等待中」；② 解释器后端没有这条路径，两后端在此不对称。
+        //  注意  没有策略层 ⇒ 降级为直接续跑， 行不通  不是把任务归约掉（纪律：无合格版本则降级，不失败）。
+        // 具体用处：进程内直接调这一族符号的用法（判据就是这么做的）从不绑策略，归约会让他们从能跑变成不能跑。
+        //  注意  ① 这条路上不置 `queued` ⇒ 可观测面读作「等待中」；② 解释器后端没有这条路径，两后端在此不对称。
         _bkSpawnTaskThread(h)
         return false
     }
@@ -3699,7 +3697,7 @@ private func _bkReportYields() {
 }
 
 /// 认父（照 `FutureValue.addChild`）：父已取消 ⇒ 新子**立即**被取消（不漏网）。
-/// `B-3` 的 `bk_task_spawn` 在此登记新任务。
+/// `bk_task_spawn` 在此登记新任务。
 func _bkTaskAdopt(_ parent: UnsafeMutableRawPointer?, _ child: UnsafeMutableRawPointer?) {
     guard let p = _bkTaskBox(parent), let c = _bkTaskBox(child) else { return }
     p.cond.lock()
@@ -3712,7 +3710,7 @@ func _bkTaskAdopt(_ parent: UnsafeMutableRawPointer?, _ child: UnsafeMutableRawP
     if parentAlreadyCancelled { _bkTaskCancelBox(c) }
 }
 
-/// 登记「当前任务」（`bk_task_is_cancelled` 读它；`B-3` 的 `bk_task_spawn` 亦在此登记）。
+/// 登记「当前任务」（`bk_task_is_cancelled` 读它；`bk_task_spawn` 亦在此登记）。
 /// - Returns: **恢复闭包** —— 调用方在体跑完后调它还原上一层（照 `RuntimeOps.enterTask`）。
 func _bkTaskEnter(_ h: UnsafeMutableRawPointer?) -> () -> Void {
     let previous = _bkTaskCurrent

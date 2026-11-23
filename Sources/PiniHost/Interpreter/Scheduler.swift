@@ -170,9 +170,8 @@ final class GCDScheduler: Scheduler, @unchecked Sendable {
         return "[scheduler]  注意  高并发水位：\(active)/\(chans) 活跃任务 (\(Int(ratio * 100))% 池容)"
     }
 
-    /// Coerce anything thrown out of a dispatched body into a `RuntimeError`, so a rejected
-    /// task's failure has a description the CLI can print. Not private because the resume path
-    /// also runs bodies outside this class and needs failures to reach the future in the same shape.
+    /// 把分派体中抛出的任何错误统一成 `RuntimeError`，好让被拒任务的失败有可打印的描述。
+    /// 不设为私有：恢复路径也在本类之外执行函数体，失败须以同一形状抵达 future。
     static func coerce(_ error: Error) -> RuntimeError {
         if let re = error as? RuntimeError { return re }
         return RuntimeError.invalidOperation(

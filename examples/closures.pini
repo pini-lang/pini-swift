@@ -12,19 +12,19 @@
 main|func() -> ():
     ; 1) 闭包绑定 + 直接调用（无捕获）
     var sq = func (n: I32,) -> (I32,): return n * n
-    print(sq(6)) ; 36
+    print(sq(6)) ; 输出 36
     ; 2) 捕获：闭包按引用捕获外层变量 base（与解释器 currentEnv 共享语义一致）
     var base = 10
     var addBase = func (n: I32,) -> (I32,):
         capture base
         return n + base
-    print(addBase(5)) ; 15
+    print(addBase(5)) ; 输出 15
     base = 100
     print(addBase(5)) ; 105（引用捕获：后续修改对闭包可见）
     ; 3) 高阶：具名函数作为值传递
-    print(应用(f = 加倍, x = 21)) ; 42
+    print(应用(f = 加倍, x = 21)) ; 输出 42
     ; 4) 高阶：闭包变量作为值传递
-    print(应用(f = sq, x = 7)) ; 49
+    print(应用(f = sq, x = 7)) ; 输出 49
     ; 5) 高阶：直接匿名函数作为实参
-    print(应用(f = func (n,) -> (I32,): return n + 100, x = 3)) ; 103
+    print(应用(f = func (n,) -> (I32,): return n + 100, x = 3)) ; 输出 103
     return

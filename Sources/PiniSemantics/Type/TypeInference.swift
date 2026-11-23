@@ -38,9 +38,9 @@ public final class TypeInference {
             // 算术运算符返回操作数类型
             switch op {
             case .plus:
-                /// `Char` 参与 `+` ⇒ 结果是 `String` 面：任一操作数为 `Char` 时拼接都可能超过一个字素
-                /// （`c + c` / `c + s` / `s + c`），若仍按「结果 = 左操作数类型」算成 `Char`，
-                /// `Char` 的「恰含 1 个字素」不变式就会被绕开。其余组合沿用下面的规则。
+                // `Char` 参与 `+` ⇒ 结果是 `String` 面：任一操作数为 `Char` 时拼接都可能超过一个字素
+                // （`c + c` / `c + s` / `s + c`），若仍按「结果 = 左操作数类型」算成 `Char`，
+                // `Char` 的「恰含 1 个字素」不变式就会被绕开。其余组合沿用下面的规则。
                 if isCharTyped(leftType)
                     || isCharTyped(infer(expression: right, scopedParams: scopedParams))
                 {
@@ -86,7 +86,7 @@ public final class TypeInference {
                     ? sig.returnLabels : Array(repeating: nil, count: sig.returns.count)
                 return .tuple(labels: labels, elements: sig.returns, location: loc)
             }
-            // P2-1.4：泛型构造返回特化类型 Box<T> 等，供成员方法调用点推断对象类型
+            // 泛型构造返回特化类型 Box<T> 等，供成员方法调用点推断对象类型。
             return .generic(name: typeName, params: typeArgs, location: loc)
 
         case .tuple(let labels, let elements, let loc):
@@ -96,11 +96,11 @@ public final class TypeInference {
                     elemTypes.append(t)
                 }
             }
-            // 草稿 A2（批次 1.3，D1）：字面量命名元组的标签随类型推断一并保留。
+            // 字面量命名元组的标签随类型推断一并保留。
             return .tuple(labels: labels, elements: elemTypes, location: loc)
 
         case .tupleIndex(let object, let index, let loc):
-            // 草稿 A2（批次 1）：`.0` 位置访问的类型 = 元组类型的第 index 个分量；
+            // `.0` 位置访问的类型 = 元组类型的第 index 个分量；
             // 非元组对象或越界返回 nil，交由 TypeChecker 报错（此处仅做推断）。
             guard let t = infer(expression: object) else { return nil }
             if case .tuple(_, let elements, _) = t, index >= 0 && index < elements.count {
@@ -110,7 +110,7 @@ public final class TypeInference {
 
         case .identifier(let name, let location):
             // 内建 Optional 枚举类型：静态层作为已知类型引用（裸 Optional / Optional.none 成员访问），
-            // 与解释器对 Optional.some/Optional.none 的特判对齐（闭合 B2 静态缺口）。
+            // 与解释器对 Optional.some / Optional.none 的特判对齐。
             if name == "Optional" {
                 return .generic(name: "Optional", params: [.simple(name: "Any", location: location)], location: location)
             }
@@ -118,9 +118,9 @@ public final class TypeInference {
             if let bound = environment?.lookupVariable(name: name) { return bound }
             // 外部数据符号：模块级，读它是取符号当前值，类型即声明类型。
             if let foreign = environment?.lookupForeignData(name: name) { return foreign }
-            /// 无实参枚举用例的裸名形态（`名`，不带括号）：`名(...)` 的识别只写在 `.call` 分支，故本支返 nil。
-            /// nil 在无期望类型处（局部变量初值位最典型）会被 `varDecl` 落成 `Any`，错误迟发在最后用它的地方。
-            /// 口径同 `.call`：父枚举唯一 ⇒ 取父枚举类型；歧义 ⇒ 返 nil，交期望类型路径处置（不猜）。
+            // 无实参枚举用例的裸名形态（`名`，不带括号）：`名(...)` 的识别只写在 `.call` 分支，故本支返 nil。
+            // nil 在无期望类型处（局部变量初值位最典型）会被 `varDecl` 落成 `Any`，错误迟发在最后用它的地方。
+            // 口径同 `.call`：父枚举唯一 ⇒ 取父枚举类型；歧义 ⇒ 返 nil，交期望类型路径处置（不猜）。
             if let env = environment {
                 let caseParents = env.parentEnums(of: name)
                 if caseParents.count == 1 {
@@ -159,9 +159,9 @@ public final class TypeInference {
                 return .simple(name: typeName, location: loc)
             }
 
-            /// 点号用例构造：推断优先级为期望类型命中候选 > 唯一父枚举（与裸名构造相反——前导点已声明
-            /// 「这是某枚举的成员」）。期望不可知且歧义时返回例名占位，报错交 TypeChecker；
-            /// 用户枚举候选为空时内建 some/none 直达 Optional（与 `nil` 的推断对齐）。
+            // 点号用例构造：推断优先级为期望类型命中候选 > 唯一父枚举（与裸名构造相反——前导点已声明
+            // 「这是某枚举的成员」）。期望不可知且歧义时返回例名占位，报错交 TypeChecker；
+            // 用户枚举候选为空时内建 some / none 直达 Optional（与 `nil` 的推断对齐）。
             if case .dotCaseRef(let caseName, _) = callee, let env = environment {
                 let caseParents = env.parentEnums(of: caseName)
                 if let exp = expected {
@@ -188,10 +188,10 @@ public final class TypeInference {
                 return .simple(name: caseName, location: loc)
             }
 
-            // P2-1.4：成员方法调用返回类型推断（obj.method(args)）。
+            // 成员方法调用返回类型推断（obj.method(args)）。
             // Optional.some / .none 已在上方特判并返回，此处仅处理普通成员方法。
             if case .member(let object, let memberName, _) = callee, let env = environment {
-                /// 无主引用透传：方法与字段按元素类型找，unsafe 门禁在检查面。
+                // 无主引用透传：方法与字段按元素类型找，unsafe 门禁在检查面。
                 var objType = infer(expression: object)
                 if case .generic(let name, let args, _)? = objType, name == "UnownedRef", args.count == 1 {
                     objType = args[0]
@@ -212,8 +212,8 @@ public final class TypeInference {
             }
 
             if case .identifier(let name, _) = callee, let env = environment {
-                /// 指针读：`load(p)` 的元素类型由实参的 `*T` 给出，静态签名只登记了 Any 参数。
-                /// 不在这里定，`print("x", load(p))` 的第二参会按 void 判成类型不符。
+                // 指针读：`load(p)` 的元素类型由实参的 `*T` 给出，静态签名只登记了 Any 参数。
+                // 不在这里定，`print("x", load(p))` 的第二参会按 void 判成类型不符。
                 if name == "load", arguments.count == 1,
                     case .pointer(let element, _)? = infer(expression: arguments[0].expression)
                 {
@@ -230,14 +230,14 @@ public final class TypeInference {
                         return .tuple(labels: [], elements: returns, location: loc)
                     }
                 }
-                /// `LazyRef(closure)`：元素类型取自初值闭包的返回，省略的类型实参在此补齐。
+                // `LazyRef(closure)`：元素类型取自初值闭包的返回，省略的类型实参在此补齐。
                 if name == "LazyRef", arguments.count == 1,
                     case .function(_, let returns, _, _, _)? = infer(expression: arguments[0].expression),
                     returns.count == 1
                 {
                     return .generic(name: "LazyRef", params: [returns[0]], location: loc)
                 }
-                /// `UnownedRef(对象)`：元素类型取自实参；它是不加计数的裸指针，类型只为承载 unsafe 门禁。
+                // `UnownedRef(对象)`：元素类型取自实参；它是不加计数的裸指针，类型只为承载 unsafe 门禁。
                 if name == "UnownedRef", arguments.count == 1,
                     let inner = infer(expression: arguments[0].expression)
                 {
@@ -253,7 +253,7 @@ public final class TypeInference {
                     }
                 }
                 // case 值类型身份（缩窄版）：裸名 case 构造且父枚举唯一 → 推断为父枚举类型，
-                // 使 case 值可在期望父枚举的位置（return/关联值）通过检查（G-P3）。
+                // 使 case 值可在期望父枚举的位置（return / 关联值）通过检查。
                 let caseParents = env.parentEnums(of: name)
                 if caseParents.count == 1 {
                     return .simple(name: caseParents[0], location: loc)
@@ -276,11 +276,11 @@ public final class TypeInference {
             return nil
 
         case .member(let object, let name, let loc):
-            // B2：裸 Optional.none 成员访问（无调用）→ 视为 Optional<Any> 值，与解释器对齐。
+            // 裸 Optional.none 成员访问（无调用）→ 视为 Optional<Any> 值，与解释器对齐。
             if case .identifier(let typeName, _) = object, typeName == "Optional", name == "none" {
                 return .generic(name: "Optional", params: [.simple(name: "Any", location: loc)], location: loc)
             }
-            // 草稿 A2（批次 1.3，D1）：命名元组 `.名称` 标签访问——object 推断为元组且 labels 含 name
+            // 命名元组 `.名称` 标签访问——object 推断为元组且 labels 含 name
             // 时返回对应元素类型；未知标签返回 nil，交由 TypeChecker 报错。
             if let objType = infer(expression: object),
                 case .tuple(let labels, let elements, _) = objType,
@@ -291,7 +291,7 @@ public final class TypeInference {
             guard let env = environment else { return nil }
             let objType = infer(expression: object)
             guard var t = objType else { return nil }
-            /// 无主引用透传：字段按元素类型解析；`UnownedRef` 自己没有字段表。
+            // 无主引用透传：字段按元素类型解析；`UnownedRef` 自己没有字段表。
             if case .generic(let wrapName, let wrapArgs, _) = t, wrapName == "UnownedRef", wrapArgs.count == 1 {
                 t = wrapArgs[0]
             }
@@ -299,11 +299,11 @@ public final class TypeInference {
             case .simple(let typeName, _):
                 return env.lookupField(typeName: typeName, fieldName: name)
             case .generic(let typeName, let typeArgs, _):
-                /// `LazyRef<T>.value` 是句柄内建读，元素类型就是类型实参；它不在名义字段表里。
+                // `LazyRef<T>.value` 是句柄内建读，元素类型就是类型实参；它不在名义字段表里。
                 if typeName == "LazyRef", name == "value", typeArgs.count == 1 {
                     return typeArgs[0]
                 }
-                /// `WeakRef<T>.value` 是内建读，结果是 `Optional<T>`；对象销毁后读到 `nil`。
+                // `WeakRef<T>.value` 是内建读，结果是 `Optional<T>`；对象销毁后读到 `nil`。
                 if typeName == "WeakRef", name == "value", typeArgs.count == 1 {
                     return .generic(name: "Optional", params: [typeArgs[0]], location: loc)
                 }
@@ -321,7 +321,7 @@ public final class TypeInference {
 
         case .selfKeyword:
             // self 调用类型传播：self 在方法体内已登记为接收对象类型（checkBody 的 defineVariable），
-            // 与外部标识符接收者同路径解析，修复合绑定退化 Any（G-P8）。
+            // 与外部标识符接收者同路径解析，合绑定不再退化成 Any。
             return environment?.lookupVariable(name: "self")
 
         case .selfTypeKeyword:
@@ -367,8 +367,8 @@ public final class TypeInference {
                 scopedParams: scopedParams,
                 location: loc
             ) else { return nil }
-            /// 值类型：显式条目类型优先（`{k: T = v,}`），其余按值推断；
-            /// 候选不等价 ⇒ `Any`，交由调用点按 `Dictionary<K, Any>` 报不匹配。
+            // 值类型：显式条目类型优先（`{k: T = v,}`），其余按值推断；
+            // 候选不等价 ⇒ `Any`，交由调用点按 `Dictionary<K, Any>` 报不匹配。
             let valueExpected = expectedGenericArgument(expected, "Dictionary", at: 1)
             var value: TypeAnnotation?
             for entry in entries {
@@ -409,9 +409,9 @@ public final class TypeInference {
             case .generic(let name, let params, _) where name == "Dictionary":
                 return params.last ?? .simple(name: "Any", location: loc)
             case .simple(let name, _) where name == "String":
-                // G68（P0d-D）：`String` 的下标结果是 `Char`（不再是 `String`）。这是窄化
-                // 的三个入口之一（`s[i]` / `chars` / `chr`），`Char 表示与 String 同构` 的不变式靠它守：
-                // 想拿回 `String` 由 `Char → String` 单向加宽承接，不需要在此留住旧类型。
+                // `String` 的下标结果是 `Char`（不再是 `String`）。这是窄化的三个入口之一
+                // （`s[i]` / `chars` / `chr`），`Char` 与 `String` 同构的不变式靠它守：
+                // 想拿回 `String` 由 `Char → String` 单向加宽承接，不必在此留住宽类型。
                 return .simple(name: "Char", location: loc)
             default:
                 return nil
@@ -438,14 +438,14 @@ public final class TypeInference {
             return nil
 
         case .unsafe(let operand, _):
-            // Phase 2a（FFI 子系统）：`unsafe expr` 的类型 = 操作数类型（类型不变，仅加不安全上下文）。
+            // `unsafe expr` 的类型 = 操作数类型（类型不变，仅加不安全上下文）。
             return infer(expression: operand)
         case .weakRef(let operand, let loc):
             // `weak 对象` 的结果是 `WeakRef<T>`，T 取操作数的对象类型；对象约束在检查阶段判。
             guard let inner = infer(expression: operand) else { return nil }
             return .generic(name: "WeakRef", params: [inner], location: loc)
         case .addressOf(let operand, let loc):
-            // Phase 2a（FFI 子系统）：`&x` 的类型 = `*T`（指向操作数类型的指针）。
+            // `&x` 的类型 = `*T`（指向操作数类型的指针）。
             guard let inner = infer(expression: operand) else { return nil }
             return .pointer(element: inner, location: loc)
         case .cast(let operand, let target, _):
@@ -456,7 +456,7 @@ public final class TypeInference {
         }
     }
 
-    /// 将方法签名归约为返回类型注解（P2-1.4 复用）。
+    /// 归约方法签名的返回类型注解。
     private func methodReturn(for sig: TypeEnvironment.FunctionSignature, loc: SourceLocation) -> TypeAnnotation? {
         if sig.returns.count == 1 {
             return sig.returns[0]
@@ -502,9 +502,8 @@ public final class TypeInference {
         return params[index]
     }
 
-    /// G68（`P0d-D`）：推断出的类型是否为 `Char`。
-    ///
-    /// `nil`（推断不出）一律为假 —— 推断不出时**不接管**结果类型，交回既有路径。
+    /// 推断出的类型是否为 `Char`。
+    /// `nil`（推断不出）一律为假——推断不出时**不接管**结果类型，交回既有路径。
     private func isCharTyped(_ type: TypeAnnotation?) -> Bool {
         guard let type, case .simple(let name, _) = type else { return false }
         return name == "Char"
@@ -512,7 +511,7 @@ public final class TypeInference {
 
     // MARK: - 匿名函数（funcLiteral）双向类型推断
 
-    /// 推断匿名函数（funcLiteral）类型：参数标注优先、返回类型标注优先（闭合 L1，G29）。
+    /// 推断匿名函数（funcLiteral）类型：参数标注优先、返回类型标注优先。
     /// 优先级：参数 = `p.typeAnnotation` > 体运算符反推 > 期望函数类型 > 返回类型标注(单一具体) > 通配 `_`；
     /// 返回 = `decl.returnTypes` > 块体 return 语句反推 > 期望 > 通配 `_`。
     private func inferFuncLiteral(
@@ -537,9 +536,9 @@ public final class TypeInference {
             collectLambdaParamConstraints(in: body, paramNames: paramNames, into: &bottomUp)
         }
 
-        /// 返回类型标注（单一具体、非通配）→ 作为未标注参数的回退，与顶层函数「参数无标注则从返回
-        /// 类型推断」一致。仅当无标注、无体反推、无期望时生效：否则 `n * n` 这类两操作数皆变量、
-        /// 无字面量的体收不到约束，`n` 会被推成 `_`，与调用点的 `(I32)->(I32)` 比对时报 mismatch。
+        // 返回类型标注（单一具体、非通配）→ 作为未标注参数的回退，与顶层函数「参数无标注则从返回
+        // 类型推断」一致。仅当无标注、无体反推、无期望时生效：否则 `n * n` 这类两操作数皆变量、
+        // 无字面量的体收不到约束，`n` 会被推成 `_`，与调用点的 `(I32)->(I32)` 比对时报 mismatch。
         let fallbackReturnType: TypeAnnotation?
         if decl.returnTypes.count == 1,
             case .simple(let rn, _) = decl.returnTypes[0], rn != "_"
@@ -569,16 +568,16 @@ public final class TypeInference {
         } else if !expectedReturns.isEmpty {
             returnTypes = expectedReturns.compactMap { $0 }
         } else if let body = decl.body, !hasValueReturn(in: body) {
-            /// 体无带值返回：返回表记空元组，与 `(T,) -> ()` 的空返回表对齐；
-            /// 落到通配 `_` 会让 `forEach([...], 闭包)` 这类调用在可赋值判定时报不匹配。
+            // 体无带值返回：返回表记空元组，与 `(T,) -> ()` 的空返回表对齐；
+            // 落到通配 `_` 会让 `forEach([...], 闭包)` 这类调用在可赋值判定时报不匹配。
             returnTypes = []
         } else {
             returnTypes = [.simple(name: "_", location: location)]
         }
 
-        /// 捕获（自由变量）类型分析：闭包体标识符 − (参数 ∪ 局部 var)，余下即在创建点作用域可见、
-        /// 被闭包捕获的外层变量，取其当前类型填入 captured。与 IRGenerator 的 free-variable 分析同算法。
-        /// 仅取类型可解析者，不可解析的哨兵/未知名跳过，不误报。
+        // 捕获（自由变量）类型分析：闭包体标识符 − (参数 ∪ 局部 var)，余下即在创建点作用域可见、
+        // 被闭包捕获的外层变量，取其当前类型填入 captured。与 IRGenerator 的 free-variable 分析同算法。
+        // 仅取类型可解析者，不可解析的哨兵 / 未知名跳过，不误报。
         var capturedTypes: [TypeAnnotation] = []
         if let body = decl.body {
             let used = collectIdentifiers(in: decl)
@@ -594,7 +593,7 @@ public final class TypeInference {
         return .function(params: paramTypes, returns: returnTypes, captured: capturedTypes, usingIndices: Set(params.enumerated().filter { $0.element.isUsing }.map { $0.offset }), location: location)
     }
 
-    // MARK: - 自由变量分析（捕获集计算，复用阶段 B 同算法）
+    // MARK: - 自由变量分析（捕获集计算）
 
     /// 收集闭包体内引用的全部标识符名（含 callee 名）；funcLiteral 子表达式视为不透明、不再下探。
     private func collectIdentifiers(in decl: FuncDecl) -> Set<String> {
@@ -807,7 +806,7 @@ public final class TypeInference {
             guard let i = init_ else { return nil }
             return infer(expression: i, scopedParams: scopedParams)
         case .varDestructure(_, _, let init_, _, _):
-            // 草稿 A1（批次 1）：解构初始值参与返回类型反推。
+            // 解构初始值参与返回类型反推。
             guard let i = init_ else { return nil }
             return infer(expression: i, scopedParams: scopedParams)
         default:

@@ -155,7 +155,7 @@ public enum Desugar {
                 name: name, typeAnnotation: typeAnn,
                 initializer: initializer.map(desugar), isMutable: isMutable, location: loc)
         case .varDestructure(let names, let typeAnn, let initializer, let isMutable, let loc):
-            // 草稿 A1（批次 1）：递归降层初始值，names/typeAnnotation 为结构不动。
+            // 递归降层初始值，names / typeAnnotation 属结构，不动。
             return .varDestructure(
                 names: names, typeAnnotation: typeAnn,
                 initializer: initializer.map(desugar), isMutable: isMutable, location: loc)
@@ -276,10 +276,10 @@ public enum Desugar {
                 operand: desugar(operand), errorVar: errorVar,
                 handler: desugar(handler), location: loc)
         case .tupleIndex(let obj, let index, let loc):
-            // 草稿 A2（批次 1）：递归降层 object，索引为常量不动。
+            // 递归降层 object，索引是常量，不动。
             return .tupleIndex(object: desugar(obj), index: index, location: loc)
         case .tuple(let labels, let elems, let loc):
-            // 草稿 A2（批次 1.3，D1）：保留命名元组标签。
+            // 保留命名元组标签，元素逐个降层。
             return .tuple(labels: labels, elements: elems.map(desugar), location: loc)
         case .arrayLiteral(let elems, let loc):
             return .arrayLiteral(elements: elems.map(desugar), location: loc)

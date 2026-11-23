@@ -99,8 +99,8 @@ public enum CHeaderTranslator {
 
         let arguments = compilerArguments(options: options, header: header)
         let target = try CTarget.probe(clang: clang)
-        /// `-fno-builtin` 关掉 clang 自带的 `strlen` / `memcpy` 等预声明：开着它们，头文件里的
-        /// 声明会被合并进内建声明，类型变成 `__size_t` 这种只有 clang 认识的拼写。
+        // `-fno-builtin` 关掉 clang 自带的 `strlen` / `memcpy` 等预声明：开着它们，头文件里的
+        // 声明会被合并进内建声明，类型变成 `__size_t` 这种只有 clang 认识的拼写。
         let ast = try runJSON(
             clang: clang,
             arguments: ["-Xclang", "-ast-dump=json", "-fsyntax-only", "-fno-builtin"] + arguments)
@@ -122,8 +122,8 @@ public enum CHeaderTranslator {
                 entry = mapper.variableEntry(variable, skipped: &skipped)
             }
             guard let entry = entry else { continue }
-            /// 被包含头文件之间常重复声明同一符号。生成物是给 foreign 块用的，同名只留一处，
-            /// 否则第二处会把整块判成异型冲突（E3-019）。
+            // 被包含头文件之间常重复声明同一符号。生成物是给 foreign 块用的，同名只留一处，
+            // 否则第二处会把整块判成异型冲突（E3-019）。
             guard seen.insert(name).inserted else {
                 skipped.append(CHeaderSkip(name: name, reason: "同名重复声明，保留第一处"))
                 continue
@@ -286,7 +286,7 @@ enum ASTScanner {
         mutating func visitTopLevel(_ node: [String: Any]) {
             updateFile(node)
             let inHeader = currentFile.map { URL(fileURLWithPath: $0).standardizedFileURL.path == header } ?? false
-            /// typedef 表先于任何过滤收集：它只用于展开类型拼写，不是生成物。
+            // typedef 表先于任何过滤收集：它只用于展开类型拼写，不是生成物。
             if node["kind"] as? String == "TypedefDecl", let name = node["name"] as? String {
                 result.typedefs[name] = Walker.typeSpelling(node["type"] as? [String: Any])
             }
@@ -407,8 +407,8 @@ struct TypeMapper {
     func variableEntry(_ variable: ASTScanner.RawVariable, skipped: inout [CHeaderSkip]) -> String? {
         guard !variable.isStatic else { return nil }
         let spelling = Self.stripAttributes(variable.type)
-        /// 只认顶层 `const`（`const int x`）。`const char *` 是「指向不可写」，不是只读符号，
-        /// 故判据看拼写的第一个词，而不是看整串里有没有 const。
+        // 只认顶层 `const`（`const int x`）。`const char *` 是「指向不可写」，不是只读符号，
+        // 故判据看拼写的第一个词，而不是看整串里有没有 const。
         let firstWord = spelling.trimmingCharacters(in: .whitespaces)
             .split(separator: " ").first.map(String.init)
         let isReadonly = firstWord == "const"
@@ -464,10 +464,10 @@ struct TypeMapper {
             return nil
         }
         if words.contains("int") || words == ["signed"] || words == ["unsigned"] {
-            /// `unsigned int` 是 U32，IR 里没有这个宽度；`short` 同理。跳过比截断诚实。
+            // `unsigned int` 是 U32，IR 里没有这个宽度；`short` 同理。跳过比截断诚实。
             return isUnsigned ? nil : "I32"
         }
-        /// 单个未知词再查一次 typedef：展开是有终点的，深度上限只是防环。
+        // 单个未知词再查一次 typedef：展开是有终点的，深度上限只是防环。
         if words.count == 1, depth < 4, let underlying = typedefs[words[0]] {
             return piniValue(underlying, depth: depth + 1)
         }
@@ -478,12 +478,12 @@ struct TypeMapper {
         let trimmed = Self.stripAttributes(spelling).trimmingCharacters(in: .whitespaces)
         guard Self.pointerDepth(trimmed) > 0 else { return nil }
         let base = Self.pointeeWords(trimmed)
-        /// 判 `const` 要看原拼写：`tokens` 已把限定符滤掉，在那里找永远找不到。
+        // 判 `const` 要看原拼写：`tokens` 已把限定符滤掉，在那里找永远找不到。
         let isConstPointee = Self.rawTokens(trimmed).contains("const")
         if isParam, Self.pointerDepth(trimmed) == 1, base == ["char"], isConstPointee {
             return "String"
         }
-        /// 指针一律退化成 `*U8`：类型区分交给手写的给定块，原拼写由来源头文件负责。
+        // 指针一律退化成 `*U8`：类型区分交给手写的给定块，原拼写由来源头文件负责。
         return "*U8"
     }
 
@@ -662,7 +662,7 @@ enum MacroScanner {
                 continue
             }
             guard let currentFile = currentFile, textLine.hasPrefix("#define ") else { continue }
-            /// `<built-in>` 与 `<command line>` 不是头文件，收进来只会污染清单。
+            // `<built-in>` 与 `<command line>` 不是头文件，收进来只会污染清单。
             guard !currentFile.hasPrefix("<") else { continue }
             let normalized = URL(fileURLWithPath: currentFile).standardizedFileURL.path
             let rest = textLine.dropFirst("#define ".count)

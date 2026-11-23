@@ -17,12 +17,12 @@ public final class FutureValue: @unchecked Sendable {
     public private(set) var result: Value? = nil
     public private(set) var error: RuntimeError? = nil
     private var waiters: [() -> Void] = []
-    /// 挂起式等待（`whenResolved`，Strategy B 自建续体）的续体回调。与 `waiters` 并行维护：
-    /// 阻塞 `wait()` 用 `waiters`（无参回调），挂起 `whenResolved` 用 `suspendCallbacks`
-    /// （携带 `Result` 值）。零 Swift 并发运行时依赖，保持「无平台限制 / Swift 5.9+」。
+    /// 挂起式等待（`whenResolved`）的续体回调，与 `waiters` 并行维护：
+    /// 阻塞 `wait()` 用 `waiters`（无参回调），挂起 `whenResolved` 用 `suspendCallbacks`（携带 `Result` 值）。
+    /// 零 Swift 并发运行时依赖，故不受平台限制。
     private var suspendCallbacks: [(Result<Value, RuntimeError>) -> Void] = []
 
-    // MARK: - B2-1 结构化取消
+    // MARK: - 结构化取消
 
     private var cancelled: Bool = false
     /// 父节点弱引用（父强持有子，子弱引用父，避免保留环）。
@@ -51,7 +51,7 @@ public final class FutureValue: @unchecked Sendable {
         lock.unlock()
     }
 
-    /// 当前仍登记在册的子任务快照（B2-2 父返回自动取消用）。
+    /// 当前仍登记在册的子任务快照，供父任务返回时自动取消使用。
     public func childrenSnapshot() -> [FutureValue] {
         lock.lock(); defer { lock.unlock() }
         return children
@@ -131,8 +131,8 @@ public final class FutureValue: @unchecked Sendable {
         // 先唤醒本节点的等待者（阻塞中的 join 立即得到 CancelError），再向下传播。
         ws.forEach { $0() }
         kids.forEach { $0.cancel() }
-        // 附加取消联动（B2-4：joinAll 聚合节点据此取消其成员——成员不在子表中，
-        // 因为它们的父作用域另有归属，不能被聚合节点篡改父链）。
+        // 附加取消联动：`joinAll` 聚合节点据此取消其成员。成员不在子表中，
+        // 因为它们的父作用域另有归属，不能被聚合节点篡改父链。
         handlers.forEach { $0() }
     }
 
@@ -277,13 +277,13 @@ public enum Value {
     case int(Int)
     case float(Double)
     case string(String)
-    /// `Char`: one extended grapheme cluster. Payload type is `String`, shared with `string`, so every
-    /// existing string path (printing, concatenation, runtime handles) applies without conversion;
-    /// the "exactly one grapheme" invariant is the type system's, not the representation's.
+    /// `Char`：一个扩展字素簇。载荷类型是 `String`，与 `string` 同表示，故打印、拼接、
+    /// 运行时段句柄等既有字符串路径无需转换即可套用；
+    /// 「恰好一个字素」这条不变量由类型系统保证，不靠表示层。
     case char(String)
     case bool(Bool)
-    /// 元组值。labels[i] 对应 elements[i] 的可选标签（nil = 位置元素；位置元组为全 nil 或空数组）。
-    /// 与 TypeAnnotation.tuple(labels:) / Expression.tuple(labels:) 对齐（草稿 A2，批次 1.3，D1），供 `.名称` 标签访问。
+    /// 元组值。`labels[i]` 对应 `elements[i]` 的可选标签（nil 为位置元素；位置元组全为 nil 或空数组）。
+    /// 与 `TypeAnnotation.tuple(labels:)` / `Expression.tuple(labels:)` 对齐，供 `.名称` 标签访问。
     case tuple(labels: [String?], elements: [Value])
     case array([Value])
     case dictionary([(Value, Value)])
@@ -299,7 +299,7 @@ public enum Value {
     case unownedRef(UnownedRefBox)
     /// 懒加载包装——引用语义承载（class），复制共享同一「锁 + once 标志 + 缓存」。
     case lazyRef(LazyRefBox)
-    /// Phase 2a（FFI 子系统）：原始指针 `*T`——引用语义承载（class），复制共享同一地址。
+    /// 原始指针 `*T` —— 引用语义承载（class），复制共享同一地址。
     case rawPointer(RawPointerValue)
     case null
 }
@@ -479,7 +479,7 @@ public class FunctionValue {
 
     public enum TypeKind { case structKind, objectKind }
 
-    /// Phase 2a（FFI 子系统）：foreign/native 函数的 Swift 实现（`[名称|foreign]` 声明经原生函数表解析）。
+    /// foreign / native 函数的 Swift 实现（`[名称|foreign]` 声明经原生函数表解析）。
     public var nativeImpl: (([Value]) throws -> Value)? = nil
 
     public init(
@@ -509,9 +509,9 @@ extension Value: Equatable {
         case (.int(let l), .int(let r)): return l == r
         case (.float(let l), .float(let r)): return l == r
         case (.string(let l), .string(let r)): return l.utf8.elementsEqual(r.utf8)
-        /// `Char` 与 `String` 是相容对（同表示），比较一律按 UTF-8 字节序列 —— 与编译通道的
-        /// 「先比长度再 `memcmp`」同一条判据，不做规范等价。 行不通  用 Swift 的 `==`：它按规范等价，
-        /// NFD 的 `é` 与预组合的 `é` 相等，而编译产物上那两个字节不等。
+        // `Char` 与 `String` 是相容对（同表示），比较一律按 UTF-8 字节序列 —— 与编译通道的
+        // 「先比长度再 `memcmp`」同一条判据，不做规范等价。
+        // 用 Swift 的 `==` 会让 NFD 的 `é` 与预组合的 `é` 相等，而编译产物上那两个字节不等。
         case (.char(let l), .char(let r)): return l.utf8.elementsEqual(r.utf8)
         case (.char(let l), .string(let r)): return l.utf8.elementsEqual(r.utf8)
         case (.string(let l), .char(let r)): return l.utf8.elementsEqual(r.utf8)

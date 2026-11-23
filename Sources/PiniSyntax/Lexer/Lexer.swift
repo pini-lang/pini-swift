@@ -7,7 +7,7 @@ public class Lexer {
     private var line: Int
     private var column: Int
     private var indentTracker: IndentTracker
-    /// 草稿 A2（批次 1）：上一个已产出 token 是否为 `.`（dot）。
+    /// 上一个已产出 token 是否为 `.`（dot）。
     /// 用于元组位置访问 `.index` 的词法消歧：`.` 后随数字时只读整数、不进浮点，
     /// 避免 `t.0.1` 中 `0.1` 被读成浮点字面量（`0.1` 本应拆为 `.0` `.1`）。
     private var prevTokenIsDot = false
@@ -94,7 +94,7 @@ public class Lexer {
                 }
 
                 if char == ";" || char == "#" {
-                    // `;` 行注释 / `#` 文档注释（行首=文档注释，行中=退化行注释）；均持续到行尾（G35）
+                    // `;` 行注释 / `#` 文档注释（行首=文档注释，行中=退化行注释）；均持续到行尾
                     recordComment(column: column, ownLine: awaitingFirstTokenOfLine)
                     break
                 }
@@ -378,8 +378,8 @@ public class Lexer {
                 return .identifier(escaped, loc)
             }
             return .identifier("`", loc)
-        // `#` 已由行级注释拦截（G35：文档注释/退化行注释），不再产出 token；
-        // 若意外到达此处则落入 default → invalidCharacter（历史 `.hash` token 保留于 Token.swift 供兼容）。
+        // `#` 已由行级注释拦截（文档注释 / 退化行注释），不再产出 token；
+        // 若意外到达此处则落入 default → invalidCharacter；`.hash` token 定义仍在 Token.swift 里闲置。
         case "?":
             _ = advance()
             return .questionMark(loc)
@@ -498,8 +498,8 @@ public class Lexer {
     }
 
     private func readIdentifier(startingWith prefix: String) throws -> String {
-        // IDENT 续字符放宽：IDENT 续字符 = \p{L} ∪ numeric property ∪ `_`——spec 已按
-        // numeric property（isNumber 语义，严格超集 \p{N}）放宽对齐本实现（见 spec「词法类」主题）；INT 字面量仍限 [0-9]。
+        // IDENT 续字符放宽：IDENT 续字符 = \p{L} ∪ numeric property ∪ `_`——按 isNumber 语义
+        // （严格超集 \p{N}）对齐本实现；INT 字面量仍限 [0-9]。
         var name = prefix
         while let char = currentChar, char.isLetter || char.isNumber || char == "_" {
             // 变体选择符与零宽字符能与基字合成同一个字素簇，只看簇属性会漏掉，故逐标量查。
@@ -587,7 +587,7 @@ public class Lexer {
         }
 
         var isFloat = false
-        // 草稿 A2（批次 1）：`.` 后随数字 = 元组位置访问 `.index`（如 `t.0.1` 拆为 `.0` `.1`），
+        // `.` 后随数字 = 元组位置访问 `.index`（如 `t.0.1` 拆为 `.0` `.1`），
         // 数字只读整数部分、不进入浮点；其余位置（前 token 非 `.`）照常支持 `3.14` 浮点。
         if !prevTokenIsDot, let char = currentChar, char == ".", let next = peek(offset: 1), next.isNumber {
             isFloat = true

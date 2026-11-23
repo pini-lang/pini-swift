@@ -1,4 +1,4 @@
-; Pini P1-5 基础 IO 演示
+; 基础 IO 演示：格式化输出 / 文件读写 / 标准输入
 ; 运行：pini run examples/io.pini
 ; 注意：SwiftPM 下须 --disable-sandbox 方可落盘写入文件
 main|func() -> ():
