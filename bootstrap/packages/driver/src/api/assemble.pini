@@ -39,6 +39,7 @@ units: WorkspaceUnits = WorkspaceUnits()
     input.world = 世界
     input.types = 泛.types
     input.generics = 泛
+    input.macros = macroRows(items = ws.macros)
     let shapes = makeShapeTable(世界)
     input.shapes = shapes
     input.layouts = layoutAll(shapes = shapes, pool = 世界.types.pool)
@@ -92,6 +93,7 @@ units: WorkspaceUnits = WorkspaceUnits()
     input.world = 带池
     input.types = 泛.types
     input.generics = 泛
+    input.macros = macroRows(items = ws.macros)
     input.shapes = shapes
     input.layouts = layouts
     out.module = lowerWorkspace(input = input)
@@ -111,3 +113,18 @@ typedExprCount|func(table: ExprTypes,) -> (I32,):
         total = total + validCount(table = table, unit = u)
         u = u + 1
     return total
+
+; 计划宏转 IR 宏：值文本原样带过去，声明类型留在世界里，降载点按表达式类型出常量。
+macroRows|func(items: Array<PlanMacro>,) -> (Array<IrMacro>,):
+    var out: Array<IrMacro> = []
+    var i = 0
+    while i < len(items):
+        var one = IrMacro()
+        one.name = items[i].name
+        one.resolved = items[i].state == "value"
+        one.value = items[i].value
+        one.reason = items[i].reason
+        one.detail = items[i].detail
+        out = out.append(one)
+        i = i + 1
+    return out

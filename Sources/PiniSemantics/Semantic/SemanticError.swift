@@ -36,4 +36,7 @@ public enum SemanticError: Error, Equatable {
     case foreignSignatureConflict(name: String, firstFile: String, location: SourceLocation)
     /// 外部符号名不是合法 C 标识符。这个名字要原样交给 `dlsym`，中文名只会得到「库里没有」。
     case foreignSymbolNotCIdentifier(name: String, location: SourceLocation)
+    /// 生成面认识这个名字却没有产出声明：`pini bind` 跳过了一个宏。
+    /// 与未定义名的区别在处置：这里要告诉读者去写 shim，而不是去拼写别的名字。
+    case untranslatedForeignMacro(name: String, reason: String, location: SourceLocation)
 }

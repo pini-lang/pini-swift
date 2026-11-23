@@ -310,6 +310,8 @@ public enum ErrorFormatter {
         case .injectedSymbolConflict(let symbol, let holder, _): return "注入符号 '\(symbol)' 与 \(holder) 冲突（D-4：裸名必须无歧义）；请改用显式别名并以 `别名.符号` 限定调用"
         case .foreignSignatureConflict(let name, let firstFile, _): return "外部符号 '\(name)' 的声明与 '\(firstFile)' 中的那份不一致（签名或标志不同）"
         case .foreignSymbolNotCIdentifier(let name, _): return "外部符号名 '\(name)' 不是合法 C 标识符"
+        case .untranslatedForeignMacro(let name, let reason, _):
+            return "'\(name)' 是 C 头文件里的宏，`pini bind` 没有翻译它：\(reason)"
         }
     }
 

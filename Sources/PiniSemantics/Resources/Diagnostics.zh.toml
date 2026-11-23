@@ -241,6 +241,10 @@ suggestion = "值只能来自 C 头文件：补 `[ffi].headers`，或写一个 s
 message = "`|macro` 的类型必须是标量：'{name}' 声明为 '{type}'"
 suggestion = "改成 I8 / U8 / I32 / I64 / U64 / F64 / Bool 之一；C 的字符串与结构宏不进常量面"
 
+[E4-046]
+message = "'{name}' 是 C 头文件里的宏，`pini bind` 没有翻译它：{reason}"
+suggestion = "函数式宏要写成 C shim 再声明为外部函数；Pini 侧不展开宏"
+
 [E5-001]
 message = "未定义变量 '{name}'"
 suggestion = "你是想说 '{closest}' 吗？"

@@ -217,10 +217,13 @@ requires: Array<String> = []
 testRoots: Array<String> = []
 units: Array<CompilationUnit> = []
 
-; 工作区单元：按计划拓扑序分组，装载错误单列；判据读这里，不再回头猜路径。
+; 工作区单元：按计划拓扑序分组，装载错误单列，宏常量与跳过项随计划带出。
+; 判据读这里，不再回头猜路径；宏表是自举侧唯一的值来源。
 (WorkspaceUnits)
 packages: Array<PackageUnits> = []
 errors: Array<LoadError> = []
+macros: Array<PlanMacro> = []
+skips: Array<PlanSkip> = []
 
 ; 单文件装载：一个入口文件自成一组，单元路径按调用方给的写法记，诊断里与输入一致。
 ; 没有包图，import 别的包因此不成立——「单文件即独立程序」正是这个意思。
@@ -248,6 +251,8 @@ loadWorkspaceGrouped|func(_plan: BuildPlan, stdlib: StdlibOption,) -> (Workspace
     if !_plan.isOK():
         return out
     let planRead: PlanRead = package.readPlanFile(root = _plan.rootPath, profile = _plan.profile)
+    out.macros = planRead.macros
+    out.skips = planRead.skips
     var i = 0
     while i < len(_plan.packages):
         let planned: PackagePlan = _plan.packages[i]

@@ -2191,6 +2191,12 @@ func runBuildPath(_ path: String, printPlan: Bool = false, withStdlib: Bool = tr
                     print("未变 \(output)")
                 }
             }
+            /// 宏段在翻译之后写：生成块的 `|macro` 值只能来自刚落盘的头文件与计划步骤。
+            let plan = try BuildRunner.recordMacros(report.plan, layout: configured.layout)
+            if !plan.macros.isEmpty {
+                let unresolved = plan.macros.filter { !$0.isResolved }.count
+                print("宏常量 \(plan.macros.count) 条（未求值 \(unresolved)）")
+            }
             if !report.plan.steps.isEmpty {
                 print(
                     "构建计划 \(configured.layout.relativeToRoot(report.planPath))："

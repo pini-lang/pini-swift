@@ -222,6 +222,11 @@ exprDiagnostics|func(_check: ExprCheck,) -> (Array<Diagnostic>,):
 ; 表达式装配：先逐单元推导填表，再逐单元跑表达式检查。
 ; 推导只推能唯一确定类型的节点；推不出的按未定处理，不阻断检查。
 exprPackageDiagnostics|func(world: MemberWorld, units: Array<CompilationUnit>,) -> (Array<Diagnostic>,):
+    var 空跳过: Array<String> = []
+    return exprPackageDiagnosticsSkipping(world = world, units = units, skips = 空跳过)
+
+; 带跳过表的装配：跳过名不报未定义，留给 E4-046 说「生成面没翻译」。
+exprPackageDiagnosticsSkipping|func(world: MemberWorld, units: Array<CompilationUnit>, skips: Array<String>,) -> (Array<Diagnostic>,):
     var types = makeExprTypes(units)
     var enriched = world
     var u = 0
@@ -235,13 +240,72 @@ exprPackageDiagnostics|func(world: MemberWorld, units: Array<CompilationUnit>,) 
     var out: Array<Diagnostic> = []
     u = 0
     while u < len(units):
-        var one = exprDiagnostics(checkUnitExprs(world = enriched, unitIndex = u, types = types))
+        var one = exprDiagnostics(checkUnitExprsSkipping(world = enriched, unitIndex = u, types = types, skips = skips))
         var i = 0
         while i < len(one):
             out = out.append(one[i])
             i = i + 1
         u = u + 1
     return out
+
+; 跳过名表：只取名字，表达式检查按名字面跳过未定义报告。
+skipNames|func(items: Array<PlanSkip>,) -> (Array<String>,):
+    var out: Array<String> = []
+    var i = 0
+    while i < len(items):
+        out = out.append(items[i].name)
+        i = i + 1
+    return out
+
+; 宏常量诊断：声明的宏在计划里没有值报 E4-044；生成面跳过的名字报 E4-046。
+; 生成面跳过名连调用位一起查：函数式宏被跳过时，用户写的正是调用。
+macroDiagnostics|func(units: Array<CompilationUnit>, world: MemberWorld, macros: Array<PlanMacro>, skips: Array<PlanSkip>,) -> (Array<Diagnostic>,):
+    var out: Array<Diagnostic> = []
+    if !hasDeclaredMacro(world = world) && len(skips) == 0:
+        return out
+    var u = 0
+    while u < len(units):
+        let unit = units[u]
+        let bytes = unitBytes(unit)
+        let locals = localOnlyNames(unit = unit)
+        let callees = calleeNodeIds(unit = unit)
+        var i = 0
+        while i < unit.ast.exprCount():
+            if unit.ast.isIdentifierExpr(i):
+                let expr = unit.ast.exprAt(i)
+                let name = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
+                let isCallee = containsId(items = callees, value = i)
+                if !hasName(items = locals, value = name) && isDeclaredMacro(world = world, name = name) && !isCallee:
+                    let at = findPlanMacro(items = macros, name = name)
+                    if at < 0:
+                        out = out.append(makeCheckDiagnostic(file = unit.path, category = typeCategory(), code = "E4-044", message = "宏常量 '" + name + "' 在这里取不到值：" + macroReasonLine(reason = "missingPlan", detail = ""), offset = expr.start))
+                    elif macros[at].state != "value":
+                        out = out.append(makeCheckDiagnostic(file = unit.path, category = typeCategory(), code = "E4-044", message = "宏常量 '" + name + "' 在这里取不到值：" + macroReasonLine(reason = macros[at].reason, detail = macros[at].detail), offset = expr.start))
+                elif !hasName(items = locals, value = name):
+                    let skipped = findPlanSkip(items = skips, name = name)
+                    if skipped >= 0:
+                        out = out.append(makeCheckDiagnostic(file = unit.path, category = typeCategory(), code = "E4-046", message = "'" + name + "' 是 C 头文件里的宏，`pini bind` 没有翻译它：" + skips[skipped].reason, offset = expr.start))
+            i = i + 1
+        u = u + 1
+    return out
+
+; 声明为宏：外部符号且标志含 macro；宏没有存储，故它不算可读的外部数据。
+isDeclaredMacro|func(world: MemberWorld, name: String,) -> (Bool,):
+    let symbol = lookupTopByName(index = world.symbols, name = name)
+    if symbol < 0:
+        return false
+    let entry = world.table.symbolAt(symbol)
+    return entry.isForeign && containsFlagText(items = entry.foreignFlags, name = "macro")
+
+; 是否有宏声明：没有就不必逐标识符查表，整仓检查不为「用不到的能力」付扫描代价。
+hasDeclaredMacro|func(world: MemberWorld,) -> (Bool,):
+    var i = 0
+    while i < world.table.symbolCount():
+        let entry = world.table.symbolAt(i)
+        if entry.isForeign && containsFlagText(items = entry.foreignFlags, name = "macro"):
+            return true
+        i = i + 1
+    return false
 
 ; 体诊断：返回路径与参数重名，码取体面自己的表。
 bodyDiagnostics|func(_check: BodyCheck,) -> (Array<Diagnostic>,):
@@ -494,10 +558,15 @@ checkUnits|func(root: String, ws: WorkspaceUnits, packages: I32, plan: BuildPlan
     while i < len(bodies):
         diagnostics = diagnostics.append(bodies[i])
         i = i + 1
-    var exprs = exprPackageDiagnostics(world = world, units = units)
+    var exprs = exprPackageDiagnosticsSkipping(world = world, units = units, skips = skipNames(items = ws.skips))
     i = 0
     while i < len(exprs):
         diagnostics = diagnostics.append(exprs[i])
+        i = i + 1
+    var macroErrors = macroDiagnostics(units = units, world = world, macros = ws.macros, skips = ws.skips)
+    i = 0
+    while i < len(macroErrors):
+        diagnostics = diagnostics.append(macroErrors[i])
         i = i + 1
     if plan.packageCount() > 0:
         var drift = interfaceDriftDiagnostics(root = root, records = packageInterfaces(ws, world = world), plan = plan)

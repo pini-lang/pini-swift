@@ -241,6 +241,10 @@ suggestion = "the value can only come from a C header: add `[ffi].headers`, or w
 message = "`|macro` requires a scalar type: '{name}' is declared as '{type}'"
 suggestion = "use one of I8 / U8 / I32 / I64 / U64 / F64 / Bool; C string and struct macros stay outside the constant surface"
 
+[E4-046]
+message = "'{name}' is a macro in the C header that `pini bind` did not translate: {reason}"
+suggestion = "write a C shim and declare it as an external function; Pini does not expand macros"
+
 [E5-001]
 message = "undefined variable '{name}'"
 suggestion = "Did you mean '{closest}'?"

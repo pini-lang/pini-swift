@@ -29,6 +29,9 @@ public struct Package: Equatable, ASTNode, Sendable {
     public let fileUnits: [FileUnit]
     /// 包根的规范路径；可见性用它把绝对文件名换成包根相对路径。
     public let rootPath: String?
+    /// 已登记但不产符号的名字与原因（生成面的宏跳过项）。名字解析失败时先查它，
+    /// 命中即报「头文件里有、翻译没产出」，不退回泛泛的未定义名。
+    public let unavailableNames: [String: String]
 
     public var location: SourceLocation {
         fileUnits.first?.location ?? SourceLocation(line: 0, column: 0, fileName: name)
@@ -39,10 +42,14 @@ public struct Package: Equatable, ASTNode, Sendable {
         fileUnits.flatMap { $0.warnings }
     }
 
-    public init(name: String, fileUnits: [FileUnit], rootPath: String? = nil) {
+    public init(
+        name: String, fileUnits: [FileUnit], rootPath: String? = nil,
+        unavailableNames: [String: String] = [:]
+    ) {
         self.name = name
         self.fileUnits = fileUnits
         self.rootPath = rootPath
+        self.unavailableNames = unavailableNames
     }
 
     /// 可见性只消费包内路径；无包根的内存包退到文件名，保持既有行为。
@@ -69,6 +76,8 @@ public struct Package: Equatable, ASTNode, Sendable {
         assembled[0] = FileUnit(
             fileName: first.fileName, module: FrontEnd.assemble(module: first.module),
             warnings: first.warnings)
-        return Package(name: name, fileUnits: assembled, rootPath: rootPath)
+        return Package(
+            name: name, fileUnits: assembled, rootPath: rootPath,
+            unavailableNames: unavailableNames)
     }
 }

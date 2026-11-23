@@ -237,6 +237,8 @@ extension SemanticError: DiagnosticProviding {
         case .injectedSymbolConflict: return "\(DiagnosticDomain.semantic.rawValue)-013"
         case .foreignSignatureConflict: return "\(DiagnosticDomain.semantic.rawValue)-019"
         case .foreignSymbolNotCIdentifier: return "\(DiagnosticDomain.semantic.rawValue)-020"
+        /// 码落在类型域：它与 E4-044 / E4-045 同属 C 面，读者按 FFI 一族读；发码点在名字解析。
+        case .untranslatedForeignMacro: return "\(DiagnosticDomain.type.rawValue)-046"
         }
     }
     public var diagnosticSeverity: DiagnosticSeverity { .error }
@@ -260,6 +262,8 @@ extension SemanticError: DiagnosticProviding {
             .injectedSymbolConflict(_, _, let loc),
             .foreignSignatureConflict(_, _, let loc),
             .foreignSymbolNotCIdentifier(_, let loc):
+            return loc
+        case .untranslatedForeignMacro(_, _, let loc):
             return loc
         case .moduleDependencyCycle, .moduleRootMissing:
             return SourceLocation(line: 0, column: 0, endLine: 0, endColumn: 0, fileName: "未知文件")

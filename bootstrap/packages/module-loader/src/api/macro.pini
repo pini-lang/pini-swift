@@ -1,0 +1,38 @@
+[macro|import]
+_package = "../../../package"
+
+; 宏表查询：名字全等即命中，未命中答 -1；同名跨包以计划次序先出现者为准。
+findPlanMacro|func(items: Array<PlanMacro>, name: String,) -> (I32,):
+    var i = 0
+    while i < len(items):
+        if items[i].name == name:
+            return i
+        i = i + 1
+    return -1
+
+; 跳过项查找：名字全等即命中，未命中答 -1；命中即可报「生成面没翻译」。
+findPlanSkip|func(items: Array<PlanSkip>, name: String,) -> (I32,):
+    var i = 0
+    while i < len(items):
+        if items[i].name == name:
+            return i
+        i = i + 1
+    return -1
+
+; 失败理由码转一句可执行的话：缺计划与缺头文件分开说，读者才分得清配置与计划。
+; 计划只存码与细节，措辞留在这里，换文案不改计划字节。
+macroReasonLine|func(reason: String, detail: String,) -> (String,):
+    var text = "本机构建计划里没有它的求值结果；跑 `pini build` 生成计划"
+    if reason == "noHeaders":
+        text = "包里 `[ffi].headers` 为空"
+    elif reason == "notDefined":
+        text = "头文件里没有这个宏"
+    elif reason == "functionLike":
+        text = "它是函数式宏，Pini 不展开宏；要调用请写 C shim"
+    elif reason == "unparsable":
+        text = "展开后不是常量表达式"
+    elif reason == "outOfRange":
+        text = "值超出声明类型的范围"
+    if len(detail) > 0:
+        text = text + "（" + detail + "）"
+    return text

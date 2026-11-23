@@ -7,7 +7,7 @@ _module_loader = "../../../module-loader"
 ; 函数表与语句体一并产出；语句或表达式降不了时整函数留空并逐函数报缺口。
 ; 空体在发射期会变成能跑却错的码，故缺口必须可见。
 
-; 降载入参：世界、表达式类型表、泛型实例表、解析表、形态表与槽布局；形态与槽本切片只带不改。
+; 降载入参：世界、表达式类型表、泛型实例表、解析表、形态表、槽布局与宏表；后三者本切片只带不改。
 (LowerWorld)
 world: MemberWorld = MemberWorld()
 types: ExprTypes = ExprTypes()
@@ -15,6 +15,7 @@ generics: GenericFill = GenericFill()
 resolve: ResolveTable = ResolveTable()
 shapes: ShapeTable = ShapeTable()
 layouts: LayoutTable = LayoutTable()
+macros: Array<IrMacro> = []
 
 ; 函数形参：名字、IR 类型下标、函数内槽位与取用位。
 (IrParam)
@@ -52,6 +53,15 @@ adapterTarget: String = ""
 (IrExternData)
 name: String = ""
 typeId: I32 = -1
+
+; 宏常量：有值时按声明类型解析成字面量；未求值只留理由，读点报能力缺口。
+; 宏没有存储，故它不进外部数据表，也不产生任何符号。
+(IrMacro)
+name: String = ""
+resolved: Bool = false
+value: String = ""
+reason: String = ""
+detail: String = ""
 
 ; 外部函数声明：名字、返回类型、形参类型与变参标志；发射期按它出 `declare`。
 ; 名字保留 C 拼写，不走内部函数的编码；形参只收标量、指针与串，聚合在语义层已拒。
@@ -91,6 +101,7 @@ decls: IrDeclTable = IrDeclTable()
 slots: IrSlotTable = IrSlotTable()
 externData: Array<IrExternData> = []
 externs: Array<IrExternFunction> = []
+macros: Array<IrMacro> = []
 unitIndex: I32 = 0
 bytes: Array<U8> = []
 ; 泛型实例表：逐实例换世界与类型表后降载模板体，调用点按它查实例名。
@@ -197,7 +208,7 @@ lowerFunction|func(state: LowerState, unit: CompilationUnit, declId: I32, owner:
         var start = LowerStmt()
         start.pool = out.nodes
         start.texts = out.texts
-        start.frame = seedLowerFrame(scope = seed.scope, map = out.map, world = out.world, decls = out.decls, generics = out.generics)
+        start.frame = seedLowerFrame(scope = seed.scope, map = out.map, world = out.world, decls = out.decls, generics = out.generics, macros = out.macros)
         start.frame.isAsync = decl.isAsync
         start.frame.closureSerial = out.closureSerial
         let body = lowerBlockOf(out = start, unit = unit, bytes = out.bytes, map = out.map, types = out.types, unitIndex = out.unitIndex, blockId = decl.body)
@@ -247,7 +258,7 @@ lowerGivenMaker|func(state: LowerState, unit: CompilationUnit, declId: I32,) -> 
     var one = LowerExpr()
     one.pool = out.nodes
     one.texts = out.texts
-    one.frame = seedLowerFrame(scope = ScopeStack(), map = out.map, world = out.world, decls = out.decls, generics = out.generics)
+    one.frame = seedLowerFrame(scope = ScopeStack(), map = out.map, world = out.world, decls = out.decls, generics = out.generics, macros = out.macros)
     one.frame.closureSerial = out.closureSerial
     let built = lowerConstructDefaults(out = one, map = out.map, types = out.types, ref = ref, typeId = typeId)
     var fn = IrFunction()
@@ -305,6 +316,7 @@ lowerWorkspace|func(input: LowerWorld,) -> (IrModule,):
     state.world = input.world
     state.types = input.types
     state.generics = input.generics
+    state.macros = input.macros
     state.map = buildTypeMap(world = input.world)
     state.decls = makeDeclTable(shapes = input.shapes, map = state.map, world = input.world)
     state.slots = makeSlotTable(layouts = input.layouts, map = state.map)

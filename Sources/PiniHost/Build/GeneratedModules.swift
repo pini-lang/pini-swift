@@ -64,7 +64,12 @@ public enum GeneratedModules {
                     path: step.output, reason: error.localizedDescription)
             }
         }
-        return Package(name: package.name, fileUnits: units, rootPath: package.rootPath)
+        /// 跳过名只收宏：它们没有声明可查，但用户写下去时该得到「翻译没产出」而不是「没定义」。
+        var unavailable: [String: String] = [:]
+        for skip in plan.skips(for: package.name) { unavailable[skip.name] = skip.reason }
+        return Package(
+            name: package.name, fileUnits: units, rootPath: package.rootPath,
+            unavailableNames: unavailable)
     }
 
     /// 脚本哈希：文件不存在为空串。与计划里的空值同义，都是「没有构建脚本」。

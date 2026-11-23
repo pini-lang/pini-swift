@@ -1,7 +1,9 @@
+import Foundation
 import Testing
 import PiniIR
 import PiniSemantics
 import PiniSyntax
+import PiniHost
 
 /// 宏常量降级：未求值只在读点报，声明处只挡非标量，降载不再逐条预检。
 /// 需要 C 头文件的真实求值另由命令行夹具覆盖；这里钉住判定面与诊断面。
@@ -109,5 +111,84 @@ struct MacroDemotionTests: Sendable {
         let ir = try IRLowerer.lower(
             module: module, typeInference: checker.typeInference, foreignConstants: [])
         #expect(ir.functions.contains { $0.name == "main" })
+    }
+
+    @Test("计划跳过的宏名：E4-046，不是未定义名")
+    func skippedMacroIsNotUndefined() throws {
+        let module = try module(
+            """
+            main|func() -> (I32,):
+                return DOUBLE(1)
+            """)
+        let package = Package(
+            name: "p", fileUnits: [FileUnit(fileName: "inline.pini", module: module)],
+            unavailableNames: ["DOUBLE": "函数式宏要实参才能展开，不能取成常量"])
+        do {
+            try SemanticAnalyzer().analyze(package: package)
+            Issue.record("跳过名应报 E4-046")
+        } catch let error as SemanticError {
+            guard case .untranslatedForeignMacro(let name, let reason, let location) = error else {
+                Issue.record("期望 untranslatedForeignMacro，实际 \(error)")
+                return
+            }
+            #expect(name == "DOUBLE")
+            #expect(reason.contains("函数式宏"))
+            #expect(location.line == 2)
+            #expect(error.diagnosticCode == "E4-046")
+        }
+    }
+
+    @Test("未登记的名字仍是未定义：跳过表不扩大解释面")
+    func unknownNameStaysUndefined() throws {
+        let module = try module(
+            """
+            main|func() -> (I32,):
+                return NOPE
+            """)
+        let package = Package(
+            name: "p", fileUnits: [FileUnit(fileName: "inline.pini", module: module)],
+            unavailableNames: ["DOUBLE": "函数式宏"])
+        do {
+            try SemanticAnalyzer().analyze(package: package)
+            Issue.record("未登记的名字应报未定义")
+        } catch let error as SemanticError {
+            guard case .undefinedVariable(let name, _) = error else {
+                Issue.record("期望 undefinedVariable，实际 \(error)")
+                return
+            }
+            #expect(name == "NOPE")
+        }
+    }
+
+    @Test("计划宏段与跳过段：渲染后可回读，旧计划缺段读作空表")
+    func planRoundTripsResultSections() throws {
+        let root = NSTemporaryDirectory() + "/pini-plan-\(UUID().uuidString)"
+        let layout = BuildLayout(root: root, profile: "debug")
+        try FileManager.default.createDirectory(
+            atPath: layout.buildDirectory, withIntermediateDirectories: true)
+        let plan = BuildPlan(
+            packages: [PlannedPackage(name: "p", root: root, scriptHash: "")],
+            steps: [],
+            macros: [
+                PlannedMacro(package: "p", name: "EOF", type: "I32", value: "-1"),
+                PlannedMacro(
+                    package: "p", name: "getc", type: "I32", reason: "functionLike"),
+            ],
+            skips: [PlannedSkip(package: "p", step: "s", name: "DOUBLE", reason: "函数式宏")])
+        let text = try plan.render(layout: layout)
+        #expect(text.contains("[[macro]]"))
+        #expect(text.contains("state = \"value\""))
+        #expect(text.contains("reason = \"functionLike\""))
+        #expect(text.contains("[[skip]]"))
+        try text.write(toFile: layout.planPath, atomically: true, encoding: .utf8)
+        let read = try BuildPlan.read(at: layout.planPath, layout: layout)
+        #expect(read == plan)
+
+        let oldPath = layout.buildDirectory + "/old-plan.toml"
+        try "[plan]\nversion = 1\ntranslator = \"pini-bind/1\"\n"
+            .write(toFile: oldPath, atomically: true, encoding: .utf8)
+        let old = try BuildPlan.read(at: oldPath, layout: layout)
+        #expect(old?.macros.isEmpty == true)
+        #expect(old?.skips.isEmpty == true)
     }
 }

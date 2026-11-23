@@ -58,6 +58,10 @@ public final class SemanticAnalyzer {
     /// 单文件模式（`analyze(module:)`）下恒为 `nil`，故单文件行为零回归。
     private var packageContext: (index: PackageSymbolIndex, currentFileName: String)? = nil
 
+    /// 生成面跳过名：`pini bind` 看见却没有产出声明的宏名与理由。
+    /// 只在名字解析失败时使用，不产生符号、不参与类型，故解析命中时它完全不可见。
+    private var unavailableForeignNames: [String: String] = [:]
+
     /// 本模块的外部符号表：跨文件合并与冲突裁决在注册之前一次做完，注册阶段只认合并后的那一份。
     /// `nil` 表示建表已失败（收集模式），此后外部符号按原样逐个登记，不再判冲突。
     private var foreignSymbols: ForeignSymbolTable?
@@ -104,6 +108,12 @@ public final class SemanticAnalyzer {
 
     /// 分析模块
     public func analyze(module: Module) throws {
+        unavailableForeignNames = [:]
+        try analyzeModule(module)
+    }
+
+    /// 单模块主体：入口负责重置状态，包级入口据此携带跳过名表。
+    private func analyzeModule(_ module: Module) throws {
         warnings = []  // B2：每次分析重置（实例可复用）
         usedSymbols = []
         // 登记 import 别名（加载被引入模块，R1 边界 + R2 禁环由加载器负责）
@@ -152,13 +162,14 @@ public final class SemanticAnalyzer {
     /// 顶级声明，跨文件引用经索引解析并 enforce 4 级可见性。
     public func analyze(package: Package) throws {
         warnings = []  // B2：每包重置（实例可复用）
+        unavailableForeignNames = package.unavailableNames
         if package.fileUnits.count <= 1 {
             let module =
                 package.fileUnits.first?.module
                 ?? Module(
                     declarations: [], imports: [], exports: [],
                     location: SourceLocation(line: 0, column: 0, fileName: package.name))
-            try analyze(module: module)
+            try analyzeModule(module)
             return
         }
 
@@ -380,6 +391,11 @@ public final class SemanticAnalyzer {
         }
         // 未命中本地/包级时，注入的 public 符号可裸引用（文件级全导入；冲突已由哨兵排除）
         if currentInjectNames.contains(name) { return }
+        /// 生成面见过这个名字却没产出声明：报「翻译没做」比报「没定义」多给一条出路。
+        if let reason = unavailableForeignNames[name] {
+            throw SemanticError.untranslatedForeignMacro(
+                name: name, reason: reason, location: location)
+        }
         if isFunction {
             throw SemanticError.undefinedFunction(name: name, location: location)
         } else {
@@ -392,6 +408,7 @@ public final class SemanticAnalyzer {
     /// 仍遇错即抛，不跨函数累积。
     public func analyzeCollecting(module: Module) -> [SemanticError] {
         warnings = []  // B2：收集模式同样重置（实例可复用）
+        unavailableForeignNames = [:]
         usedSymbols = []
         var errors: [SemanticError] = []
         // 登记 import 别名（与 analyze(module:) 同规则）；加载失败收集为诊断
