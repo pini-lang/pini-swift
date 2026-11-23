@@ -84,7 +84,7 @@ def host_binary():
 def bootstrap_binary():
     path = Path(
         os.environ.get("PINI_BOOTSTRAP_BIN")
-        or (ROOT / "bootstrap" / ".build" / "debug" / "bin" / "pini-bootstrap")
+        or (ROOT / "bootstrap" / ".build" / "release" / "bin" / "pini-bootstrap")
     )
     if not path.is_file() or not os.access(path, os.X_OK):
         fail(f"缺自举产物 {path}；先 bash bootstrap/tools/build.sh")

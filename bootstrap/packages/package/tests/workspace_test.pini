@@ -23,6 +23,6 @@
     assert(计划.packageAt(12).name == "driver", "驱动依赖全部前置包")
     assert(计划.packageAt(13).name == "runtime_api", "运行时段包无依赖，排在最后")
     let 首 = 计划.packageAt(0).targets[0]
-    assert(首.irPath == "./.build/debug/packages/support/support.ll", "库产物路径")
+    assert(首.irPath == "./.build/" + 计划.profile + "/packages/support/support.ll", "库产物路径")
     assert(planText(计划) == planText(planWorkspace(".")), "两次装配逐字相同")
     return

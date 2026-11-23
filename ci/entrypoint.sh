@@ -100,7 +100,7 @@ run_body() {
         .build/release/pini build bootstrap || rc=1
         if [ "$rc" -eq 0 ]; then
             local out
-            out="$(cd bootstrap && ./.build/debug/bin/pini-bootstrap)" || rc=1
+            out="$(cd bootstrap && ./.build/release/bin/pini-bootstrap)" || rc=1
             case "$out" in
             "workspace-ok "*" true") ;;
             *)

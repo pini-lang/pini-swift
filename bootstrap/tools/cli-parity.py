@@ -55,7 +55,7 @@ def host_binary():
 
 def self_binary():
     candidate = os.environ.get("PINI_BOOTSTRAP_BIN")
-    path = Path(candidate) if candidate else ROOT / "bootstrap" / ".build" / "debug" / "bin" / "pini-bootstrap"
+    path = Path(candidate) if candidate else ROOT / "bootstrap" / ".build" / "release" / "bin" / "pini-bootstrap"
     if not path.is_file():
         fail("缺自举产物；先 bash bootstrap/tools/build.sh")
         sys.exit(2)
@@ -102,7 +102,7 @@ def ensure_fresh(host, mine):
     if newest_mtime(host_sources) > host.stat().st_mtime + 1:
         fail("宿主产物落后于源码；先 swift build -c release")
         sys.exit(2)
-    if not stamp_matches(mine_sources, ROOT / "bootstrap" / ".build" / "debug" / "sources.sha256"):
+    if not stamp_matches(mine_sources, ROOT / "bootstrap" / ".build" / "release" / "sources.sha256"):
         if newest_mtime(mine_sources) > mine.stat().st_mtime + 1:
             fail("自举产物落后于源码；先 bash bootstrap/tools/build.sh")
             sys.exit(2)

@@ -44,7 +44,7 @@ if [ "$code" -ne 0 ]; then
 fi
 
 # 编译器产物一旦并进标准库，自举链就多一道回边；驱动包出现扩展方法符号即说明没带 --no-stdlib。
-guard_ir="$root/bootstrap/.build/debug/packages/driver/pini-bootstrap.ll"
+guard_ir="$root/bootstrap/.build/release/packages/driver/pini-bootstrap.ll"
 if grep -q -E '@[A-Za-z_]+__(String|Array)\(' "$guard_ir"; then
     echo " 行不通  [构建] 编译器产物含标准库扩展符号；构建须带 --no-stdlib" >&2
     exit 1
@@ -60,12 +60,12 @@ from pathlib import Path
 root = Path(sys.argv[1])
 started = int(sys.argv[2])
 
-binary = root / "bootstrap" / ".build" / "debug" / "bin" / "pini-bootstrap"
+binary = root / "bootstrap" / ".build" / "release" / "bin" / "pini-bootstrap"
 if not binary.is_file():
     print(f" 行不通  [构建] 缺产物 {binary}", file=sys.stderr)
     raise SystemExit(1)
 
-packages = root / "bootstrap" / ".build" / "debug" / "packages"
+packages = root / "bootstrap" / ".build" / "release" / "packages"
 lls = sorted(packages.glob("*/*.ll")) if packages.is_dir() else []
 fresh = [path for path in lls if path.stat().st_mtime >= started]
 total = sum(path.stat().st_size for path in lls)
@@ -94,7 +94,7 @@ for path in files:
     digest.update(b"\0")
     digest.update(path.read_bytes())
     digest.update(b"\0")
-stamp = root / "bootstrap" / ".build" / "debug" / "sources.sha256"
+stamp = root / "bootstrap" / ".build" / "release" / "sources.sha256"
 stamp.parent.mkdir(parents=True, exist_ok=True)
 stamp.write_text(digest.hexdigest() + "\n", encoding="utf-8")
 print(f"源码摘要 {digest.hexdigest()[:16]} 记于 {stamp.relative_to(root)}")

@@ -8,7 +8,7 @@ root="$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")"
 cd "$root" || exit 1
 . "$root/bootstrap/tools/runtime-lib.sh"
 
-gen1="${PINI_BOOTSTRAP_BIN:-$root/bootstrap/.build/debug/bin/pini-bootstrap}"
+gen1="${PINI_BOOTSTRAP_BIN:-$root/bootstrap/.build/release/bin/pini-bootstrap}"
 if [ ! -x "$gen1" ]; then
     echo " 行不通  [自洽] 缺首代产物 $gen1；先 bash bootstrap/tools/build.sh" >&2
     exit 1
