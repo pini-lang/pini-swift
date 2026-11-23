@@ -41,7 +41,8 @@ public final class ProgramRunner: DebugHookHost {
         let assembled = FrontEnd.assemble(module: module)
         try checkEntryConsistency(assembled)
         let checker = TypeChecker()
-        let errors = checker.checkCollecting(module: assembled)
+        let errors = checker.checkCollecting(
+            module: assembled, foreignConstantFailures: [:])
         guard errors.isEmpty else {
             throw ProgramRunError.typeCheck(
                 errors.map { ErrorFormatter.formatTypeError($0, source: "") }
@@ -79,7 +80,7 @@ public final class ProgramRunner: DebugHookHost {
         let assembled = package.assemblingStdlib()
         let checker = TypeChecker()
         try checkEntryConsistency(in: assembled)
-        try checker.check(package: assembled)
+        try checker.check(package: assembled, foreignConstantFailures: [:])
         // Same ordering rule as the module path: type errors first, "no main"
         // last, so the latter cannot mask the former.
         try requireMain(in: assembled)
@@ -126,7 +127,8 @@ public final class ProgramRunner: DebugHookHost {
     /// 解释器通道执行它、LLVM 通道发射它，故两侧不会各自漂移。不跑测试、不建执行器。
     public func lowerTests(module: Module) throws -> IRModule {
         let checker = TypeChecker()
-        let errors = checker.checkCollecting(module: module)
+        let errors = checker.checkCollecting(
+            module: module, foreignConstantFailures: [:])
         guard errors.isEmpty else {
             throw ProgramRunError.typeCheck(
                 errors.map { ErrorFormatter.formatTypeError($0, source: "") }
@@ -171,7 +173,7 @@ public final class ProgramRunner: DebugHookHost {
     /// （两通道共用一份降载），故不重复一遍。
     public func lowerTests(package: Package) throws -> IRModule {
         let checker = TypeChecker()
-        try checker.check(package: package)
+        try checker.check(package: package, foreignConstantFailures: [:])
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
         return try IRLowerer.lower(
             package: package, typeInference: checker.typeInference, requiresMain: false

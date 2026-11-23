@@ -310,6 +310,8 @@ public enum ErrorFormatter {
         case .injectedSymbolConflict(let symbol, let holder, _): return "注入符号 '\(symbol)' 与 \(holder) 冲突（D-4：裸名必须无歧义）；请改用显式别名并以 `别名.符号` 限定调用"
         case .foreignSignatureConflict(let name, let firstFile, _): return "外部符号 '\(name)' 的声明与 '\(firstFile)' 中的那份不一致（签名或标志不同）"
         case .foreignSymbolNotCIdentifier(let name, _): return "外部符号名 '\(name)' 不是合法 C 标识符"
+        case .untranslatedForeignMacro(let name, let reason, _):
+            return "'\(name)' 是 C 头文件里的宏，`pini bind` 没有翻译它：\(reason)"
         }
     }
 
@@ -340,6 +342,10 @@ public enum ErrorFormatter {
         case .foreignVarargsOnNonFunction(let symbol, _): return "`|varargs` 只对函数条目成立：`\(symbol)` 是数据符号"
         case .foreignVariadicArgument(let position, let type, let reason, _):
             return "变参的第 \(position) 个实参类型 `\(type)` 不能传给 C：\(reason)"
+        case .foreignMacroUnavailable(let name, let reason, _):
+            return "宏常量 '\(name)' 在这里取不到值：\(reason)"
+        case .foreignMacroTypeNotScalar(let name, let type, _):
+            return "`|macro` 的类型必须是标量：'\(name)' 声明为 '\(type)'"
         case .stringHandleOutsideCFace(let type, _):
             return "`\(type)` 只在 C 面上成立：写在外部函数声明里，或写在带 `|c` 条目的函数签名上"
         case .missingArgumentLabel(let callee, let param, _, _, _, _):

@@ -185,13 +185,14 @@ public final class DAPServer: @unchecked Sendable {
             launch = DebugRun(host: exec) {
                 if let pkg = launchPackage {
                     let checker = TypeChecker()
-                    try checker.check(package: pkg)
+                    try checker.check(package: pkg, foreignConstantFailures: [:])
                     checker.typeInference.environment?.persistAcrossScopesForCodegen = true
                     let ir = try IRLowerer.lower(package: pkg, typeInference: checker.typeInference)
                     try exec.run(module: ir)
                 } else if let mod = launchModule {
                     let checker = TypeChecker()
-                    let errors = checker.checkCollecting(module: mod)
+                    let errors = checker.checkCollecting(
+                        module: mod, foreignConstantFailures: [:])
                     guard errors.isEmpty else {
                         throw ProgramRunError.typeCheck(
                             errors.map { ErrorFormatter.formatTypeError($0, source: "") }

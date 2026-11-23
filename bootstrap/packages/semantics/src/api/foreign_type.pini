@@ -23,6 +23,7 @@ foreignVarargsOnNonFunction
 foreignFlagUnknown
 foreignFlagDuplicated
 foreignFlagMisplaced
+foreignMacroNotScalar
 
 ; 判型错误：类别、文件、源内字节偏移、符号名与理由；位置一律指向符号条目起点。
 (ForeignTypeError)
@@ -68,6 +69,8 @@ foreignTypeErrorName|func(_kind: ForeignTypeErrorKind,) -> (String,):
             return "外部标志重复"
         case foreignFlagMisplaced:
             return "外部标志用错位置"
+        case foreignMacroNotScalar:
+            return "宏常量的类型不是标量"
     return "外部判型错误"
 
 ; 同一类别判定：枚举相等比较不可用，按名称比。
@@ -95,6 +98,8 @@ foreignTypeErrorCode|func(_kind: ForeignTypeErrorKind,) -> (String,):
             return "E2-011"
         case foreignFlagMisplaced:
             return "E2-011"
+        case foreignMacroNotScalar:
+            return "E4-045"
     return "E4-028"
 
 ; 位置名：错误理由与测试断言共用。
@@ -135,6 +140,15 @@ isForeignScalarName|func(_name: String,) -> (Bool,):
     if _name == "I32" || _name == "I64" || _name == "U64":
         return true
     return _name == "F64" || _name == "Bool"
+
+; 语义类型是否是 C 标量：类别为标量且名字在七种之内。
+isForeignScalarType|func(pool: TypePool, id: I32,) -> (Bool,):
+    if id < 0 || id >= len(pool.entries):
+        return false
+    let entry = pool.entries[id]
+    if !isTypeClass(kind = entry.kind, expected = .typeClassScalar):
+        return false
+    return isForeignScalarName(entry.name)
 
 ; IR 没有对应宽度的四类：单列一条码，避免与「不是 C 标量」混同。
 isWidthOutsideIR|func(_name: String,) -> (Bool,):
@@ -298,6 +312,9 @@ checkForeignSymbol|func(out: ForeignTypeCheck, unit: CompilationUnit, unitIndex:
     let typeId = types.typeOf(unit = unitIndex, decl = declId)
     if typeId < 0:
         return working
+    ; 宏常量只收标量：与头文件无关，写法本身不成立，故在声明处报，不降级。
+    if !isFunction && containsFlagText(items = foreignFlagTexts(ast = unit.ast, bytes = bytes, decl = symbol), name = "macro") && !isForeignScalarType(pool = types.pool, id = typeId):
+        return appendForeignTypeError(out = working, unit = unit, offset = symbol.start, kind = .foreignMacroNotScalar, name = name, detail = "只收 I8 / U8 / I32 / I64 / U64 / F64 / Bool；字符串、指针与结构宏不进常量面")
     if !isFunction:
         return checkForeignValue(out = working, unit = unit, pool = types.pool, id = typeId, position = .foreignPositionData, name = name, offset = symbol.start)
     let entry = types.pool.entries[typeId]

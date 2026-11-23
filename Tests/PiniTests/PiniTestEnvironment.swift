@@ -126,7 +126,8 @@ extension PiniSourceLowering {
         let module = try FrontEnd.passes(module: parsed.module)
         try SemanticAnalyzer().analyze(module: module)
         let checker = TypeChecker()
-        let errors = checker.checkCollecting(module: module)
+        let errors = checker.checkCollecting(
+            module: module, foreignConstantFailures: [:])
         guard errors.isEmpty else { throw errors[0] }
         return (module, checker)
     }

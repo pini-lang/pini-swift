@@ -428,6 +428,13 @@ runBuild|func(root: String, stdlib: StdlibOption,) -> ():
         print("build-failed", path, "缺构建目录", directory)
         assert(false, "构建计划未落盘")
         return
-    writeFile(path, planFileText(filled.plan))
+    ; 宏段与跳过段归宿主求值：自举只做搬运，丢了它们等于让所有宏变成缺计划。
+    var tail = ""
+    if exists(path):
+        tail = planTailSections(text = readFile(path))
+    var text = planFileText(filled.plan)
+    if len(tail) > 0:
+        text = text + "\n" + tail
+    writeFile(path, text)
     print("build-ok", steps, filled.missing)
     return

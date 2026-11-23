@@ -231,7 +231,8 @@ public final class LSPServer {
             semanticWarnings = analyzer.warnings  // B2：warning 随诊断一起发布（severity: .warning）
 
             let checker = TypeChecker()
-            typeErrors = checker.checkCollecting(module: module)
+            typeErrors = checker.checkCollecting(
+                module: module, foreignConstantFailures: [:])
 
             // 保存 scope 供补全/跳转使用
             documentScopes[uri] = analyzer.symbolTable.current
