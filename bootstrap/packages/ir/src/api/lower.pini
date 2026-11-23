@@ -276,6 +276,9 @@ lowerDeclBody|func(state: LowerState, unit: CompilationUnit, declId: I32,) -> (L
     if isGivenDeclCode(decl.kind):
         return lowerGivenMaker(state = out, unit = unit, declId = declId)
     if isTypeDecl(decl) || isExtensionDeclCode(decl.kind):
+        ; 带类型形参的类型块与扩展块是模板：成员体由实例表另降，这里不进函数表。
+        if len(decl.generic) > 0:
+            return out
         let owner = declName(unit = unit, bytes = out.bytes, decl = decl)
         var i = 0
         while i < len(decl.kids):

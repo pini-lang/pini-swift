@@ -7,6 +7,52 @@ _module_loader = "../../../module-loader"
 name: String = ""
 typeId: I32 = -1
 
+; 形参绑定表：池随表带回；同名形参复用既有不透明条目，签名与体因此认同一型。
+(TypeParams)
+pool: TypePool = TypePool()
+bindings: Array<GenericBinding> = []
+
+; 收集形参：逐单元扫泛型声明，形参名各驻留一条不透明类型；已驻留的按名字复用。
+collectTypeParams|func(units: Array<CompilationUnit>, pool: TypePool,) -> (TypeParams,):
+    var out = TypeParams()
+    out.pool = pool
+    var u = 0
+    while u < len(units):
+        let unit = units[u]
+        let bytes = unitBytes(unit)
+        var d = 0
+        while d < len(unit.ast.decls):
+            let decl = unit.ast.decls[d]
+            var g = 0
+            while g < len(decl.generic):
+                let param = unit.ast.decls[decl.generic[g]]
+                let name = decodeRange(bytes = bytes, start = param.nameStart, end = param.nameEnd)
+                var known = -1
+                var b = 0
+                while b < len(out.bindings):
+                    if out.bindings[b].name == name:
+                        known = out.bindings[b].typeId
+                    b = b + 1
+                if known < 0:
+                    var e = 0
+                    while e < len(out.pool.entries):
+                        let entry = out.pool.entries[e]
+                        if isTypeClass(kind = entry.kind, expected = .typeClassOpaque) && entry.name == name:
+                            known = e
+                        e = e + 1
+                if known < 0:
+                    let inserted = internNamed(pool = out.pool, kind = .typeClassOpaque, name = name)
+                    out.pool = inserted.pool
+                    known = inserted.root
+                var bind = GenericBinding()
+                bind.name = name
+                bind.typeId = known
+                out.bindings = out.bindings.append(bind)
+                g = g + 1
+            d = d + 1
+        u = u + 1
+    return out
+
 ; 类型世界：全部编译单元与符号表；具名类型查声明、字段环查成员体都从这里取。
 ; `genericBindings` 非空时解析器先认类型形参名。
 (TypeWorld)
@@ -537,6 +583,9 @@ resolvePackage|func(units: Array<CompilationUnit>, table: SymbolTable,) -> (Type
     world.units = sortedUnits(units)
     world.table = table
     var stage = TypePass()
+    let params = collectTypeParams(units = world.units, pool = stage.pool)
+    stage.pool = params.pool
+    world.genericBindings = params.bindings
     var i = 0
     while i < len(world.units):
         stage = resolveUnit(stage = stage, world = world, unitIndex = i)

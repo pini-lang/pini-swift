@@ -98,6 +98,7 @@ formatConstants|func() -> (Array<String>,):
     out = out.append("@fmt_comma = private constant [3 x i8] c\", \\00\"")
     out = out.append("@fmt_some_open = private constant [6 x i8] c\"some(\\00\"")
     out = out.append("@fmt_rparen = private constant [2 x i8] c\")\\00\"")
+    out = out.append("@fmt_lparen = private constant [2 x i8] c\"(\\00\"")
     out = out.append("@fmt_none = private constant [5 x i8] c\"none\\00\"")
     out = out.append("@fmt_lbrace = private constant [2 x i8] c\"{\\00\"")
     out = out.append("@fmt_rbrace = private constant [2 x i8] c\"}\\00\"")

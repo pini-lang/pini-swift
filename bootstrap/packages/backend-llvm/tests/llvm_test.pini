@@ -1467,7 +1467,7 @@ _backend_kit = "../../backend-kit"
     assert(发射含子串(text = result.text, needle = "@fmt_none"), "none 分支应出字面")
     return
 
-; 枚举的打印：没有逐值通道，按整数兜底会印标签，须记缺口。
+; 枚举的打印：没有用例表就印不出用例名，按整数兜底会印标签，须记缺口。
 打印枚举记缺口|test() -> ():
     var module = IrModule()
     var pool = IrTypePool()
@@ -1502,7 +1502,7 @@ _backend_kit = "../../backend-kit"
     var hit = false
     var i = 0
     while i < len(result.gaps):
-        if 发射含子串(text = result.gaps[i], needle = "打印带标签值"):
+        if 发射含子串(text = result.gaps[i], needle = "打印枚举"):
             hit = true
         i = i + 1
     assert(hit, "缺口不是打印面")
@@ -1567,4 +1567,35 @@ _backend_kit = "../../backend-kit"
     assert(发射含子串(text = result.text, needle = "define i32 @__adapter_x(ptr %env, i32 %p0)"), "适配器按闭包协议出签名")
     assert(发射含子串(text = result.text, needle = "%r = call i32 @x(i32 %p0)"), "适配器体转发到真实函数")
     assert(发射含子串(text = result.text, needle = "{ ptr @__adapter_x, ptr null }"), "代码槽取适配器，环境槽为空")
+    return
+
+; 数学内建：abs 摊成比较加取负，目标不连数学库；同名外部声明在时仍以声明为准。
+数学内建展开|test() -> ():
+    var module = IrModule()
+    module.types = 发射造类型池()
+    var nodes = IrNodePool()
+    var literal = irMakeNode(kind = tagOfName(name = "intConst"), typeId = 0)
+    literal.intValue = -5
+    let placedLiteral = irAppendNode(pool = nodes, node = literal)
+    nodes = placedLiteral.pool
+    var called = irMakeNode(kind = tagOfName(name = "call"), typeId = 0)
+    called.text = 0
+    called.kids = [placedLiteral.id]
+    let placedCalled = irAppendNode(pool = nodes, node = called)
+    nodes = placedCalled.pool
+    var back = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    back.kids = [placedCalled.id]
+    let placedBack = irAppendNode(pool = nodes, node = back)
+    nodes = placedBack.pool
+    module.nodes = nodes
+    module.texts = module.texts.append("abs")
+    var fn = IrFunction()
+    fn.name = "main"
+    fn.returnType = 0
+    fn.body = [placedBack.id]
+    module.functions = module.functions.append(fn)
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    assert(!result.failed, "数学内建应发得出来")
+    assert(发射含子串(text = result.text, needle = "icmp slt i32"), "abs 应按比较展开")
+    assert(发射含子串(text = result.text, needle = "select i1"), "abs 应按选择取值")
     return

@@ -191,6 +191,16 @@ makeMemberWorld|func(units: Array<CompilationUnit>, table: SymbolTable, types: T
     out.functions = builtinFunctionTable()
     out.types.pool = internNominalTypes(units = units, pool = types.pool)
     out.compositions = collectCompositions(units = units)
+    out = attachTypeParams(world = out)
+    return out
+
+; 类型形参绑定：泛型声明的每个形参名驻留成不透明类型，模板体因此有型可解。
+; 与签名解析共用同一张收集表：同名形参解析到同一条条目，签名与体不会各认一型。
+attachTypeParams|func(world: MemberWorld,) -> (MemberWorld,):
+    var out = world
+    let params = collectTypeParams(units = out.units, pool = out.types.pool)
+    out.types.pool = params.pool
+    out.genericBindings = params.bindings
     return out
 
 ; 挂标签：同一类型重复挂时后挂的整串替换，位置即分量序号。
