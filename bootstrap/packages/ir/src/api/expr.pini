@@ -27,6 +27,8 @@ lowerClosure|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: 
     closure.decls = done.frame.decls
     closure.externData = done.frame.externData
     closure.externs = done.frame.externs
+    closure.macros = done.frame.macros
+    closure.unitPackages = done.frame.unitPackages
     closure.outerLocals = done.frame.locals
     closure.closureSerial = serial + 1
     var params: Array<IrParam> = []
@@ -546,6 +548,16 @@ lowerIdentifier|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, ma
             return missType(out = out, unit = unit, id = id, bytes = bytes)
     let expr = unit.ast.exprAt(id)
     let name = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
+    ; 宏常量：有值直接出字面量，没有存储也没有取址；未求值与缺计划都在读点报缺口。
+    let pkg = packageNameAt(items = out.frame.unitPackages, index = unitIndex)
+    let macroAt = findIrMacro(items = out.frame.macros, package = pkg, name = name)
+    if macroAt >= 0:
+        let macro = out.frame.macros[macroAt]
+        if !macro.resolved:
+            return missExpr(out = out, unit = unit, id = id, what = "宏常量 '" + name + "' 在这里取不到值：" + macroReasonLine(reason = macro.reason, detail = macro.detail))
+        return lowerMacroValue(out = out, map = map, typeId = typeId, macro = macro)
+    if isForeignMacroSymbol(frame = out.frame, name = name):
+        return missExpr(out = out, unit = unit, id = id, what = "宏常量 '" + name + "' 在这里取不到值：" + macroReasonLine(reason = "missingPlan", detail = ""))
     ; 顶层函数名作值：既不在帧里也不是外部数据，发适配器上的函数值节点。
     if findIrLocal(frame = out.frame, name = name) < 0 && findOuterLocal(frame = out.frame, name = name) < 0 && isTopFunctionName(frame = out.frame, name = name):
         let adapter = functionAdapterFor(frame = out.frame, map = map, name = name)
@@ -590,6 +602,48 @@ lowerIdentifier|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, ma
     done.pool = inserted.pool
     done.id = inserted.id
     return done
+
+; 宏查找：包名与名字都相等才命中，未命中答 -1；同名宏因此各取本包那一行。
+findIrMacro|func(items: Array<IrMacro>, package: String, name: String,) -> (I32,):
+    var i = 0
+    while i < len(items):
+        if items[i].package == package && items[i].name == name:
+            return i
+        i = i + 1
+    return -1
+
+; 宏值降载：按声明类型出整型、浮点或布尔常量；值文本已由计划定形。
+lowerMacroValue|func(out: LowerExpr, map: TypeMap, typeId: I32, macro: IrMacro,) -> (LowerExpr,):
+    var node = irMakeNode(kind = irExprTag(.irIntConst), typeId = typeId)
+    let type = irTypeAt(pool = map.pool, id = typeId)
+    if irTypeTag(type.kind) == irTypeTag(.irTypeF64):
+        node = irMakeNode(kind = irExprTag(.irFloatConst), typeId = typeId)
+        node.floatValue = unsafe bk_parse_double(macro.value)
+    elif irTypeTag(type.kind) == irTypeTag(.irTypeBoolean):
+        node = irMakeNode(kind = irExprTag(.irBoolConst), typeId = typeId)
+        if macro.value == "1":
+            node.intValue = 1
+    else:
+        node.intValue = macroIntValue(text = macro.value)
+    let inserted = irAppendNode(pool = out.pool, node = node)
+    var done = out
+    done.pool = inserted.pool
+    done.id = inserted.id
+    return done
+
+; 宏值里的整数允许前导负号：计划存的是值，不是源里那个正数拼写。
+macroIntValue|func(text: String,) -> (I64,):
+    if len(text) > 0 && text.substring(0, 1) == "-":
+        return -intSpellingValue(text = text.substring(1, len(text)))
+    return intSpellingValue(text = text)
+
+; 声明为宏却没有计划条目：它是 `|macro` 条目，不是可 dlsym 的数据符号。
+isForeignMacroSymbol|func(frame: LowerFrame, name: String,) -> (Bool,):
+    let symbol = lookupTopByName(index = frame.world.symbols, name = name)
+    if symbol < 0:
+        return false
+    let entry = frame.world.table.symbolAt(symbol)
+    return entry.isForeign && containsFlagText(items = entry.foreignFlags, name = "macro")
 
 ; 二元：短路逻辑单独成节点，其余按值二元；带标签实参的 `=` 不是运算，报缺口。
 lowerBinary|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map: TypeMap, types: ExprTypes, unitIndex: I32, id: I32,) -> (LowerExpr,):

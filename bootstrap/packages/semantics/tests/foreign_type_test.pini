@@ -48,6 +48,16 @@ check: ForeignTypeCheck = ForeignTypeCheck()
     assert(采样.types.textOf(unit = 0, decl = 块.kids[3]) == "(String,) -> StringHandle", "句柄签名文本")
     return
 
+; 宏只收标量：指针宏在声明处报 E4-045，且只报这一条。
+宏只收标量|test() -> ():
+    let 文本 = "[libc|foreign]\nP|macro: *U8\n"
+    let 单元 = 造判型单元(path = "packages/p/src/api/a.pini", text = 文本)
+    let 采样 = 判型采样(units = [单元])
+    assert(采样.check.errorCount() == 1, "应只报一条，实得 " + 判型摘要(采样.check))
+    assert(isForeignTypeError(error = 采样.check.errorAt(0), kind = .foreignMacroNotScalar), "类别应为宏非标量")
+    assert(foreignTypeErrorCode(采样.check.errorAt(0).kind) == "E4-045", "码应为 E4-045")
+    return
+
 ; 宽度四类：I16 / U16 / U32 / F32 各报宽度码，不落进「不可表示」。
 宽度四类|test() -> ():
     let 文本 = "[libc|foreign]\na: I16\nb: U16\nc: U32\nd: F32\n"

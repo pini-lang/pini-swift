@@ -3,7 +3,7 @@
 
 ; 已登记的诊断码数量，供门禁核对表规模。
 diagnosticCodeCount|func() -> (I32,):
-    return 117
+    return 120
 
 ; 码的消息模板；未登记答空串。占位符由调用方按诊断负载填充。
 diagnosticMessage|func(_code: String,) -> (String,):
@@ -167,6 +167,12 @@ diagnosticMessage|func(_code: String,) -> (String,):
         return "`weak` 的操作数必须是对象：`{type}` 没有弱引用旁表"
     if _code == "E4-043":
         return "`UnownedRef` 的操作数必须是对象：`{type}` 没有可借的对象箱"
+    if _code == "E4-044":
+        return "宏常量 '{name}' 在这里取不到值：{reason}"
+    if _code == "E4-045":
+        return "`|macro` 的类型必须是标量：'{name}' 声明为 '{type}'"
+    if _code == "E4-046":
+        return "'{name}' 是 C 头文件里的宏，`pini bind` 没有翻译它：{reason}"
     if _code == "E5-001":
         return "未定义变量 '{name}'"
     if _code == "E5-002":
@@ -309,6 +315,12 @@ diagnosticSuggestion|func(_code: String,) -> (String,):
         return "只对对象取弱引用；结构、枚举、标量与函数值按值或按引用共享，不需要弱引用"
     if _code == "E4-043":
         return "只对对象取无主引用；结构、枚举、标量与函数值没有计数箱，按值或按引用共享即可"
+    if _code == "E4-044":
+        return "值只能来自 C 头文件：补 `[ffi].headers`，或写一个 shim 函数；确定不用就删掉这条声明"
+    if _code == "E4-045":
+        return "改成 I8 / U8 / I32 / I64 / U64 / F64 / Bool 之一；C 的字符串与结构宏不进常量面"
+    if _code == "E4-046":
+        return "函数式宏要写成 C shim 再声明为外部函数；Pini 侧不展开宏"
     if _code == "E5-001":
         return "你是想说 '{closest}' 吗？"
     if _code == "E5-019":

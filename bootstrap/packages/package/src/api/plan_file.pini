@@ -33,6 +33,20 @@ planFileText|func(_plan: BuildPlan,) -> (String,):
         i = i + 1
     return text
 
+; 结果段原文：宏段与跳过段由宿主求值写入，自举构建不重算，原样搬回新计划。
+; 取第一个 [[macro]] 或 [[skip]] 起的后缀；没有结果段答空串。
+planTailSections|func(text: String,) -> (String,):
+    let macroAt = text.indexOf("\n[[macro]]")
+    let skipAt = text.indexOf("\n[[skip]]")
+    var at = -1
+    if macroAt >= 0:
+        at = macroAt + 1
+    if skipAt >= 0 && (at < 0 || skipAt + 1 < at):
+        at = skipAt + 1
+    if at < 0:
+        return ""
+    return text.substring(at, len(text))
+
 ; 一条步骤：包名、步骤名、头文件、包含路径、定义、产物与指纹。
 stepText|func(pkg: PackagePlan, one: BuildStep,) -> (String,):
     var text = "\n[[step]]\n"
@@ -105,12 +119,33 @@ package: String = ""
 name: String = ""
 output: String = ""
 
-; 计划读取结果：存在标记、不合法原因与两张条目表；原因非空时条目表不可用。
+; 计划里的宏常量：state 为 value 时 value 有值；unresolved 时 reason 与 detail 说原因。
+; 自举侧不启动 C 编译器，这张表是它唯一的宏值来源。
+(PlanMacro)
+package: String = ""
+name: String = ""
+state: String = ""
+type: String = ""
+value: String = ""
+reason: String = ""
+detail: String = ""
+
+; 计划里的生成面跳过项：`pini bind` 见过这个名字，但没有为它产生声明。
+; 只收宏；其余跳过项没有「本该有值却没有」的语义。
+(PlanSkip)
+package: String = ""
+stepName: String = ""
+name: String = ""
+reason: String = ""
+
+; 计划读取结果：存在标记、不合法原因与四张条目表；原因非空时条目表不可用。
 (PlanRead)
 present: Bool = false
 broken: String = ""
 packages: Array<PlanEntry> = []
 steps: Array<PlanEntryStep> = []
+macros: Array<PlanMacro> = []
+skips: Array<PlanSkip> = []
 
 ; 解析计划文本：版本不符或形状非法答不合法原因；条目按出现序保留，不做跨条目校验。
 parsePlanText|func(text: String, path: String,) -> (PlanRead,):
@@ -138,6 +173,30 @@ parsePlanText|func(text: String, path: String,) -> (PlanRead,):
         one.name = tomlRowValue(doc = doc, table = "step", row = r, key = "name")
         one.output = tomlRowValue(doc = doc, table = "step", row = r, key = "output")
         out.steps = out.steps.append(one)
+        r = r + 1
+    r = 0
+    while r < tomlRowCount(doc = doc, table = "macro"):
+        var one = PlanMacro()
+        one.package = tomlRowValue(doc = doc, table = "macro", row = r, key = "package")
+        one.name = tomlRowValue(doc = doc, table = "macro", row = r, key = "name")
+        one.state = tomlRowValue(doc = doc, table = "macro", row = r, key = "state")
+        one.type = tomlRowValue(doc = doc, table = "macro", row = r, key = "type")
+        one.value = tomlRowValue(doc = doc, table = "macro", row = r, key = "value")
+        one.reason = tomlRowValue(doc = doc, table = "macro", row = r, key = "reason")
+        one.detail = tomlRowValue(doc = doc, table = "macro", row = r, key = "detail")
+        if one.state != "value" && one.state != "unresolved":
+            out.broken = "宏段形状不合法"
+            return out
+        out.macros = out.macros.append(one)
+        r = r + 1
+    r = 0
+    while r < tomlRowCount(doc = doc, table = "skip"):
+        var one = PlanSkip()
+        one.package = tomlRowValue(doc = doc, table = "skip", row = r, key = "package")
+        one.stepName = tomlRowValue(doc = doc, table = "skip", row = r, key = "step")
+        one.name = tomlRowValue(doc = doc, table = "skip", row = r, key = "name")
+        one.reason = tomlRowValue(doc = doc, table = "skip", row = r, key = "reason")
+        out.skips = out.skips.append(one)
         r = r + 1
     return out
 

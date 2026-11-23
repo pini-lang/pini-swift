@@ -100,6 +100,32 @@
     assert(len(坏.broken) > 0, "版本不符应判不合法")
     return
 
+; 宏段：state 区分有值与未求值，回读逐项对上；未知状态判不合法。
+计划宏段|test() -> ():
+    let 文本 = "[plan]\nversion = 1\n\n[[macro]]\npackage = \"p\"\nname = \"EOF\"\nstate = \"value\"\ntype = \"I32\"\nvalue = \"-1\"\n\n[[macro]]\npackage = \"p\"\nname = \"getc\"\nstate = \"unresolved\"\ntype = \"I32\"\nreason = \"functionLike\"\ndetail = \"(*__sgetc())\"\n\n[[skip]]\npackage = \"p\"\nstep = \"s\"\nname = \"DOUBLE\"\nreason = \"函数式宏要实参\"\n"
+    let 读 = parsePlanText(text = 文本, path = "plan.toml")
+    assert(len(读.broken) == 0, "宏段应可读：" + 读.broken)
+    assert(len(读.macros) == 2, "两条宏条目")
+    assert(读.macros[0].name == "EOF", "名字回读")
+    assert(读.macros[0].state == "value", "状态回读")
+    assert(读.macros[0].value == "-1", "值回读")
+    assert(读.macros[1].reason == "functionLike", "理由回读")
+    assert(读.macros[1].detail == "(*__sgetc())", "细节回读")
+    assert(len(读.skips) == 1, "一条跳过项")
+    assert(读.skips[0].name == "DOUBLE", "跳过名回读")
+    let 坏 = parsePlanText(text = "[plan]\nversion = 1\n\n[[macro]]\npackage = \"p\"\nname = \"X\"\nstate = \"maybe\"\ntype = \"I32\"\n", path = "plan.toml")
+    assert(len(坏.broken) > 0, "未知状态应判不合法")
+    return
+
+; 结果段搬运：宏段原文原样保留，没有结果段答空串。
+计划结果段|test() -> ():
+    let 计划 = planWorkspace("./fixtures/build-script")
+    let 头 = planFileText(计划)
+    let 尾 = planTailSections(text = 头 + "\n[[macro]]\npackage = \"p\"\nname = \"EOF\"\nstate = \"value\"\ntype = \"I32\"\nvalue = \"-1\"\n")
+    assert(尾 == "[[macro]]\npackage = \"p\"\nname = \"EOF\"\nstate = \"value\"\ntype = \"I32\"\nvalue = \"-1\"\n", "结果段应从宏头起原样搬出")
+    assert(len(planTailSections(text = 头)) == 0, "没有结果段答空串")
+    return
+
 ; 测试助手：错误表首条文本；空表答空串，用于断言里的失败信息。
 首条错误|func(_errors: Array<ManifestError>,) -> (String,):
     if len(_errors) == 0:

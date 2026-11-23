@@ -1006,12 +1006,13 @@ func givenCycleWarnings(
 func givenCycleWarnings(module: Module, checker: TypeChecker) -> [SemanticWarning] {
     checker.typeInference.environment?.persistAcrossScopesForCodegen = true
     /// 宏常量求不出就照样跳过环检测：这条通道本来就是 best-effort，缺值不该把它变成错误。
+    /// 求值器只在工具链故障时抛，单条失败已在失败表里，这里只用得到有值的那半。
     guard
-        let constants = try? evaluateForeignMacros(
+        let macros = try? evaluateForeignMacros(
             symbols: foreignSymbols(in: module), config: .default),
         let ir = try? IRLowerer.lower(
             module: module, typeInference: checker.typeInference,
-            foreignConstants: constants, requiresMain: false)
+            foreignConstants: macros.values, requiresMain: false)
     else { return [] }
     return givenCycleWarnings(
         references: ir.givenReferences, calls: ir.callReferences,
@@ -1022,12 +1023,12 @@ func givenCycleWarnings(module: Module, checker: TypeChecker) -> [SemanticWarnin
 func givenCycleWarnings(package: Package, checker: TypeChecker) -> [SemanticWarning] {
     checker.typeInference.environment?.persistAcrossScopesForCodegen = true
     guard
-        let constants = try? evaluateForeignMacros(
+        let macros = try? evaluateForeignMacros(
             symbols: package.fileUnits.flatMap { foreignSymbols(in: $0.module) },
             config: .default),
         let ir = try? IRLowerer.lower(
             package: package, typeInference: checker.typeInference,
-            foreignConstants: constants, requiresMain: false)
+            foreignConstants: macros.values, requiresMain: false)
     else { return [] }
     return givenCycleWarnings(
         references: ir.givenReferences, calls: ir.callReferences,
@@ -1063,8 +1064,13 @@ private func runIREngine(
     module: Module, source: String, programBase: String?,
     argv: [String] = []
 ) throws {
+    /// 单文件没有清单：失败表恒为「缺头文件」，不启动工具链；求值只产出空值表与理由。
+    let macros =
+        (try? evaluateForeignMacros(symbols: foreignSymbols(in: module), config: .default))
+        ?? ForeignMacroEvaluation(values: [], failures: [:])
     let checker = TypeChecker()
-    let typeErrors = checker.checkCollecting(module: module)
+    let typeErrors = checker.checkCollecting(
+        module: module, foreignConstantFailures: macros.failures)
     if !typeErrors.isEmpty {
         for e in typeErrors {
             printError(ErrorFormatter.formatTypeError(e, source: source))
@@ -1076,8 +1082,7 @@ private func runIREngine(
     checker.typeInference.environment?.persistAcrossScopesForCodegen = true
     let irModule = try IRLowerer.lower(
         module: module, typeInference: checker.typeInference,
-        foreignConstants: try evaluateForeignMacros(
-            symbols: foreignSymbols(in: module), config: .default))
+        foreignConstants: macros.values)
     let executor = IRExecutor(programBase: programBase)
     executor.processArguments = argv
     try executor.run(module: irModule)
@@ -1090,13 +1095,12 @@ private func runIRPackageEngine(
     package: Package, moduleRoot: String,
     typeInference: TypeInference,
     ffiConfig: FFIConfig,
+    foreignConstants: [IRForeignConstant],
     argv: [String] = []
 ) throws {
     let irModule = try IRLowerer.lower(
         package: package, typeInference: typeInference,
-        foreignConstants: try evaluateForeignMacros(
-            symbols: package.fileUnits.flatMap { foreignSymbols(in: $0.module) },
-            config: ffiConfig))
+        foreignConstants: foreignConstants)
     let executor = IRExecutor(programBase: absoluteProgramBase(moduleRoot), ffiConfig: ffiConfig)
     executor.processArguments = argv
     try executor.run(module: irModule)
@@ -1169,8 +1173,11 @@ func runRunPath(_ path: String, argv: [String] = []) {
         let analyzer = SemanticAnalyzer()
         try analyzer.analyze(package: pkg)
         emitSemanticWarnings(analyzer)
+        let config = foreignConfigFor(root: path, manifest: manifest)
+        let macros = try evaluateForeignMacros(
+            symbols: pkg.fileUnits.flatMap { foreignSymbols(in: $0.module) }, config: config)
         let checker = TypeChecker()
-        try checker.check(package: pkg)
+        try checker.check(package: pkg, foreignConstantFailures: macros.failures)
         // 降载会在 checker 弹出作用域之后重推 match scrutinee 的类型，
         // 需持久表兜底（与单文件、emit、compile 三条路径同款）。
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
@@ -1178,7 +1185,7 @@ func runRunPath(_ path: String, argv: [String] = []) {
         try runIRPackageEngine(
             package: pkg, moduleRoot: path,
             typeInference: checker.typeInference,
-            ffiConfig: foreignConfigFor(root: path, manifest: manifest), argv: argv)
+            ffiConfig: config, foreignConstants: macros.values, argv: argv)
     } catch {
         printError(formatCLIError(error: error, source: nil)); exit(1)
     }
@@ -1256,8 +1263,13 @@ private func runDebugFile(_ path: String) {
     }
     let module = parseOrReport(source: source, fileName: path)
     let sources = [path: source]
+    /// 单文件没有清单：求值器直接给出「缺头文件」失败表，不启动工具链。
+    let macros =
+        (try? evaluateForeignMacros(symbols: foreignSymbols(in: module), config: .default))
+        ?? ForeignMacroEvaluation(values: [], failures: [:])
     let checker = TypeChecker()
-    let errors = checker.checkCollecting(module: module)
+    let errors = checker.checkCollecting(
+        module: module, foreignConstantFailures: macros.failures)
     guard errors.isEmpty else {
         printError(
             errors.map { ErrorFormatter.formatTypeError($0, source: source) }
@@ -1270,8 +1282,7 @@ private func runDebugFile(_ path: String) {
         run: DebugRun(host: executor) {
             let ir = try IRLowerer.lower(
                 module: module, typeInference: checker.typeInference,
-                foreignConstants: try evaluateForeignMacros(
-                    symbols: foreignSymbols(in: module), config: .default))
+                foreignConstants: macros.values)
             try executor.run(module: ir)
         }, sources: sources, primaryName: path)
 }
@@ -1289,19 +1300,21 @@ private func runDebugDirectory(_ path: String) {
                 sources[unit.fileName] = src
             }
         }
+        let config = foreignConfigFor(root: path, manifest: manifest)
+        let macros = try evaluateForeignMacros(
+            symbols: pkg.fileUnits.flatMap { foreignSymbols(in: $0.module) },
+            config: config)
         let checker = TypeChecker()
-        try checker.check(package: pkg)
+        try checker.check(package: pkg, foreignConstantFailures: macros.failures)
         checker.typeInference.environment?.persistAcrossScopesForCodegen = true
         let executor = IRExecutor(
             programBase: absoluteProgramBase(path),
-            ffiConfig: foreignConfigFor(root: path, manifest: manifest))
+            ffiConfig: config)
         startDebugger(
             run: DebugRun(host: executor) {
                 let ir = try IRLowerer.lower(
                     package: pkg, typeInference: checker.typeInference,
-                    foreignConstants: try evaluateForeignMacros(
-                        symbols: pkg.fileUnits.flatMap { foreignSymbols(in: $0.module) },
-                        config: foreignConfigFor(root: path, manifest: manifest)))
+                    foreignConstants: macros.values)
                 try executor.run(module: ir)
             }, sources: sources, primaryName: sources.keys.first ?? path)
     } catch {
@@ -1347,12 +1360,22 @@ func foreignSymbols(in module: Module) -> [ForeignSymbol] {
 }
 
 /// 求值宏常量：没有 `|macro` 的模块不碰工具链，返回值恒空。
-/// check 与运行路径都先过这一关，免得「check 通过、run 才报宏展不开」。
+/// 单条失败不抛，进失败表随声明留给读点；只有工具链故障才抛。
 func evaluateForeignMacros(
     symbols: [ForeignSymbol], config: FFIConfig
-) throws -> [IRForeignConstant] {
-    guard symbols.contains(where: { $0.flags.contains("macro") }) else { return [] }
+) throws -> ForeignMacroEvaluation {
+    guard symbols.contains(where: { $0.flags.contains("macro") }) else {
+        return ForeignMacroEvaluation(values: [], failures: [:])
+    }
     return try ForeignMacroEvaluator.evaluate(symbols: symbols, config: config)
+}
+
+/// 未求值的提示行：`check` 通过也要说一声，避免退成 Swift 那种静默跳过。
+/// 按名字排序，行数恒为零或一；不进诊断流，不改退出码。
+func foreignMacroHintLines(_ failures: [String: ForeignConstantFailure]) -> [String] {
+    guard !failures.isEmpty else { return [] }
+    let names = failures.keys.sorted()
+    return ["注意 \(names.count) 条宏常量未求值：\(names.joined(separator: "、"))。用到时才报错。"]
 }
 
 func checkSingleFileDiagnostics(source: String, fileName: String, withStdlib: Bool = true) -> FileCheckResult {
@@ -1373,20 +1396,18 @@ func checkSingleFileDiagnostics(source: String, fileName: String, withStdlib: Bo
     // 类型检查阶段（P2-4 收尾）：收集模式一次性同报多错；
     // 仅在无语义错误时进入（语义层已能多错同报，类型层不重复污染）。
     if semanticErrors.isEmpty {
+        /// 单文件没有清单：求值器直接给出「缺头文件」失败表，不启动工具链。
+        let macros =
+            (try? evaluateForeignMacros(symbols: foreignSymbols(in: module), config: .default))
+            ?? ForeignMacroEvaluation(values: [], failures: [:])
         let checker = TypeChecker()
-        let typeErrors = checker.checkCollecting(module: module)
+        let typeErrors = checker.checkCollecting(
+            module: module, foreignConstantFailures: macros.failures)
         result.diagnostics += typeErrors.map {
             ErrorFormatter.formatTypeError($0, source: source)
         }
         if typeErrors.isEmpty {
-            /// 宏常量：单文件没有 `pini.toml`，声明了就只能报「缺 headers」—— 值没有别的来源。
-            do {
-                _ = try evaluateForeignMacros(
-                    symbols: foreignSymbols(in: module), config: .default)
-            } catch {
-                result.diagnostics.append("Error: \(error)")
-                result.hasBlockingDiagnostics = true
-            }
+            result.diagnostics += foreignMacroHintLines(macros.failures)
             for w in givenCycleWarnings(module: module, checker: checker) {
                 result.diagnostics.append(renderedWarning(w, source: source))
             }
@@ -1615,8 +1636,11 @@ private func gateAndRunTests(
         let analyzer = SemanticAnalyzer()
         try analyzer.analyze(package: pkg)
         emitSemanticWarnings(analyzer)
+        let macros = try evaluateForeignMacros(
+            symbols: pkg.fileUnits.flatMap { foreignSymbols(in: $0.module) },
+            config: ffiConfig)
         let checker = TypeChecker()
-        try checker.check(package: pkg)
+        try checker.check(package: pkg, foreignConstantFailures: macros.failures)
     } catch let err as SemanticError {
         handleSemanticError(err); exit(1)
     } catch let err as TypeError {
@@ -1893,16 +1917,18 @@ func runCheckPath(_ path: String, withStdlib: Bool = true) {
             let analyzer = SemanticAnalyzer()
             try analyzer.analyze(package: pkg)
             emitSemanticWarnings(analyzer)
-            let checker = TypeChecker()
-            try checker.check(package: pkg)
-            /// 宏常量在检查阶段就求值：值展不开是声明或配置的问题，不该等到运行才显形。
-            _ = try evaluateForeignMacros(
+            /// 先求值再检查：未求值的宏只在使用点报，检查期要能读到失败表。
+            /// 失败不抛，未使用即零诊断；通过后补一行提示，避免静默。
+            let macros = try evaluateForeignMacros(
                 symbols: pkg.fileUnits.flatMap { foreignSymbols(in: $0.module) },
                 config: foreignConfigFor(root: path, manifest: manifest))
+            let checker = TypeChecker()
+            try checker.check(package: pkg, foreignConstantFailures: macros.failures)
             for warning in givenCycleWarnings(package: pkg, checker: checker) {
                 emitSemanticWarning(warning)
             }
             print("检查通过（模块 \(pkg.name)，\(pkg.fileUnits.count) 个文件）：\(path)")
+            for line in foreignMacroHintLines(macros.failures) { print(line) }
             CommentStyleHint.emit()
         } catch let err as SemanticError {
             handleSemanticError(err); exit(1)
@@ -2019,8 +2045,11 @@ private func lowerSingleFile(
         }
         exit(1)
     }
+    let macros = try evaluateForeignMacros(
+        symbols: foreignSymbols(in: module), config: .default)
     let checker = TypeChecker()
-    let typeErrors = checker.checkCollecting(module: module)
+    let typeErrors = checker.checkCollecting(
+        module: module, foreignConstantFailures: macros.failures)
     if !typeErrors.isEmpty {
         for e in typeErrors {
             FileHandle.standardError.write(Data((ErrorFormatter.formatTypeError(e, source: source) + "\n").utf8))
@@ -2031,8 +2060,7 @@ private func lowerSingleFile(
     checker.typeInference.environment?.persistAcrossScopesForCodegen = true
     let irModule = try IRLowerer.lower(
         module: module, typeInference: checker.typeInference,
-        foreignConstants: try evaluateForeignMacros(
-            symbols: foreignSymbols(in: module), config: .default),
+        foreignConstants: macros.values,
         requiresMain: policy.requiresMain(hasCSurface: hasCSurface(module.exports)))
     /// 结构不变量先过一遍：后端读 IR 时按它们取槽、取字段、取用例，破了就是进程信号而不是诊断。
     try IRValidator.check(irModule)
@@ -2102,17 +2130,17 @@ private func lowerPackage(
 ) throws -> IRModule {
     let analyzer = SemanticAnalyzer()
     try analyzer.analyze(package: package)
+    let config = foreignConfigFor(
+        root: moduleRoot, manifest: try? FileLoader.loadManifest(directory: moduleRoot))
+    let macros = try evaluateForeignMacros(
+        symbols: package.fileUnits.flatMap { foreignSymbols(in: $0.module) }, config: config)
     let checker = TypeChecker()
-    try checker.check(package: package)
+    try checker.check(package: package, foreignConstantFailures: macros.failures)
     // Same persistent-table fallback as the single-file pipeline.
     checker.typeInference.environment?.persistAcrossScopesForCodegen = true
     let irModule = try IRLowerer.lower(
         package: package, typeInference: checker.typeInference,
-        foreignConstants: try evaluateForeignMacros(
-            symbols: package.fileUnits.flatMap { foreignSymbols(in: $0.module) },
-            config: foreignConfigFor(
-                root: moduleRoot,
-                manifest: try? FileLoader.loadManifest(directory: moduleRoot))),
+        foreignConstants: macros.values,
         requiresMain: policy.requiresMain(
             hasCSurface: package.fileUnits.contains { hasCSurface($0.module.exports) }))
     try IRValidator.check(irModule)
@@ -2162,6 +2190,12 @@ func runBuildPath(_ path: String, printPlan: Bool = false, withStdlib: Bool = tr
                 } else {
                     print("未变 \(output)")
                 }
+            }
+            /// 宏段在翻译之后写：生成块的 `|macro` 值只能来自刚落盘的头文件与计划步骤。
+            let plan = try BuildRunner.recordMacros(report.plan, layout: configured.layout)
+            if !plan.macros.isEmpty {
+                let unresolved = plan.macros.filter { !$0.isResolved }.count
+                print("宏常量 \(plan.macros.count) 条（未求值 \(unresolved)）")
             }
             if !report.plan.steps.isEmpty {
                 print(
@@ -2266,7 +2300,8 @@ private func checkWorkspace(_ plan: WorkspaceBuildPlan, withStdlib: Bool) {
             try analyzer.analyze(package: loaded.package)
             emitSemanticWarnings(analyzer)
             let checker = TypeChecker()
-            try checker.check(package: loaded.package)
+            /// 接口面只收公开名：宏是否求值不影响这份文本，失败表传空。
+            try checker.check(package: loaded.package, foreignConstantFailures: [:])
             texts[package.name] = loaded.publicInterface
             hashes[package.name] = WorkspaceInterfaceLedger.digest(loaded.publicInterface)
         } catch let err as SemanticError {

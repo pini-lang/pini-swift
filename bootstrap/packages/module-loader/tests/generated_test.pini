@@ -1,5 +1,5 @@
 [generated_test|import]
-package = "../../package"
+_package = "../../package"
 
 ; 造计划文本：一个包条目加一条步骤条目；步骤名固定，产物路径由调用方给。
 计划文本|func(name: String, digest: String, output: String,) -> (String,):
@@ -14,7 +14,7 @@ package = "../../package"
     pkg.name = "app"
     pkg.scriptHash = "h"
     pkg.outputs = pkg.outputs.append(".build/debug/packages/app/generated/cstr.pini")
-    let 空: PlanRead = package.readPlanFile(root = "/nonexistent", profile = "debug")
+    let 空: PlanRead = readPlanFile(root = "/nonexistent", profile = "debug")
     let 结果 = attachGenerated(root = "/nonexistent", profile = "debug", plan = 空, pkg = pkg)
     assert(len(结果.errors) == 1, "缺计划应报一条，实得 " + "\(len(结果.errors))")
     assert(len(结果.units) == 0, "缺计划不应并入单元")
@@ -29,7 +29,7 @@ package = "../../package"
     pkg.scriptHash = "new"
     pkg.outputs = pkg.outputs.append(".build/debug/packages/app/generated/cstr.pini")
     let 旧: String = 计划文本(name = "app", digest = "old", output = ".build/debug/packages/app/generated/cstr.pini")
-    let plan: PlanRead = package.parsePlanText(text = 旧, path = "plan.toml")
+    let plan: PlanRead = parsePlanText(text = 旧, path = "plan.toml")
     let 结果 = attachGenerated(root = "/nonexistent", profile = "debug", plan = plan, pkg = pkg)
     assert(len(结果.errors) == 1, "过期应报一条")
     assert(isLoadError(error = 结果.errors[0], kind = .errorPlanStale), "类别应为计划过期")
@@ -42,7 +42,7 @@ package = "../../package"
     pkg.scriptHash = "h"
     pkg.outputs = pkg.outputs.append(".build/debug/packages/app/generated/cstr.pini")
     let 文本: String = 计划文本(name = "app", digest = "h", output = "src/api/cstr.pini")
-    let plan: PlanRead = package.parsePlanText(text = 文本, path = "plan.toml")
+    let plan: PlanRead = parsePlanText(text = 文本, path = "plan.toml")
     let 结果 = attachGenerated(root = "/nonexistent", profile = "debug", plan = plan, pkg = pkg)
     assert(len(结果.errors) == 1, "越界应报一条")
     assert(isLoadError(error = 结果.errors[0], kind = .errorPlanStale), "越界按计划不一致报")
@@ -56,7 +56,7 @@ package = "../../package"
     pkg.scriptHash = "h"
     pkg.outputs = pkg.outputs.append(".build/debug/packages/gapp/generated/cstr.pini")
     let 文本: String = 计划文本(name = "gapp", digest = "h", output = ".build/debug/packages/gapp/generated/cstr.pini")
-    let plan: PlanRead = package.parsePlanText(text = 文本, path = "plan.toml")
+    let plan: PlanRead = parsePlanText(text = 文本, path = "plan.toml")
     let root: String = moduleRoot() + "/../.."
     let 结果 = attachGenerated(root = root, profile = "debug", plan = plan, pkg = pkg)
     assert(len(结果.errors) == 1, "产物缺失应报一条")
@@ -68,10 +68,46 @@ package = "../../package"
 无构建面|test() -> ():
     var pkg = GeneratedPackage()
     pkg.name = "plain"
-    let 空: PlanRead = package.readPlanFile(root = "/nonexistent", profile = "debug")
+    let 空: PlanRead = readPlanFile(root = "/nonexistent", profile = "debug")
     let 结果 = attachGenerated(root = "/nonexistent", profile = "debug", plan = 空, pkg = pkg)
     assert(len(结果.errors) == 0, "无构建面不应报错")
     assert(len(结果.units) == 0, "无构建面不应并入单元")
+    return
+
+; 宏理由：码转成可执行的话，缺计划与缺头文件分开说，细节附在后面。
+宏理由|test() -> ():
+    assert(macroReasonLine(reason = "missingPlan", detail = "").contains("pini build"), "缺计划应指 build")
+    assert(macroReasonLine(reason = "noHeaders", detail = "").contains("headers"), "缺头文件应指配置")
+    assert(macroReasonLine(reason = "functionLike", detail = "").contains("shim"), "函数式宏应给 shim 配方")
+    assert(macroReasonLine(reason = "unparsable", detail = "展开后是 `x`").contains("展开后是 `x`"), "细节应附在理由后")
+    return
+
+; 宏查找：包名与名字都相等才命中，未命中答 -1；同名宏按包各取本包那一行。
+宏查找|test() -> ():
+    var 甲 = PlanMacro()
+    甲.package = "a"
+    甲.name = "EOF"
+    甲.state = "value"
+    甲.value = "-1"
+    var 乙 = PlanMacro()
+    乙.package = "b"
+    乙.name = "EOF"
+    乙.state = "value"
+    乙.value = "7"
+    var 表: Array<PlanMacro> = [甲, 乙]
+    assert(findPlanMacro(items = 表, package = "a", name = "EOF") == 0, "首包命中")
+    assert(findPlanMacro(items = 表, package = "b", name = "EOF") == 1, "同名宏按包各取一行")
+    assert(findPlanMacro(items = 表, package = "c", name = "EOF") < 0, "别包不算命中")
+    assert(findPlanMacro(items = 表, package = "a", name = "absent") < 0, "未命中答 -1")
+    var 跳 = PlanSkip()
+    跳.package = "a"
+    跳.name = "DOUBLE"
+    跳.reason = "函数式宏要实参"
+    var 跳表: Array<PlanSkip> = [跳]
+    assert(findPlanSkip(items = 跳表, package = "a", name = "DOUBLE") == 0, "跳过名命中")
+    assert(findPlanSkip(items = 跳表, package = "b", name = "DOUBLE") < 0, "别包跳过名不算命中")
+    assert(findPlanSkip(items = 跳表, package = "a", name = "absent") < 0, "跳过名未命中答 -1")
+    assert(len(skipNamesFor(items = 跳表, package = "b")) == 0, "别包不继承跳过名")
     return
 
 ; 归属：生成模块落在 .build 下，按分组成员判定归属；源码仍按包根前缀。

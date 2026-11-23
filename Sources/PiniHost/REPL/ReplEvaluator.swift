@@ -75,7 +75,8 @@ public final class ReplEvaluator {
         // to type the nodes, so an untypeable input cannot be lowered at all.
         // Reported as a REPL type error, not swallowed.
         let checker = TypeChecker()
-        let errors = checker.checkCollecting(module: module)
+        let errors = checker.checkCollecting(
+            module: module, foreignConstantFailures: [:])
         if !errors.isEmpty {
             throw ReplError.typeError(
                 errors.map { ErrorFormatter.formatTypeError($0, source: "") }

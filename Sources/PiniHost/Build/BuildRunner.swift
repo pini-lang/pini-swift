@@ -1,5 +1,7 @@
 import Foundation
+import PiniIR
 import PiniSemantics
+import PiniSyntax
 
 /// 配置期的一条翻译步：计划里的形状，加上它来自哪个包根。包根是配置期唯一需要记住的上下文，
 /// 执行期据此把头文件与包含路径换成绝对路径。
@@ -84,6 +86,7 @@ public enum BuildRunner {
         let previous = try BuildPlan.read(at: configured.layout.planPath, layout: configured.layout)
         var outcomes: [BuildStepOutcome] = []
         var steps: [PlannedTranslateStep] = []
+        var skips: [PlannedSkip] = []
         for step in configured.steps {
             let options = CHeaderTranslator.Options(
                 header: step.planned.header,
@@ -101,6 +104,10 @@ public enum BuildRunner {
                 outcomes.append(
                     BuildStepOutcome(
                         step: step, translated: false, skipped: [], fromIncludedHeaders: 0))
+                /// 复用步不重翻，跳过表沿用旧计划里这一步的行：丢了它们，E4-046 会随增量构建消失。
+                skips += (previous?.skips ?? []).filter {
+                    $0.package == step.planned.package && $0.step == step.planned.name
+                }
             } else {
                 let translation = try CHeaderTranslator.translate(options)
                 try write(translation.text, to: step.planned.output)
@@ -108,6 +115,11 @@ public enum BuildRunner {
                     BuildStepOutcome(
                         step: step, translated: true, skipped: translation.skipped,
                         fromIncludedHeaders: translation.fromIncludedHeaders))
+                skips += translation.skipped.filter(\.isMacro).map {
+                    PlannedSkip(
+                        package: step.planned.package, step: step.planned.name,
+                        name: $0.name, reason: $0.reason)
+                }
             }
             steps.append(step.planned.with(inputHash: digest))
         }
@@ -115,13 +127,82 @@ public enum BuildRunner {
         let owned = Set(configured.packages.map(\.name))
         let keptPackages = previous?.packages.filter { !owned.contains($0.name) } ?? []
         let keptSteps = previous?.steps.filter { !owned.contains($0.package) } ?? []
-        let plan = BuildPlan(packages: keptPackages + configured.packages, steps: keptSteps + steps)
+        let keptMacros = previous?.macros.filter { !owned.contains($0.package) } ?? []
+        let keptSkips = previous?.skips.filter { !owned.contains($0.package) } ?? []
+        let plan = BuildPlan(
+            packages: keptPackages + configured.packages, steps: keptSteps + steps,
+            macros: keptMacros, skips: keptSkips + skips)
         /// 没有翻译步也不曾有计划时不落盘：没构建面的包不该多个空文件。
         if !steps.isEmpty || previous != nil {
             try write(try plan.render(layout: configured.layout), to: configured.layout.planPath)
         }
         return BuildRunReport(
             outcomes: outcomes, plan: plan, planPath: configured.layout.planPath)
+    }
+
+    /// 宏段：翻译完成后按包重算全部 `|macro`，把值与未求值理由写进计划。
+    /// 自举侧不启动 C 编译器，值只能从这里来；这一步因此放在计划已含新版翻译步之后。
+    /// 求值不依赖类型检查，源码只需解析得出声明；声明之外的一切留给 `check`。
+    public static func recordMacros(_ plan: BuildPlan, layout: BuildLayout) throws -> BuildPlan {
+        var rows: [PlannedMacro] = []
+        for entry in plan.packages {
+            let manifest = try FileLoader.loadManifest(directory: entry.root)
+            let package = try FileLoader.loadDirectory(
+                path: entry.root, manifest: manifest, withStdlib: false)
+            let attached = try GeneratedModules.attach(to: package, packageRoot: entry.root)
+            let symbols = attached.fileUnits.flatMap { unit -> [ForeignSymbol] in
+                unit.module.declarations.flatMap { decl -> [ForeignSymbol] in
+                    guard case .foreignDecl(let block) = decl else { return [] }
+                    return block.symbols
+                }
+            }
+            let macroSymbols = dedupedMacroSymbols(symbols)
+            guard !macroSymbols.isEmpty else { continue }
+            let config = plan.ffiConfig(
+                for: entry.name, base: manifest?.ffi ?? .default)
+            let evaluation = try ForeignMacroEvaluator.evaluate(symbols: macroSymbols, config: config)
+            var values: [String: IRForeignConstant] = [:]
+            for constant in evaluation.values { values[constant.name] = constant }
+            for symbol in macroSymbols {
+                let type = symbol.annotation.describe()
+                if let constant = values[symbol.name] {
+                    rows.append(
+                        PlannedMacro(
+                            package: entry.name, name: symbol.name, type: type,
+                            value: planValue(constant.value)))
+                } else if let failure = evaluation.failures[symbol.name] {
+                    rows.append(
+                        PlannedMacro(
+                            package: entry.name, name: symbol.name, type: type,
+                            reason: failure.planReason, detail: failure.planDetail))
+                }
+                /// 两边都没有的是非标量声明：它归 E4-045，不在这里编一条「缺计划」。
+            }
+        }
+        let updated = plan.replacing(macros: rows)
+        /// 没有翻译步、没有任何宏条目、盘上也没有旧计划时不落盘：没构建面的包不该多个空计划。
+        let existed = FileManager.default.fileExists(atPath: layout.planPath)
+        if !updated.steps.isEmpty || !updated.macros.isEmpty || !updated.skips.isEmpty || existed {
+            try write(try updated.render(layout: layout), to: layout.planPath)
+        }
+        return updated
+    }
+
+    /// 同包同名宏只留第一条：生成模块会重复声明源文件里的宏，重复求值会让计划多出行。
+    /// 保留先出现的那条；同包同名两条类型不同时，语义检查另报冲突，这里不替它裁定。
+    static func dedupedMacroSymbols(_ symbols: [ForeignSymbol]) -> [ForeignSymbol] {
+        var seenNames: Set<String> = []
+        return symbols.filter { $0.flags.contains("macro") }.filter {
+            seenNames.insert($0.name).inserted
+        }
+    }
+
+    /// 计划里的值一律字符串：整数不经浮点中转，浮点取最短往返十进制。
+    private static func planValue(_ value: IRForeignConstantValue) -> String {
+        switch value {
+        case .integer(let number): return String(number)
+        case .float(let number): return String(number)
+        }
     }
 
     private static func write(_ text: String, to path: String) throws {

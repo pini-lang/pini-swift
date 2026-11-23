@@ -47,6 +47,47 @@ public struct PlannedTranslateStep: Equatable, Sendable {
     }
 }
 
+/// 计划里的一条宏常量结局：有值记 `value`，没值记理由码与细节。
+/// 两个状态同形，自举侧据此区分「有值可降」与「缺计划/求值失败」。
+public struct PlannedMacro: Equatable, Sendable {
+    public let package: String
+    public let name: String
+    public let type: String
+    public let value: String?
+    public let reason: String?
+    public let detail: String
+
+    public var isResolved: Bool { value != nil }
+
+    public init(
+        package: String, name: String, type: String,
+        value: String? = nil, reason: String? = nil, detail: String = ""
+    ) {
+        self.package = package
+        self.name = name
+        self.type = type
+        self.value = value
+        self.reason = reason
+        self.detail = detail
+    }
+}
+
+/// 计划里的一条生成面跳过项：`pini bind` 看见了这个宏名，但没有为它产生声明。
+/// 只收宏：其余跳过项各有自己的原因，混进「已知但未翻译」会让未定义名报错指错方向。
+public struct PlannedSkip: Equatable, Sendable {
+    public let package: String
+    public let step: String
+    public let name: String
+    public let reason: String
+
+    public init(package: String, step: String, name: String, reason: String) {
+        self.package = package
+        self.step = step
+        self.name = name
+        self.reason = reason
+    }
+}
+
 public enum BuildPlanError: Error, LocalizedError, Equatable {
     case unreadable(path: String, reason: String)
     case invalid(path: String, reason: String)
@@ -73,11 +114,26 @@ public struct BuildPlan: Equatable, Sendable {
 
     public let packages: [PlannedPackage]
     public let steps: [PlannedTranslateStep]
+    /// 宏常量的求值结局，按包与名索引；旧计划没有这一段，读出来是空表。
+    public let macros: [PlannedMacro]
+    /// 生成面跳过项：`pini bind` 见到但没翻译的宏名与理由。
+    public let skips: [PlannedSkip]
 
-    public init(packages: [PlannedPackage], steps: [PlannedTranslateStep]) {
+    public init(
+        packages: [PlannedPackage], steps: [PlannedTranslateStep],
+        macros: [PlannedMacro] = [], skips: [PlannedSkip] = []
+    ) {
         self.packages = packages.sorted { $0.name < $1.name }
         self.steps = steps.sorted {
             $0.package == $1.package ? $0.name < $1.name : $0.package < $1.package
+        }
+        self.macros = macros.sorted {
+            $0.package == $1.package ? $0.name < $1.name : $0.package < $1.package
+        }
+        self.skips = skips.sorted {
+            if $0.package != $1.package { return $0.package < $1.package }
+            if $0.step != $1.step { return $0.step < $1.step }
+            return $0.name < $1.name
         }
     }
 
@@ -89,8 +145,21 @@ public struct BuildPlan: Equatable, Sendable {
         steps.filter { $0.package == package }
     }
 
+    public func macros(for package: String) -> [PlannedMacro] {
+        macros.filter { $0.package == package }
+    }
+
+    public func skips(for package: String) -> [PlannedSkip] {
+        skips.filter { $0.package == package }
+    }
+
     public func replacing(steps: [PlannedTranslateStep]) -> BuildPlan {
-        BuildPlan(packages: packages, steps: steps)
+        BuildPlan(packages: packages, steps: steps, macros: macros, skips: skips)
+    }
+
+    /// 只换宏段：跳过段与步骤原样留住，写宏不该顺手丢别的结果段。
+    public func replacing(macros: [PlannedMacro]) -> BuildPlan {
+        BuildPlan(packages: packages, steps: steps, macros: macros, skips: skips)
     }
 
     /// 宏求值要沿翻译步的头文件走一遍：生成的 `|macro` 条目值只能来自声明它的那个头文件。
@@ -131,11 +200,44 @@ public struct BuildPlan: Equatable, Sendable {
             lines.append(try pair("output", step.output, layout: layout))
             lines.append(try pair("input_hash", step.inputHash, layout: layout))
         }
+        /// 宏段与跳过段排在步骤之后：旧读取器只认前两段，多余的表原样忽略。
+        for macro in macros {
+            lines.append("")
+            lines.append("[[macro]]")
+            lines.append(try rawPair("package", macro.package))
+            lines.append(try rawPair("name", macro.name))
+            lines.append(try rawPair("state", macro.isResolved ? "value" : "unresolved"))
+            lines.append(try rawPair("type", macro.type))
+            if let value = macro.value {
+                lines.append(try rawPair("value", value))
+            } else if let reason = macro.reason {
+                lines.append(try rawPair("reason", reason))
+                if !macro.detail.isEmpty {
+                    lines.append(try rawPair("detail", macro.detail))
+                }
+            }
+        }
+        for skip in skips {
+            lines.append("")
+            lines.append("[[skip]]")
+            lines.append(try rawPair("package", skip.package))
+            lines.append(try rawPair("step", skip.step))
+            lines.append(try rawPair("name", skip.name))
+            lines.append(try rawPair("reason", skip.reason))
+        }
         return lines.joined(separator: "\n") + "\n"
     }
 
     private func pair(_ key: String, _ value: String, layout: BuildLayout) throws -> String {
         "\(key) = \"\(try literal(value, layout: layout))\""
+    }
+
+    /// 非路径值（宏名、理由码、数值）不参与根相对换算，但同样不许带引号与换行。
+    private func rawPair(_ key: String, _ value: String) throws -> String {
+        guard !value.contains("\""), !value.contains("\n") else {
+            throw BuildPlanError.unrepresentable(path: value)
+        }
+        return "\(key) = \"\(value)\""
     }
 
     private func array(_ key: String, _ values: [String], layout: BuildLayout) throws -> String {
@@ -196,7 +298,48 @@ public struct BuildPlan: Equatable, Sendable {
                     output: layout.absolute(output),
                     inputHash: table["input_hash"] ?? ""))
         }
-        return BuildPlan(packages: packages, steps: steps)
+        var macros: [PlannedMacro] = []
+        for table in document.arrayTables["macro"] ?? [] {
+            guard let package = table["package"], let name = table["name"],
+                let state = table["state"], let type = table["type"]
+            else {
+                throw BuildPlanError.invalid(
+                    path: path, reason: "[[macro]] 缺 package / name / state / type")
+            }
+            switch state {
+            case "value":
+                guard let value = table["value"] else {
+                    throw BuildPlanError.invalid(
+                        path: path, reason: "[[macro]] \(name) 标为 value 但缺 value")
+                }
+                macros.append(
+                    PlannedMacro(package: package, name: name, type: type, value: value))
+            case "unresolved":
+                guard let reason = table["reason"] else {
+                    throw BuildPlanError.invalid(
+                        path: path, reason: "[[macro]] \(name) 标为 unresolved 但缺 reason")
+                }
+                macros.append(
+                    PlannedMacro(
+                        package: package, name: name, type: type,
+                        reason: reason, detail: table["detail"] ?? ""))
+            default:
+                throw BuildPlanError.invalid(
+                    path: path, reason: "[[macro]] \(name) 的 state 是 `\(state)`，只认 value / unresolved")
+            }
+        }
+        var skips: [PlannedSkip] = []
+        for table in document.arrayTables["skip"] ?? [] {
+            guard let package = table["package"], let step = table["step"],
+                let name = table["name"], let reason = table["reason"]
+            else {
+                throw BuildPlanError.invalid(
+                    path: path, reason: "[[skip]] 缺 package / step / name / reason")
+            }
+            skips.append(
+                PlannedSkip(package: package, step: step, name: name, reason: reason))
+        }
+        return BuildPlan(packages: packages, steps: steps, macros: macros, skips: skips)
     }
 
     /// 给人读的计划文本。`--print-plan` 打它：工具接口的第一形态是文本，协议等有消费方再谈。
@@ -216,6 +359,13 @@ public struct BuildPlan: Equatable, Sendable {
                 lines.append("    定义: \(step.defines.joined(separator: ", "))")
             }
             lines.append("    输出: \(layout.relativeToRoot(step.output))")
+        }
+        let unresolved = macros.filter { !$0.isResolved }.count
+        if !macros.isEmpty {
+            lines.append("  宏常量: \(macros.count) 条（未求值 \(unresolved)）")
+        }
+        if !skips.isEmpty {
+            lines.append("  生成面跳过: \(skips.count) 条")
         }
         return lines.joined(separator: "\n")
     }

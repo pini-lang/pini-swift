@@ -664,14 +664,13 @@ public enum IRLowerer {
                 foreignData[symbol.name] = type.irType
             }
         }
+        /// 声明了但没值的宏不进常量表：未求值已由 check 报过，这里不再逐条打红。
+        /// 名字仍记下，读点遇到时给一条比「未定义变量」更近的兜底。
+        var declaredMacroNames: Set<String> = []
         for decl in module.declarations {
             guard case .foreignDecl(let block) = decl else { continue }
             for symbol in block.symbols where symbol.flags.contains("macro") {
-                guard constantTable[symbol.name] != nil else {
-                    throw unsupported(
-                        "宏常量 '\(symbol.name)' 没有求值结果：它需要 [ffi].headers 与一次 C 预处理器展开",
-                        at: symbol.location)
-                }
+                declaredMacroNames.insert(symbol.name)
             }
         }
 
@@ -689,6 +688,7 @@ public enum IRLowerer {
                         traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector,
                         builtinExtensionMethods: builtinExtensionMethods,
                         foreignData: foreignData, foreignConstants: constantTable,
+                        declaredMacros: declaredMacroNames,
                         errorCodeByType: errorCodePlan.byType,
                         hashedErrorCodes: errorCodePlan.hashedTables)
                 )
@@ -728,7 +728,8 @@ public enum IRLowerer {
                     genericFuncTemplates: genericFuncTemplates, closureIds: closureIds,
                     traitRegistry: traitRegistry, traitDefaultsCollector: traitDefaultsCollector,
                     builtinExtensionMethods: builtinExtensionMethods,
-                    foreignData: foreignData, foreignConstants: constantTable)
+                    foreignData: foreignData, foreignConstants: constantTable,
+                    declaredMacros: declaredMacroNames)
             )
         }
         if requiresMain {
@@ -859,11 +860,10 @@ public enum IRLowerer {
             }
             var constantEntries: [IRForeignConstant] = []
             for symbol in foreignDecl.symbols where symbol.flags.contains("macro") {
-                guard let constant = constantTable[symbol.name] else {
-                    throw unsupported(
-                        "宏常量 '\(symbol.name)' 没有求值结果", at: symbol.location)
+                /// 没值的宏不进 IR：未求值由 check 在使用点报，这里只收求到值的那几条。
+                if let constant = constantTable[symbol.name] {
+                    constantEntries.append(constant)
                 }
-                constantEntries.append(constant)
             }
             foreigns.append(
                 IRForeignBlock(
@@ -1570,6 +1570,7 @@ public enum IRLowerer {
         builtinExtensionMethods: [String: [String: (irName: String, returnType: IRType)]] = [:],
         foreignData: [String: IRType] = [:],
         foreignConstants: [String: IRForeignConstant] = [:],
+        declaredMacros: Set<String> = [],
         errorCodeByType: [String: Int32] = [:],
         hashedErrorCodes: [String: [Int32]] = [:]
     ) throws -> IRFunction {
@@ -1621,6 +1622,7 @@ public enum IRLowerer {
         context.errorCodeByType = errorCodeByType
         context.hashedErrorCodes = hashedErrorCodes
         context.foreignConstants = foreignConstants
+        context.declaredMacros = declaredMacros
         context.isAsync = decl.isAsync
         context.isAsyncVoid = decl.isAsync && effectiveReturn == nil
         let body = try lowerBlock(decl.body!, into: &context, trailingValue: bodyReturn)
@@ -3167,6 +3169,11 @@ public enum IRLowerer {
                 case .float(let value):
                     return LoweredExpr(node: .floatConst(value: value), type: .f64)
                 }
+            }
+            /// 声明过却没值的宏：check 应已报未求值；走到这里说明有通道漏判。
+            if context.declaredMacros.contains(name) {
+                throw unsupported(
+                    "宏常量 '\(name)' 没有求值结果（check 应已报未求值）", at: location)
             }
             // 外部数据符号：读的是符号存储的当前值，不是声明处的任何初值。
             if let type = context.foreignData[name] {
@@ -6618,6 +6625,8 @@ private struct FunctionContext {
     var foreignData: [String: IRType] = [:]
     /// 宏常量的构建期值：标识符命中它时直接出字面量，不产生任何存储访问。
     var foreignConstants: [String: IRForeignConstant] = [:]
+    /// 声明过但没值的宏名：check 应已报未求值；命中即说明有通道漏判，给条明确兜底。
+    var declaredMacros: Set<String> = []
     /// 错误类型名 → 码基址。`err(...)` 按载荷类型查它，查不到按未归类 `1`。
     var errorCodeByType: [String: Int32] = [:]
     /// 稳定码类型 → 按用例 tag 索引的码表。查得到就压过「基址 | tag」。

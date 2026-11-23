@@ -426,6 +426,13 @@ runBuild|func(root: String, stdlib: StdlibOption,) -> ():
     let directory = root + "/.build/" + filled.plan.profile
     ; 构建目录由本步建出来：首次构建时它按定义不存在，报错等于要求用户先手工建树。
     ensureDir(directory)
-    writeFile(path, planFileText(filled.plan))
+    ; 宏段与跳过段归宿主求值：自举只做搬运，丢了它们等于让所有宏变成缺计划。
+    var tail = ""
+    if exists(path):
+        tail = planTailSections(text = readFile(path))
+    var text = planFileText(filled.plan)
+    if len(tail) > 0:
+        text = text + "\n" + tail
+    writeFile(path, text)
     print("build-ok", steps, filled.missing)
     return

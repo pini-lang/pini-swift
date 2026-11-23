@@ -164,6 +164,7 @@ public struct DiagnosticPublisher {
         case .injectedSymbolConflict(_, _, let loc): return loc
         case .foreignSignatureConflict(_, _, let loc): return loc
         case .foreignSymbolNotCIdentifier(_, let loc): return loc
+        case .untranslatedForeignMacro(_, _, let loc): return loc
         case .moduleDependencyCycle, .moduleRootMissing:
             return SourceLocation(line: 0, column: 0, endLine: 0, endColumn: 0, fileName: "未知文件")
         }
@@ -195,6 +196,8 @@ public struct DiagnosticPublisher {
         case .foreignCallbackBoolean(let loc): return loc
         case .foreignVarargsOnNonFunction(_, let loc): return loc
         case .foreignVariadicArgument(_, _, _, let loc): return loc
+        case .foreignMacroUnavailable(_, _, let loc): return loc
+        case .foreignMacroTypeNotScalar(_, _, let loc): return loc
         case .stringHandleOutsideCFace(_, let loc): return loc
         case .missingArgumentLabel(_, _, _, _, _, let loc): return loc
         case .unexpectedArgumentLabel(_, _, let loc): return loc

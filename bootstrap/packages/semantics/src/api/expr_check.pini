@@ -121,10 +121,13 @@ mergeNames|func(items: Array<String>, add: Array<String>,) -> (Array<String>,):
     return out
 
 ; 未定义名：文件级名字面都不含这个名字时报；位置取标识符起点。
-checkIdentifierNode|func(world: MemberWorld, unit: CompilationUnit, bytes: Array<U8>, locals: Array<String>, node: I32, out: ExprCheck,) -> (ExprCheck,):
+; 生成面跳过的名字由调用方单列：这里不报未定义，留给 E4-046 说「翻译没产出」。
+checkIdentifierNode|func(world: MemberWorld, unit: CompilationUnit, bytes: Array<U8>, locals: Array<String>, skips: Array<String>, node: I32, out: ExprCheck,) -> (ExprCheck,):
     let expr = unit.ast.exprAt(node)
     let name = decodeRange(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
     if knownName(world = world, unit = unit, locals = locals, name = name):
+        return out
+    if hasName(items = skips, value = name):
         return out
     return appendExprError(out = out, unit = unit, offset = expr.start, kind = .exprUndefined, name = name, detail = "文件内没有这个名字", code = "E3-001")
 
@@ -205,7 +208,7 @@ checkMemberCall|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, 
 
 ; 调用形状：被调是顶层函数或内建时按签名对实参标签与个数；外部符号只判 unsafe 上下文。
 ; 变参尾与回调判据要实参类型，本层拿不到；未定义函数由本节点报 E3-002。
-checkCallNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, bytes: Array<U8>, shadow: Array<String>, types: ExprTypes, ranges: UnsafeRanges, node: I32, out: ExprCheck,) -> (ExprCheck,):
+checkCallNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, bytes: Array<U8>, shadow: Array<String>, skips: Array<String>, types: ExprTypes, ranges: UnsafeRanges, node: I32, out: ExprCheck,) -> (ExprCheck,):
     let callee = calleeNode(unit = unit, node = node)
     if callee < 0:
         return out
@@ -252,6 +255,9 @@ checkCallNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, by
         ; 枚举项构造不是顶层符号，也不是未定义函数。
         let owner = uniqueCaseOwner(index = world.symbols, name = name)
         if len(owner) > 0:
+            return out
+        ; 生成面跳过的宏名由 E4-046 报，这里不再报未定义函数。
+        if hasName(items = skips, value = name):
             return out
         return appendExprError(out = out, unit = unit, offset = calleeExpr.start, kind = .exprUndefined, name = name, detail = "文件内没有这个函数", code = "E3-002")
     if site.symbol >= 0:
@@ -378,6 +384,11 @@ checkWeakRefNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32,
 ; 单元检查：逐个表达式节点分派；同一节点只走一条分支。
 ; 被调名字由调用节点报（未定义函数是 E3-002），标识符扫描跳过它，免得同一名字报两条。
 checkUnitExprs|func(world: MemberWorld, unitIndex: I32, types: ExprTypes,) -> (ExprCheck,):
+    var 空跳过: Array<String> = []
+    return checkUnitExprsSkipping(world = world, unitIndex = unitIndex, types = types, skips = 空跳过)
+
+; 带跳过表的单元检查：跳过名不报未定义，由 E4-046 单独说「翻译没产出」。
+checkUnitExprsSkipping|func(world: MemberWorld, unitIndex: I32, types: ExprTypes, skips: Array<String>,) -> (ExprCheck,):
     var out = ExprCheck()
     if unitIndex < 0 || unitIndex >= len(world.units):
         return out
@@ -391,12 +402,12 @@ checkUnitExprs|func(world: MemberWorld, unitIndex: I32, types: ExprTypes,) -> (E
     while i < unit.ast.exprCount():
         if unit.ast.isIdentifierExpr(i):
             if !containsId(items = callees, value = i):
-                out = checkIdentifierNode(world = world, unit = unit, bytes = bytes, locals = known, node = i, out = out)
+                out = checkIdentifierNode(world = world, unit = unit, bytes = bytes, locals = known, skips = skips, node = i, out = out)
         elif unit.ast.isMemberExpr(i):
             out = checkMemberNode(world = world, unit = unit, bytes = bytes, shadow = shadow, node = i, out = out)
             out = checkUnownedAccessNode(world = world, unit = unit, unitIndex = unitIndex, types = types, ranges = ranges, node = i, out = out)
         elif unit.ast.isCallExpr(i):
-            out = checkCallNode(world = world, unit = unit, unitIndex = unitIndex, bytes = bytes, shadow = shadow, types = types, ranges = ranges, node = i, out = out)
+            out = checkCallNode(world = world, unit = unit, unitIndex = unitIndex, bytes = bytes, shadow = shadow, skips = skips, types = types, ranges = ranges, node = i, out = out)
         elif unit.ast.isJoinExpr(i):
             out = checkJoinNode(world = world, unit = unit, unitIndex = unitIndex, types = types, node = i, out = out)
         elif unit.ast.isWeakRefExpr(i):

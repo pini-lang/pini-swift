@@ -149,7 +149,7 @@ public enum WorkspaceTestRunner {
                 let analyzer = SemanticAnalyzer()
                 try analyzer.analyze(package: loaded.package)
                 let checker = TypeChecker()
-                try checker.check(package: loaded.package)
+                try checker.check(package: loaded.package, foreignConstantFailures: [:])
 
                 let runner = ProgramRunner(
                     ffiConfig: package.manifest.ffi ?? .default,

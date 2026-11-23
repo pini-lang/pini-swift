@@ -6,10 +6,14 @@ import PiniIR
 public struct CHeaderSkip: Equatable, Sendable {
     public let name: String
     public let reason: String
+    /// 跳过的是宏：只有这一类会进构建计划的跳过段，供使用点报 E4-046。
+    /// 其余跳过项（静态函数、typedef、枚举）没有「已知但未翻译」的语义，混进去会指错方向。
+    public let isMacro: Bool
 
-    public init(name: String, reason: String) {
+    public init(name: String, reason: String, isMacro: Bool = false) {
         self.name = name
         self.reason = reason
+        self.isMacro = isMacro
     }
 }
 
@@ -608,9 +612,14 @@ enum MacroScanner {
         var output = Output()
         for macro in macros where macro.file == header {
             if macro.isFunctionLike {
-                output.skipped.append(CHeaderSkip(name: macro.name, reason: "函数式宏要展开与求值，本期不生成"))
+                output.skipped.append(
+                    CHeaderSkip(
+                        name: macro.name,
+                        reason: "函数式宏要实参才能展开，不能取成常量；要用请写 C shim",
+                        isMacro: true))
             } else if macro.body.isEmpty {
-                output.skipped.append(CHeaderSkip(name: macro.name, reason: "空宏没有值"))
+                output.skipped.append(
+                    CHeaderSkip(name: macro.name, reason: "空宏没有值", isMacro: true))
             }
         }
         guard !objectLike.isEmpty else { return output }
@@ -622,7 +631,10 @@ enum MacroScanner {
             else {
                 if macro.file == header {
                     output.skipped.append(
-                        CHeaderSkip(name: macro.name, reason: "展开结果 `\(body)` 不是数值常量"))
+                        CHeaderSkip(
+                            name: macro.name,
+                            reason: "展开结果 `\(body)` 不是数值常量",
+                            isMacro: true))
                 }
                 continue
             }
