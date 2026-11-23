@@ -4,6 +4,7 @@
 # 用法：--bless 重取期望与读数表；不带参数只比，差距或表过期即红。
 
 import argparse
+import hashlib
 import os
 import re
 import subprocess
@@ -34,13 +35,10 @@ def fail(message):
 
 
 def host_binary():
-    candidates = (
-        os.environ.get("PINI_HOST_BIN"),
-        os.environ.get("PINI_CLI_BIN"),
-        ".build/release/pini",
-        ".build/debug/pini",
-    )
-    for candidate in candidates:
+    """宿主可执行文件：显式环境变量优先，否则取默认位置里最新构建的那份。
+    两份并存时固定优先 release，会把另一份的新构建判成落后，红绿取决于谁被挑中。
+    """
+    for candidate in (os.environ.get("PINI_HOST_BIN"), os.environ.get("PINI_CLI_BIN")):
         if not candidate:
             continue
         path = Path(candidate)
@@ -48,8 +46,12 @@ def host_binary():
             path = ROOT / path
         if path.is_file():
             return path
-    fail("缺宿主可执行文件；先 swift build")
-    sys.exit(2)
+    found = [path for path in (ROOT / ".build/release/pini", ROOT / ".build/debug/pini")
+             if path.is_file()]
+    if not found:
+        fail("缺宿主可执行文件；先 swift build")
+        sys.exit(2)
+    return max(found, key=lambda path: path.stat().st_mtime)
 
 
 def self_binary():
@@ -66,8 +68,31 @@ def newest_mtime(paths):
     return max(values) if values else 0.0
 
 
+def sources_digest(paths):
+    """源码摘要：路径与内容一起进哈希，构建脚本按同一算法写标记。"""
+    digest = hashlib.sha256()
+    for path in sorted(paths):
+        digest.update(path.relative_to(ROOT).as_posix().encode())
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def stamp_matches(sources, stamp):
+    """产物旁记的源码摘要与当前源码一致，即产物对应当前源码，时间戳不必再看。"""
+    if not stamp.is_file():
+        return False
+    try:
+        return stamp.read_text(encoding="utf-8").strip() == sources_digest(sources)
+    except OSError:
+        return False
+
+
 def ensure_fresh(host, mine):
-    """产物必须新于源码：旧二进制会把上一批的行为钉成期望。"""
+    """产物必须新于源码：旧二进制会把上一批的行为钉成期望。
+    时间戳只作退路：merge 检出会刷新源码时间而内容没变，摘要一致时直接放行。
+    """
     host_sources = [
         path for path in (ROOT / "Sources").rglob("*.swift")
         # 运行时库不是宿主二进制的链接输入（CLI 只经 dlopen 加载它），不算它落后。
@@ -78,9 +103,10 @@ def ensure_fresh(host, mine):
     if newest_mtime(host_sources) > host.stat().st_mtime + 1:
         fail("宿主产物落后于源码；先 swift build -c release")
         sys.exit(2)
-    if newest_mtime(mine_sources) > mine.stat().st_mtime + 1:
-        fail("自举产物落后于源码；先 bash bootstrap/tools/build.sh")
-        sys.exit(2)
+    if not stamp_matches(mine_sources, ROOT / "bootstrap" / ".build" / "debug" / "sources.sha256"):
+        if newest_mtime(mine_sources) > mine.stat().st_mtime + 1:
+            fail("自举产物落后于源码；先 bash bootstrap/tools/build.sh")
+            sys.exit(2)
 
 
 def load_cases():

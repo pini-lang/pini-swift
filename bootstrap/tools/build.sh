@@ -80,5 +80,28 @@ print(f"中间产物：{len(lls)} 份 .ll，共 {total / 1024 / 1024:.2f} MB，�
 if not fresh:
     print(" 提示  [构建] 本次未更新任何中间产物；刚改过源码时先查是否被增量跳过")
 PY
+read_rc=$?
 
-exit $?
+# 源码摘要：merge 检出会刷新 .pini 时间戳而内容不变，摘要一致时下游不再判落后。
+python3 - "$root" <<'PY'
+"""记下本次构建所依据的源码摘要，供对照判据判断产物是否仍有效。"""
+import hashlib
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+files = sorted(path for path in (root / "bootstrap" / "packages").rglob("*.pini")
+               if "src" in path.parts)
+digest = hashlib.sha256()
+for path in files:
+    digest.update(path.relative_to(root).as_posix().encode())
+    digest.update(b"\0")
+    digest.update(path.read_bytes())
+    digest.update(b"\0")
+stamp = root / "bootstrap" / ".build" / "debug" / "sources.sha256"
+stamp.parent.mkdir(parents=True, exist_ok=True)
+stamp.write_text(digest.hexdigest() + "\n", encoding="utf-8")
+print(f"源码摘要 {digest.hexdigest()[:16]} 记于 {stamp.relative_to(root)}")
+PY
+
+exit "$read_rc"

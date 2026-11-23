@@ -275,6 +275,9 @@ swift build -c release --product PiniRuntime --disable-sandbox
 runtime="$(pini_runtime_lib "$PWD")" || exit 1
 export PINI_RUNTIME_LIB="$runtime"
 export PINI_CLI_BIN="$PWD/.build/debug/pini"
+# 增量构建按内容判定：内容未变时不重链，产物时间戳也不动；检出却会刷新源码时间戳。
+# 构建在此成功即产物对应当前源码，故把它对齐到此刻，免下游「产物不早于源码」误判。
+touch "$PWD/.build/debug/pini"
 step_end
 
 step_begin "并流判据（16 项）"
