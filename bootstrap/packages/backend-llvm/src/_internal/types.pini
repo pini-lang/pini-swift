@@ -34,6 +34,8 @@ llvmTypeName|func(pool: IrTypePool, typeId: I32,) -> (String,):
         return resultSpelling(pool = pool, kids = entry.kids)
     if tag == 13:
         return optionalSpelling(pool = pool, kids = entry.kids)
+    if tag == 19:
+        return tupleSpelling(pool = pool, kids = entry.kids)
     if tag == 18:
         ; 惰性引用是不透明句柄：运行时段按 ptr 收发，元素类型只用于装箱 ABI。
         return "ptr"
@@ -61,6 +63,19 @@ optionalSpelling|func(pool: IrTypePool, kids: Array<I32>,) -> (String,):
     if len(kids) > 0:
         payload = llvmTypeName(pool = pool, typeId = kids[0])
     return "{ i64, " + payload + " }"
+
+; 元组拼写：成员按声明序展开；空元组写空结构，不留空白槽。
+tupleSpelling|func(pool: IrTypePool, kids: Array<I32>,) -> (String,):
+    if len(kids) == 0:
+        return "{}"
+    var out = "{ "
+    var i = 0
+    while i < len(kids):
+        if i > 0:
+            out = out + ", "
+        out = out + llvmTypeName(pool = pool, typeId = kids[i])
+        i = i + 1
+    return out + " }"
 
 ; 聚合名：结构、对象、枚举各一前缀，同名不同类型因此不撞；非名义类型答空串。
 llvmAggregateName|func(pool: IrTypePool, typeId: I32,) -> (String,):

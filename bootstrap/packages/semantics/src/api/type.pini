@@ -188,6 +188,15 @@ isFutureType|func(pool: TypePool, id: I32,) -> (Bool,):
         return false
     return entry.name == "Future" && len(entry.kids) == 1
 
+; 结果类型判定：名字为 Result 且带一个实参；下标越界答否，供检查面直接查表。
+isResultType|func(pool: TypePool, id: I32,) -> (Bool,):
+    if id < 0 || id >= len(pool.entries):
+        return false
+    let entry = pool.entries[id]
+    if !isTypeClass(kind = entry.kind, expected = .typeClassResult):
+        return false
+    return len(entry.kids) == 1
+
 ; 任务载荷：Future 的唯一实参；其余答 -1。
 futurePayload|func(pool: TypePool, id: I32,) -> (I32,):
     if !isFutureType(pool = pool, id = id):

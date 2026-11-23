@@ -180,6 +180,13 @@ lowerFunction|func(state: LowerState, unit: CompilationUnit, declId: I32, owner:
     fn.sourceFile = unit.path
     if !isVoidReturn(pool = out.world.types.pool, id = seed.returnType):
         fn.returnType = irIdOf(map = out.map, semanticId = seed.returnType)
+    elif decl.isAsync:
+        ; 空载荷异步体的声明面只给空元组，任务体签名要的是 Result<()>：就地驻留一层结果。
+        let emptyIr = irIdOf(map = out.map, semanticId = seed.returnType)
+        if emptyIr >= 0:
+            let wrapped = irInternType(pool = out.map.pool, kind = .irTypeResult, name = "", kids = [emptyIr], ret = -1, uses = [], flags = 0)
+            out.map.pool = wrapped.pool
+            fn.returnType = wrapped.id
     if decl.isAsync && fn.returnType < 0:
         ; 无载荷的异步体在自举侧没有结算值可交，交缺口而不是发一个签名对不上的任务体。
         out.errors = appendLowerError(errors = out.errors, error = makeLowerError(kind = .lowerMissingCapability, file = unit.path, offset = decl.start, detail = fn.name + "：异步函数需带载荷返回"))
@@ -296,7 +303,7 @@ lowerWorkspace|func(input: LowerWorld,) -> (IrModule,):
     state.types = input.types
     state.generics = input.generics
     state.map = buildTypeMap(world = input.world)
-    state.decls = makeDeclTable(shapes = input.shapes, map = state.map)
+    state.decls = makeDeclTable(shapes = input.shapes, map = state.map, world = input.world)
     state.slots = makeSlotTable(layouts = input.layouts, map = state.map)
     var u = 0
     while u < len(input.world.units):

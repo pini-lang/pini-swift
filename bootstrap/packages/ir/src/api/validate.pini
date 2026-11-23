@@ -58,11 +58,15 @@ reportRule|func(result: IrValidation, rule: IrRule, file: String, offset: I32, d
     out.errors = appendLowerError(errors = out.errors, error = makeLowerError(kind = .lowerStructural, file = file, offset = offset, detail = text))
     return out
 
-; 体的子节点序号：分支与循环的首位是条件，其余是语句；defer 的整段都是语句。
+; 体的子节点序号：分支与循环的首位是条件或目标，其余是语句；defer 的整段都是语句。
 stmtKidIsBody|func(kind: I32, index: I32,) -> (Bool,):
     if kind == irStmtTag(.irIfStmt):
         return index > 0
     if kind == irStmtTag(.irWhileStmt):
+        return index > 0
+    if kind == irStmtTag(.irForInStmt):
+        return index > 0
+    if kind == irStmtTag(.irTryStmt):
         return index > 0
     if kind == irStmtTag(.irDeferStmt):
         return true

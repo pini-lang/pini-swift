@@ -165,7 +165,7 @@ makeFunction|func(name: String, params: Array<BuiltinParam>, ret: BuiltinShape, 
     out.variadic = variadic
     return out
 
-; 成员表：三类所有者按字符串、数组、字典顺序排。
+; 成员表：四类所有者按字符串、数组、字典、任务句柄顺序排。
 builtinMemberTable|func() -> (Array<BuiltinMember>,):
     var out: Array<BuiltinMember> = []
     out = out.append(makeBuiltin(owner = "String", name = "upper", params = noParams(), ret = .builtinString))
@@ -188,6 +188,8 @@ builtinMemberTable|func() -> (Array<BuiltinMember>,):
     out = out.append(makeBuiltin(owner = "Array", name = "getUnchecked", params = oneParam(name = "index", shape = .builtinI32), ret = .builtinSameElem))
     out = out.append(makeBuiltin(owner = "Dictionary", name = "get", params = oneParam(name = "key", shape = .builtinDictKey), ret = .builtinOptionalValue))
     out = out.append(makeBuiltin(owner = "Dictionary", name = "getUnchecked", params = oneParam(name = "key", shape = .builtinDictKey), ret = .builtinDictValue))
+    ; 任务句柄：取消是句柄上的动作，返回空元组；等待与超时归自由函数，不在这里。
+    out = out.append(makeBuiltin(owner = "Future", name = "cancel", params = noParams(), ret = .builtinVoid))
     return out
 
 ; 函数表：按收集、值、字符、读写、数学、并发、C 边界的次序排。

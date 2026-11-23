@@ -276,6 +276,9 @@ checkJoinNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, ty
         return out
     if isFutureType(pool = world.types.pool, id = operandType):
         return out
+    ; 已在结算值上等待（`wait joinAll(...)` 这类）：没有句柄可等，原样透传。
+    if isResultType(pool = world.types.pool, id = operandType):
+        return out
     return appendExprError(out = out, unit = unit, offset = unit.ast.exprAt(node).start, kind = .exprCallFailed, name = "等待", detail = "等待目标不是任务句柄", code = "E4-001")
 
 ; 不安全上下文区间：`|unsafe` 函数体与 `unsafe (...)` 表达式覆盖的偏移范围。

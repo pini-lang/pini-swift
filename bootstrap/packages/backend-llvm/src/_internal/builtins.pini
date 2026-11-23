@@ -5,8 +5,8 @@ _ir = "../../../ir"
 ; 表只登记符号与搬参法，指令由发射面按形状补；同形状加内建只加行，新形状先落发射面。
 ; 接收者类别取类型类别码：同名内建落在不同容器上就是两行，表外名字照旧报缺口。
 
-; 形状码：一 句柄计数；二 元素追加；三 单参直呼；四 零参直呼；五 谓词；六 结果读取。
-; 单参直呼按实参类型传、按节点类型出；谓词把 i32 收成 i1；结果读取把内容与错误字拼成聚合。
+; 形状码：一 句柄计数；二 元素追加；三 单参直呼；四 零参直呼；五 谓词；六 结果读取；
+; 七 数组聚合等待；八 带时限等待。后两种把结算值写三槽后整块读回。
 shapeHandleCount|func() -> (I32,):
     return 1
 
@@ -25,6 +25,12 @@ shapePredicate|func() -> (I32,):
 shapeTryRead|func() -> (I32,):
     return 6
 
+shapeJoinAll|func() -> (I32,):
+    return 7
+
+shapeJoinWithin|func() -> (I32,):
+    return 8
+
 ; 内建行：名字、接收者类别、符号与形状；`symbol` 空即未登记，调用方据此报缺口。
 (BuiltinEntry)
 name: String = ""
@@ -41,7 +47,7 @@ makeBuiltinOf|func(name: String, receiver: I32, symbol: String, shape: I32,) -> 
     out.shape = shape
     return out
 
-; 内建表：一行一条；接收者类别码是类型类别（i32 一、u8 四、字串八、字符九、数组十二、字典十六、集合十七）。
+; 内建表：一行一条；接收者类别码是类型类别（i32 一、u8 四、字串八、字符九、任务十一、数组十二、字典十六、集合十七）。
 ; 零参内建没有接收者，类别记负一，查表按名字与负一双命中。
 builtinTable|func() -> (Array<BuiltinEntry>,):
     var out: Array<BuiltinEntry> = []
@@ -62,9 +68,18 @@ builtinTable|func() -> (Array<BuiltinEntry>,):
     out = out.append(makeBuiltinOf(name = "moduleRoot", receiver = -1, symbol = "bk_module_root", shape = 4))
     ; 片睡：并发内建里唯一降载成普通调用的一个，落点是运行时入口而不是 libc。
     out = out.append(makeBuiltinOf(name = "sleep", receiver = 1, symbol = "bk_sleep", shape = 3))
+    ; 取消：句柄进、无返回；同属并发族，落点也是运行时入口。
+    out = out.append(makeBuiltinOf(name = "cancel", receiver = irFutureTypeTag(), symbol = "bk_task_cancel", shape = 3))
     ; 取回：C 串按 NUL 读成 Pini 串，入参是指针、出参是字串句柄，与单参直呼同形。
     out = out.append(makeBuiltinOf(name = "fromCString", receiver = 21, symbol = "bk_str_from_cstr", shape = 3))
     out = out.append(makeBuiltinOf(name = "Array.append", receiver = 12, symbol = "bk_array_append", shape = 2))
+    ; 错误值：消息串进、擦除字出；取消错误只差标志位，判定经谓词入口。
+    out = out.append(makeBuiltinOf(name = "Error", receiver = 8, symbol = "bk_error_create", shape = 3))
+    out = out.append(makeBuiltinOf(name = "CancelError", receiver = 8, symbol = "bk_cancel_error_create", shape = 3))
+    out = out.append(makeBuiltinOf(name = "isCancel", receiver = 2, symbol = "bk_error_is_cancel", shape = 5))
+    ; 聚合等待：数组盒逐槽取句柄；带时限等待吃单个句柄与毫秒。
+    out = out.append(makeBuiltinOf(name = "joinAll", receiver = 12, symbol = "bk_task_join_all_box", shape = 7))
+    out = out.append(makeBuiltinOf(name = "joinWithin", receiver = 11, symbol = "bk_task_join_within", shape = 8))
     return out
 
 ; 查表：名字与接收者类别都对上才算命中；未命中答空行，不猜同族符号。

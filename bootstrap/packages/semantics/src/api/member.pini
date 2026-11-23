@@ -54,7 +54,12 @@ deferred: Bool = false
 typeId: I32 = -1
 labels: Array<String> = []
 
-; 成员世界：单元、符号表、类型表、两张索引、内建成员与函数表；池内含全部名义类型。
+; 组合表：结构体名与其嵌入父类型名；没有嵌入的结构不入表，判定只查这张表。
+(TypeComposition)
+name: String = ""
+parents: Array<String> = []
+
+; 成员世界：单元、符号表、类型表、两张索引、内建与函数表、组合表；池内含全部名义类型。
 (MemberWorld)
 units: Array<CompilationUnit> = []
 table: SymbolTable = SymbolTable()
@@ -65,6 +70,7 @@ builtins: Array<BuiltinMember> = []
 functions: Array<BuiltinFunction> = []
 labels: Array<TypeLabels> = []
 genericBindings: Array<GenericBinding> = []
+compositions: Array<TypeComposition> = []
 
 ; 成员类别名：诊断、测试与回执共用一份拼写。
 memberKindName|func(_kind: MemberKind,) -> (String,):
@@ -184,6 +190,7 @@ makeMemberWorld|func(units: Array<CompilationUnit>, table: SymbolTable, types: T
     out.builtins = builtinMemberTable()
     out.functions = builtinFunctionTable()
     out.types.pool = internNominalTypes(units = units, pool = types.pool)
+    out.compositions = collectCompositions(units = units)
     return out
 
 ; 挂标签：同一类型重复挂时后挂的整串替换，位置即分量序号。
@@ -334,12 +341,69 @@ checkBuiltinMember|func(world: MemberWorld, out: MemberResult, owner: String, ki
     done.typeId = typed.id
     return done
 
+; 组合表：结构体首行裸类型名记作组合字段，值是父类型名；没有嵌入的结构不入表。
+collectCompositions|func(units: Array<CompilationUnit>,) -> (Array<TypeComposition>,):
+    var out: Array<TypeComposition> = []
+    var u = 0
+    while u < len(units):
+        let unit = units[u]
+        let bytes = unitBytes(unit)
+        var i = 0
+        while i < len(unit.ast.items):
+            let decl = unit.ast.decls[unit.ast.items[i]]
+            if isStructDeclCode(decl.kind):
+                var parents: Array<String> = []
+                var f = 0
+                while f < len(decl.kids):
+                    let field = unit.ast.decls[decl.kids[f]]
+                    if isFieldDeclCode(field.kind) && field.composed:
+                        parents = parents.append(decodeRange(bytes = bytes, start = field.nameStart, end = field.nameEnd))
+                    f = f + 1
+                if len(parents) > 0:
+                    var row = TypeComposition()
+                    row.name = decodeRange(bytes = bytes, start = decl.nameStart, end = decl.nameEnd)
+                    row.parents = parents
+                    out = out.append(row)
+            i = i + 1
+        u = u + 1
+    return out
+
+; 嵌入父类型名：按 NFC 键查组合表；未嵌入答空表，成员判定据此直接落空。
+composedParentNames|func(world: MemberWorld, owner: String,) -> (Array<String>,):
+    let ownerKey = keyOfText(owner)
+    var i = 0
+    while i < len(world.compositions):
+        if sameKey(first = keyOfText(world.compositions[i].name), second = ownerKey):
+            return world.compositions[i].parents
+        i = i + 1
+    var empty: Array<String> = []
+    return empty
+
+; 组合提升：本类型缺该成员时按嵌入父类型逐层再查，深度上限挡住自嵌环。
+; 全部落空仍按原接收者名报未知成员，诊断不指向父类型。
+checkPromotedMember|func(world: MemberWorld, out: MemberResult, entry: TypeEntry, access: MemberAccess, origin: String, depth: I32,) -> (MemberResult,):
+    if depth >= 4:
+        return failMember(out = out, access = access, kind = .memberUnknown, typeName = origin)
+    let parents = composedParentNames(world = world, owner = entry.name)
+    var i = 0
+    while i < len(parents):
+        let parentId = nominalTypeId(world = world, name = parents[i])
+        if parentId >= 0 && parentId < len(out.pool.entries):
+            let parentEntry = out.pool.entries[parentId]
+            if lookupMember(index = world.symbols, owner = parentEntry.name, key = access.key) >= 0:
+                return checkNominalMember(world = world, out = out, entry = parentEntry, access = access)
+            let deeper = checkPromotedMember(world = world, out = out, entry = parentEntry, access = access, origin = origin, depth = depth + 1)
+            if !deeper.failed:
+                return deeper
+        i = i + 1
+    return failMember(out = out, access = access, kind = .memberUnknown, typeName = origin)
+
 ; 名义成员：先查符号，再判可见性，最后按声明类别给类型与成员类别。
 checkNominalMember|func(world: MemberWorld, out: MemberResult, entry: TypeEntry, access: MemberAccess,) -> (MemberResult,):
     let owner = entry.name
     let at = lookupMember(index = world.symbols, owner = owner, key = access.key)
     if at < 0:
-        return failMember(out = out, access = access, kind = .memberUnknown, typeName = owner)
+        return checkPromotedMember(world = world, out = out, entry = entry, access = access, origin = owner, depth = 0)
     let symbol = world.table.symbolAt(at)
     let ref = lookupDecl(index = world.decls, file = symbol.file, offset = symbol.offset)
     if ref.unit < 0:
@@ -435,6 +499,9 @@ checkMember|func(world: MemberWorld, access: MemberAccess,) -> (MemberResult,):
         let declared = probeDeclared(world = world, pool = out.pool, entry = entry, access = access)
         if !isUnknownMember(result = declared):
             return declared
+        return checkBuiltinMember(world = world, out = out, owner = entry.name, kids = entry.kids, access = access)
+    ; 任务句柄：泛型实例没有名义成员表，成员只取内建那一份。
+    if isFutureType(pool = out.pool, id = access.receiver):
         return checkBuiltinMember(world = world, out = out, owner = entry.name, kids = entry.kids, access = access)
     if isNominalClass(entry.kind):
         return checkNominalMember(world = world, out = out, entry = entry, access = access)

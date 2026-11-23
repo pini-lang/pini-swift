@@ -252,3 +252,36 @@ types: ExprTypes = ExprTypes()
     assert(调用 >= 0, "样例应含泛型调用")
     assert(typeText(pool = 泛.pool, id = exprTypeAt(table = 泛.types, unit = 0, node = 调用)) == "I32", "调用点应为 I32")
     return
+
+; 首个函数字面量：用于点验实参位的字面量取了期望函数类型的形参。
+首个函数字面量节点|func(_unit: CompilationUnit,) -> (I32,):
+    var i = 0
+    while i < _unit.ast.exprCount():
+        if _unit.ast.isFunctionExpr(i):
+            return i
+        i = i + 1
+    return -1
+
+; 上下文定型：实参位缺形参标注时按期望函数类型的同位分量取型，体内用法随之可推。
+实参字面量取期望形参|test() -> ():
+    let 样例 = 造推导样例("应用|func(f: (I32,) -> (I32,), x: I32,) -> (I32,):\n    return f(x)\n\nmain|func() -> ():\n    应用(f = func (n,) -> (I32,): return n + 1, x = 2)\n")
+    let 推 = inferUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
+    let 字面量 = 首个函数字面量节点(样例.unit)
+    assert(字面量 >= 0, "样例应含函数字面量")
+    let 类型 = exprTypeAt(table = 推.types, unit = 0, node = 字面量)
+    assert(typeText(pool = 推.pool, id = 类型) == "(I32,) -> I32", "实得 " + typeText(pool = 推.pool, id = 类型))
+    return
+
+; 聚合等待：joinAll 由 Future 数组推成 Result 数组，joinWithin 与 wait 同形。
+聚合等待定型|test() -> ():
+    let 样例 = 造推导样例("任务|func(_n: I32,) => (I32,):\n    return ok(_n)\n\nmain|func() -> ():\n    var all = joinAll([任务(1)])\n    var r = joinWithin(任务(2), 10)\n    return\n")
+    let 推 = inferUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
+    let 聚合 = 同名标识符(样例.unit, "all")
+    assert(len(聚合) >= 1, "样例应含 all")
+    let 聚合类型 = exprTypeAt(table = 推.types, unit = 0, node = 聚合[0])
+    assert(typeText(pool = 推.pool, id = 聚合类型) == "^Array<I32>", "聚合实得 " + typeText(pool = 推.pool, id = 聚合类型))
+    let 等待 = 同名标识符(样例.unit, "r")
+    assert(len(等待) >= 1, "样例应含 r")
+    let 等待类型 = exprTypeAt(table = 推.types, unit = 0, node = 等待[0])
+    assert(typeText(pool = 推.pool, id = 等待类型) == "^I32", "等待实得 " + typeText(pool = 推.pool, id = 等待类型))
+    return
