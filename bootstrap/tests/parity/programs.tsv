@@ -46,7 +46,7 @@ io	单文件	ok	ok	ok	通过	通过	-	-	-
 lambda-typed	单文件	ok	ok	ok	通过	通过	-	-	-
 lambda	单文件	ok	ok	ok	通过	通过	-	-	-
 lazyref	单文件	ok	ok	ok	通过	通过	-	-	-
-lexical	单文件	ok	ok	fail	发射	发射缺口	-	-	插值段 类别码 12
+lexical	单文件	ok	ok	ok	通过	通过	-	-	-
 match	单文件	ok	ok	ok	通过	通过	-	-	-
 multidim	单文件	ok	ok	ok	通过	通过	-	-	-
 multifile	目录	ok	ok	ok	通过	通过	-	-	-
