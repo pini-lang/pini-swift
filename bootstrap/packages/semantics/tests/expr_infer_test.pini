@@ -184,12 +184,12 @@ types: ExprTypes = ExprTypes()
     let 推 = inferUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
     let 总 = 样例.unit.ast.exprCount()
     let 定型 = validCount(table = 推.types, unit = 0)
-    assert(定型 == 总 - 2, "除被调名与循环模式外都应定型，实得 " + countText(定型) + "/" + countText(总))
+    assert(定型 == 总 - 1, "除被调名外都应定型，实得 " + countText(定型) + "/" + countText(总))
     var i = 0
     while i < 总:
         if exprTypeAt(table = 推.types, unit = 0, node = i) < 0:
-            let 未定 = 样例.unit.ast.isIdentifierExpr(i) || 样例.unit.ast.isTupleExpr(i)
-            assert(未定, "未定型的只应是被调名或循环模式，节点 " + countText(i))
+            let 未定 = 样例.unit.ast.isIdentifierExpr(i)
+            assert(未定, "未定型的只应是被调名，节点 " + countText(i))
         i = i + 1
     return
 

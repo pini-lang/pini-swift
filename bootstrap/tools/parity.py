@@ -71,12 +71,11 @@ def ledger(path):
 
 
 def host_binary():
-    """宿主产物：先认显式变量，再认两档构建；release 优先，它与门禁口径一致。"""
+    """宿主产物：先认显式变量，否则只认 release；debug 不参与门禁。"""
     candidates = (
         os.environ.get("PINI_HOST_BIN"),
         os.environ.get("PINI_CLI_BIN"),
         ".build/release/pini",
-        ".build/debug/pini",
     )
     for candidate in candidates:
         if not candidate:
@@ -86,14 +85,14 @@ def host_binary():
             path = ROOT / path
         if path.is_file() and os.access(path, os.X_OK):
             return path
-    fail("缺宿主可执行文件；先 swift build")
+    fail("缺宿主可执行文件；先 swift build -c release --disable-sandbox")
     sys.exit(2)
 
 
 def bootstrap_binary():
     path = Path(
         os.environ.get("PINI_BOOTSTRAP_BIN")
-        or (ROOT / "bootstrap" / ".build" / "debug" / "bin" / "pini-bootstrap")
+        or (ROOT / "bootstrap" / ".build" / "release" / "bin" / "pini-bootstrap")
     )
     if not path.is_file() or not os.access(path, os.X_OK):
         fail(f"缺自举产物 {path}；先 bash bootstrap/tools/build.sh")

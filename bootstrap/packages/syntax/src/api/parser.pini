@@ -1056,14 +1056,14 @@ parseBraceType|self() -> (I32,):
     let id: I32 = self.newType(kind = kind, start = start, end = self.previousEnd())
     self.setTypeKids(id = id, kids = args)
     return self.maybeOptional(id)
-; 返回列表：括号内单元素即该元素本身，空表与多元素保持元组形状。
+; 返回列表：括号内单元素且无标签即该元素本身，空表、多元素与带标签保持元组形状。
 collapseReturn|self(_id: I32,) -> (I32,):
     if _id < 0:
         return _id
     let node = self.ast.typeAt(_id)
     if !isTupleTypeCode(node.kind):
         return _id
-    if len(node.kids) != 1:
+    if len(node.kids) != 1 || len(node.labels) > 0:
         return _id
     return node.kids[0]
 ; 后缀问号：包成可选类型；`T??` 逐层包裹。
@@ -1075,15 +1075,23 @@ maybeOptional|self(_id: I32,) -> (I32,):
         self.pushTypeKid(id = wrapped, kid = out)
         out = wrapped
     return out
-; 圆括号类型：先按元素列表读，见到箭头即整体成为函数类型的形参部分。
+; 圆括号类型：元素可带 `标签:` 前缀；见到箭头即整体成为函数类型的形参部分。
 parseParenType|self() -> (I32,):
     let start: I32 = self.current().start
     self.advance()
     var items: Array<I32> = []
+    var labels = ""
+    var labeled = false
     self.skipNewlines()
     while !self.at(.rightParen) && !self.atEnd():
+        let label: String = self.parseTypeLabel()
         let item: I32 = self.parseType()
         if item >= 0:
+            if len(items) > 0:
+                labels = labels + ","
+            labels = labels + label
+            if len(label) > 0:
+                labeled = true
             items = items.append(item)
         if self.at(.comma):
             self.advance()
@@ -1098,7 +1106,19 @@ parseParenType|self() -> (I32,):
         return id
     let id: I32 = self.newType(kind = .typeTuple, start = start, end = self.previousEnd())
     self.setTypeKids(id = id, kids = items)
+    if labeled:
+        self.setTypeLabels(id = id, labels = labels)
     return id
+; 类型元素标签：`标识符:` 前缀；不是标签就原样返回空串，游标不动。
+parseTypeLabel|self() -> (String,):
+    if !self.at(.identifier) || !self.isKindAt(offset = 1, kind = .colon):
+        return ""
+    let nameStart: I32 = self.current().nameStart
+    let nameEnd: I32 = self.current().nameEnd
+    let text: String = spellOf(bytes = self.bytes, start = nameStart, end = nameEnd)
+    self.advance()
+    self.advance()
+    return text
 ; 表达式：按二元优先级爬升，一元与后缀在更低层解析。
 parseExpression|self(_minPrecedence: I32,) -> (I32,):
     var left: I32 = self.parseCast()
@@ -1266,32 +1286,37 @@ finishCall|self(_callee: I32,) -> (I32,):
     self.setExprEnd(id = id, end = self.previousEnd())
     return id
 ; 实参表：游标在 `(` 之后，逐条收位置实参与 `名字 = 值` 标签实参，尾随逗号合法。
-; 调用与泛型构造共用这一份排布，标签的节点形状因此只有一处定义。
+; 调用、泛型构造与元组共用同一份条目排布。
 parseCallArguments|self(id: I32,) -> ():
     self.skipNewlines()
     while !self.at(.rightParen) && !self.atEnd():
         let before = self.pos
-        if self.at(.identifier) && self.isKindAt(offset = 1, kind = .opAssign):
-            let labelStart: I32 = self.current().nameStart
-            let labelEnd: I32 = self.current().nameEnd
-            self.advance()
-            self.advance()
-            let value: I32 = self.parseExpression(1)
-            let arg: I32 = self.newExpr(kind = .exprBinary, start = labelStart, end = self.ast.exprAt(value).end)
-            self.setExprName(id = arg, start = labelStart, end = labelEnd)
-            self.setExprOp(id = arg, op = .opAssign)
-            self.pushExprKid(id = arg, kid = value)
+        let arg: I32 = self.parseArgumentItem()
+        if arg >= 0:
             self.pushExprKid(id = id, kid = arg)
-        else:
-            let arg: I32 = self.parseExpression(1)
-            if arg >= 0:
-                self.pushExprKid(id = id, kid = arg)
         if self.at(.comma):
             self.advance()
         if self.pos == before:
             self.advance()
         self.skipNewlines()
     return
+; 实参或元组元素：`名字 = 值` 成二元节点，标签进名字区间；无标签时就是那条表达式。
+; 标签的节点形状只有这一处定义，调用面与元组面因此同形。
+parseArgumentItem|self() -> (I32,):
+    if self.at(.identifier) && self.isKindAt(offset = 1, kind = .opAssign):
+        let labelStart: I32 = self.current().nameStart
+        let labelEnd: I32 = self.current().nameEnd
+        self.advance()
+        self.advance()
+        let value: I32 = self.parseExpression(1)
+        if value < 0:
+            return value
+        let arg: I32 = self.newExpr(kind = .exprBinary, start = labelStart, end = self.ast.exprAt(value).end)
+        self.setExprName(id = arg, start = labelStart, end = labelEnd)
+        self.setExprOp(id = arg, op = .opAssign)
+        self.pushExprKid(id = arg, kid = value)
+        return arg
+    return self.parseExpression(1)
 ; 泛型应用前瞻：`名<类型实参>(...)`，函数调用与类型构造共用同一形状。
 ; 只扫记号形状不建节点，判定失手仍按标识符解析，`a < b` 比较不受影响。
 looksLikeGenericConstruct|self() -> (Bool,):
@@ -1434,7 +1459,7 @@ parseFragment|self(start: I32, end: I32,) -> (I32,):
     self.total = savedTotal
     self.pos = savedPos
     return expr
-; 括号表达式：单个元素是分组，多个元素构成元组；尾随逗号是元组标记。
+; 括号表达式：单元素无标签是分组，多元素或带标签的单元素构成元组；尾随逗号是元组标记。
 parseParenExpr|self() -> (I32,):
     let start: I32 = self.current().start
     self.advance()
@@ -1442,9 +1467,16 @@ parseParenExpr|self() -> (I32,):
     if self.at(.rightParen):
         self.advance()
         return self.newExpr(kind = .exprTuple, start = start, end = self.previousEnd())
-    let first: I32 = self.parseExpression(1)
+    let first: I32 = self.parseArgumentItem()
     if !self.at(.comma):
         self.expect(kind = .rightParen, what = "`)`")
+        ; 单元素带标签仍是元组：标签是读法，不能被分组解包吃掉。
+        if first >= 0 && self.ast.isLabeledArgument(first):
+            var one: Array<I32> = []
+            one = one.append(first)
+            let id: I32 = self.newExpr(kind = .exprTuple, start = start, end = self.previousEnd())
+            self.setExprKids(id = id, kids = one)
+            return id
         return first
     var items: Array<I32> = []
     if first >= 0:
@@ -1453,7 +1485,7 @@ parseParenExpr|self() -> (I32,):
         self.advance()
         self.skipNewlines()
         if !self.at(.rightParen):
-            let item: I32 = self.parseExpression(1)
+            let item: I32 = self.parseArgumentItem()
             if item >= 0:
                 items = items.append(item)
         self.skipNewlines()
@@ -2018,6 +2050,12 @@ setTypeName|self(id: I32, start: I32, end: I32,) -> ():
 setTypeKids|self(id: I32, kids: Array<I32>,) -> ():
     var node = self.ast.types[id]
     node.kids = kids
+    self.ast.types[id] = node
+    return
+; 元组标签串：逐分量以逗号分隔，空段表示该分量无标签。
+setTypeLabels|self(id: I32, labels: String,) -> ():
+    var node = self.ast.types[id]
+    node.labels = labels
     self.ast.types[id] = node
     return
 pushTypeKid|self(id: I32, kid: I32,) -> ():

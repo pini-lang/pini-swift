@@ -32,7 +32,7 @@ import sys
 import tempfile
 
 BIN = os.environ.get(
-    "PINI_SWEEP_BIN", "/tmp/pini-build/arm64-apple-macosx/debug/pini"
+    "PINI_SWEEP_BIN", "/tmp/pini-build/arm64-apple-macosx/release/pini"
 )
 LLVM_BIN = "/opt/homebrew/opt/llvm/bin"
 RUN_TIMEOUT = 10

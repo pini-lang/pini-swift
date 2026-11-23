@@ -139,8 +139,8 @@ irTypeClassNameFor|func(kind: IrTypeClass,) -> (String,):
         return "可选"
     return "包装类型"
 
-; 元组映射：分量逐个递归，全部到位才驻留。
-mapTuple|func(map: TypeMap, pool: TypePool, kids: Array<I32>, semanticId: I32,) -> (TypeMap,):
+; 元组映射：分量逐个递归，全部到位才驻留；标签串随类型带过去，供成员读定位槽序。
+mapTuple|func(map: TypeMap, pool: TypePool, kids: Array<I32>, labels: String, semanticId: I32,) -> (TypeMap,):
     var out = map
     var ids: Array<I32> = []
     var i = 0
@@ -151,7 +151,7 @@ mapTuple|func(map: TypeMap, pool: TypePool, kids: Array<I32>, semanticId: I32,) 
             return out
         ids = ids.append(mapped)
         i = i + 1
-    let inserted = irTupleType(pool = out.pool, fields = ids)
+    let inserted = irTupleType(pool = out.pool, fields = ids, labels = labels)
     out.pool = inserted.pool
     return setMapped(map = out, semanticId = semanticId, irId = inserted.id)
 
@@ -223,7 +223,7 @@ mapSemanticType|func(map: TypeMap, pool: TypePool, id: I32,) -> (TypeMap,):
         out.pool = inserted.pool
         return setMapped(map = out, semanticId = id, irId = inserted.id)
     if isTupleClass(entry.kind):
-        return mapTuple(map = out, pool = pool, kids = entry.kids, semanticId = id)
+        return mapTuple(map = out, pool = pool, kids = entry.kids, labels = entry.name, semanticId = id)
     if isCollectionClass(entry.kind):
         return mapCollection(map = out, pool = pool, name = entry.name, kids = entry.kids, semanticId = id)
     if isResultClass(entry.kind):

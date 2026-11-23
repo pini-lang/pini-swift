@@ -507,6 +507,8 @@ inferNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: 
         return out
     if unit.ast.isUnaryExpr(node):
         return inferUnary(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out, bytes = bytes)
+    if unit.ast.isTupleExpr(node):
+        return inferTuple(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out, bytes = bytes)
     if unit.ast.isArrayExpr(node) || unit.ast.isSetExpr(node) || unit.ast.isDictionaryExpr(node):
         return inferContainer(world = world, unit = unit, unitIndex = unitIndex, node = node, names = names, out = out, bytes = bytes, expected = expected)
     if unit.ast.isSubscriptExpr(node) || unit.ast.isSliceExpr(node):
@@ -1018,6 +1020,46 @@ inferBinary|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node
     if result.failed:
         return done
     done.typeId = result.typeId
+    done.types = writeExprType(table = done.types, unit = unitIndex, node = node, typeId = done.typeId)
+    return done
+
+; 元组：逐元素推类型，标签按分量序拼串；标签进类型身份，同形不同标签因此不同型。
+; 标签元素自身也写值类型：兜底扫描不再重复推，降载侧照旧跳过标签只取值。
+inferTuple|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, node: I32, names: NameTable, out: InferResult, bytes: Array<U8>,) -> (InferResult,):
+    var done = out
+    let expr = unit.ast.exprAt(node)
+    var kids: Array<I32> = []
+    var labels = ""
+    var labeled = false
+    var i = 0
+    while i < len(expr.kids):
+        let kid = expr.kids[i]
+        var valueId = kid
+        var label = ""
+        if unit.ast.isLabeledArgument(kid):
+            valueId = unit.ast.childOf(id = kid, index = 0)
+            let item = unit.ast.exprAt(kid)
+            label = decodeRange(bytes = bytes, start = item.nameStart, end = item.nameEnd)
+        if i > 0:
+            labels = labels + ","
+        labels = labels + label
+        if len(label) > 0:
+            labeled = true
+        let one = inferNode(world = world, unit = unit, unitIndex = unitIndex, node = valueId, names = names, pool = done.pool, types = done.types, bytes = bytes, expected = noExpectation())
+        done.pool = one.pool
+        done.types = one.types
+        if one.typeId < 0:
+            return done
+        kids = kids.append(one.typeId)
+        if kid != valueId:
+            done.types = writeExprType(table = done.types, unit = unitIndex, node = kid, typeId = one.typeId)
+        i = i + 1
+    var name = labels
+    if !labeled:
+        name = ""
+    let inserted = intern(pool = done.pool, kind = .typeClassTuple, name = name, kids = kids, ret = -1)
+    done.pool = inserted.pool
+    done.typeId = inserted.id
     done.types = writeExprType(table = done.types, unit = unitIndex, node = node, typeId = done.typeId)
     return done
 

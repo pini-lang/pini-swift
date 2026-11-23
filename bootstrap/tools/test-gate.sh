@@ -29,7 +29,7 @@ if ! python3 "$root/bootstrap/tools/cli-parity.py" > /dev/null; then
     exit 1
 fi
 
-pini="${PINI_BOOTSTRAP_BIN:-$root/bootstrap/.build/debug/bin/pini-bootstrap}"
+pini="${PINI_BOOTSTRAP_BIN:-$root/bootstrap/.build/release/bin/pini-bootstrap}"
 clang_bin="$(command -v clang || true)"
 if [ ! -x "$pini" ] || [ -z "$clang_bin" ]; then
     echo " 行不通  [测试自检] 缺 $pini 或 clang" >&2
@@ -37,7 +37,7 @@ if [ ! -x "$pini" ] || [ -z "$clang_bin" ]; then
 fi
 
 fixture="$root/bootstrap/fixtures/test-basic"
-work="$root/bootstrap/.build/debug/tests/gate"
+work="$root/bootstrap/.build/release/tests/gate"
 mkdir -p "$work" || exit 1
 
 # 跑一轮：发射、链接、运行；报告走标准输出，诊断走标准错误，退出码即测试结果。

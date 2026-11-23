@@ -35,8 +35,8 @@ def fail(message):
 
 
 def host_binary():
-    """宿主可执行文件：显式环境变量优先，否则取默认位置里最新构建的那份。
-    两份并存时固定优先 release，会把另一份的新构建判成落后，红绿取决于谁被挑中。
+    """宿主可执行文件：显式环境变量优先，否则只认 release。
+    宿主口径由 tools/host-profile-check.py 守；两份并存时按修改时间挑，红绿取决于谁被挑中。
     """
     for candidate in (os.environ.get("PINI_HOST_BIN"), os.environ.get("PINI_CLI_BIN")):
         if not candidate:
@@ -46,17 +46,16 @@ def host_binary():
             path = ROOT / path
         if path.is_file():
             return path
-    found = [path for path in (ROOT / ".build/release/pini", ROOT / ".build/debug/pini")
-             if path.is_file()]
-    if not found:
-        fail("缺宿主可执行文件；先 swift build")
+    found = ROOT / ".build/release/pini"
+    if not found.is_file():
+        fail("缺宿主可执行文件；先 swift build -c release --disable-sandbox")
         sys.exit(2)
-    return max(found, key=lambda path: path.stat().st_mtime)
+    return found
 
 
 def self_binary():
     candidate = os.environ.get("PINI_BOOTSTRAP_BIN")
-    path = Path(candidate) if candidate else ROOT / "bootstrap" / ".build" / "debug" / "bin" / "pini-bootstrap"
+    path = Path(candidate) if candidate else ROOT / "bootstrap" / ".build" / "release" / "bin" / "pini-bootstrap"
     if not path.is_file():
         fail("缺自举产物；先 bash bootstrap/tools/build.sh")
         sys.exit(2)
@@ -103,7 +102,7 @@ def ensure_fresh(host, mine):
     if newest_mtime(host_sources) > host.stat().st_mtime + 1:
         fail("宿主产物落后于源码；先 swift build -c release")
         sys.exit(2)
-    if not stamp_matches(mine_sources, ROOT / "bootstrap" / ".build" / "debug" / "sources.sha256"):
+    if not stamp_matches(mine_sources, ROOT / "bootstrap" / ".build" / "release" / "sources.sha256"):
         if newest_mtime(mine_sources) > mine.stat().st_mtime + 1:
             fail("自举产物落后于源码；先 bash bootstrap/tools/build.sh")
             sys.exit(2)

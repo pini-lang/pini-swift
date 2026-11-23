@@ -13,7 +13,7 @@ if [ "$#" -gt 0 ]; then
     shift
 fi
 
-pini="${PINI_BOOTSTRAP_BIN:-$root/bootstrap/.build/debug/bin/pini-bootstrap}"
+pini="${PINI_BOOTSTRAP_BIN:-$root/bootstrap/.build/release/bin/pini-bootstrap}"
 if [ ! -x "$pini" ]; then
     echo " 行不通  [测试] 缺 $pini；先 bash bootstrap/tools/build.sh" >&2
     exit 1
@@ -31,7 +31,7 @@ if [ -z "$clang_bin" ]; then
     exit 1
 fi
 
-out="$root/bootstrap/.build/debug/tests"
+out="$root/bootstrap/.build/release/tests"
 if ! mkdir -p "$out"; then
     echo " 行不通  [测试] 无法创建 $out" >&2
     exit 1

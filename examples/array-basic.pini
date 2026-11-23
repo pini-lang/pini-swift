@@ -22,7 +22,7 @@ main|func() -> ():
         case some(v,):
             w[1] = v + 5
         case none:
-            break
+            pass
     print(w[0])
     print(w[1])
     ; last 给末元素，pop 给 (去掉末元素的数组, 末元素)；空数组两者都终止。

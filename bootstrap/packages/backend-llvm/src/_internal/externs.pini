@@ -21,6 +21,13 @@ externUseCount|func(use: ExternUse,) -> (I32,):
 
 ; 签名：返回完整 declare 行，未登记答空串；变参符号在固定参数后留省略号。
 externSignature|func(name: String,) -> (String,):
+    ; LLVM 内建：由目标直接展开，不落外部库，故与运行时符号分开记。
+    if name == "llvm.sqrt.f64":
+        return "declare double @llvm.sqrt.f64(double)"
+    if name == "llvm.sin.f64":
+        return "declare double @llvm.sin.f64(double)"
+    if name == "llvm.cos.f64":
+        return "declare double @llvm.cos.f64(double)"
     if name == "printf":
         return "declare i32 @printf(ptr, ...)"
     if name == "bk_print_lock":

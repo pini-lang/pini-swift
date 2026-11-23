@@ -127,19 +127,20 @@ id: I32 = -1
     assert(huge.failed, "超长序号应报错")
     return
 
-; 元组标签：标签表按类型下标挂上后，名字与序号同样命中。
+; 元组标签：标签随类型条目驻留，名字与序号同样命中，类型文本按标签印。
 元组标签|test() -> ():
     let sample = 造成员样例(path = "packages/p/src/api/a.pini", src = "(点)\nx: I32 = 0\n")
     let tuple = 造元组样例(sample.world)
-    var labels: Array<String> = []
-    labels = labels.append("a")
-    labels = labels.append("b")
-    let world = withTupleLabels(world = tuple.world, typeId = tuple.id, labels = labels)
-    let hit = 查成员(world = world, file = sample.file, receiver = tuple.id, name = "b", isTypeName = false, owner = "")
+    let plain = tuple.world.types.pool.entries[tuple.id]
+    let labeled = intern(pool = tuple.world.types.pool, kind = .typeClassTuple, name = "a,b", kids = plain.kids, ret = -1)
+    var world = tuple.world
+    world.types.pool = labeled.pool
+    let hit = 查成员(world = world, file = sample.file, receiver = labeled.id, name = "b", isTypeName = false, owner = "")
     assert(!hit.failed, "标签应命中")
     assert(isMemberKind(kind = hit.kind, expected = .memberTupleLabel), "应判作元组标签")
     assert(typeText(pool = hit.pool, id = hit.typeId) == "Bool", "实得 " + typeText(pool = hit.pool, id = hit.typeId))
-    let missing = 查成员(world = world, file = sample.file, receiver = tuple.id, name = "c", isTypeName = false, owner = "")
+    assert(typeText(pool = labeled.pool, id = labeled.id) == "(a: I32, b: Bool,)", "实得 " + typeText(pool = labeled.pool, id = labeled.id))
+    let missing = 查成员(world = world, file = sample.file, receiver = labeled.id, name = "c", isTypeName = false, owner = "")
     assert(missing.failed, "未知标签应报错")
     return
 

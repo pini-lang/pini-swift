@@ -27,14 +27,14 @@ BASELINE = os.path.join(EXAMPLES, "gate-baseline.tsv")
 GOLDEN = os.path.join(EXAMPLES, "golden")
 EXEMPT = os.path.join(GOLDEN, "EXEMPT.tsv")
 LEGS = ("check", "run", "run-llvm", "golden")
-DEFAULT_BIN = os.path.join(ROOT, ".build/debug/pini")
+DEFAULT_BIN = os.path.join(ROOT, ".build/release/pini")
 TIMEOUT = 60
 
 
 def binary():
     path = os.environ.get("PINI_BIN") or DEFAULT_BIN
     if not os.path.isfile(path) or not os.access(path, os.X_OK):
-        print(f"示例门禁：找不到可执行的 pini（{path}）。先 swift build，或设 PINI_BIN。", file=sys.stderr)
+        print(f"示例门禁：找不到可执行的 pini（{path}）。先 swift build -c release --disable-sandbox，或设 PINI_BIN。", file=sys.stderr)
         sys.exit(2)
     return path
 

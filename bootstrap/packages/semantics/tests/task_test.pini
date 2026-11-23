@@ -103,3 +103,11 @@ types: ExprTypes = ExprTypes()
     assert(len(检查.errors) == 1, "应报一条，实得 " + countText(len(检查.errors)))
     assert(isExprError(error = 检查.errors[0], kind = .exprCallFailed), "实得 " + exprErrorName(检查.errors[0].kind))
     return
+
+; 类型形参：泛型声明的 T 在模板体内可解，不再报类型未声明。
+类型形参可解|test() -> ():
+    let 样例 = 造任务样例("(盒<T>)\n内容: T\n\n((盒<T>))\n取|self() -> (T,):\n    return self.内容\n")
+    let 推 = inferUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
+    let 检查 = checkUnitExprs(world = 样例.world, unitIndex = 0, types = 推.types)
+    assert(len(检查.errors) == 0, "应零错误，实得 " + countText(len(检查.errors)))
+    return

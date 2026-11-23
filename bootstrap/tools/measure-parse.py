@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-BIN = ROOT / ".build" / "debug" / "pini"
+BIN = ROOT / ".build" / "release" / "pini"
 SYNTAX = ROOT / "bootstrap" / "packages" / "syntax"
 PACKAGES = ROOT / "bootstrap" / "packages"
 
@@ -249,7 +249,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if not BIN.exists():
-        print(f"缺少可执行文件 {BIN}；先 swift build --disable-sandbox", file=sys.stderr)
+        print(f"缺少可执行文件 {BIN}；先 swift build -c release --disable-sandbox", file=sys.stderr)
         return 1
 
     wanted = [name for name in args.only if name != "底噪"] or None
