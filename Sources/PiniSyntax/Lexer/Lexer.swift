@@ -32,13 +32,38 @@ public class Lexer {
     /// 每行前导空格数：缩进块还原宽度的依据。只登记代码行。
     public private(set) var indents: [Int: Int] = [:]
 
+    /// 每行正上方的空行数：打印器据此保留作者的分组空行。键是非空行行号。
+    public private(set) var blankAbove: [Int: Int] = [:]
+
     /// 词法警告：扫描不中断。与 `comments` 同生命周期，一次 `tokenize()` 之内只增不改。
     /// 只承载「看见了但继续编译」的事实；是否阻断由调用方按严重度决定。
     public private(set) var warnings: [LexerWarning] = []
 
     /// 本次扫描的位置旁路。词法失败时只含失败点之前的部分。
     public var hints: PrintHints {
-        PrintHints(spellings: spellings, indents: indents)
+        PrintHints(
+            spellings: spellings, indents: indents, blankAbove: blankAbove,
+            step: PrintHints.quantizedStep(inferredStep))
+    }
+
+    /// 一级缩进的观测值：取最小的正缩进。跨行字面量的对齐列不算——它们只是排在同一列，不是块步长。
+    private var inferredStep: Int {
+        indents.values.filter { $0 > 0 }.min() ?? 4
+    }
+
+    /// 收集每行上方的空行数。键取非空行，注释行同样登记：注释段落之间的空行也要还原。
+    private func collectBlankLines() {
+        var counts: [Int: Int] = [:]
+        var run = 0
+        for (index, raw) in source.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
+            if raw.allSatisfy({ $0 == " " || $0 == "\t" || $0 == "\r" }) {
+                run += 1
+                continue
+            }
+            if run > 0 { counts[index + 1] = run }
+            run = 0
+        }
+        blankAbove = counts
     }
 
     public init(source: String, fileName: String) {
@@ -122,6 +147,7 @@ public class Lexer {
         let loc = currentLocation
         tokens.append(contentsOf: indentTracker.finalize(location: loc))
         tokens.append(.eof(loc))
+        collectBlankLines()
         return tokens
     }
 
