@@ -63,7 +63,8 @@ _semantics = "../../semantics"
     let world = 建世界(units = units)
     var 缺: Array<PlanMacro> = []
     var 空跳过: Array<PlanSkip> = []
-    let 缺诊断 = macroDiagnostics(units = units, world = world, macros = 缺, skips = 空跳过)
+    var 包名: Array<String> = ["p"]
+    let 缺诊断 = macroDiagnostics(units = units, world = world, macros = 缺, skips = 空跳过, unitPackages = 包名)
     assert(len(缺诊断) == 1, "应报一条，实得 " + "\(len(缺诊断))")
     assert(缺诊断[0].code == "E4-044", "实得 " + 缺诊断[0].code)
     assert(缺诊断[0].message.contains("pini build"), "缺计划文案应指 build：" + 缺诊断[0].message)
@@ -74,8 +75,12 @@ _semantics = "../../semantics"
     有值.type = "I32"
     有值.value = "1"
     var 表: Array<PlanMacro> = [有值]
-    let 有值诊断 = macroDiagnostics(units = units, world = world, macros = 表, skips = 空跳过)
+    let 有值诊断 = macroDiagnostics(units = units, world = world, macros = 表, skips = 空跳过, unitPackages = 包名)
     assert(len(有值诊断) == 0, "有值不该报，实得 " + 诊断串(有值诊断))
+    var 别包: Array<String> = ["q"]
+    let 别包诊断 = macroDiagnostics(units = units, world = world, macros = 表, skips = 空跳过, unitPackages = 别包)
+    assert(len(别包诊断) == 1, "别包的计划条目不该算本包有值")
+    assert(别包诊断[0].message.contains("pini build"), "别包应报缺计划")
     return
 
 ; 生成面跳过名：调用位报 E4-046，理由带 shim 配方；未登记仍归未定义名。
@@ -91,10 +96,32 @@ _semantics = "../../semantics"
     跳过.name = "DOUBLE"
     跳过.reason = "函数式宏要实参才能展开"
     var 表: Array<PlanSkip> = [跳过]
-    let 诊断 = macroDiagnostics(units = units, world = world, macros = 空宏, skips = 表)
+    var 包名: Array<String> = ["p"]
+    let 诊断 = macroDiagnostics(units = units, world = world, macros = 空宏, skips = 表, unitPackages = 包名)
     assert(len(诊断) == 1, "应报一条，实得 " + 诊断串(诊断))
     assert(诊断[0].code == "E4-046", "实得 " + 诊断[0].code)
     assert(诊断[0].message.contains("shim") || 诊断[0].message.contains("函数式宏"), "理由应来自跳过表：" + 诊断[0].message)
+    return
+
+; 跳过名不跨包：q 包没有这条跳过项，DOUBLE 照常按未定义函数报，不被别包的表豁免。
+跳过名不跨包|test() -> ():
+    let unit = 造单元(path = "packages/q/src/api/q.pini", src = "f|func() -> (I32,):\n    return DOUBLE(1)\n")
+    var all: Array<CompilationUnit> = [unit]
+    let units = sortedUnits(all)
+    let world = 建世界(units = units)
+    var 空宏: Array<PlanMacro> = []
+    var 跳过 = PlanSkip()
+    跳过.package = "p"
+    跳过.stepName = "s"
+    跳过.name = "DOUBLE"
+    跳过.reason = "函数式宏要实参才能展开"
+    var 表: Array<PlanSkip> = [跳过]
+    var 包名: Array<String> = ["q"]
+    let 宏诊断 = macroDiagnostics(units = units, world = world, macros = 空宏, skips = 表, unitPackages = 包名)
+    assert(len(宏诊断) == 0, "别包的跳过项不该在 q 报 E4-046：" + 诊断串(宏诊断))
+    let 表达式诊断 = exprPackageDiagnosticsSkipping(world = world, units = units, skips = 表, unitPackages = 包名)
+    assert(len(表达式诊断) == 1, "应报一条未定义函数，实得 " + 诊断串(表达式诊断))
+    assert(表达式诊断[0].code == "E3-002", "实得 " + 表达式诊断[0].code)
     return
 
 ; 诊断串：断言失败时给出码与消息。

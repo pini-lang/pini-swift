@@ -288,6 +288,15 @@ loadWorkspaceGrouped|func(_plan: BuildPlan, stdlib: StdlibOption,) -> (Workspace
         out = assembleStdlib(ws = out, paths = paths)
     return out
 
+; 单元包名表：与单元数组同序，逐项按归属取包名；降载与诊断按这个下标查本包宏表。
+unitPackagesOf|func(ws: WorkspaceUnits, units: Array<CompilationUnit>,) -> (Array<String>,):
+    var out: Array<String> = []
+    var i = 0
+    while i < len(units):
+        out = out.append(ws.packageOf(units[i].path))
+        i = i + 1
+    return out
+
 ((WorkspaceUnits))
 ; 包数：下标合法区间是 0 到 count() - 1。
 count|self() -> (I32,):

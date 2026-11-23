@@ -82,26 +82,32 @@ _package = "../../package"
     assert(macroReasonLine(reason = "unparsable", detail = "展开后是 `x`").contains("展开后是 `x`"), "细节应附在理由后")
     return
 
-; 宏查找：名字全等命中，未命中答 -1；计划次序即查找次序。
+; 宏查找：包名与名字都相等才命中，未命中答 -1；同名宏按包各取本包那一行。
 宏查找|test() -> ():
     var 甲 = PlanMacro()
+    甲.package = "a"
     甲.name = "EOF"
     甲.state = "value"
     甲.value = "-1"
     var 乙 = PlanMacro()
-    乙.name = "getc"
-    乙.state = "unresolved"
-    乙.reason = "functionLike"
+    乙.package = "b"
+    乙.name = "EOF"
+    乙.state = "value"
+    乙.value = "7"
     var 表: Array<PlanMacro> = [甲, 乙]
-    assert(findPlanMacro(items = 表, name = "EOF") == 0, "首条命中")
-    assert(findPlanMacro(items = 表, name = "getc") == 1, "次条命中")
-    assert(findPlanMacro(items = 表, name = "absent") < 0, "未命中答 -1")
+    assert(findPlanMacro(items = 表, package = "a", name = "EOF") == 0, "首包命中")
+    assert(findPlanMacro(items = 表, package = "b", name = "EOF") == 1, "同名宏按包各取一行")
+    assert(findPlanMacro(items = 表, package = "c", name = "EOF") < 0, "别包不算命中")
+    assert(findPlanMacro(items = 表, package = "a", name = "absent") < 0, "未命中答 -1")
     var 跳 = PlanSkip()
+    跳.package = "a"
     跳.name = "DOUBLE"
     跳.reason = "函数式宏要实参"
     var 跳表: Array<PlanSkip> = [跳]
-    assert(findPlanSkip(items = 跳表, name = "DOUBLE") == 0, "跳过名命中")
-    assert(findPlanSkip(items = 跳表, name = "absent") < 0, "跳过名未命中答 -1")
+    assert(findPlanSkip(items = 跳表, package = "a", name = "DOUBLE") == 0, "跳过名命中")
+    assert(findPlanSkip(items = 跳表, package = "b", name = "DOUBLE") < 0, "别包跳过名不算命中")
+    assert(findPlanSkip(items = 跳表, package = "a", name = "absent") < 0, "跳过名未命中答 -1")
+    assert(len(skipNamesFor(items = 跳表, package = "b")) == 0, "别包不继承跳过名")
     return
 
 ; 归属：生成模块落在 .build 下，按分组成员判定归属；源码仍按包根前缀。

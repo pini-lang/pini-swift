@@ -3,7 +3,7 @@ import Testing
 import PiniIR
 import PiniSemantics
 import PiniSyntax
-import PiniHost
+@testable import PiniHost
 
 /// 宏常量降级：未求值只在读点报，声明处只挡非标量，降载不再逐条预检。
 /// 需要 C 头文件的真实求值另由命令行夹具覆盖；这里钉住判定面与诊断面。
@@ -190,5 +190,20 @@ struct MacroDemotionTests: Sendable {
         let old = try BuildPlan.read(at: oldPath, layout: layout)
         #expect(old?.macros.isEmpty == true)
         #expect(old?.skips.isEmpty == true)
+    }
+
+    @Test("同包重复宏声明只留一条：生成模块与源文件同名时不重复进计划")
+    func duplicateMacroDeclarationsCollapse() {
+        let location = SourceLocation(line: 1, column: 1, fileName: "x.pini")
+        let annotation = TypeAnnotation.simple(name: "I32", location: location)
+        let source = ForeignSymbol(
+            name: "ANSWER", annotation: annotation, flags: ["macro"], location: location)
+        let generated = ForeignSymbol(
+            name: "ANSWER", annotation: annotation, flags: ["macro"], location: location)
+        let data = ForeignSymbol(
+            name: "errno", annotation: annotation, flags: [], location: location)
+        let deduped = BuildRunner.dedupedMacroSymbols([source, generated, data])
+        #expect(deduped.count == 1)
+        #expect(deduped.first?.name == "ANSWER")
     }
 }

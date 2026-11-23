@@ -156,13 +156,14 @@ public enum BuildRunner {
                     return block.symbols
                 }
             }
-            guard symbols.contains(where: { $0.flags.contains("macro") }) else { continue }
+            let macroSymbols = dedupedMacroSymbols(symbols)
+            guard !macroSymbols.isEmpty else { continue }
             let config = plan.ffiConfig(
                 for: entry.name, base: manifest?.ffi ?? .default)
-            let evaluation = try ForeignMacroEvaluator.evaluate(symbols: symbols, config: config)
+            let evaluation = try ForeignMacroEvaluator.evaluate(symbols: macroSymbols, config: config)
             var values: [String: IRForeignConstant] = [:]
             for constant in evaluation.values { values[constant.name] = constant }
-            for symbol in symbols where symbol.flags.contains("macro") {
+            for symbol in macroSymbols {
                 let type = symbol.annotation.describe()
                 if let constant = values[symbol.name] {
                     rows.append(
@@ -185,6 +186,15 @@ public enum BuildRunner {
             try write(try updated.render(layout: layout), to: layout.planPath)
         }
         return updated
+    }
+
+    /// 同包同名宏只留第一条：生成模块会重复声明源文件里的宏，重复求值会让计划多出行。
+    /// 保留先出现的那条；同包同名两条类型不同时，语义检查另报冲突，这里不替它裁定。
+    static func dedupedMacroSymbols(_ symbols: [ForeignSymbol]) -> [ForeignSymbol] {
+        var seenNames: Set<String> = []
+        return symbols.filter { $0.flags.contains("macro") }.filter {
+            seenNames.insert($0.name).inserted
+        }
     }
 
     /// 计划里的值一律字符串：整数不经浮点中转，浮点取最短往返十进制。

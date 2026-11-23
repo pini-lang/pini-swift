@@ -28,6 +28,7 @@ units: WorkspaceUnits = WorkspaceUnits()
     out.packages = entry.packages
     let ws = entry.units
     let units = collectWorkspaceUnits(ws)
+    let unitPackages = unitPackagesOf(ws = ws, units = units)
     let build = buildWorld(units = units, packages = ws.packages)
     let 填 = fillExprTypes(world = build.world, units = units)
     let 泛 = instantiateGenerics(world = build.world, units = units, fill = 填)
@@ -40,6 +41,7 @@ units: WorkspaceUnits = WorkspaceUnits()
     input.types = 泛.types
     input.generics = 泛
     input.macros = macroRows(items = ws.macros)
+    input.unitPackages = unitPackages
     let shapes = makeShapeTable(世界)
     input.shapes = shapes
     input.layouts = layoutAll(shapes = shapes, pool = 世界.types.pool)
@@ -60,6 +62,7 @@ units: WorkspaceUnits = WorkspaceUnits()
     let ws = entry.units
     out.units = ws
     let units = collectWorkspaceUnits(ws)
+    let unitPackages = unitPackagesOf(ws = ws, units = units)
     print("stage-load", len(units))
     if stage <= 1:
         return out
@@ -94,6 +97,7 @@ units: WorkspaceUnits = WorkspaceUnits()
     input.types = 泛.types
     input.generics = 泛
     input.macros = macroRows(items = ws.macros)
+    input.unitPackages = unitPackages
     input.shapes = shapes
     input.layouts = layouts
     out.module = lowerWorkspace(input = input)
@@ -115,11 +119,13 @@ typedExprCount|func(table: ExprTypes,) -> (I32,):
     return total
 
 ; 计划宏转 IR 宏：值文本原样带过去，声明类型留在世界里，降载点按表达式类型出常量。
+; 包名一并带过去：同名宏在降载与诊断两侧都按包归属取，不会跨包串值。
 macroRows|func(items: Array<PlanMacro>,) -> (Array<IrMacro>,):
     var out: Array<IrMacro> = []
     var i = 0
     while i < len(items):
         var one = IrMacro()
+        one.package = items[i].package
         one.name = items[i].name
         one.resolved = items[i].state == "value"
         one.value = items[i].value

@@ -1,23 +1,39 @@
 [macro|import]
 _package = "../../../package"
 
-; 宏表查询：名字全等即命中，未命中答 -1；同名跨包以计划次序先出现者为准。
-findPlanMacro|func(items: Array<PlanMacro>, name: String,) -> (I32,):
+; 宏表查询：包名与名字都相等才命中，未命中答 -1；不同包的同名宏各归各包。
+findPlanMacro|func(items: Array<PlanMacro>, package: String, name: String,) -> (I32,):
     var i = 0
     while i < len(items):
-        if items[i].name == name:
+        if items[i].package == package && items[i].name == name:
             return i
         i = i + 1
     return -1
 
-; 跳过项查找：名字全等即命中，未命中答 -1；命中即可报「生成面没翻译」。
-findPlanSkip|func(items: Array<PlanSkip>, name: String,) -> (I32,):
+; 跳过项查找：包名与名字都相等才命中；命中即可报「生成面没翻译」。
+findPlanSkip|func(items: Array<PlanSkip>, package: String, name: String,) -> (I32,):
     var i = 0
     while i < len(items):
-        if items[i].name == name:
+        if items[i].package == package && items[i].name == name:
             return i
         i = i + 1
     return -1
+
+; 跳过名表：只收指定包的跳过名；别包的同名标识符照常报未定义，不被这条表豁免。
+skipNamesFor|func(items: Array<PlanSkip>, package: String,) -> (Array<String>,):
+    var out: Array<String> = []
+    var i = 0
+    while i < len(items):
+        if items[i].package == package:
+            out = out.append(items[i].name)
+        i = i + 1
+    return out
+
+; 包名读：与单元数组同序的包名表按下标取，越界答空串（标准库单元无包归属）。
+packageNameAt|func(items: Array<String>, index: I32,) -> (String,):
+    if index < 0 || index >= len(items):
+        return ""
+    return items[index]
 
 ; 失败理由码转一句可执行的话：缺计划与缺头文件分开说，读者才分得清配置与计划。
 ; 计划只存码与细节，措辞留在这里，换文案不改计划字节。

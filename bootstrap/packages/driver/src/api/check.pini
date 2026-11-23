@@ -222,11 +222,13 @@ exprDiagnostics|func(_check: ExprCheck,) -> (Array<Diagnostic>,):
 ; 表达式装配：先逐单元推导填表，再逐单元跑表达式检查。
 ; 推导只推能唯一确定类型的节点；推不出的按未定处理，不阻断检查。
 exprPackageDiagnostics|func(world: MemberWorld, units: Array<CompilationUnit>,) -> (Array<Diagnostic>,):
-    var 空跳过: Array<String> = []
-    return exprPackageDiagnosticsSkipping(world = world, units = units, skips = 空跳过)
+    var 空跳过: Array<PlanSkip> = []
+    var 空包名: Array<String> = []
+    return exprPackageDiagnosticsSkipping(world = world, units = units, skips = 空跳过, unitPackages = 空包名)
 
 ; 带跳过表的装配：跳过名不报未定义，留给 E4-046 说「生成面没翻译」。
-exprPackageDiagnosticsSkipping|func(world: MemberWorld, units: Array<CompilationUnit>, skips: Array<String>,) -> (Array<Diagnostic>,):
+; 跳过表按单元所属包取：别包的同名标识符照常报未定义，不被这条豁免带过。
+exprPackageDiagnosticsSkipping|func(world: MemberWorld, units: Array<CompilationUnit>, skips: Array<PlanSkip>, unitPackages: Array<String>,) -> (Array<Diagnostic>,):
     var types = makeExprTypes(units)
     var enriched = world
     var u = 0
@@ -240,7 +242,8 @@ exprPackageDiagnosticsSkipping|func(world: MemberWorld, units: Array<Compilation
     var out: Array<Diagnostic> = []
     u = 0
     while u < len(units):
-        var one = exprDiagnostics(checkUnitExprsSkipping(world = enriched, unitIndex = u, types = types, skips = skips))
+        let names = skipNamesFor(items = skips, package = packageNameAt(items = unitPackages, index = u))
+        var one = exprDiagnostics(checkUnitExprsSkipping(world = enriched, unitIndex = u, types = types, skips = names))
         var i = 0
         while i < len(one):
             out = out.append(one[i])
@@ -248,18 +251,10 @@ exprPackageDiagnosticsSkipping|func(world: MemberWorld, units: Array<Compilation
         u = u + 1
     return out
 
-; 跳过名表：只取名字，表达式检查按名字面跳过未定义报告。
-skipNames|func(items: Array<PlanSkip>,) -> (Array<String>,):
-    var out: Array<String> = []
-    var i = 0
-    while i < len(items):
-        out = out.append(items[i].name)
-        i = i + 1
-    return out
-
 ; 宏常量诊断：声明的宏在计划里没有值报 E4-044；生成面跳过的名字报 E4-046。
+; 两条都按单元所属包查表：同名宏与同名跳过项在别包声明时不串到本包。
 ; 生成面跳过名连调用位一起查：函数式宏被跳过时，用户写的正是调用。
-macroDiagnostics|func(units: Array<CompilationUnit>, world: MemberWorld, macros: Array<PlanMacro>, skips: Array<PlanSkip>,) -> (Array<Diagnostic>,):
+macroDiagnostics|func(units: Array<CompilationUnit>, world: MemberWorld, macros: Array<PlanMacro>, skips: Array<PlanSkip>, unitPackages: Array<String>,) -> (Array<Diagnostic>,):
     var out: Array<Diagnostic> = []
     if !hasDeclaredMacro(world = world) && len(skips) == 0:
         return out
@@ -269,6 +264,7 @@ macroDiagnostics|func(units: Array<CompilationUnit>, world: MemberWorld, macros:
         let bytes = unitBytes(unit)
         let locals = localOnlyNames(unit = unit)
         let callees = calleeNodeIds(unit = unit)
+        let pkg = packageNameAt(items = unitPackages, index = u)
         var i = 0
         while i < unit.ast.exprCount():
             if unit.ast.isIdentifierExpr(i):
@@ -276,13 +272,13 @@ macroDiagnostics|func(units: Array<CompilationUnit>, world: MemberWorld, macros:
                 let name = decodeSpelling(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
                 let isCallee = containsId(items = callees, value = i)
                 if !hasName(items = locals, value = name) && isDeclaredMacro(world = world, name = name) && !isCallee:
-                    let at = findPlanMacro(items = macros, name = name)
+                    let at = findPlanMacro(items = macros, package = pkg, name = name)
                     if at < 0:
                         out = out.append(makeCheckDiagnostic(file = unit.path, category = typeCategory(), code = "E4-044", message = "宏常量 '" + name + "' 在这里取不到值：" + macroReasonLine(reason = "missingPlan", detail = ""), offset = expr.start))
                     elif macros[at].state != "value":
                         out = out.append(makeCheckDiagnostic(file = unit.path, category = typeCategory(), code = "E4-044", message = "宏常量 '" + name + "' 在这里取不到值：" + macroReasonLine(reason = macros[at].reason, detail = macros[at].detail), offset = expr.start))
                 elif !hasName(items = locals, value = name):
-                    let skipped = findPlanSkip(items = skips, name = name)
+                    let skipped = findPlanSkip(items = skips, package = pkg, name = name)
                     if skipped >= 0:
                         out = out.append(makeCheckDiagnostic(file = unit.path, category = typeCategory(), code = "E4-046", message = "'" + name + "' 是 C 头文件里的宏，`pini bind` 没有翻译它：" + skips[skipped].reason, offset = expr.start))
             i = i + 1
@@ -508,6 +504,7 @@ checkWorkspace|func(root: String, stdlib: StdlibOption,) -> (WorkspaceReport,):
 ; 检查主体：装载之后的全部阶段；包图由调用方给，单文件与工作区共用这一条链。
 checkUnits|func(root: String, ws: WorkspaceUnits, packages: I32, plan: BuildPlan,) -> (WorkspaceReport,):
     let units = collectWorkspaceUnits(ws)
+    let unitPackages = unitPackagesOf(ws = ws, units = units)
     var diagnostics = loadDiagnostics(ws)
     var lexical = lexicalDiagnostics(units)
     var i = 0
@@ -558,12 +555,12 @@ checkUnits|func(root: String, ws: WorkspaceUnits, packages: I32, plan: BuildPlan
     while i < len(bodies):
         diagnostics = diagnostics.append(bodies[i])
         i = i + 1
-    var exprs = exprPackageDiagnosticsSkipping(world = world, units = units, skips = skipNames(items = ws.skips))
+    var exprs = exprPackageDiagnosticsSkipping(world = world, units = units, skips = ws.skips, unitPackages = unitPackages)
     i = 0
     while i < len(exprs):
         diagnostics = diagnostics.append(exprs[i])
         i = i + 1
-    var macroErrors = macroDiagnostics(units = units, world = world, macros = ws.macros, skips = ws.skips)
+    var macroErrors = macroDiagnostics(units = units, world = world, macros = ws.macros, skips = ws.skips, unitPackages = unitPackages)
     i = 0
     while i < len(macroErrors):
         diagnostics = diagnostics.append(macroErrors[i])

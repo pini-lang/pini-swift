@@ -34,6 +34,8 @@ module: IrModule = IrModule()
     input.types = 泛.types
     input.generics = 泛
     input.macros = macros
+    var 包名: Array<String> = ["p"]
+    input.unitPackages = 包名
     let shapes = makeShapeTable(world)
     input.shapes = shapes
     input.layouts = layoutAll(shapes = shapes, pool = world.types.pool)
@@ -577,6 +579,7 @@ module: IrModule = IrModule()
 宏降载|test() -> ():
     let src = "[m|foreign]\nEOF|macro: I32\n\nmain|func() -> (I32,):\n    return EOF\n"
     var 值 = IrMacro()
+    值.package = "p"
     值.name = "EOF"
     值.resolved = true
     值.value = "-1"
@@ -589,10 +592,32 @@ module: IrModule = IrModule()
     assert(irNodeAt(pool = 样例.module.nodes, id = 常量).intValue == (-1) as I64, "值应为 -1")
     return
 
+; 同名宏不串包：别包同名宏排在前面且值不同，本包读点仍取本包那一行。
+宏按包取值|test() -> ():
+    let src = "[m|foreign]\nANSWER|macro: I32\n\nmain|func() -> (I32,):\n    return ANSWER\n"
+    var 别包 = IrMacro()
+    别包.package = "q"
+    别包.name = "ANSWER"
+    别包.resolved = true
+    别包.value = "42"
+    var 本包 = IrMacro()
+    本包.package = "p"
+    本包.name = "ANSWER"
+    本包.resolved = true
+    本包.value = "7"
+    var 表: Array<IrMacro> = [别包, 本包]
+    let 样例 = 造样例带宏(src, macros = 表)
+    assert(len(样例.module.errors) == 0, "本包有值不应报缺口")
+    let 常量 = 取节点按类别(样例 = 样例, kind = irExprTag(.irIntConst))
+    assert(常量 >= 0, "应出整型字面量")
+    assert(irNodeAt(pool = 样例.module.nodes, id = 常量).intValue == 7 as I64, "应取本包的值 7")
+    return
+
 ; 未求值宏：读点报能力缺口并给出理由；它同样不进外部数据表。
 宏未求值|test() -> ():
     let src = "[m|foreign]\nDOUBLE|macro: I32\n\nmain|func() -> (I32,):\n    return DOUBLE\n"
     var 未求 = IrMacro()
+    未求.package = "p"
     未求.name = "DOUBLE"
     未求.resolved = false
     未求.reason = "functionLike"
