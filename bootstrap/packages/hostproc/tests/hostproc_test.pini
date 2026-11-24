@@ -1,8 +1,13 @@
-; 进程族入口的冒烟：起一个只回显的程序，退出码与两路输出都对上才算通。
-; 只在这里验证 ABI 姿态；工具链定位与运行时库查找归 driver 的编译命令。
-进程回显|test() -> ():
-    var 参数: Array<String> = ["/bin/echo", "回显"]
-    let 结局 = runProcess(argv = 参数, keepOutput = true)
-    assert(结局.code == 0, "退出码应为零")
-    assert(len(结局.stdoutText) > 0, "标准输出应有字节")
+; 文本工具：路径末分隔符与尾部换行剥除，都是纯字符串运算，两个通道都能跑。
+; 进程调用本身不在单测里跑：解释器通道的进程映像没有运行时段符号，归 compile 端到端覆盖。
+末分隔符|test() -> ():
+    assert(processLastSlash(text = "/tmp/a.ll") == 4, "末分隔符位置")
+    assert(processLastSlash(text = "裸名") == -1, "无分隔符答 -1")
+    return
+
+剥尾换行|test() -> ():
+    assert(stripTrailingNewline(text = "abc\n") == "abc", "去掉一个换行")
+    assert(stripTrailingNewline(text = "abc\n\n") == "abc", "连续换行一并去掉")
+    assert(stripTrailingNewline(text = "abc") == "abc", "无换行原样")
+    assert(stripTrailingNewline(text = "\n") == "", "只有换行得空串")
     return
