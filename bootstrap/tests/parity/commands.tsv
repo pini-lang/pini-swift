@@ -13,7 +13,7 @@ dap	-	无	-	无	待补齐
 debug	-	无	-	无	待补齐
 dump	-	有	-	自举独有	自举内部通道
 emit	--backend,-o	有	-	有	-
-expand	-	无	-	无	待补齐
+expand	-	有	-	有	-
 fmt	-	有	-	有	-
 help	-	无	-	无	待核
 interfaces	-	有	-	自举独有	自举内部通道

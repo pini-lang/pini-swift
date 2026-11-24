@@ -34,3 +34,7 @@ fmt-struct	fmt	在	0	0	-	-	0/0	同同同	同
 fmt-check-clean	fmt	在	0	0	-	-	0/0	同同同	同
 fmt-check-dirty	fmt	在	1	1	-	-	0/0	同同异	异:文
 fmt-multi-path	fmt	在	1	1	-	-	0/0	同同异	异:文
+expand-unroll	expand	在	0	0	-	-	0/0	同同同	同
+expand-no-unroll	expand	在	0	0	-	-	0/0	同同同	同
+expand-bad	expand	在	1	1	E3-014@4:20	E3-014@4:20	1/1	同同异	异:文
+expand-fold	expand	在	0	0	-	-	0/0	同同异	异:文

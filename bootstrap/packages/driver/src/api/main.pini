@@ -160,6 +160,13 @@ main|func() -> ():
             return
         runFmt(paths = paths, write = write, check = check)
         return
+    if len(args) > 0 && args[0] == "expand":
+        if len(args) != 2:
+            print("Error: expand 要且只要一个 .pini 路径")
+            assert(false, "展开参数不合规")
+            return
+        runExpand(path = entryPathOf(raw = args[1]))
+        return
     if len(args) > 0 && args[0] == "parse":
         var target = ""
         var c = 1
@@ -472,6 +479,8 @@ isKnownCommand|func(name: String,) -> (Bool,):
     if name == "plan" || name == "version" || name == "--version" || name == "-v":
         return true
     if name == "tokens" || name == "backends" || name == "parse" || name == "fmt":
+        return true
+    if name == "expand":
         return true
     if name == "compile" || name == "run-llvm" || name == "test-llvm":
         return true

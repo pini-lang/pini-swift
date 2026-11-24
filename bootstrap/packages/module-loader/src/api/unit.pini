@@ -72,22 +72,10 @@ loadUnit|func(path: String, text: String,) -> (UnitLoad,):
     unit.ast = expanded.ast
     unit.diagnostics = parsed.diagnostics
     unit.issues = parsed.issues
+    var faults = unrollFaultDiagnostics(errors = expanded.errors, path = path)
     var e = 0
-    while e < len(expanded.errors):
-        var one = Diagnostic()
-        one.file = path
-        one.category = semanticCategory()
-        one.severity = errorSeverity()
-        one.code = expanded.errors[e].code
-        one.message = expanded.errors[e].message
-        var label = Label()
-        label.start = expanded.errors[e].start
-        label.end = expanded.errors[e].end
-        label.primary = true
-        var labels: Array<Label> = []
-        labels = labels.append(label)
-        one.labels = labels
-        unit.diagnostics = unit.diagnostics.append(one)
+    while e < len(faults):
+        unit.diagnostics = unit.diagnostics.append(faults[e])
         e = e + 1
     out.unit = unit
     return out

@@ -34,3 +34,7 @@ fmt-struct	fmt	examples/struct.pini	在	同同同	类型体顶格、成员尾逗
 fmt-check-clean	fmt	--check examples/hello.pini	在	同同同	已是规范形：零输出、退出 0
 fmt-check-dirty	fmt	--check bootstrap/fixtures/cli-parity/inputs/fmt-dirty.pini	在	同同异	退出码同；列表里宿主去掉 ./ 前缀，自举原样回显
 fmt-multi-path	fmt	examples/hello.pini examples/object.pini	在	同同异	两侧都拒多路径无开关；文案宿主走标准错误，自举走标准输出
+expand-unroll	expand	examples/unroll.pini	在	同同同	展开 unroll：模式名换成表里的字面量，注释不进产物
+expand-no-unroll	expand	examples/comments.pini	在	同同同	无 unroll 时与 fmt 同形，仅注释不进产物
+expand-bad	expand	bootstrap/fixtures/cli-parity/inputs/unroll-bad.pini	在	同同异	展开错误 E3-014，码与位置相同；诊断走标准输出，与宿主分流不同
+expand-fold	expand	bootstrap/fixtures/cli-parity/inputs/fold.pini	在	同同异	常量折叠未接：宿主折成结果，自举保留原文

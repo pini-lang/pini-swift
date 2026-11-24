@@ -1406,6 +1406,19 @@ printFoldNewlines|func(_text: String,) -> (String,):
         i = i + 1
     return out
 
+; 拼接输出行：行间一个换行，末行后留一个换行；空行序答空串。
+printJoinLines|func(lines: Array<OutLine>,) -> (String,):
+    var out = ""
+    var i = 0
+    while i < len(lines):
+        if i > 0:
+            out = out + "\n"
+        out = out + lines[i].text
+        i = i + 1
+    if len(lines) > 0:
+        out = out + "\n"
+    return out
+
 ; 源文本直通：解析、打印、按行拼回；解析失败答 not ok 且不带文本。
 printChecked|func(_text: String,) -> (PrintResult,):
     var result = PrintResult()
@@ -1418,17 +1431,12 @@ printChecked|func(_text: String,) -> (PrintResult,):
     let source = makeSourceText(normalized)
     let drafted = printModuleOf(ast = parsed.ast, bytes = lexed.bytes, source = source)
     let lines = printAnchorComments(lines = drafted, comments = lexed.comments, source = source, bytes = lexed.bytes)
-    var out = ""
-    var i = 0
-    while i < len(lines):
-        if i > 0:
-            out = out + "\n"
-        out = out + lines[i].text
-        i = i + 1
-    if len(lines) > 0:
-        out = out + "\n"
-    result.text = out
+    result.text = printJoinLines(lines = lines)
     return result
+
+; 展开树打印：与 fmt 同一条映射，差别只在树已跑过展开清单；注释不进产物。
+printExpandedModule|func(ast: Ast, bytes: Array<U8>, source: SourceText,) -> (String,):
+    return printJoinLines(lines = printModuleOf(ast = ast, bytes = bytes, source = source))
 
 ; 待落位的注释：目标输出行下标、原文、输出列与原文行号；行号只用来判段落空行。
 (CommentSlot)

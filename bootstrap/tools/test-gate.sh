@@ -817,8 +817,21 @@ if ! grep -q "^; 注释" "$work/fmt-comments.1.pini"; then
     fail=1
 fi
 
+# 展开：unroll 摊平后按树重打，产物喂回 check 必须通过，且展开前的构造不再出现。
+if ! "$pini" "${stdlib_args[@]}" expand "$root/examples/unroll.pini" > "$work/expand-unroll.pini" 2>/dev/null; then
+    echo " 行不通  [测试自检] 展开 unroll 失败" >&2
+    fail=1
+elif grep -q "^ *unroll" "$work/expand-unroll.pini"; then
+    echo " 行不通  [测试自检] 展开产物仍含 unroll" >&2
+    fail=1
+elif ! "$pini" "${stdlib_args[@]}" check "$work/expand-unroll.pini" > "$work/expand-check.out" 2>&1; then
+    echo " 行不通  [测试自检] 展开产物过不了 check" >&2
+    cat "$work/expand-check.out" >&2
+    fail=1
+fi
+
 if [ "$fail" -ne 0 ]; then
     exit 1
 fi
-echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入，浮点常量走位模式，接口缓存按记录判失效，逐包产物按包发射且合并可链接，缓存按拓扑与内容判复用，分波按依赖深度，共享缓存按指纹复用，命令对照按签名锁定，导出面按符号表核对，构建执行组五条命令各有判据，模块工具组按副本验改写与抓取，内存模型两条示例与 golden 一致，源码树零改动且格式化幂等"
+echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入，浮点常量走位模式，接口缓存按记录判失效，逐包产物按包发射且合并可链接，缓存按拓扑与内容判复用，分波按依赖深度，共享缓存按指纹复用，命令对照按签名锁定，导出面按符号表核对，构建执行组五条命令各有判据，模块工具组按副本验改写与抓取，内存模型两条示例与 golden 一致，源码树零改动且格式化幂等，展开产物过检查"
 exit 0
