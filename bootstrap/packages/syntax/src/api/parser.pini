@@ -322,6 +322,7 @@ parseTraitSignature|self() -> (I32,):
     return self.finishTraitSignature(start = start, nameStart = nameStart, nameEnd = nameEnd)
 ; 签名尾巴：修饰符、参数、返回类型与可选体；无体时 body 留 -1。
 finishTraitSignature|self(start: I32, nameStart: I32, nameEnd: I32,) -> (I32,):
+    var isFunc = false
     var isSelf = false
     var isOwn = false
     var isForeign = false
@@ -341,6 +342,7 @@ finishTraitSignature|self(start: I32, nameStart: I32, nameEnd: I32,) -> (I32,):
             isUnsafe = true
             self.advance()
         elif self.at(.kwFunc):
+            isFunc = true
             self.advance()
         else:
             self.report(code = "E2-001", message = "期望特征方法的修饰符")
@@ -364,6 +366,7 @@ finishTraitSignature|self(start: I32, nameStart: I32, nameEnd: I32,) -> (I32,):
     self.setDeclType(id = id, typeId = returnType)
     self.setDeclBody(id = id, body = body)
     self.setFunctionMarks(id = id, isTest = false, isSelf = isSelf, isOwn = isOwn, isForeign = isForeign, isUnsafe = isUnsafe)
+    self.setDeclFuncMark(id = id, value = isFunc)
     return id
 ; 块名：导入、导出、外部与给定块的头名取文件名，可与关键字同形（`foreign.pini` 即 `[foreign|import]`）。
 ; 只放行名字这一格，`|` 之后的修饰符仍按词判定；非标识符且非关键字照旧报错。
@@ -837,6 +840,7 @@ parseFunctionDecl|self() -> (I32,):
     let nameEnd: I32 = self.current().nameEnd
     self.advance()
     var isTest = false
+    var isFunc = false
     var isSelf = false
     var isOwn = false
     var isForeign = false
@@ -859,6 +863,7 @@ parseFunctionDecl|self() -> (I32,):
             isUnsafe = true
             self.advance()
         elif self.at(.kwFunc):
+            isFunc = true
             self.advance()
         else:
             self.report(code = "E2-001", message = "期望 `func`、`test`、`self`、`own`、`foreign` 或 `unsafe`")
@@ -878,14 +883,19 @@ parseFunctionDecl|self() -> (I32,):
         return -1
     let params = self.parseParams()
     var returnType = -1
+    var returnNested = false
     var isAsync = false
     if self.at(.fatArrow):
         isAsync = true
         self.advance()
-        returnType = self.collapseReturn(self.parseType())
+        let raw: I32 = self.parseType()
+        returnType = self.collapseReturn(raw)
+        returnNested = self.hasExtraParens(raw = raw, collapsed = returnType)
     elif self.at(.arrow):
         self.advance()
-        returnType = self.collapseReturn(self.parseType())
+        let raw: I32 = self.parseType()
+        returnType = self.collapseReturn(raw)
+        returnNested = self.hasExtraParens(raw = raw, collapsed = returnType)
     if !self.expect(kind = .colon, what = "`:`"):
         self.recover()
         return -1
@@ -900,6 +910,8 @@ parseFunctionDecl|self() -> (I32,):
     self.setDeclType(id = id, typeId = returnType)
     self.setDeclBody(id = id, body = body)
     self.setFunctionMarks(id = id, isTest = isTest, isSelf = isSelf, isOwn = isOwn, isForeign = isForeign, isUnsafe = isUnsafe)
+    self.setDeclFuncMark(id = id, value = isFunc)
+    self.setDeclReturnNested(id = id, value = returnNested)
     self.setDeclAsync(id = id, value = isAsync)
     self.setDeclGeneric(id = id, kids = generics)
     return id
@@ -1057,6 +1069,11 @@ parseBraceType|self() -> (I32,):
     self.setTypeKids(id = id, kids = args)
     return self.maybeOptional(id)
 ; 返回列表：括号内单元素且无标签即该元素本身，空表、多元素与带标签保持元组形状。
+; 折叠后仍是元组，说明源里多包了一层：`((T,),)` 折成 `(T,)` 后仍是元组。
+hasExtraParens|self(raw: I32, collapsed: I32,) -> (Bool,):
+    if raw == collapsed || collapsed < 0:
+        return false
+    return isTupleTypeCode(self.ast.typeAt(collapsed).kind)
 collapseReturn|self(_id: I32,) -> (I32,):
     if _id < 0:
         return _id
@@ -1946,6 +1963,8 @@ parsePattern|self() -> (I32,):
         self.setExprName(id = id, start = token.nameStart, end = token.nameEnd)
         while !self.at(.rightParen) && !self.atEnd():
             if self.at(.identifier) && self.isKindAt(offset = 1, kind = .colon):
+                let labelStart: I32 = self.current().nameStart
+                let labelEnd: I32 = self.current().nameEnd
                 self.advance()
                 self.advance()
                 if self.at(.identifier):
@@ -1953,6 +1972,7 @@ parsePattern|self() -> (I32,):
                     self.advance()
                     let binding: I32 = self.newExpr(kind = .exprIdentifier, start = bind.start, end = bind.end)
                     self.setExprName(id = binding, start = bind.nameStart, end = bind.nameEnd)
+                    self.setExprLabel(id = binding, start = labelStart, end = labelEnd)
                     self.pushExprKid(id = id, kid = binding)
             elif self.at(.identifier):
                 let bind = self.current()
@@ -2158,6 +2178,25 @@ setParamMarks|self(id: I32, isOwn: Bool, isUsing: Bool, isSelf: Bool,) -> ():
     node.isOwn = isOwn
     node.isUsing = isUsing
     node.isSelf = isSelf
+    self.ast.decls[id] = node
+    return
+; 返回位多包一层括号的标记写回。
+setDeclReturnNested|self(id: I32, value: Bool,) -> ():
+    var node = self.ast.decls[id]
+    node.returnNested = value
+    self.ast.decls[id] = node
+    return
+; 模式绑定的具名标签写回：只记区间，打印按它还原 `标签: 绑定`。
+setExprLabel|self(id: I32, start: I32, end: I32,) -> ():
+    var node = self.ast.exprs[id]
+    node.labelStart = start
+    node.labelEnd = end
+    self.ast.exprs[id] = node
+    return
+; `|func` 标记写回：只记源里写没写，打印与签名都按它还原。
+setDeclFuncMark|self(id: I32, value: Bool,) -> ():
+    var node = self.ast.decls[id]
+    node.isFunc = value
     self.ast.decls[id] = node
     return
 ; 异步位写回：只由 `=>` 置位，函数声明与函数字面量各走一条。

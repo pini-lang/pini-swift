@@ -15,7 +15,10 @@ tokens: Array<Token> = []
 segments: Array<Segment> = []
 issues: Array<LexIssue> = []
 warnings: Array<LexWarning> = []
+comments: Array<Comment> = []
 atLineStart: Bool = true
+; 当前源行是否已出过实记号：注释的 `ownLine` 由它在注释前一刻的取值决定。
+lineHasToken: Bool = false
 
 ; 扫描整段字节：行结构、缩进、括号与记号在同一条循环里推进，收尾补布局记号。
 scanAll|func(language: KeywordLanguage, bytes: Array<U8>, start: I32, issues: Array<LexIssue>,) -> (LexResult,):
@@ -46,6 +49,7 @@ scanAll|func(language: KeywordLanguage, bytes: Array<U8>, start: I32, issues: Ar
     out.segments = state.segments
     out.issues = state.issues
     out.warnings = state.warnings
+    out.comments = state.comments
     out.bytes = bytes
     return out
 
@@ -155,6 +159,7 @@ scanInline|func(_state: LexState,) -> (LexState,):
         out = emitToken(state = out, kind = .newline, start = out.pos, end = out.pos + 1)
         out.pos = out.pos + 1
         out.atLineStart = true
+        out.lineHasToken = false
         return out
     if c == 59 || c == 35:
         return skipComment(out)
@@ -165,6 +170,8 @@ scanInsideBrackets|func(_state: LexState,) -> (LexState,):
     var out = _state
     let c = byteAt(bytes = out.bytes, index = out.pos)
     if c == 10 || c == 32 || c == 9 || c == 13:
+        if c == 10:
+            out.lineHasToken = false
         out.pos = out.pos + 1
         out.atLineStart = false
         return out
@@ -174,12 +181,26 @@ scanInsideBrackets|func(_state: LexState,) -> (LexState,):
     return scanToken(out)
 
 ; 注释跳过：从当前字节到行尾，不消费换行本身；内容里的双向控制字符记警告。
+; 同时登记旁路表：区间右端去掉行尾空白，`ownLine` 取注释前该行是否已出过实记号。
 skipComment|func(_state: LexState,) -> (LexState,):
     var out = _state
     let total = len(out.bytes)
     let start = out.pos
     while out.pos < total && byteAt(bytes = out.bytes, index = out.pos) != 10:
         out.pos = out.pos + 1
+    var stop = out.pos
+    var trimming = true
+    while trimming && stop > start:
+        let last = byteAt(bytes = out.bytes, index = stop - 1)
+        if last == 32 || last == 9 || last == 13:
+            stop = stop - 1
+        else:
+            trimming = false
+    var entry = Comment()
+    entry.start = start
+    entry.end = stop
+    entry.ownLine = !out.lineHasToken
+    out.comments = out.comments.append(entry)
     return scanBidiWarnings(state = out, from = start, to = out.pos, role = .textComment)
 
 ; 区间内的双向控制字符：逐个标量查，命中一条记一条；游标按标量宽度推进，不落在字节中间。
@@ -697,6 +718,10 @@ emitNamed|func(state: LexState, kind: TokenKind, start: I32, end: I32, nameStart
     token.nameStart = nameStart
     token.nameEnd = nameEnd
     out.tokens = out.tokens.append(token)
+    if kind == .newline:
+        out.lineHasToken = false
+    elif kind != .indent && kind != .dedent && kind != .eof:
+        out.lineHasToken = true
     return out
 
 ; 发字符串记号：段先进段池，记号只记基址与段数，故记号是定长记录。
@@ -716,4 +741,8 @@ emitString|func(state: LexState, kind: TokenKind, start: I32, end: I32, segments
         out.segments = out.segments.append(segments[i])
         i = i + 1
     out.tokens = out.tokens.append(token)
+    if kind == .newline:
+        out.lineHasToken = false
+    elif kind != .indent && kind != .dedent && kind != .eof:
+        out.lineHasToken = true
     return out

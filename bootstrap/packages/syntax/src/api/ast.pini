@@ -30,6 +30,9 @@ op: I32 = 0
 typeId: I32 = -1
 body: I32 = -1
 isAsync: Bool = false
+; 模式里的具名绑定标签区间；无名绑定时为 -1。
+labelStart: I32 = -1
+labelEnd: I32 = -1
 kids: Array<I32> = []
 
 ; 语句节点：块与分支体都是语句池下标，`kids` 的排布由类别码决定；
@@ -56,6 +59,10 @@ typeId: I32 = -1
 body: I32 = -1
 mutable: Bool = false
 isTest: Bool = false
+; `|func` 是否写在源里：特征签名不带它，写法要与源一致。
+isFunc: Bool = false
+; 返回位是否多包了一层括号：`-> ((T,),)` 与 `-> (T,)` 的树同形，打印按它还原。
+returnNested: Bool = false
 isForeign: Bool = false
 isUnsafe: Bool = false
 isOwn: Bool = false
