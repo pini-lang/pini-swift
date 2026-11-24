@@ -1,16 +1,19 @@
 [printer|import]
 _support = "../../../support"
+_unicode = "../../../unicode"
 _diagnostics = "../../../diagnostics"
 
 ; 源码打印器：语法树到源码。`fmt` 与 `expand` 共用这一条映射，只从树重建。
 ; 版面：缩进取文件级步长；块间空行按源行还原；行内空白归一，不折行、不对齐列。
 ; 原文字面量与行前空白按节点跨度取回，故十六进制、下划线与指数写法原样保留。
 
-; 一条输出行：文本、输出列与生成它的源行；注释锚回靠这份对照。
+; 一条输出行：文本、输出列与生成它的源位置；注释锚回靠这份对照。
 (OutLine)
 text: String = ""
 column: I32 = 0
 anchor: I32 = -1
+; 锚点的源列，一基；与注释列比深浅，决定注释落在块内还是块尾。
+anchorColumn: I32 = 0
 
 ; 写入状态：行缓冲、当前列与缩进栈；源文本与字节供取原文与行号。
 (Source)
@@ -21,6 +24,7 @@ indent: I32 = 4
 text: SourceText = SourceText()
 bytes: Array<U8> = []
 anchor: I32 = -1
+anchorColumn: I32 = 0
 
 ; 行号：字节偏移换算成一基行号；越界答 1。
 printLineOf|func(source: SourceText, offset: I32,) -> (I32,):
@@ -29,6 +33,17 @@ printLineOf|func(source: SourceText, offset: I32,) -> (I32,):
     return locationOf(text = source, offset = offset).line
 
 ((Source))
+
+; 锚点：源行与源列一并登记，注释锚回按两者判前后与深浅；偏移为负即清空。
+setAnchor|self(offset: I32,) -> ():
+    if offset < 0:
+        self.anchor = -1
+        self.anchorColumn = 0
+        return
+    let loc = locationOf(text = self.text, offset = offset)
+    self.anchor = loc.line
+    self.anchorColumn = loc.column
+    return
 
 ; 缩进：按当前列补空格后落行；续行由文本内换行自带缩进。
 put|self(text: String,) -> ():
@@ -41,6 +56,7 @@ put|self(text: String,) -> ():
     line.text = pad + text
     line.column = self.column
     line.anchor = self.anchor
+    line.anchorColumn = self.anchorColumn
     self.lines = self.lines.append(line)
     return
 
@@ -97,6 +113,29 @@ printBlankAbove|func(source: SourceText, bytes: Array<U8>, line: I32,) -> (I32,)
         probe = probe - 1
     return count
 
+; 行缩进宽度：该源行行首的空格数；行号越界答零。
+printLineIndentOf|func(source: SourceText, bytes: Array<U8>, line: I32,) -> (I32,):
+    if line < 1 || line > len(source.lineStarts):
+        return 0
+    let from = source.lineStarts[line - 1]
+    var width = 0
+    while from + width < len(bytes) && tempByteToInt(bytes[from + width]) == 32:
+        width = width + 1
+    return width
+
+; 跨行元素列：取源里首个换行元素与字面量所在行的缩进差，量化到 2/4/8；无跨行或算不出答回退值。
+printObservedStep|func(source: SourceText, bytes: Array<U8>, literalLine: I32, firstLine: I32, fallback: I32,) -> (I32,):
+    if firstLine == literalLine:
+        return fallback
+    let delta = printLineIndentOf(source = source, bytes = bytes, line = firstLine) - printLineIndentOf(source = source, bytes = bytes, line = literalLine)
+    if delta <= 0:
+        return fallback
+    if delta <= 3:
+        return 2
+    if delta <= 6:
+        return 4
+    return 8
+
 ; 文件级步长：首个缩进行的前导空格量化到 2 / 4 / 8；没有缩进行答 4。
 printIndentStepOf|func(source: SourceText, bytes: Array<U8>,) -> (I32,):
     var i = 0
@@ -131,58 +170,75 @@ printNameOf|func(bytes: Array<U8>, start: I32, end: I32,) -> (String,):
 
 ; 字符串值：剥引号并还原转义，供重新按规范写法转义。
 printStringValue|func(bytes: Array<U8>, start: I32, end: I32,) -> (String,):
-    let raw = printTextOf(bytes = bytes, start = start + 1, end = end - 1)
     var out = ""
-    var i = 0
-    while i < len(raw):
-        let ch = raw.slice(i, i + 1)
-        if ch != "\\":
-            out = out + ch
-            i = i + 1
+    if start < 0 || end <= start + 1:
+        return out
+    var at = start + 1
+    let stop = end - 1
+    while at < stop:
+        let code = tempByteToInt(bytes[at])
+        if code != 92:
+            let unit = decodeScalarAt(bytes = bytes, offset = at)
+            if unit.length <= 0:
+                at = at + 1
+            else:
+                out = out + chr(unit.code)
+                at = at + unit.length
             continue
-        if i + 1 >= len(raw):
+        if at + 1 >= stop:
             out = out + "\\"
-            i = i + 1
+            at = at + 1
             continue
-        let next = raw.slice(i + 1, i + 2)
-        if next == "n":
+        let next = tempByteToInt(bytes[at + 1])
+        if next == 110:
             out = out + "\n"
-        elif next == "t":
+        elif next == 116:
             out = out + "\t"
-        elif next == "r":
+        elif next == 114:
             out = out + "\r"
-        elif next == "0":
-            out = out + ""
-        elif next == "\\":
+        elif next == 48:
+            out = out + chr(0)
+        elif next == 92:
             out = out + "\\"
-        elif next == "\"":
+        elif next == 34:
             out = out + "\""
         else:
-            out = out + next
-        i = i + 2
+            out = out + chr(next)
+        at = at + 2
     return out
 
 ; 字符串转义：反斜杠先转，否则后面的 `\(` 会被读成插值；逐标量比对。
 printQuoteText|func(value: String,) -> (String,):
     var out = "\""
+    let data = tempUtf8Bytes(value)
     var i = 0
-    while i < len(value):
-        let ch = value.slice(i, i + 1)
-        if ch == "\\":
+    while i < len(data):
+        let code = tempByteToInt(data[i])
+        if code == 92:
             out = out + "\\\\"
-        elif ch == "\"":
+            i = i + 1
+        elif code == 34:
             out = out + "\\\""
-        elif ch == "\n":
+            i = i + 1
+        elif code == 10:
             out = out + "\\n"
-        elif ch == "\t":
+            i = i + 1
+        elif code == 9:
             out = out + "\\t"
-        elif ch == "\r":
+            i = i + 1
+        elif code == 13:
             out = out + "\\r"
-        elif ch == "":
+            i = i + 1
+        elif code == 0:
             out = out + "\\0"
+            i = i + 1
         else:
-            out = out + ch
-        i = i + 1
+            let unit = decodeScalarAt(bytes = data, offset = i)
+            if unit.length <= 0:
+                i = i + 1
+            else:
+                out = out + chr(unit.code)
+                i = i + unit.length
     return out + "\""
 
 ; 类型文本：容器四类按名字还原，元组补尾逗号，泛型末位以 `>` 收尾时补空格。
@@ -220,18 +276,7 @@ printTypeText|func(ast: Ast, bytes: Array<U8>, id: I32,) -> (String,):
             tail = " >"
         return name + "<" + inner + tail
     if node.kind == typeKindTag(.typeFunction):
-        var params = ""
-        var p = 0
-        while p < len(node.kids):
-            params = params + printTypeText(ast = ast, bytes = bytes, id = node.kids[p]) + ", "
-            p = p + 1
-        var rets = ""
-        if node.ret >= 0 && node.ret < len(ast.types):
-            var r = 0
-            while r < len(ast.types[node.ret].kids):
-                rets = rets + printTypeText(ast = ast, bytes = bytes, id = ast.types[node.ret].kids[r]) + ", "
-                r = r + 1
-        return "(" + params + ") -> (" + rets + ")"
+        return "(" + printTypeListText(ast = ast, bytes = bytes, kids = node.kids) + ") -> (" + printTypeListText(ast = ast, bytes = bytes, kids = printReturnKids(ast = ast, ret = node.ret)) + ")"
     if node.kind == typeKindTag(.typeTuple):
         if len(node.kids) == 0:
             return "()"
@@ -239,14 +284,38 @@ printTypeText|func(ast: Ast, bytes: Array<U8>, id: I32,) -> (String,):
         var labels = printSplitLabels(node.labels)
         var i = 0
         while i < len(node.kids):
+            if i > 0:
+                inner = inner + ", "
             let one = printTypeText(ast = ast, bytes = bytes, id = node.kids[i])
             if i < len(labels) && len(labels[i]) > 0:
-                inner = inner + labels[i] + ": " + one + ", "
+                inner = inner + labels[i] + ": " + one
             else:
-                inner = inner + one + ", "
+                inner = inner + one
             i = i + 1
-        return "(" + inner + ")"
+        return "(" + inner + ",)"
     return printNameOf(bytes = bytes, start = node.nameStart, end = node.nameEnd)
+
+; 类型表：逐项 `, ` 相接、末项补尾逗号；空表答空串，故 `()` 只由空表得到。
+printTypeListText|func(ast: Ast, bytes: Array<U8>, kids: Array<I32>,) -> (String,):
+    var out = ""
+    var i = 0
+    while i < len(kids):
+        if i > 0:
+            out = out + ", "
+        out = out + printTypeText(ast = ast, bytes = bytes, id = kids[i])
+        i = i + 1
+    if len(kids) > 0:
+        out = out + ","
+    return out
+
+; 返回位：折叠后只剩一个类型，元组按分量展开，其余单列一项。
+printReturnKids|func(ast: Ast, ret: I32,) -> (Array<I32>,):
+    var out: Array<I32> = []
+    if ret < 0 || ret >= len(ast.types):
+        return out
+    if ast.types[ret].kind == typeKindTag(.typeTuple):
+        return ast.types[ret].kids
+    return out.append(ret)
 
 ; 标签表：逗号分隔，空段表示该分量无标签。
 printSplitLabels|func(_labels: String,) -> (Array<String>,):
@@ -353,7 +422,7 @@ printMaxOf|func(a: I32, b: I32,) -> (I32,):
 printWriteDecl|func(out: Source, ast: Ast, id: I32,) -> (Source,):
     var state = out
     let node = ast.decls[id]
-    state.anchor = printLineOf(source = state.text, offset = node.start)
+    state.setAnchor(offset = node.start)
     let name = printNameOf(bytes = state.bytes, start = node.nameStart, end = node.nameEnd)
     if node.kind == declKindTag(.declImportBlock):
         return printWriteImportBlock(out = state, ast = ast, node = node, name = name)
@@ -399,8 +468,8 @@ printGenericText|func(ast: Ast, bytes: Array<U8>, kids: Array<I32>,) -> (String,
 
 ; 成员体：字段与 `实现:` 连排，方法各自成块；枚举的变体先出。
 printWriteMembers|func(out: Source, ast: Ast, node: DeclNode, mode: I32,) -> (Source,):
+    ; 体顶格：成员与块头同列，方法体再缩一层。
     var state = out
-    state.enterBlock()
     var i = 0
     var wrote = false
     while i < len(node.kids):
@@ -414,7 +483,7 @@ printWriteMembers|func(out: Source, ast: Ast, node: DeclNode, mode: I32,) -> (So
                 let line = printLineOf(source = state.text, offset = child.start)
                 if printBlankAbove(source = state.text, bytes = state.bytes, line = line) > 0:
                     state.blank()
-            state.anchor = printLineOf(source = state.text, offset = child.start)
+            state.setAnchor(offset = child.start)
             state.put(text = printMemberText(ast = ast, bytes = state.bytes, source = state.text, id = kid, mode = mode))
             wrote = true
         i = i + 1
@@ -422,10 +491,9 @@ printWriteMembers|func(out: Source, ast: Ast, node: DeclNode, mode: I32,) -> (So
     while i < len(node.kids):
         let kid = node.kids[i]
         if kid >= 0 && kid < len(ast.decls) && ast.decls[kid].kind == declKindTag(.declFunction):
-            state.anchor = printLineOf(source = state.text, offset = ast.decls[kid].start)
+            state.setAnchor(offset = ast.decls[kid].start)
             state = printWriteFunction(out = state, ast = ast, node = ast.decls[kid])
         i = i + 1
-    state.exitBlock()
     return state
 
 ; 成员一行：结构内嵌只写类型名；字段写名字、类型与初值；实现行写特征；变体带载荷。
@@ -470,19 +538,17 @@ printWriteTraitBlock|func(out: Source, ast: Ast, node: DeclNode, name: String,) 
     else:
         head = head + ">"
     state.put(text = head)
-    state.enterBlock()
     var i = 0
     while i < len(node.kids):
         let kid = node.kids[i]
         if kid >= 0 && kid < len(ast.decls):
             let child = ast.decls[kid]
-            state.anchor = printLineOf(source = state.text, offset = child.start)
+            state.setAnchor(offset = child.start)
             if child.kind == declKindTag(.declField):
                 state.put(text = printMemberText(ast = ast, bytes = state.bytes, source = state.text, id = kid, mode = 1))
             if child.kind == declKindTag(.declFunction):
                 state = printWriteFunction(out = state, ast = ast, node = child)
         i = i + 1
-    state.exitBlock()
     return state
 
 ; 扩展块：定界符按源内前两字节判，目标名与泛型照写。
@@ -501,15 +567,13 @@ printWriteExtensionBlock|func(out: Source, ast: Ast, node: DeclNode, name: Strin
         open = "<<"
         close = ">>"
     state.put(text = open + name + printGenericText(ast = ast, bytes = state.bytes, kids = node.generic) + close)
-    state.enterBlock()
     var i = 0
     while i < len(node.kids):
         let kid = node.kids[i]
         if kid >= 0 && kid < len(ast.decls) && ast.decls[kid].kind == declKindTag(.declFunction):
-            state.anchor = printLineOf(source = state.text, offset = ast.decls[kid].start)
+            state.setAnchor(offset = ast.decls[kid].start)
             state = printWriteFunction(out = state, ast = ast, node = ast.decls[kid])
         i = i + 1
-    state.exitBlock()
     return state
 
 ; 导入块：头名取声明名；条目写 `别名 = 包路径`。
@@ -521,7 +585,7 @@ printWriteImportBlock|func(out: Source, ast: Ast, node: DeclNode, name: String,)
         let kid = node.kids[i]
         if kid >= 0 && kid < len(ast.decls):
             let entry = ast.decls[kid]
-            state.anchor = printLineOf(source = state.text, offset = entry.start)
+            state.setAnchor(offset = entry.start)
             var path = ""
             if len(entry.kids) > 0:
                 path = printRawString(ast = ast, bytes = state.bytes, id = entry.kids[0])
@@ -539,7 +603,7 @@ printWriteExportBlock|func(out: Source, ast: Ast, node: DeclNode, name: String,)
         let kid = node.kids[i]
         if kid >= 0 && kid < len(ast.decls):
             let entry = ast.decls[kid]
-            state.anchor = printLineOf(source = state.text, offset = entry.start)
+            state.setAnchor(offset = entry.start)
             let alias = printNameOf(bytes = state.bytes, start = entry.nameStart, end = entry.nameEnd)
             var symbol = ""
             var target = ""
@@ -558,13 +622,12 @@ printWriteExportBlock|func(out: Source, ast: Ast, node: DeclNode, name: String,)
 printWriteForeignBlock|func(out: Source, ast: Ast, node: DeclNode, name: String,) -> (Source,):
     var state = out
     state.put(text = "[" + name + "|foreign]")
-    state.enterBlock()
     var i = 0
     while i < len(node.kids):
         let kid = node.kids[i]
         if kid >= 0 && kid < len(ast.decls):
             let symbol = ast.decls[kid]
-            state.anchor = printLineOf(source = state.text, offset = symbol.start)
+            state.setAnchor(offset = symbol.start)
             var text = printNameOf(bytes = state.bytes, start = symbol.nameStart, end = symbol.nameEnd)
             var f = 0
             while f < len(symbol.kids):
@@ -572,7 +635,6 @@ printWriteForeignBlock|func(out: Source, ast: Ast, node: DeclNode, name: String,
                 f = f + 1
             state.put(text = text + ": " + printTypeText(ast = ast, bytes = state.bytes, id = symbol.typeId))
         i = i + 1
-    state.exitBlock()
     return state
 
 ; 原样字符串：导入路径按源区间取回，不做转义改写。
@@ -595,7 +657,7 @@ printWriteFunction|func(out: Source, ast: Ast, node: DeclNode,) -> (Source,):
         head = head + "|foreign"
     if node.isUnsafe:
         head = head + "|unsafe"
-    if !node.isTest && !node.isSelf && !node.isOwn && !node.isForeign && !node.isUnsafe:
+    if node.isFunc:
         head = head + "|func"
     head = head + printGenericText(ast = ast, bytes = state.bytes, kids = node.generic)
     head = head + "(" + printParamsText(ast = ast, bytes = state.bytes, source = state.text, kids = node.kids) + ")"
@@ -603,7 +665,7 @@ printWriteFunction|func(out: Source, ast: Ast, node: DeclNode,) -> (Source,):
         head = head + " => "
     else:
         head = head + " -> "
-    head = head + "(" + printReturnsText(ast = ast, bytes = state.bytes, typeId = node.typeId) + ")"
+    head = head + "(" + printReturnsText(ast = ast, bytes = state.bytes, typeId = node.typeId, nested = node.returnNested) + ")"
     if node.body < 0:
         state.put(text = head)
         return state
@@ -631,12 +693,14 @@ printParamsText|func(ast: Ast, bytes: Array<U8>, source: SourceText, kids: Array
     return out
 
 ; 返回表：类型元组的标签与分量；空表答空串。
-printReturnsText|func(ast: Ast, bytes: Array<U8>, typeId: I32,) -> (String,):
+printReturnsText|func(ast: Ast, bytes: Array<U8>, typeId: I32, nested: Bool,) -> (String,):
     if typeId < 0 || typeId >= len(ast.types):
         return ""
+    if nested:
+        return printTypeText(ast = ast, bytes = bytes, id = typeId) + ","
     let node = ast.types[typeId]
     if node.kind != typeKindTag(.typeTuple):
-        return printTypeText(ast = ast, bytes = bytes, id = typeId) + ", "
+        return printTypeText(ast = ast, bytes = bytes, id = typeId) + ","
     let labels = printSplitLabels(node.labels)
     var out = ""
     var i = 0
@@ -664,11 +728,11 @@ printWriteNested|func(out: Source, ast: Ast, block: I32,) -> (Source,):
             let line = printLineOf(source = state.text, offset = ast.stmts[kids[i]].start)
             if printBlankAbove(source = state.text, bytes = state.bytes, line = line) > 0:
                 state.blank()
-        state.anchor = printLineOf(source = state.text, offset = ast.stmts[kids[i]].start)
+        state.setAnchor(offset = ast.stmts[kids[i]].start)
         state = printWriteStmt(out = state, ast = ast, id = kids[i])
         i = i + 1
     if len(kids) == 0:
-        state.anchor = -1
+        state.setAnchor(offset = -1)
         state.put(text = "pass")
     state.exitBlock()
     return state
@@ -706,10 +770,10 @@ printWriteStmt|func(out: Source, ast: Ast, id: I32,) -> (Source,):
         return state
     let node = ast.stmts[id]
     if node.kind == stmtKindTag(.stmtVariable):
-        state.put(text = printVarLine(ast = ast, bytes = state.bytes, source = state.text, id = id))
+        state.put(text = printVarLine(ast = ast, bytes = state.bytes, source = state.text, id = id, column = state.column))
         return state
     if node.kind == stmtKindTag(.stmtAssign):
-        state.put(text = printAssignLine(ast = ast, bytes = state.bytes, source = state.text, id = id))
+        state.put(text = printAssignLine(ast = ast, bytes = state.bytes, source = state.text, id = id, column = state.column))
         return state
     if node.kind == stmtKindTag(.stmtExpression):
         state.put(text = printExprText(ast = ast, bytes = state.bytes, source = state.text, id = node.kids[0], column = state.column, indent = state.indent))
@@ -790,7 +854,7 @@ printWriteStep|func(out: Source, ast: Ast, node: StmtNode, index: I32,) -> (Sour
     let block = node.kids[index]
     if block < 0:
         return state
-    state.anchor = printLineOf(source = state.text, offset = ast.stmts[block].start)
+    state.setAnchor(offset = ast.stmts[block].start)
     state.put(text = "step:")
     return printWriteNested(out = state, ast = ast, block = block)
 
@@ -805,7 +869,7 @@ printWriteIf|func(out: Source, ast: Ast, node: StmtNode,) -> (Source,):
         state = printWriteBranch(out = state, ast = ast, head = elifHead, block = node.kids[k + 1])
         k = k + 2
     if k < len(node.kids):
-        state.anchor = printLineOf(source = state.text, offset = ast.stmts[node.kids[k]].start)
+        state.setAnchor(offset = ast.stmts[node.kids[k]].start)
         state = printWriteBranch(out = state, ast = ast, head = "else", block = node.kids[k])
     return state
 
@@ -816,19 +880,19 @@ printWriteMatch|func(out: Source, ast: Ast, node: StmtNode,) -> (Source,):
     state.enterBlock()
     var k = 1
     while k + 1 < len(node.kids):
-        state.anchor = printLineOf(source = state.text, offset = ast.stmts[node.kids[k + 1]].start)
-        let head = "case " + printPatternText(ast = ast, bytes = state.bytes, id = node.kids[k])
+        state.setAnchor(offset = ast.stmts[node.kids[k + 1]].start)
+        let head = "case " + printPatternText(ast = ast, bytes = state.bytes, source = state.text, id = node.kids[k])
         state.put(text = head + ":")
         state.enterBlock()
         let block = node.kids[k + 1]
         let kids = ast.stmts[block].kids
         var i = 0
         while i < len(kids):
-            state.anchor = printLineOf(source = state.text, offset = ast.stmts[kids[i]].start)
+            state.setAnchor(offset = ast.stmts[kids[i]].start)
             state = printWriteStmt(out = state, ast = ast, id = kids[i])
             i = i + 1
         if len(kids) == 0:
-            state.anchor = -1
+            state.setAnchor(offset = -1)
             state.put(text = "pass")
         state.exitBlock()
         k = k + 2
@@ -836,12 +900,14 @@ printWriteMatch|func(out: Source, ast: Ast, node: StmtNode,) -> (Source,):
     return state
 
 ; 模式文本：用例名带绑定表，其余按表达式原文。
-printPatternText|func(ast: Ast, bytes: Array<U8>, id: I32,) -> (String,):
+printPatternText|func(ast: Ast, bytes: Array<U8>, source: SourceText, id: I32,) -> (String,):
     if id < 0 || id >= len(ast.exprs):
         return "_"
     let node = ast.exprs[id]
+    if node.kind == exprKindTag(.exprNil):
+        return "none"
     if node.kind != exprKindTag(.exprCase):
-        return printExprText(ast = ast, bytes = bytes, source = SourceText(), id = id, column = 0, indent = 4)
+        return printExprText(ast = ast, bytes = bytes, source = source, id = id, column = 0, indent = 4)
     var text = printNameOf(bytes = bytes, start = node.nameStart, end = node.nameEnd)
     if len(node.kids) == 0:
         return text
@@ -850,31 +916,34 @@ printPatternText|func(ast: Ast, bytes: Array<U8>, id: I32,) -> (String,):
     while i < len(node.kids):
         if i > 0:
             inner = inner + ", "
-        inner = inner + printNameOf(bytes = bytes, start = ast.exprs[node.kids[i]].nameStart, end = ast.exprs[node.kids[i]].nameEnd)
+        let bind = ast.exprs[node.kids[i]]
+        if bind.labelStart >= 0:
+            inner = inner + printNameOf(bytes = bytes, start = bind.labelStart, end = bind.labelEnd) + ": "
+        inner = inner + printNameOf(bytes = bytes, start = bind.nameStart, end = bind.nameEnd)
         i = i + 1
     return text + "(" + inner + ",)"
 
 ; 变量行：`var` / `let`、名字或解构、可选类型与初值。
-printVarLine|func(ast: Ast, bytes: Array<U8>, source: SourceText, id: I32,) -> (String,):
+printVarLine|func(ast: Ast, bytes: Array<U8>, source: SourceText, id: I32, column: I32,) -> (String,):
     let node = ast.stmts[id]
     var text = "let "
     if node.op == kindTag(.kwVar):
         text = "var "
-    text = text + printAssignmentPattern(ast = ast, bytes = bytes, id = node.kids[0])
+    text = text + printAssignmentPattern(ast = ast, bytes = bytes, source = source, id = node.kids[0])
     if node.typeId >= 0:
         text = text + ": " + printTypeText(ast = ast, bytes = bytes, id = node.typeId)
     if len(node.kids) > 1 && node.kids[1] >= 0:
-        text = text + " = " + printExprText(ast = ast, bytes = bytes, source = source, id = node.kids[1], column = 0, indent = 4)
+        text = text + " = " + printExprText(ast = ast, bytes = bytes, source = source, id = node.kids[1], column = column, indent = 4)
     return text
 
 ; 赋值目标：普通名字直接用，元组解构按 `(a, b,)` 写。
-printAssignmentPattern|func(ast: Ast, bytes: Array<U8>, id: I32,) -> (String,):
+printAssignmentPattern|func(ast: Ast, bytes: Array<U8>, source: SourceText, id: I32,) -> (String,):
     if id < 0 || id >= len(ast.exprs):
         return ""
     let node = ast.exprs[id]
     if node.kind == exprKindTag(.exprIdentifier):
         return printNameOf(bytes = bytes, start = node.nameStart, end = node.nameEnd)
-    return printExprText(ast = ast, bytes = bytes, source = SourceText(), id = id, column = 0, indent = 4)
+    return printExprText(ast = ast, bytes = bytes, source = source, id = id, column = 0, indent = 4)
 
 ; 元组模式：`(` 分量 `,)`，与函数返回表同形。
 printTuplePatternText|func(ast: Ast, bytes: Array<U8>, source: SourceText, id: I32,) -> (String,):
@@ -895,15 +964,15 @@ printTuplePatternText|func(ast: Ast, bytes: Array<U8>, source: SourceText, id: I
     return "(" + inner + ",)"
 
 ; 赋值行：复合赋值还原成 `目标 = 目标 运算 值`，与规范形一致。
-printAssignLine|func(ast: Ast, bytes: Array<U8>, source: SourceText, id: I32,) -> (String,):
+printAssignLine|func(ast: Ast, bytes: Array<U8>, source: SourceText, id: I32, column: I32,) -> (String,):
     let node = ast.stmts[id]
-    let target = printExprText(ast = ast, bytes = bytes, source = source, id = node.kids[0], column = 0, indent = 4)
+    let target = printExprText(ast = ast, bytes = bytes, source = source, id = node.kids[0], column = column, indent = 4)
     var text = target + " = "
     if node.op != kindTag(.opAssign) && len(node.kids) > 1:
-        let value = printExprText(ast = ast, bytes = bytes, source = source, id = node.kids[1], column = 0, indent = 4)
+        let value = printExprText(ast = ast, bytes = bytes, source = source, id = node.kids[1], column = column, indent = 4)
         text = text + target + " " + printOpText(tag = node.op) + " " + value
         return text
-    return text + printExprText(ast = ast, bytes = bytes, source = source, id = node.kids[1], column = 0, indent = 4)
+    return text + printExprText(ast = ast, bytes = bytes, source = source, id = node.kids[1], column = column, indent = 4)
 
 ; 复合赋值的运算符：把赋值类记号还原成运算记号。
 printOpText|func(tag: I32,) -> (String,):
@@ -941,9 +1010,9 @@ printStmtInlineText|func(ast: Ast, bytes: Array<U8>, source: SourceText, id: I32
             return "return"
         return "return " + printExprText(ast = ast, bytes = bytes, source = source, id = node.kids[0], column = 0, indent = 4)
     if node.kind == stmtKindTag(.stmtAssign):
-        return printAssignLine(ast = ast, bytes = bytes, source = source, id = id)
+        return printAssignLine(ast = ast, bytes = bytes, source = source, id = id, column = 0)
     if node.kind == stmtKindTag(.stmtVariable):
-        return printVarLine(ast = ast, bytes = bytes, source = source, id = id)
+        return printVarLine(ast = ast, bytes = bytes, source = source, id = id, column = 0)
     if node.kind == stmtKindTag(.stmtPass):
         return "pass"
     if node.kind == stmtKindTag(.stmtBreak) || node.kind == stmtKindTag(.stmtContinue):
@@ -987,17 +1056,24 @@ printExprText|func(ast: Ast, bytes: Array<U8>, source: SourceText, id: I32, colu
     if node.kind == exprKindTag(.exprIdentifier):
         return printNameOf(bytes = bytes, start = node.nameStart, end = node.nameEnd)
     if node.kind == exprKindTag(.exprCase):
-        return printNameOf(bytes = bytes, start = node.nameStart, end = node.nameEnd)
+        var text = printNameOf(bytes = bytes, start = node.nameStart, end = node.nameEnd)
+        if node.start >= 0 && node.start < len(bytes) && tempByteToInt(bytes[node.start]) == 46:
+            text = "." + text
+        return text
     if node.kind == exprKindTag(.exprMember):
         return printAtomText(ast = ast, bytes = bytes, source = source, id = node.kids[0], column = column, indent = indent) + "." + printNameOf(bytes = bytes, start = node.nameStart, end = node.nameEnd)
     if node.kind == exprKindTag(.exprSubscript):
-        return printAtomText(ast = ast, bytes = bytes, source = source, id = node.kids[0], column = column, indent = indent) + "[" + printExprText(ast = ast, bytes = bytes, source = source, id = node.kids[1], column = column, indent = indent) + "]"
+        if len(node.kids) < 2:
+            return ""
+        return printWrapText(head = printAtomText(ast = ast, bytes = bytes, source = source, id = node.kids[0], column = column, indent = indent) + "[", body = printExprText(ast = ast, bytes = bytes, source = source, id = node.kids[1], column = column, indent = indent), tail = "]", column = column)
     if node.kind == exprKindTag(.exprSlice):
         let lower = printSlicePart(ast = ast, bytes = bytes, source = source, kids = node.kids, index = 1, column = column, indent = indent)
         let upper = printSlicePart(ast = ast, bytes = bytes, source = source, kids = node.kids, index = 2, column = column, indent = indent)
         return printAtomText(ast = ast, bytes = bytes, source = source, id = node.kids[0], column = column, indent = indent) + "[" + lower + ":" + upper + "]"
     if node.kind == exprKindTag(.exprCall):
-        return printAtomText(ast = ast, bytes = bytes, source = source, id = node.kids[0], column = column, indent = indent) + "(" + printArgsText(ast = ast, bytes = bytes, source = source, kids = node.kids, from = 1, column = column, indent = indent) + ")"
+        if len(node.kids) == 0:
+            return ""
+        return printWrapText(head = printAtomText(ast = ast, bytes = bytes, source = source, id = node.kids[0], column = column, indent = indent) + "(", body = printArgsText(ast = ast, bytes = bytes, source = source, kids = node.kids, from = 1, column = column, indent = indent), tail = ")", column = column)
     if node.kind == exprKindTag(.exprUnary):
         return printUnaryExprText(ast = ast, bytes = bytes, source = source, node = node, column = column, indent = indent)
     if node.kind == exprKindTag(.exprBinary):
@@ -1026,14 +1102,7 @@ printExprText|func(ast: Ast, bytes: Array<U8>, source: SourceText, id: I32, colu
             word = "await "
         return word + printAtomText(ast = ast, bytes = bytes, source = source, id = node.kids[0], column = column, indent = indent)
     if node.kind == exprKindTag(.exprGeneric):
-        var inner = ""
-        var i = 0
-        while i < len(node.kids):
-            if i > 0:
-                inner = inner + ", "
-            inner = inner + printExprText(ast = ast, bytes = bytes, source = source, id = node.kids[i], column = column, indent = indent)
-            i = i + 1
-        return printTypeText(ast = ast, bytes = bytes, id = node.typeId) + "(" + inner + ")"
+        return printWrapText(head = printTypeText(ast = ast, bytes = bytes, id = node.typeId) + "(", body = printArgsText(ast = ast, bytes = bytes, source = source, kids = node.kids, from = 0, column = column, indent = indent), tail = ")", column = column)
     if node.kind == exprKindTag(.exprDictEntry):
         return printDictEntryText(ast = ast, bytes = bytes, source = source, node = node, column = column, indent = indent)
     return ""
@@ -1054,23 +1123,36 @@ printArgsText|func(ast: Ast, bytes: Array<U8>, source: SourceText, kids: Array<I
         let arg = kids[i]
         if arg >= 0 && arg < len(ast.exprs) && ast.isLabeledArgument(arg):
             let label = printNameOf(bytes = bytes, start = ast.exprs[arg].nameStart, end = ast.exprs[arg].nameEnd)
-            out = out + label + " = " + printExprText(ast = ast, bytes = bytes, source = source, id = ast.exprs[arg].kids[1], column = column, indent = indent)
+            out = out + label + " = " + printChildExprText(ast = ast, bytes = bytes, source = source, node = ast.exprs[arg], column = column, indent = indent)
         else:
             out = out + printExprText(ast = ast, bytes = bytes, source = source, id = arg, column = column, indent = indent)
         i = i + 1
     return out
 
+; 换行包装：体里有换行时收尾另起一行，按当前列补缩进；单行原样接上。
+printWrapText|func(head: String, body: String, tail: String, column: I32,) -> (String,):
+    if body.indexOf("\n") < 0:
+        return head + body + tail
+    return head + body + "\n" + printPadOf(count = column) + tail
+
+; 标签实参的值：节点只有一个子，就是 `= 右值`；缺子答空串。
+printChildExprText|func(ast: Ast, bytes: Array<U8>, source: SourceText, node: ExprNode, column: I32, indent: I32,) -> (String,):
+    if len(node.kids) == 0:
+        return ""
+    return printExprText(ast = ast, bytes = bytes, source = source, id = node.kids[0], column = column, indent = indent)
+
 ; 一元：前后缀按记号种类，操作数非原子时加括号。
 printUnaryExprText|func(ast: Ast, bytes: Array<U8>, source: SourceText, node: ExprNode, column: I32, indent: I32,) -> (String,):
     if len(node.kids) == 0:
         return ""
-    var mark = printUnaryText(tag = node.op)
+    ; 前后缀同用一枚记号：节点起点不晚于操作数即后缀，否则是前缀。
+    if printIsPostfix(tag = node.op) && node.start >= ast.exprs[node.kids[0]].start:
+        return printAtomText(ast = ast, bytes = bytes, source = source, id = node.kids[0], column = column, indent = indent) + printUnaryText(tag = node.op)
+    if node.op == kindTag(.opBitAnd):
+        return "&" + printAtomText(ast = ast, bytes = bytes, source = source, id = node.kids[0], column = column, indent = indent)
+    let mark = printUnaryText(tag = node.op)
     if len(mark) == 0:
         return printAtomText(ast = ast, bytes = bytes, source = source, id = node.kids[0], column = column, indent = indent)
-    if printIsPostfix(tag = node.op):
-        return printAtomText(ast = ast, bytes = bytes, source = source, id = node.kids[0], column = column, indent = indent) + mark
-    if node.op == kindTag(.opBitAnd):
-        mark = "&"
     return mark + printAtomText(ast = ast, bytes = bytes, source = source, id = node.kids[0], column = column, indent = indent)
 
 ; 二元：左子优先级更低才加括号，右子同层即加括号；标签实参在此还原成 `名 = 值`。
@@ -1146,33 +1228,42 @@ printBinaryMark|func(tag: I32,) -> (String,):
 printTupleText|func(ast: Ast, bytes: Array<U8>, source: SourceText, node: ExprNode, column: I32, indent: I32,) -> (String,):
     if len(node.kids) == 0:
         return "()"
-    var parts: Array<String> = []
-    var multiline = false
     let literalLine = printLineOf(source = source, offset = node.start)
+    var firstLine = literalLine
+    var scan = 0
+    while scan < len(node.kids):
+        let one = printLineOf(source = source, offset = ast.exprs[node.kids[scan]].start)
+        if one != literalLine:
+            firstLine = one
+            scan = len(node.kids)
+        else:
+            scan = scan + 1
+    let inner = column + printObservedStep(source = source, bytes = bytes, literalLine = literalLine, firstLine = firstLine, fallback = indent)
+    var parts: Array<String> = []
     var i = 0
     while i < len(node.kids):
         let kid = node.kids[i]
-        var text = printExprText(ast = ast, bytes = bytes, source = source, id = kid, column = column, indent = indent)
+        var text = ""
         if kid >= 0 && kid < len(ast.exprs) && ast.isLabeledArgument(kid):
             let label = printNameOf(bytes = bytes, start = ast.exprs[kid].nameStart, end = ast.exprs[kid].nameEnd)
-            text = label + " = " + printExprText(ast = ast, bytes = bytes, source = source, id = ast.exprs[kid].kids[1], column = column, indent = indent)
+            text = label + " = " + printChildExprText(ast = ast, bytes = bytes, source = source, node = ast.exprs[kid], column = inner, indent = indent)
+        else:
+            text = printExprText(ast = ast, bytes = bytes, source = source, id = kid, column = inner, indent = indent)
         parts = parts.append(text)
-        if printLineOf(source = source, offset = ast.exprs[kid].start) != literalLine:
-            multiline = true
         i = i + 1
-    if !multiline:
-        var inner = ""
+    if firstLine == literalLine:
+        var joined = ""
         var p = 0
         while p < len(parts):
             if p > 0:
-                inner = inner + ", "
-            inner = inner + parts[p]
+                joined = joined + ", "
+            joined = joined + parts[p]
             p = p + 1
-        return "(" + inner + ",)"
+        return "(" + joined + ",)"
     var out = "(\n"
     var q = 0
     while q < len(parts):
-        out = out + printPadOf(count = column + indent) + parts[q] + ",\n"
+        out = out + printPadOf(count = inner) + parts[q] + ",\n"
         q = q + 1
     return out + printPadOf(count = column) + ")"
 
@@ -1180,34 +1271,41 @@ printTupleText|func(ast: Ast, bytes: Array<U8>, source: SourceText, node: ExprNo
 printCollectionText|func(ast: Ast, bytes: Array<U8>, source: SourceText, node: ExprNode, open: String, close: String, column: I32, indent: I32, dictMode: Bool,) -> (String,):
     if len(node.kids) == 0:
         return open + close
-    var parts: Array<String> = []
-    var multiline = false
     let literalLine = printLineOf(source = source, offset = node.start)
+    var firstLine = literalLine
+    var scan = 0
+    while scan < len(node.kids):
+        let one = printLineOf(source = source, offset = ast.exprs[node.kids[scan]].start)
+        if one != literalLine:
+            firstLine = one
+            scan = len(node.kids)
+        else:
+            scan = scan + 1
+    let inner = column + printObservedStep(source = source, bytes = bytes, literalLine = literalLine, firstLine = firstLine, fallback = indent)
+    var parts: Array<String> = []
     var i = 0
     while i < len(node.kids):
         let kid = node.kids[i]
         var text = ""
         if dictMode:
-            text = printDictEntryText(ast = ast, bytes = bytes, source = source, node = ast.exprs[kid], column = column, indent = indent)
+            text = printDictEntryText(ast = ast, bytes = bytes, source = source, node = ast.exprs[kid], column = inner, indent = indent)
         else:
-            text = printExprText(ast = ast, bytes = bytes, source = source, id = kid, column = column, indent = indent)
+            text = printExprText(ast = ast, bytes = bytes, source = source, id = kid, column = inner, indent = indent)
         parts = parts.append(text)
-        if printLineOf(source = source, offset = ast.exprs[kid].start) != literalLine:
-            multiline = true
         i = i + 1
-    if !multiline:
-        var inner = ""
+    if firstLine == literalLine:
+        var joined = ""
         var p = 0
         while p < len(parts):
             if p > 0:
-                inner = inner + ", "
-            inner = inner + parts[p]
+                joined = joined + ", "
+            joined = joined + parts[p]
             p = p + 1
-        return open + inner + close
+        return open + joined + close
     var out = open + "\n"
     var q = 0
     while q < len(parts):
-        out = out + printPadOf(count = column + indent) + parts[q] + ",\n"
+        out = out + printPadOf(count = inner) + parts[q] + ",\n"
         q = q + 1
     return out + printPadOf(count = column) + close
 
@@ -1234,7 +1332,7 @@ printFuncLiteralText|func(ast: Ast, bytes: Array<U8>, source: SourceText, node: 
         head = head + " => "
     else:
         head = head + " -> "
-    head = head + "(" + printReturnsText(ast = ast, bytes = bytes, typeId = node.op) + ")"
+    head = head + "(" + printReturnsText(ast = ast, bytes = bytes, typeId = node.op, nested = false) + ")"
     if last < 0:
         return head
     let block = node.kids[last]
@@ -1251,7 +1349,7 @@ printFuncLiteralText|func(ast: Ast, bytes: Array<U8>, source: SourceText, node: 
     body.indent = indent
     var k = 0
     while k < len(kids):
-        body.anchor = printLineOf(source = source, offset = ast.stmts[kids[k]].start)
+        body.setAnchor(offset = ast.stmts[kids[k]].start)
         body = printWriteStmt(out = body, ast = ast, id = kids[k])
         k = k + 1
     if len(kids) == 0:
@@ -1277,7 +1375,7 @@ printTryText|func(ast: Ast, bytes: Array<U8>, source: SourceText, node: ExprNode
     let kids = ast.stmts[node.body].kids
     var k = 0
     while k < len(kids):
-        body.anchor = printLineOf(source = source, offset = ast.stmts[kids[k]].start)
+        body.setAnchor(offset = ast.stmts[kids[k]].start)
         body = printWriteStmt(out = body, ast = ast, id = kids[k])
         k = k + 1
     if len(kids) == 0:
@@ -1301,7 +1399,9 @@ printFoldNewlines|func(_text: String,) -> (String,):
     var i = 0
     while i < len(_text):
         let ch = _text.slice(i, i + 1)
-        if ch != "\r":
+        if ch == "\r\n":
+            out = out + "\n"
+        elif ch != "\r":
             out = out + ch
         i = i + 1
     return out
@@ -1315,7 +1415,9 @@ printChecked|func(_text: String,) -> (PrintResult,):
         result.ok = false
         return result
     let lexed = lexTextIn(language = .langEnglish, text = normalized)
-    let lines = printModuleOf(ast = parsed.ast, bytes = lexed.bytes, source = makeSourceText(normalized))
+    let source = makeSourceText(normalized)
+    let drafted = printModuleOf(ast = parsed.ast, bytes = lexed.bytes, source = source)
+    let lines = printAnchorComments(lines = drafted, comments = lexed.comments, source = source, bytes = lexed.bytes)
     var out = ""
     var i = 0
     while i < len(lines):
@@ -1327,3 +1429,159 @@ printChecked|func(_text: String,) -> (PrintResult,):
         out = out + "\n"
     result.text = out
     return result
+
+; 待落位的注释：目标输出行下标、原文、输出列与原文行号；行号只用来判段落空行。
+(CommentSlot)
+index: I32 = -1
+text: String = ""
+column: I32 = 0
+line: I32 = 0
+
+; 注释锚回：把词法旁路表的注释插回输出行序，落点三条——行尾挂同源行末、块内挂下一处锚点前、块尾挂上一处锚点后。
+; 落点列从上一锚点向前找第一处「源列不深于注释」的锚点，取它的输出列；只看位置先后，故二次打印不动。
+printAnchorComments|func(lines: Array<OutLine>, comments: Array<Comment>, source: SourceText, bytes: Array<U8>,) -> (Array<OutLine>,):
+    if len(comments) == 0 || len(lines) == 0:
+        return lines
+    var anchors: Array<I32> = []
+    var i = 0
+    while i < len(lines):
+        if lines[i].anchor >= 0:
+            anchors = anchors.append(i)
+        i = i + 1
+    if len(anchors) == 0:
+        return lines
+    var before: Array<CommentSlot> = []
+    var after: Array<CommentSlot> = []
+    var inline: Array<CommentSlot> = []
+    var tail: Array<CommentSlot> = []
+    var c = 0
+    while c < len(comments):
+        let text = printTextOf(bytes = bytes, start = comments[c].start, end = comments[c].end)
+        let loc = locationOf(text = source, offset = comments[c].start)
+        if !comments[c].ownLine:
+            var same = -1
+            var k = 0
+            while k < len(anchors):
+                if lines[anchors[k]].anchor == loc.line:
+                    same = anchors[k]
+                k = k + 1
+            if same >= 0:
+                var item = CommentSlot()
+                item.index = same
+                item.text = text
+                item.line = loc.line
+                inline = inline.append(item)
+                c = c + 1
+                continue
+        var next = -1
+        var prev = -1
+        var k = 0
+        while k < len(anchors):
+            if lines[anchors[k]].anchor > loc.line:
+                if next < 0:
+                    next = k
+            else:
+                prev = k
+            k = k + 1
+        let column = printCommentColumn(commentColumn = loc.column, limit = prev, anchors = anchors, lines = lines)
+        var item = CommentSlot()
+        item.text = text
+        item.column = column
+        item.line = loc.line
+        if prev >= 0 && (next < 0 || column > lines[anchors[next]].column):
+            item.index = anchors[prev]
+            after = after.append(item)
+        elif next >= 0:
+            item.index = anchors[next]
+            item.column = lines[anchors[next]].column
+            before = before.append(item)
+        else:
+            item.index = -1
+            item.column = 0
+            tail = tail.append(item)
+        c = c + 1
+    var blockStarts: Array<Bool> = []
+    var s = 0
+    while s < len(lines):
+        blockStarts = blockStarts.append(false)
+        s = s + 1
+    var previousColumn = 0
+    var i2 = 0
+    while i2 < len(lines):
+        if len(lines[i2].text) > 0:
+            if lines[i2].column > previousColumn:
+                blockStarts[i2] = true
+            previousColumn = lines[i2].column
+        i2 = i2 + 1
+    var out: Array<OutLine> = []
+    var bi = 0
+    var ai = 0
+    var ii = 0
+    var i3 = 0
+    while i3 < len(lines):
+        var from = bi
+        while bi < len(before) && before[bi].index == i3:
+            bi = bi + 1
+        out = printEmitSlots(out = out, slots = before, from = from, to = bi, dropLeading = blockStarts[i3], source = source, bytes = bytes)
+        var current = lines[i3]
+        var from2 = ii
+        while ii < len(inline) && inline[ii].index == i3:
+            ii = ii + 1
+        if ii > from2:
+            current.text = current.text + " " + printJoinSlots(slots = inline, from = from2, to = ii)
+        out = out.append(current)
+        var from3 = ai
+        while ai < len(after) && after[ai].index == i3:
+            ai = ai + 1
+        out = printEmitSlots(out = out, slots = after, from = from3, to = ai, dropLeading = false, source = source, bytes = bytes)
+        i3 = i3 + 1
+    return printEmitSlots(out = out, slots = tail, from = 0, to = len(tail), dropLeading = false, source = source, bytes = bytes)
+
+; 同源行末的多条注释连写：按出现顺序以空格相接。
+printJoinSlots|func(slots: Array<CommentSlot>, from: I32, to: I32,) -> (String,):
+    var out = ""
+    var i = from
+    while i < to:
+        if i > from:
+            out = out + " "
+        out = out + slots[i].text
+        i = i + 1
+    return out
+
+; 落一组注释：原文相隔空行的两段之间、整段上方的空行都补一行；块首上方那行按块内规则丢弃。
+printEmitSlots|func(out: Array<OutLine>, slots: Array<CommentSlot>, from: I32, to: I32, dropLeading: Bool, source: SourceText, bytes: Array<U8>,) -> (Array<OutLine>,):
+    var lines = out
+    var previous = -1
+    var i = from
+    while i < to:
+        let slot = slots[i]
+        var pastGap = false
+        if previous >= 0 && slot.line - previous > 1:
+            pastGap = true
+        var sourceGap = false
+        if !(i == from && dropLeading) && printBlankAbove(source = source, bytes = bytes, line = slot.line) > 0:
+            sourceGap = true
+        if pastGap || sourceGap:
+            if len(lines) > 0 && len(lines[len(lines) - 1].text) > 0:
+                lines = lines.append(OutLine())
+        var line = OutLine()
+        line.text = printPadOf(count = slot.column) + slot.text
+        line.column = slot.column
+        line.anchor = -1
+        line.anchorColumn = 0
+        lines = lines.append(line)
+        previous = slot.line
+        i = i + 1
+    return lines
+
+; 注释落在哪一列：从上一锚点向前找第一处源列不深于注释的锚点，取它的输出列；
+; 找不到（注释比所有锚点都靠左）或尚无锚点时，退到最近一处锚点的列。
+printCommentColumn|func(commentColumn: I32, limit: I32, anchors: Array<I32>, lines: Array<OutLine>,) -> (I32,):
+    if limit < 0:
+        return 0
+    var slot = limit
+    while slot >= 0:
+        if lines[anchors[slot]].anchorColumn <= commentColumn:
+            return lines[anchors[slot]].column
+        slot = slot - 1
+    return lines[anchors[limit]].column

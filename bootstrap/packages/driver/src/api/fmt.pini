@@ -24,26 +24,13 @@ printWithoutTrailingNewline|func(text: String,) -> ():
     print(body)
     return
 
-; 注释探测：行首（去缩进后）出现 `;` 或 `#` 即判为含整行注释；保留未实现时拒绝改写。
-hasLineComment|func(source: String,) -> (Bool,):
-    var start = 0
-    var i = 0
-    while i <= len(source):
-        if i == len(source) || source.slice(i, i + 1) == "\n":
-            var at = start
-            while at < i && source.slice(at, at + 1) == " ":
-                at = at + 1
-            if at < i:
-                let mark = source.slice(at, at + 1)
-                if mark == ";" || mark == "#":
-                    return true
-            start = i + 1
-        i = i + 1
-    return false
-
 ; 保真打印：解析后按树重排；`-w` 就地写，`--check` 列出待整理文件，默认单文件打标准输出。
 ; 解析失败不跳过：静默跳过会把真错误变成通过，与宿主的处置一致。
 runFmt|func(paths: Array<String>, write: Bool, check: Bool,) -> ():
+    if len(paths) > 1 && !write && !check:
+        print("Error: 多个路径要配 -w 或 --check，否则多份输出在 stdout 上分不清边界")
+        assert(false, "多路径缺开关")
+        return
     var files: Array<String> = []
     var p = 0
     while p < len(paths):
@@ -58,11 +45,6 @@ runFmt|func(paths: Array<String>, write: Bool, check: Bool,) -> ():
     var i = 0
     while i < len(files):
         let source = readFile(files[i])
-        if hasLineComment(source = source):
-            print(" 行不通  [格式化] 注释保留未实现：" + files[i])
-            failed = failed + 1
-            i = i + 1
-            continue
         let result = printChecked(source)
         if !result.ok:
             print(" 行不通  [格式化] 解析失败：" + files[i])
