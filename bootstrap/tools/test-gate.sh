@@ -603,8 +603,172 @@ if ! echo "$bad_report" | grep -q "E4-026"; then
     fail=1
 fi
 
+# 模块工具组：tidy 对齐集合、refresh 写摘要、verify 比校验和、graph 出依赖树。
+# 改动型命令各用一份副本，源码树里的夹具只读；期望值按宿主同一份行为写死。
+mod_copy="$work/mod-tidy"
+rm -rf "$mod_copy"
+cp -R "$root/bootstrap/fixtures/mod-tidy" "$mod_copy"
+tidy_out="$("$pini" "${stdlib_args[@]}" mod tidy "$mod_copy" 2>&1)"
+case "$tidy_out" in
+*"tidy：新增 beta（约束 *，由 refresh 回填）"*) ;;
+*)
+    echo " 行不通  [测试自检] tidy 应报新增 beta：$tidy_out" >&2
+    fail=1
+    ;;
+esac
+case "$tidy_out" in
+*"tidy：移除 stale（代码中已无 import）"*) ;;
+*)
+    echo " 行不通  [测试自检] tidy 应报移除 stale：$tidy_out" >&2
+    fail=1
+    ;;
+esac
+cat > "$work/mod-tidy-expected.toml" <<'TOML'
+[package]
+name = "app"
+version = "1.0.0"
+
+[tap]
+default = "file:vendor"
+
+[lib]
+name = "app"
+entry = "src/api/app.pini"
+
+[require]
+alpha = "^1.0"
+beta = "*"
+TOML
+if ! cmp -s "$work/mod-tidy-expected.toml" "$mod_copy/pini.toml"; then
+    echo " 行不通  [测试自检] tidy 改写后的清单与期望不符" >&2
+    fail=1
+fi
+clean_out="$("$pini" "${stdlib_args[@]}" mod tidy "$mod_copy" 2>&1)"
+case "$clean_out" in
+*"已与 import 对齐（2 条），无改动"*) ;;
+*)
+    echo " 行不通  [测试自检] 二次 tidy 应报无改动：$clean_out" >&2
+    fail=1
+    ;;
+esac
+refresh_out="$("$pini" "${stdlib_args[@]}" mod refresh "$mod_copy" 2>&1)"
+case "$refresh_out" in
+*"pini-summary.toml 已生成（30 行）"*) ;;
+*)
+    echo " 行不通  [测试自检] refresh 未写摘要：$refresh_out" >&2
+    fail=1
+    ;;
+esac
+verify_out="$("$pini" "${stdlib_args[@]}" mod verify "$mod_copy" 2>&1)"
+case "$verify_out" in
+*"verify：2 项校验和全部匹配"*) ;;
+*)
+    echo " 行不通  [测试自检] verify 应报两项匹配：$verify_out" >&2
+    fail=1
+    ;;
+esac
+graph_out="$("$pini" "${stdlib_args[@]}" mod graph "$mod_copy" 2>&1)"
+case "$graph_out" in
+*"alpha 1.2.0"*"└─ beta 1.4.0"*"环：无"*) ;;
+*)
+    echo " 行不通  [测试自检] graph 未出依赖树：$graph_out" >&2
+    fail=1
+    ;;
+esac
+printf 'x\n' >> "$mod_copy/deps/beta/src/api/beta.pini"
+tampered_out="$("$pini" "${stdlib_args[@]}" mod verify "$mod_copy" 2>&1)"
+tampered_rc=$?
+if [ "$tampered_rc" -eq 0 ]; then
+    echo " 行不通  [测试自检] 篡改依赖后 verify 应非零退出" >&2
+    fail=1
+fi
+case "$tampered_out" in
+*"内容与锁文件不符"*) ;;
+*)
+    echo " 行不通  [测试自检] 篡改依赖后 verify 应报不符：$tampered_out" >&2
+    fail=1
+    ;;
+esac
+
+# 远程 tap：本地 git 仓库造两个 tag；MVS 取满足下界的最小版本，commit 记进摘要。
+git_bin="$(command -v git || true)"
+if [ -z "$git_bin" ]; then
+    echo " 行不通  [测试自检] 缺 git，抓取判据无法执行" >&2
+    fail=1
+else
+    repo="$work/mod-repo"
+    rm -rf "$repo"
+    mkdir -p "$repo/src/api"
+    cat > "$repo/pini.toml" <<'TOML'
+[package]
+name = "alpha"
+version = "1.0.0"
+
+[lib]
+name = "alpha"
+entry = "src/api/alpha.pini"
+TOML
+    printf '甲|func() -> (I32,):\n    return 1\n' > "$repo/src/api/alpha.pini"
+    "$git_bin" -C "$repo" init -q
+    "$git_bin" -C "$repo" add -A
+    "$git_bin" -C "$repo" -c user.name=pini -c user.email=pini@example.com commit -qm v1
+    "$git_bin" -C "$repo" tag v1.0.0
+    sed -i '' 's/version = "1.0.0"/version = "1.1.0"/' "$repo/pini.toml" 2>/dev/null || \
+        sed -i 's/version = "1.0.0"/version = "1.1.0"/' "$repo/pini.toml"
+    "$git_bin" -C "$repo" add -A
+    "$git_bin" -C "$repo" -c user.name=pini -c user.email=pini@example.com commit -qm v11
+    "$git_bin" -C "$repo" tag v1.1.0
+    app_copy="$work/mod-git-app"
+    rm -rf "$app_copy"
+    mkdir -p "$app_copy/src/api"
+    cat > "$app_copy/pini.toml" <<TOML
+[package]
+name = "app"
+version = "0.1.0"
+
+[tap]
+default = "git:$repo"
+
+[require]
+alpha = "^1.0"
+
+[lib]
+name = "app"
+entry = "src/api/app.pini"
+TOML
+    printf '[app|import]\nalpha = "../../deps/alpha"\n\n入口|func() -> (I32,):\n    return 1\n' > "$app_copy/src/api/app.pini"
+    git_refresh="$("$pini" "${stdlib_args[@]}" mod refresh "$app_copy" 2>&1)"
+    case "$git_refresh" in
+    *"已生成（19 行）"*) ;;
+    *)
+        echo " 行不通  [测试自检] 远程 tap 的 refresh 未落摘要：$git_refresh" >&2
+        fail=1
+        ;;
+    esac
+    if [ ! -f "$app_copy/deps/alpha/pini.toml" ]; then
+        echo " 行不通  [测试自检] 远程 tap 未落地到 deps/alpha" >&2
+        fail=1
+    fi
+    if ! grep -q '^version = "1.0.0"$' "$app_copy/pini-summary.toml"; then
+        echo " 行不通  [测试自检] MVS 应取满足 ^1.0 的最小版本 1.0.0" >&2
+        fail=1
+    fi
+    if grep -q '^commit = "-"$' "$app_copy/pini-summary.toml"; then
+        echo " 行不通  [测试自检] 抓取后 commit 应记定位符" >&2
+        fail=1
+    fi
+    git_verify="$("$pini" "${stdlib_args[@]}" mod verify "$app_copy" 2>&1)"
+    case "$git_verify" in
+    *"verify：1 项校验和全部匹配"*) ;;
+    *)
+        echo " 行不通  [测试自检] 抓取后 verify 应通过：$git_verify" >&2
+        fail=1
+        ;;
+    esac
+fi
+
 if [ "$fail" -ne 0 ]; then
     exit 1
 fi
-echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入，浮点常量走位模式，接口缓存按记录判失效，逐包产物按包发射且合并可链接，缓存按拓扑与内容判复用，分波按依赖深度，共享缓存按指纹复用，命令对照按签名锁定，导出面按符号表核对，构建执行组五条命令各有判据"
+echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入，浮点常量走位模式，接口缓存按记录判失效，逐包产物按包发射且合并可链接，缓存按拓扑与内容判复用，分波按依赖深度，共享缓存按指纹复用，命令对照按签名锁定，导出面按符号表核对，构建执行组五条命令各有判据，模块工具组按副本验改写与抓取"
 exit 0

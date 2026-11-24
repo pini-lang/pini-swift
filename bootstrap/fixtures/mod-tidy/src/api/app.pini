@@ -1,0 +1,6 @@
+[app|import]
+alpha = "../../deps/alpha"
+beta = "../../deps/beta"
+
+入口|func() -> (I32,):
+    return 1

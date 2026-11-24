@@ -22,3 +22,8 @@ run-llvm-hello	run-llvm	在	0	0	-	-	0/0	同同同	同
 test-llvm-module	test-llvm	在	1	1	-	-	0/0	同同异	异:文
 build-print-plan	build	在	0	0	-	-	0/0	同同异	异:文
 build-shared	build	在	0	0	-	-	0/0	同同异	异:文
+mod-graph	mod	在	0	0	-	-	0/0	同同同	同
+mod-graph-cycles	mod	在	0	0	-	-	0/0	同同同	同
+mod-verify	mod	在	0	0	-	-	0/0	同同同	同
+mod-tidy-clean	mod	在	0	0	-	-	0/0	同同同	同
+mod-usage	mod	在	1	1	-	-	0/0	同同异	异:文

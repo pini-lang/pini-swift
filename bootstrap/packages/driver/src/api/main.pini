@@ -311,6 +311,9 @@ main|func() -> ():
             return
         runLLI(path = entryPathOf(raw = runPath), stdlib = stdlib)
         return
+    if len(args) > 0 && args[0] == "mod":
+        runMod(args)
+        return
     if len(args) > 0 && !isKnownCommand(name = args[0]):
         print("Error: Unknown command '" + args[0] + "'")
         assert(false, "未知命令")
@@ -439,6 +442,8 @@ isKnownCommand|func(name: String,) -> (Bool,):
     if name == "tokens" || name == "backends":
         return true
     if name == "compile" || name == "run-llvm" || name == "test-llvm":
+        return true
+    if name == "mod":
         return true
     return false
 

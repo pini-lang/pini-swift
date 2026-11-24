@@ -8,15 +8,15 @@ bk_process_stdout: (*U8,) -> (*U8,)
 bk_process_wait: (*U8,) -> (I32,)
 
 ; 进程结局：退出码与两路输出。句柄在 runProcess 内归还，这里的串是从句柄视图复制出来的副本。
-(进程结局)
+(ProcessOutcome)
 code: I32 = -1
 stdoutText: String = ""
 stderrText: String = ""
 
 ; 起子进程并等它结束。keepOutput 为零时子进程直通调用方的 stdout / stderr，输出不进结局。
 ; 句柄在返回前一律归还：调用方只关心结局，留着手柄只会漏。
-runProcess|func(argv: Array<String>, keepOutput: Bool,) -> (进程结局,):
-    var done = 进程结局()
+runProcess|func(argv: Array<String>, keepOutput: Bool,) -> (ProcessOutcome,):
+    var done = ProcessOutcome()
     var 模式 = 0
     if keepOutput:
         模式 = 1

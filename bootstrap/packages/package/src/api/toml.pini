@@ -115,6 +115,14 @@ tomlRowCount|func(doc: TomlDocument, table: String,) -> (I32,):
         i = i + 1
     return maxRow + 1
 
+; 数组表某一行的内联数组；缺键或不是数组答空表。
+tomlRowArray|func(doc: TomlDocument, table: String, row: I32, key: String,) -> (Array<String>,):
+    var empty: Array<String> = []
+    let at = findEntry(doc = doc, table = table, row = row, key = key)
+    if at < 0:
+        return empty
+    return doc.entries[at].elements
+
 ; 数组表某一行的标量；缺键答空串。
 tomlRowValue|func(doc: TomlDocument, table: String, row: I32, key: String,) -> (String,):
     let at = findEntry(doc = doc, table = table, row = row, key = key)

@@ -19,7 +19,7 @@ help	-	无	-	无	待核
 interfaces	-	有	-	自举独有	自举内部通道
 lower	-	有	-	自举独有	自举内部通道
 lsp	-	无	-	无	待补齐
-mod	-	无	-	无	待补齐
+mod	-	有	-	有	-
 parse	--sig	无	--sig	无	保留差异
 plan	-	有	-	自举独有	自举内部通道
 repl	-	无	-	无	待补齐

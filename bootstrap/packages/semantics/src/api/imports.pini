@@ -1,0 +1,29 @@
+[imports|import]
+_module_loader = "../../../module-loader"
+_syntax = "../../../syntax"
+
+; 导入条目：别名与原文路径；路径未归一，调用方按单元所在目录折叠。
+(ImportRef)
+alias: String = ""
+path: String = ""
+
+; 单元导入：只认导入块，块内顺序即书写顺序；路径取字符串字面量的里层字节。
+listUnitImports|func(_unit: CompilationUnit,) -> (Array<ImportRef>,):
+    var out: Array<ImportRef> = []
+    let bytes = unitBytes(_unit)
+    var i = 0
+    while i < len(_unit.ast.items):
+        let decl = _unit.ast.decls[_unit.ast.items[i]]
+        if isImportBlockCode(decl.kind):
+            var k = 0
+            while k < len(decl.kids):
+                let entry = _unit.ast.decls[decl.kids[k]]
+                if isImportEntryCode(entry.kind) && len(entry.kids) > 0:
+                    let node = _unit.ast.exprAt(entry.kids[0])
+                    var ref = ImportRef()
+                    ref.alias = decodeRange(bytes = bytes, start = entry.nameStart, end = entry.nameEnd)
+                    ref.path = decodeRange(bytes = bytes, start = node.start + 1, end = node.end - 1)
+                    out = out.append(ref)
+                k = k + 1
+        i = i + 1
+    return out

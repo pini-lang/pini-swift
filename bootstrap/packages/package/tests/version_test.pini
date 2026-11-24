@@ -1,0 +1,91 @@
+; 版本模型：分量解析、补零比较、约束求值与最小版本选择。
+; 全部用例只碰纯函数，不落盘、不起进程。
+
+; 分量：点分十进制逐段取值，`v` 前缀剥掉，非数字段丢弃。
+分量|test() -> ():
+    let 三段 = versionParts("1.2.3")
+    assert(len(三段) == 3, "三段")
+    assert(三段[0] == 1 && 三段[2] == 3, "首末段")
+    let 带前缀 = versionParts("v2.0")
+    assert(len(带前缀) == 2 && 带前缀[0] == 2, "v 前缀剥掉")
+    assert(len(versionParts("x.y")) == 0, "全非数字答空")
+    return
+
+; 版本比较：补零后逐段比，短版本按零补齐。
+版本比较|test() -> ():
+    assert(compareParts(first = versionParts("1.0"), second = versionParts("1.0.0")) == 0, "补零相等")
+    assert(compareParts(first = versionParts("1.2"), second = versionParts("1.10")) < 0, "按数值比而非字典序")
+    assert(compareParts(first = versionParts("2"), second = versionParts("1.9.9")) > 0, "主版本优先")
+    return
+
+; 约束：`^` / `~` / `=` / 区间 / 裸版本 / `*` 各有边界。
+约束求值|test() -> ():
+    let 尖号 = parseConstraint("^1.0")
+    assert(尖号.ok && len(尖号.atoms) == 2, "尖号两个原子")
+    assert(constraintSatisfies(尖号, versionParts("1.5.0")), "1.5 在 ^1.0 内")
+    assert(!constraintSatisfies(尖号, versionParts("2.0.0")), "2.0 越出 ^1.0")
+    let 零号 = parseConstraint("^0.2")
+    assert(constraintSatisfies(零号, versionParts("0.2.9")), "0.2 内")
+    assert(!constraintSatisfies(零号, versionParts("0.3.0")), "0.3 越出 ^0.2")
+    let 波浪 = parseConstraint("~1.2")
+    assert(constraintSatisfies(波浪, versionParts("1.2.9")), "~1.2 内")
+    assert(!constraintSatisfies(波浪, versionParts("1.3.0")), "~1.2 上界")
+    let 等值 = parseConstraint("=1.5")
+    assert(constraintSatisfies(等值, versionParts("1.5")), "等值命中")
+    assert(!constraintSatisfies(等值, versionParts("1.5.1")), "等值不容次版本")
+    let 区间 = parseConstraint(">=1.0, <2.0")
+    assert(len(区间.atoms) == 2, "区间两个原子")
+    assert(constraintSatisfies(区间, versionParts("1.9")), "区间内")
+    assert(!constraintSatisfies(区间, versionParts("2.0")), "区间上界")
+    let 裸 = parseConstraint("1.3")
+    assert(constraintSatisfies(裸, versionParts("1.3")), "裸版本当下界：等值满足")
+    assert(constraintSatisfies(裸, versionParts("1.4")), "裸版本当下界：更高满足")
+    let 任意 = parseConstraint("*")
+    assert(任意.ok && len(任意.atoms) == 0, "星号无原子")
+    assert(constraintSatisfies(任意, versionParts("9.9")), "任意版本满足")
+    return
+
+; 约束坏值：空段与不可解析的版本都答 ok=false，调用方据此报错而不是当 `*`。
+约束坏值|test() -> ():
+    assert(!parseConstraint("^").ok, "尖号无版本")
+    assert(!parseConstraint("1.0,").ok, "尾逗号留空段")
+    assert(!parseConstraint(">=x").ok, "区间无数值")
+    return
+
+; 选择：升序里第一个满足全部约束者；全为 `*` 回填最高版本；无解与坏约束都答 ok=false。
+最小版本|test() -> ():
+    var 候选: Array<String> = ["1.1.0", "1.0.0", "2.0.0"]
+    let 选中 = selectVersion(candidates = 候选, constraints = ["^1.0"])
+    assert(选中.ok && 选中.version == "1.0.0", "取满足下界的最小版本")
+    let 回填 = selectVersion(candidates = 候选, constraints = ["*"])
+    assert(回填.ok && 回填.version == "2.0.0", "回填取最高版本")
+    let 无解 = selectVersion(candidates = 候选, constraints = ["^3.0"])
+    assert(!无解.ok, "没有候选满足")
+    let 坏 = selectVersion(candidates = 候选, constraints = ["^"])
+    assert(!坏.ok, "坏约束不容忍")
+    let 空表 = selectVersion(candidates = [], constraints = ["*"])
+    assert(!空表.ok, "没有候选")
+    return
+
+; 清单：版本、约束、具名 tap 子表、替换与资源都进模型；requires 仍是名字视图。
+清单字段|test() -> ():
+    let 文本 = "[package]\nname = \"app\"\nversion = \"1.2.0\"\n\n[tap]\ndefault = \"file:vendor\"\nweb = \"github:acme\"\n\n[require]\nalpha = \"^1.0\"\nbeta = \"\"\n\n[require.web]\ngamma = \"~2.1\"\n\n[replace]\nalpha = \"1.4\"\n\n[resources]\n数据 = \"file:data\"\n"
+    let 解析 = parseModuleManifest(text = 文本, path = "pini.toml")
+    assert(len(解析.errors) == 0, "不应有错误")
+    assert(解析.manifest.version == "1.2.0", "版本")
+    assert(len(解析.manifest.dependencies) == 3, "三条依赖")
+    assert(解析.manifest.dependencies[1].constraint == "*", "空约束按星号收")
+    assert(解析.manifest.dependencies[2].tap == "web", "具名子表记 tap")
+    assert(len(解析.manifest.taps) == 2, "两个 tap")
+    assert(解析.manifest.replaces[0].spec == "1.4", "替换原文")
+    assert(解析.manifest.resources[0].name == "数据", "资源名")
+    assert(len(解析.manifest.requires) == 3, "名字视图含具名子表")
+    return
+
+; 约束坏值进清单：条目仍在，错误指向依赖名，求解前就被拦下。
+清单坏约束|test() -> ():
+    let 解析 = parseModuleManifest(text = "[package]\nname = \"app\"\n[require]\nalpha = \"^\"\n", path = "pini.toml")
+    assert(len(解析.errors) == 1, "一条错误")
+    assert(isErrorKind(e = 解析.errors[0], kind = .errorVersionConstraint), "约束类别")
+    assert(len(解析.manifest.dependencies) == 1, "条目仍在")
+    return
