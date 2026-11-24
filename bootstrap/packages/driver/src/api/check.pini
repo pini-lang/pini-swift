@@ -344,7 +344,7 @@ storeDiagnostics|func(_check: StoreCheck,) -> (Array<Diagnostic>,):
 ; 单函数检查：返回路径与声明赋值各走一遍，两份错误合并成一串诊断。
 checkOneFunction|func(world: MemberWorld, types: ExprTypes, unitIndex: I32, declId: I32, bytes: Array<U8>, out: Array<Diagnostic>,) -> (Array<Diagnostic>,):
     var working = out
-    let seed = seedFunctionScope(world = world, unitIndex = unitIndex, declId = declId, bytes = bytes)
+    let seed = seedFunctionScope(world = world, unitIndex = unitIndex, declId = declId, bytes = bytes, selfType = -1)
     let body = checkFunctionBodyWith(world = world, unitIndex = unitIndex, declId = declId, types = types, bytes = bytes, seed = seed)
     var bodyList = bodyDiagnostics(body)
     var i = 0

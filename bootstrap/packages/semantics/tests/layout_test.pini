@@ -206,3 +206,24 @@ unit: CompilationUnit = CompilationUnit()
     assert(kind.slotCount == 5, "实得 " + countText(kind.slotCount))
     assert(len(kind.cases) == 2, "实得 " + countText(len(kind.cases)))
     return
+
+; 泛型实例：盒<I32> 与 盒<String> 是两个具体类型，字段类型按实参替换，形态各成一条。
+泛型实例形态|test() -> ():
+    let sample = 造布局样例("(甲)\n整: 盒<I32>\n串: 盒<String>\n\n(盒<T>)\n内容: T\n\nf|func() -> ():\n    pass\n")
+    assert(sample.world.types.isOK(), "泛型实例标注应无错")
+    let 甲 = sample.unit.ast.items[0]
+    let 整 = sample.unit.ast.decls[甲].kids[0]
+    let 串 = sample.unit.ast.decls[甲].kids[1]
+    let 整型 = sample.world.types.typeOf(unit = 0, decl = 整)
+    let 串型 = sample.world.types.typeOf(unit = 0, decl = 串)
+    assert(整型 >= 0, "整实例应已解析")
+    assert(串型 >= 0, "串实例应已解析")
+    assert(整型 != 串型, "两个实参应得两个类型")
+    let 整文本 = typeText(pool = sample.world.types.pool, id = 整型)
+    assert(整文本 == "盒<I32>", "实得 " + 整文本)
+    let shapes = makeShapeTable(sample.world)
+    let 整形态 = shapeAt(table = shapes, typeId = 整型)
+    assert(len(整形态.fields) == 1, "实得 " + countText(len(整形态.fields)))
+    let 字段文本 = typeText(pool = sample.world.types.pool, id = 整形态.fields[0].typeId)
+    assert(字段文本 == "I32", "实得 " + 字段文本)
+    return

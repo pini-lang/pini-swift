@@ -122,6 +122,9 @@ ownerTypeOf|func(world: MemberWorld, unitIndex: I32, declId: I32, bytes: Array<U
     while i < unit.ast.declCount():
         let decl = unit.ast.decls[i]
         if isOwnerDeclCode(decl.kind) && containsDeclKid(kids = decl.kids, id = declId):
+            let over = world.types.overrideOf(unit = unitIndex, decl = i)
+            if over >= 0:
+                return over
             let owner = decodeRange(bytes = view, start = decl.nameStart, end = decl.nameEnd)
             return ownerTypeId(world = world, name = owner)
         i = i + 1
@@ -327,7 +330,7 @@ valid: Bool = false
 
 ; 播种函数帧：`|self` 方法先放自身，再逐个放参数；返回类型一并定好，无标注按空元组。
 ; 播种函数帧：字节视图由调用方传入，整单元只转一次；传空时按单元文本现转。
-seedFunctionScope|func(world: MemberWorld, unitIndex: I32, declId: I32, bytes: Array<U8>,) -> (BodySeed,):
+seedFunctionScope|func(world: MemberWorld, unitIndex: I32, declId: I32, bytes: Array<U8>, selfType: I32,) -> (BodySeed,):
     var out = BodySeed()
     out.pool = world.types.pool
     if unitIndex < 0 || unitIndex >= len(world.units):
@@ -344,7 +347,9 @@ seedFunctionScope|func(world: MemberWorld, unitIndex: I32, declId: I32, bytes: A
         view = unitBytes(unit)
     var stack = enterScope(stack = ScopeStack(), kind = .scopeFunction, file = unit.path, offset = decl.start)
     if decl.isSelf:
-        let ownerId = ownerTypeOf(world = world, unitIndex = unitIndex, declId = declId, bytes = view)
+        var ownerId = selfType
+        if ownerId < 0:
+            ownerId = ownerTypeOf(world = world, unitIndex = unitIndex, declId = declId, bytes = view)
         if ownerId >= 0:
             let selfDecl = declareSelf(stack = stack, spelling = "self", typeId = ownerId, file = unit.path, offset = decl.start)
             if selfDecl.failed:
@@ -411,4 +416,4 @@ checkFunctionBodyWith|func(world: MemberWorld, unitIndex: I32, declId: I32, type
 
 ; 检查入口：自行播种后转调；调用方已有函数帧时走带 seed 的版本，同一函数不重复播种。
 checkFunctionBody|func(world: MemberWorld, unitIndex: I32, declId: I32, types: ExprTypes, bytes: Array<U8>,) -> (BodyCheck,):
-    return checkFunctionBodyWith(world = world, unitIndex = unitIndex, declId = declId, types = types, bytes = bytes, seed = seedFunctionScope(world = world, unitIndex = unitIndex, declId = declId, bytes = bytes))
+    return checkFunctionBodyWith(world = world, unitIndex = unitIndex, declId = declId, types = types, bytes = bytes, seed = seedFunctionScope(world = world, unitIndex = unitIndex, declId = declId, bytes = bytes, selfType = -1))

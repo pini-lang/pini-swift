@@ -39,7 +39,7 @@ ffi_generated	目录	ok	ok	ok	通过	通过	-	-	-
 ffi_module	目录	ok	ok	ok	通过	通过	-	-	-
 for	单文件	ok	ok	ok	通过	通过	-	-	-
 generic-func	单文件	ok	ok	ok	通过	通过	-	-	-
-generic	单文件	ok	fail	-	降载	降载缺口	-	-	1 表达式类型未定 泛型构造 ./examples/generic.pini:268
+generic	单文件	ok	ok	ok	通过	通过	-	-	-
 hello	单文件	ok	ok	ok	通过	通过	-	-	-
 higher-order	单文件	ok	ok	ok	通过	通过	-	-	-
 io	单文件	ok	ok	ok	通过	通过	-	-	-

@@ -36,6 +36,7 @@ units: WorkspaceUnits = WorkspaceUnits()
     var 类型面 = 世界.types
     类型面.pool = 泛.pool
     世界.types = 类型面
+    世界 = attachTypeInstances(world = 世界)
     var input = LowerWorld()
     input.world = 世界
     input.types = 泛.types
@@ -87,6 +88,7 @@ units: WorkspaceUnits = WorkspaceUnits()
     var 类型面 = 带池.types
     类型面.pool = 泛.pool
     带池.types = 类型面
+    带池 = attachTypeInstances(world = 带池)
     let shapes = makeShapeTable(带池)
     let layouts = layoutAll(shapes = shapes, pool = 带池.types.pool)
     print("stage-shapes", len(带池.types.pool.entries))

@@ -191,6 +191,11 @@ mapResult|func(map: TypeMap, pool: TypePool, kids: Array<I32>, semanticId: I32,)
     return setMapped(map = out, semanticId = semanticId, irId = inserted.id)
 
 ; 单条映射：先查是否已映射，再按类别分流；未覆盖的类别报能力缺口。
+; 名义 IR 名：与语义层的实例符号文本同一份规则，两侧算出的符号因此对得上。
+nominalIrName|func(pool: TypePool, entry: TypeEntry,) -> (String,):
+    return nominalSymbolText(pool = pool, entry = entry)
+
+; 语义类型池到 IR 类型池的映射入口：池、名字与下标三样齐备，递归重入靠 ids 判重。
 mapSemanticType|func(map: TypeMap, pool: TypePool, id: I32,) -> (TypeMap,):
     var out = map
     if id < 0 || id >= len(pool.entries):
@@ -211,15 +216,15 @@ mapSemanticType|func(map: TypeMap, pool: TypePool, id: I32,) -> (TypeMap,):
     if isOptionalClass(entry.kind):
         return mapWrapped(map = out, pool = pool, kind = .irTypeOptional, kids = entry.kids, semanticId = id)
     if isStructClass(entry.kind):
-        let inserted = irNominalType(pool = out.pool, name = entry.name, isObject = false)
+        let inserted = irNominalType(pool = out.pool, name = nominalIrName(pool = pool, entry = entry), isObject = false)
         out.pool = inserted.pool
         return setMapped(map = out, semanticId = id, irId = inserted.id)
     if isObjectClass(entry.kind):
-        let inserted = irNominalType(pool = out.pool, name = entry.name, isObject = true)
+        let inserted = irNominalType(pool = out.pool, name = nominalIrName(pool = pool, entry = entry), isObject = true)
         out.pool = inserted.pool
         return setMapped(map = out, semanticId = id, irId = inserted.id)
     if isEnumClass(entry.kind):
-        let inserted = irEnumType(pool = out.pool, name = entry.name)
+        let inserted = irEnumType(pool = out.pool, name = nominalIrName(pool = pool, entry = entry))
         out.pool = inserted.pool
         return setMapped(map = out, semanticId = id, irId = inserted.id)
     if isTupleClass(entry.kind):

@@ -1,0 +1,5 @@
+[case]
+name = "泛型类型单态化"
+category = "legal"
+kind = "pass"
+spec = "语言参考 3.11 泛型：每个具体实例独立成形，盒<I32> 与 盒<String> 是两个具体类型"

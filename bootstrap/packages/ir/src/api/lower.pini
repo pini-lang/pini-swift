@@ -114,6 +114,8 @@ bytes: Array<U8> = []
 generics: GenericFill = GenericFill()
 ; 闭包编号水位：跨单元、跨实例共用一格，逐闭包递增。
 closureSerial: I32 = 0
+; 实例方法的 self 类型：语义层给的实例下标，模板方法留 -1 走按名查。
+selfType: I32 = -1
 
 ; 声明名：从源内区间解码，保留原始拼写。
 declName|func(unit: CompilationUnit, bytes: Array<U8>, decl: DeclNode,) -> (String,):
@@ -178,7 +180,7 @@ lowerParams|func(state: LowerState, unit: CompilationUnit, decl: DeclNode, scope
 lowerFunction|func(state: LowerState, unit: CompilationUnit, declId: I32, owner: String, overrideName: String,) -> (LowerState,):
     var out = state
     let decl: DeclNode = unit.ast.decls[declId]
-    let seed = seedFunctionScope(world = out.world, unitIndex = out.unitIndex, declId = declId, bytes = out.bytes)
+    let seed = seedFunctionScope(world = out.world, unitIndex = out.unitIndex, declId = declId, bytes = out.bytes, selfType = out.selfType)
     if !seed.valid:
         let name = irFunctionName(unit = unit, bytes = out.bytes, decl = decl, owner = owner)
         out.errors = appendLowerError(errors = out.errors, error = makeLowerError(kind = .lowerMissingCapability, file = unit.path, offset = decl.start, detail = name + "：函数帧播种失败"))
@@ -297,6 +299,8 @@ lowerDeclBody|func(state: LowerState, unit: CompilationUnit, declId: I32,) -> (L
         if len(decl.generic) > 0:
             return out
         let owner = declName(unit = unit, bytes = out.bytes, decl = decl)
+        if isExtensionDeclCode(decl.kind) && isGenericTemplateOwner(world = out.world, name = owner):
+            return out
         var i = 0
         while i < len(decl.kids):
             let child: DeclNode = unit.ast.decls[decl.kids[i]]
@@ -339,13 +343,16 @@ lowerWorkspace|func(input: LowerWorld,) -> (IrModule,):
         let inst = input.generics.instances[g]
         let savedWorld = state.world
         let savedTypes = state.types
+        let savedSelf = state.selfType
         state.world = inst.world
         state.types = inst.types
         state.unitIndex = inst.unit
+        state.selfType = inst.selfType
         state.bytes = unitBytes(inst.world.units[inst.unit])
         state = lowerFunction(state = state, unit = inst.world.units[inst.unit], declId = inst.decl, owner = "", overrideName = inst.name)
         state.world = savedWorld
         state.types = savedTypes
+        state.selfType = savedSelf
         g = g + 1
     var out = IrModule()
     out.types = state.map.pool
@@ -492,3 +499,11 @@ irTagNames|func() -> (Array<String>,):
         out[table.entries[k].tag] = table.entries[k].name
         k = k + 1
     return out
+
+; 扩展块宿主是泛型模板：成员只为实例降载，模板本身不发函数。
+isGenericTemplateOwner|func(world: MemberWorld, name: String,) -> (Bool,):
+    let ref = findNominalDecl(world = world, name = name)
+    if ref.unit < 0:
+        return false
+    let decl = world.units[ref.unit].ast.decls[ref.decl]
+    return len(decl.generic) > 0
