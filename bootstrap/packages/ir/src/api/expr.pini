@@ -823,6 +823,18 @@ fieldTypeOf|func(frame: LowerFrame, owner: String, fieldName: String,) -> (I32,)
         return -1
     return frame.world.types.typeOf(unit = ref.unit, decl = ref.decl)
 
+; 实例世界：按实例符号找到替换表，方法的形参与返回据此定型；不是实例名答原世界。
+instanceWorldOf|func(frame: LowerFrame, owner: String,) -> (MemberWorld,):
+    var i = 0
+    while i < len(frame.world.types.instances):
+        let inst = frame.world.types.instances[i]
+        if inst.typeId >= 0 && inst.typeId < len(frame.world.types.pool.entries):
+            let entry = frame.world.types.pool.entries[inst.typeId]
+            if nominalSymbolText(pool = frame.world.types.pool, entry = entry) == owner:
+                return worldWithOverrides(world = frame.world, overrides = inst.overrides)
+        i = i + 1
+    return frame.world
+
 ; 接收者所有者：名义、枚举与内建 String/Array 答名字，其余答空串；空串说明按名找不到方法符号。
 receiverOwner|func(map: TypeMap, typeId: I32,) -> (String,):
     if typeId < 0 || typeId >= irTypeCount(map.pool):
@@ -999,9 +1011,14 @@ calleeOfMethod|func(frame: LowerFrame, map: TypeMap, pool: IrNodePool, receiver:
         return out
     var symbol = lookupMemberByName(index = frame.world.symbols, owner = owner, name = memberName)
     var methodOwner = owner
+    ; 实例接收者：符号按实例名出，声明仍挂在模板名下，故查表回落到 `$` 之前的前缀。
+    var lookupOwner = owner
+    if symbol < 0 && owner.indexOf("$") > 0:
+        lookupOwner = owner.substring(0, owner.indexOf("$"))
+        symbol = lookupMemberByName(index = frame.world.symbols, owner = lookupOwner, name = memberName)
     if symbol < 0:
         ; 组合：方法声明在嵌入的父类型上，逐级向上找；符号名按声明所在的类型出。
-        let parents = composedParentNames(world = frame.world, owner = owner)
+        let parents = composedParentNames(world = frame.world, owner = lookupOwner)
         var p = 0
         while p < len(parents) && symbol < 0:
             symbol = lookupMemberByName(index = frame.world.symbols, owner = parents[p], name = memberName)
@@ -1014,15 +1031,20 @@ calleeOfMethod|func(frame: LowerFrame, map: TypeMap, pool: IrNodePool, receiver:
     let decl = frame.world.units[ref.unit].ast.decls[ref.decl]
     if !isFunctionDeclCode(decl.kind):
         return out
+    let retWorld = instanceWorldOf(frame = frame, owner = methodOwner)
     out.found = true
-    out.params = declParams(world = frame.world, ref = ref)
-    out.ret = frame.world.types.typeOf(unit = ref.unit, decl = ref.decl)
+    out.params = declParams(world = retWorld, ref = ref)
+    out.ret = retWorld.types.typeOf(unit = ref.unit, decl = ref.decl)
     out.ordered = true
     if decl.isOwn:
         out.name = ownMethodName(method = memberName, owner = methodOwner)
         out.takesReceiver = false
     else:
-        out.name = instanceMethodName(method = memberName, owner = methodOwner)
+        ; 实例符号由语义层按原始拼写建，两侧一致；发射期统一编码，不在这一层再编一次。
+        if methodOwner.indexOf("$") > 0:
+            out.name = memberName + "__" + methodOwner
+        else:
+            out.name = instanceMethodName(method = memberName, owner = methodOwner)
         out.takesReceiver = true
     return out
 
@@ -2482,10 +2504,23 @@ lowerExpr|func(pool: IrNodePool, texts: IrTextPool, map: TypeMap, types: ExprTyp
     if unit.ast.isFunctionExpr(id):
         return lowerClosure(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)
     if unit.ast.isGenericExpr(id):
-        ; 泛型函数调用点先按实例表发实例调用；未命中才是 `LazyRef<T>` 构造。
+        ; 泛型函数调用点先按实例表发实例调用；其次判用户泛型类型的零参构造；再次才是 `LazyRef<T>`。
         let at = findGenericCall(calls = frame.generics.calls, unit = unitIndex, node = id)
         if at >= 0:
             return lowerGenericCall(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id, instance = at)
+        let ctorType = exprIrType(map = map, types = types, unit = unit, unitIndex = unitIndex, frame = frame, bytes = bytes, id = id)
+        if ctorType >= 0 && ctorType < irTypeCount(map.pool) && len(unit.ast.exprAt(id).kids) == 0:
+            let ctorTag = irTypeTag(irTypeAt(pool = map.pool, id = ctorType).kind)
+            if ctorTag == irTypeTag(.irTypeNominal) || ctorTag == irTypeTag(.irTypeEnumeration):
+                let ctorNode = unit.ast.exprAt(id)
+                var ctorName = ""
+                if ctorNode.typeId >= 0 && ctorNode.typeId < unit.ast.typeCount():
+                    let ctorTypeNode = unit.ast.typeAt(ctorNode.typeId)
+                    ctorName = decodeSpelling(bytes = bytes, start = ctorTypeNode.nameStart, end = ctorTypeNode.nameEnd)
+                let ctorSymbol = lookupTopByName(index = frame.world.symbols, name = ctorName)
+                let ctorRef = symbolDecl(world = frame.world, symbol = ctorSymbol)
+                if ctorRef.unit >= 0:
+                    return lowerConstructDefaults(out = out, map = map, types = types, ref = ctorRef, typeId = ctorType)
         return lowerLazyRefConstruct(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id, callee = id)
     if unit.ast.isNilExpr(id):
         return lowerNil(out = out, unit = unit, bytes = bytes, map = map, types = types, unitIndex = unitIndex, id = id)

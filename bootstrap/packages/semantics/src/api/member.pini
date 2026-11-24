@@ -186,6 +186,8 @@ makeMemberWorld|func(units: Array<CompilationUnit>, table: SymbolTable, types: T
     out.types.pool = internNominalTypes(units = units, pool = types.pool)
     out.compositions = collectCompositions(units = units)
     out = attachTypeParams(world = out)
+    out = preinternTypeInstances(world = out)
+    out = attachTypeInstances(world = out)
     return out
 
 ; 类型形参绑定：泛型声明的每个形参名驻留成不透明类型，模板体因此有型可解。
@@ -391,11 +393,17 @@ checkPromotedMember|func(world: MemberWorld, out: MemberResult, entry: TypeEntry
     return failMember(out = out, access = access, kind = .memberUnknown, typeName = origin)
 
 ; 名义成员：先查符号，再判可见性，最后按声明类别给类型与成员类别。
+; 带实参的实例先换替换表世界，字段与方法签名因此按实参定型，模板形参不外泄。
 checkNominalMember|func(world: MemberWorld, out: MemberResult, entry: TypeEntry, access: MemberAccess,) -> (MemberResult,):
     let owner = entry.name
     let at = lookupMember(index = world.symbols, owner = owner, key = access.key)
     if at < 0:
         return checkPromotedMember(world = world, out = out, entry = entry, access = access, origin = owner, depth = 0)
+    var ownerWorld = world
+    if len(entry.kids) > 0:
+        let instAt = world.types.findTypeInstance(access.receiver)
+        if instAt >= 0:
+            ownerWorld = worldWithOverrides(world = world, overrides = world.types.instances[instAt].overrides)
     let symbol = world.table.symbolAt(at)
     let ref = lookupDecl(index = world.decls, file = symbol.file, offset = symbol.offset)
     if ref.unit < 0:
@@ -408,11 +416,11 @@ checkNominalMember|func(world: MemberWorld, out: MemberResult, entry: TypeEntry,
     if isVisibility(level = symbol.visibility, expected = .visibilityInternal) && access.file != symbol.file:
         return failMember(out = out, access = access, kind = .memberInaccessible, typeName = owner)
     if isFieldDeclCode(decl.kind):
-        return checkFieldMember(world = world, out = out, owner = owner, ref = ref, symbol = at, access = access)
+        return checkFieldMember(world = ownerWorld, out = out, owner = owner, ref = ref, symbol = at, access = access)
     if isFunctionDeclCode(decl.kind):
-        return checkMethodMember(world = world, out = out, owner = owner, ref = ref, symbol = at, decl = decl, access = access)
+        return checkMethodMember(world = ownerWorld, out = out, owner = owner, ref = ref, symbol = at, decl = decl, access = access)
     if isVariantDeclCode(decl.kind):
-        return checkVariantMember(world = world, out = out, owner = owner, ref = ref, symbol = at, access = access)
+        return checkVariantMember(world = ownerWorld, out = out, owner = owner, ref = ref, symbol = at, access = access)
     return failMember(out = out, access = access, kind = .memberUnknown, typeName = owner)
 
 ; 字段成员：类型名位不暴露字段，值位按声明标注回表。

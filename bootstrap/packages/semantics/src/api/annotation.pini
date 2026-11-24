@@ -100,6 +100,15 @@ last: I32 = -1
 state: Array<I32> = []
 cycle: Bool = false
 
+; 泛型类型实例：模板声明加一组具体实参；字段、用例载荷与方法签名的替换结果都在 overrides 里。
+; 实例类型本身就是带实参的名义条目，故名字仍是模板名，实参进 kids。
+(TypeInstance)
+typeId: I32 = -1
+unit: I32 = -1
+decl: I32 = -1
+argIds: Array<I32> = []
+overrides: Array<TypeBinding> = []
+
 ; 类型表：池、按路径与声明序排好的绑定、聚合成员与每单元的绑定起点；错误统一挂在池上。
 ; `overrides` 是实例表，优先于全局绑定回答模板形参与返回类型。
 (TypeTable)
@@ -108,6 +117,7 @@ bindings: Array<TypeBinding> = []
 members: Array<TypeMember> = []
 unitStart: Array<I32> = []
 overrides: Array<TypeBinding> = []
+instances: Array<TypeInstance> = []
 
 ; 每单元的绑定起点：绑定按单元升序连续追加，扫一遍即得各单元首条下标。
 unitStarts|func(bindings: Array<TypeBinding>, unitCount: I32,) -> (Array<I32>,):
@@ -155,6 +165,24 @@ textOf|self(unit: I32, decl: I32,) -> (String,):
     if at < 0:
         return "<无效>"
     return typeText(pool = self.pool, id = at)
+
+; 只读替换：命中该声明的实例类型，未命中答 -1；模板形参的替换走这条，不回退全局绑定。
+overrideOf|self(unit: I32, decl: I32,) -> (I32,):
+    var o = 0
+    while o < len(self.overrides):
+        if self.overrides[o].unit == unit && self.overrides[o].decl == decl:
+            return self.overrides[o].typeId
+        o = o + 1
+    return -1
+
+; 按实例类型查记录：未命中答 -1。
+findTypeInstance|self(_typeId: I32,) -> (I32,):
+    var i = 0
+    while i < len(self.instances):
+        if self.instances[i].typeId == _typeId:
+            return i
+        i = i + 1
+    return -1
 
 ; 内建值类型：数值、布尔、字符、字符串与内建错误类型；具名解析先查这张表。
 isBuiltinType|func(_name: String,) -> (Bool,):
@@ -408,11 +436,10 @@ resolveGeneric|func(cursor: TypeCursor, pool: TypePool, node: TypeNode, name: St
     if failed:
         return out
     if containerMinArity(name) < 0:
-        if isBuiltinType(name) || cursor.world.table.topIndex(keyOfText(name)) >= 0:
+        if isBuiltinType(name):
             out.pool = addTypeError(pool = working, error = makeTypeError(kind = .typeErrorArityMismatch, file = cursor.file, offset = node.start, name = name))
             return out
-        out.pool = addTypeError(pool = working, error = makeTypeError(kind = .typeErrorUnknownName, file = cursor.file, offset = node.start, name = name))
-        return out
+        return resolveUserGeneric(cursor = cursor, pool = working, node = node, name = name, ids = ids)
     if !containerAccepts(name = name, count = len(ids)):
         out.pool = addTypeError(pool = working, error = makeTypeError(kind = .typeErrorArityMismatch, file = cursor.file, offset = node.start, name = name))
         return out
@@ -709,3 +736,48 @@ memberIndexOf|func(members: Array<TypeMember>, key: Array<U8>,) -> (I32,):
             return i
         i = i + 1
     return -1
+
+; 名义声明查找：按名字扫全部单元的顶层项；未命中答空引用。
+findDeclIn|func(world: TypeWorld, name: String,) -> (DeclRef,):
+    var out = DeclRef()
+    var u = 0
+    while u < len(world.units):
+        let unit = world.units[u]
+        let bytes = unitBytes(unit)
+        var i = 0
+        while i < len(unit.ast.items):
+            let id = unit.ast.items[i]
+            let decl = unit.ast.decls[id]
+            if isNominalDeclCode(decl.kind) && decodeRange(bytes = bytes, start = decl.nameStart, end = decl.nameEnd) == name:
+                out.unit = u
+                out.decl = id
+                return out
+            i = i + 1
+        u = u + 1
+    return out
+
+; 声明类别到类型类别：对象归对象，枚举归枚举，结构与给定归结构。
+nominalClassOfDecl|func(_decl: DeclNode,) -> (TypeClass,):
+    if isObjectDeclCode(_decl.kind):
+        return .typeClassObject
+    if isEnumDeclCode(_decl.kind):
+        return .typeClassEnum
+    return .typeClassStruct
+
+; 用户泛型实例：实参个数须与模板形参表一致；结果驻留成带实参的名义条目。
+; 字段与方法签名的替换不进解析期，由实例表在装配前一次算好。
+resolveUserGeneric|func(cursor: TypeCursor, pool: TypePool, node: TypeNode, name: String, ids: Array<I32>,) -> (TypeResolution,):
+    var out = TypeResolution()
+    out.pool = pool
+    let ref = findDeclIn(world = cursor.world, name = name)
+    if ref.unit < 0:
+        out.pool = addTypeError(pool = pool, error = makeTypeError(kind = .typeErrorUnknownName, file = cursor.file, offset = node.start, name = name))
+        return out
+    let decl = cursor.world.units[ref.unit].ast.decls[ref.decl]
+    if len(decl.generic) != len(ids):
+        out.pool = addTypeError(pool = pool, error = makeTypeError(kind = .typeErrorArityMismatch, file = cursor.file, offset = node.start, name = name))
+        return out
+    let inserted = intern(pool = pool, kind = nominalClassOfDecl(decl), name = name, kids = ids, ret = -1)
+    out.pool = inserted.pool
+    out.root = inserted.id
+    return out

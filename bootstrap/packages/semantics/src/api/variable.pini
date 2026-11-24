@@ -398,4 +398,4 @@ checkFunctionStoresWith|func(world: MemberWorld, unitIndex: I32, declId: I32, ty
 
 ; 检查入口：自行播种后转调；调用方已有函数帧时走带 seed 的版本，同一函数不重复播种。
 checkFunctionStores|func(world: MemberWorld, unitIndex: I32, declId: I32, types: ExprTypes, bytes: Array<U8>,) -> (StoreCheck,):
-    return checkFunctionStoresWith(world = world, unitIndex = unitIndex, declId = declId, types = types, bytes = bytes, seed = seedFunctionScope(world = world, unitIndex = unitIndex, declId = declId, bytes = bytes))
+    return checkFunctionStoresWith(world = world, unitIndex = unitIndex, declId = declId, types = types, bytes = bytes, seed = seedFunctionScope(world = world, unitIndex = unitIndex, declId = declId, bytes = bytes, selfType = -1))

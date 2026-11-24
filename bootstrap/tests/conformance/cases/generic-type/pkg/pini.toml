@@ -1,0 +1,10 @@
+[package]
+name = "pkg"
+
+[lib]
+name = "pkg"
+entry = "src/api.pini"
+
+[[test]]
+name = "pkg-tests"
+entry = "tests"

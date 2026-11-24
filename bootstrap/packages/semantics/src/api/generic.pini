@@ -13,6 +13,8 @@ argTexts: Array<String> = []
 returnType: I32 = -1
 paramTypes: Array<I32> = []
 overrides: Array<TypeBinding> = []
+; 方法实例的 self 类型：模板方法的所属类型是模板，实例方法要显式带上实例类型。
+selfType: I32 = -1
 world: MemberWorld = MemberWorld()
 types: ExprTypes = ExprTypes()
 
@@ -283,5 +285,110 @@ instantiateGenerics|func(world: MemberWorld, units: Array<CompilationUnit>, fill
     while u < len(units):
         out = scanGenericCalls(world = world, unit = units[u], unitIndex = u, work = out)
         u = u + 1
-    out = repinGenerics(world = world, work = out)
+    ; 泛型类型的实例在推导期才进池，故补推之前先算替换表：成员读据此拿到实参类型。
+    var 带实例 = world
+    var 类型面 = 带实例.types
+    类型面.pool = out.pool
+    带实例.types = 类型面
+    带实例 = attachTypeInstances(world = 带实例)
+    out.pool = 带实例.types.pool
+    out = repinGenerics(world = 带实例, work = out)
+    out = buildMethodInstances(world = 带实例, fill = out)
+    return out
+
+; 声明拼写：从源内区间解码，保留原始拼写。
+declSpelling|func(unit: CompilationUnit, bytes: Array<U8>, decl: DeclNode,) -> (String,):
+    return decodeRange(bytes = bytes, start = decl.nameStart, end = decl.nameEnd)
+
+; 实例绑定：模板形参名对到实参类型；方法体的 self 字段据此定型。
+bindsOfType|func(world: MemberWorld, typeInst: TypeInstance,) -> (Array<GenericBinding>,):
+    var out: Array<GenericBinding> = []
+    let unit = world.units[typeInst.unit]
+    let bytes = unitBytes(unit)
+    let decl = unit.ast.decls[typeInst.decl]
+    var g = 0
+    while g < len(decl.generic) && g < len(typeInst.argIds):
+        let param = unit.ast.decls[decl.generic[g]]
+        var bind = GenericBinding()
+        bind.name = declSpelling(unit = unit, bytes = bytes, decl = param)
+        bind.typeId = typeInst.argIds[g]
+        out = out.append(bind)
+        g = g + 1
+    return out
+
+; 实例查名：同符号只建一次。
+findInstanceByName|func(instances: Array<GenericInstance>, name: String,) -> (I32,):
+    var i = 0
+    while i < len(instances):
+        if instances[i].name == name:
+            return i
+        i = i + 1
+    return -1
+
+; 块内方法：逐个建实例，符号取「方法__实例名」，体在实例世界下重推。
+buildMethodsOfBlock|func(world: MemberWorld, typeInst: TypeInstance, instName: String, unitIndex: I32, blockId: I32, work: GenericFill,) -> (GenericFill,):
+    var out = work
+    let unit = world.units[unitIndex]
+    let bytes = unitBytes(unit)
+    let block = unit.ast.decls[blockId]
+    var d = 0
+    while d < len(block.kids):
+        let declId = block.kids[d]
+        let decl = unit.ast.decls[declId]
+        if isFunctionDeclCode(decl.kind):
+            let methodName = declSpelling(unit = unit, bytes = bytes, decl = decl)
+            let symbol = methodName + "__" + instName
+            if findInstanceByName(instances = out.instances, name = symbol) < 0:
+                let binds = bindsOfType(world = world, typeInst = typeInst)
+                var table = world.types
+                table.overrides = typeInst.overrides
+                var iw = instanceWorld(world = world, table = table, binds = binds)
+                let instTypes = makeInstanceExprTypes(units = world.units, only = unitIndex)
+                let inferred = inferUnitExprs(world = iw, unitIndex = unitIndex, types = instTypes)
+                var settled = table
+                settled.pool = inferred.pool
+                iw = instanceWorld(world = world, table = settled, binds = binds)
+                var row = GenericInstance()
+                row.name = symbol
+                row.key = "method#" + instName + "#" + methodName
+                row.unit = unitIndex
+                row.decl = declId
+                row.overrides = typeInst.overrides
+                row.selfType = typeInst.typeId
+                row.world = iw
+                row.types = inferred.types
+                row.returnType = iw.types.typeOf(unit = unitIndex, decl = declId)
+                out.pool = inferred.pool
+                out.instances = out.instances.append(row)
+        d = d + 1
+    return out
+
+; 单个类型实例：扫全部扩展块，同名块下的方法各建一条实例。
+buildInstancesOfType|func(world: MemberWorld, typeInst: TypeInstance, work: GenericFill,) -> (GenericFill,):
+    var out = work
+    if typeInst.typeId < 0 || typeInst.typeId >= len(out.pool.entries):
+        return out
+    let entry = out.pool.entries[typeInst.typeId]
+    let instName = nominalSymbolText(pool = out.pool, entry = entry)
+    var u = 0
+    while u < len(world.units):
+        let unit = world.units[u]
+        let bytes = unitBytes(unit)
+        var d = 0
+        while d < unit.ast.declCount():
+            let block = unit.ast.decls[d]
+            if isOwnerDeclCode(block.kind):
+                if declSpelling(unit = unit, bytes = bytes, decl = block) == entry.name:
+                    out = buildMethodsOfBlock(world = world, typeInst = typeInst, instName = instName, unitIndex = u, blockId = d, work = out)
+            d = d + 1
+        u = u + 1
+    return out
+
+; 方法实例：每个类型实例乘上它的全部方法；模板方法本身不另立实例。
+buildMethodInstances|func(world: MemberWorld, fill: GenericFill,) -> (GenericFill,):
+    var out = fill
+    var i = 0
+    while i < len(world.types.instances):
+        out = buildInstancesOfType(world = world, typeInst = world.types.instances[i], work = out)
+        i = i + 1
     return out

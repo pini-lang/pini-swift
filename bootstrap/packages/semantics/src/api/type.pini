@@ -327,6 +327,23 @@ needsParens|func(pool: TypePool, id: I32,) -> (Bool,):
         return false
     return isTypeClass(kind = pool.entries[id].kind, expected = .typeClassFunction)
 
+; 名义文本：无实参即裸拼写，带实参按 `名<实参>` 写；模板与实例共用这一条。
+nominalText|func(pool: TypePool, entry: TypeEntry,) -> (String,):
+    if len(entry.kids) == 0:
+        return entry.name
+    return entry.name + "<" + joinTypes(pool = pool, ids = entry.kids) + ">"
+
+; 实例符号文本：无实参即裸拼写，带实参按 `名$实参$实参` 写；`$` 不进标识符，拼写不撞名。
+nominalSymbolText|func(pool: TypePool, entry: TypeEntry,) -> (String,):
+    if len(entry.kids) == 0:
+        return entry.name
+    var out = entry.name
+    var i = 0
+    while i < len(entry.kids):
+        out = out + "$" + typeText(pool = pool, id = entry.kids[i])
+        i = i + 1
+    return out
+
 ; 规范化文本：接口产物与诊断共用一份拼写，同一类型在任何遍历顺序下都得到同一串。
 typeText|func(pool: TypePool, id: I32,) -> (String,):
     if id < 0 || id >= len(pool.entries):
@@ -337,9 +354,9 @@ typeText|func(pool: TypePool, id: I32,) -> (String,):
     if isTypeClass(kind = entry.kind, expected = .typeClassOpaque):
         return entry.name
     if isTypeClass(kind = entry.kind, expected = .typeClassStruct) || isTypeClass(kind = entry.kind, expected = .typeClassObject):
-        return entry.name
+        return nominalText(pool = pool, entry = entry)
     if isTypeClass(kind = entry.kind, expected = .typeClassEnum):
-        return entry.name
+        return nominalText(pool = pool, entry = entry)
     if isTypeClass(kind = entry.kind, expected = .typeClassGeneric):
         if len(entry.kids) == 0:
             return entry.name

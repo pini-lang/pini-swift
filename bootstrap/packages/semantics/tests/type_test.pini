@@ -254,3 +254,14 @@ firstField: I32 = -1
     assert(types.typeOf(unit = 0, decl = fieldA) >= 0, "首单元应查到")
     assert(types.typeOf(unit = 1, decl = fieldB) >= 0, "次单元应查到")
     return
+
+; 泛型实参个数：与模板形参表不一致即报元数错误，不静默取第一个实参。
+泛型元数不符|test() -> ():
+    let 单元 = 造类型单元(path = "packages/p/src/api/a.pini", text = "(盒<T>)\n内容: T\n\n(甲)\n字段: 盒<I32, I64>\n")
+    let 符号 = registerPackage([单元])
+    let 表 = resolvePackage(units = [单元], table = 符号)
+    assert(!表.isOK(), "元数不符应记进池")
+    assert(表.errorCount() == 1, "实得 " + countText(表.errorCount()))
+    let 错误 = 表.errorAt(0)
+    assert(错误.name == "盒", "实得 " + 错误.name)
+    return
