@@ -7,6 +7,7 @@ _backend_kit = "../../../backend-kit"
 _backend_dump = "../../../backend-dump"
 _backend_llvm = "../../../backend-llvm"
 _testkit = "../../../testkit"
+_hostproc = "../../../hostproc"
 
 ; 入口路径归一：不以 `/`、`./`、`../` 开头的路径补 `./`。
 ; 运行时按程序基准解析裸相对路径，宿主按进程目录解析；补前缀后两侧落到同一处。
@@ -265,6 +266,18 @@ main|func() -> ():
         print("emit-backend", entry.name, backendOutputName(entry.output), len(entry.families))
         print(emitted.text)
         return
+    if len(args) > 0 && args[0] == "compile":
+        var 编译路径 = ""
+        var cc = 1
+        while cc < len(args):
+            编译路径 = args[cc]
+            cc = cc + 1
+        if len(编译路径) == 0:
+            print("Error: compile command requires a file path")
+            assert(false, "compile 缺路径")
+            return
+        runCompile(path = entryPathOf(raw = 编译路径), stdlib = stdlib)
+        return
     if len(args) > 0 && !isKnownCommand(name = args[0]):
         print("Error: Unknown command '" + args[0] + "'")
         assert(false, "未知命令")
@@ -392,6 +405,8 @@ isKnownCommand|func(name: String,) -> (Bool,):
         return true
     if name == "tokens" || name == "backends":
         return true
+    if name == "compile":
+        return true
     return false
 
 ; 执行期：补输入指纹、数缺头文件的步、落计划；自举侧不翻译，生成文本由宿主 bind 产出。
@@ -436,3 +451,61 @@ runBuild|func(root: String, stdlib: StdlibOption,) -> ():
     writeFile(path, text)
     print("build-ok", steps, filled.missing)
     return
+
+; 编译命令：单文件 → 发射 → clang 链成原生程序 → 运行。
+; 宿主同名命令只收单文件，这里同口径；目录入口不在此列。
+; 注意 退出码只对齐「零 / 非零」：自举侧没有逐值退出原语，非零一律落到断言的 1。
+runCompile|func(path: String, stdlib: StdlibOption,) -> ():
+    ; 检查先行：降载不跑语法与类型诊断，直接下去会把坏源码送进 clang，错因落成链接失败。
+    let report = checkWorkspace(root = path, stdlib = stdlib)
+    if report.errorCount > 0 || report.exitCode != 0:
+        if len(report.text) > 0:
+            print(report.text)
+        print("compile-blocked", report.errorCount)
+        assert(false, "检查未通过")
+        return
+    let 产物 = 降载工作区(root = path, stdlib = stdlib)
+    if 产物.packages == 0:
+        return
+    if len(产物.check.errors) > 0:
+        print("compile-blocked", len(产物.check.errors))
+        assert(false, "结构校验未通过")
+        return
+    let outputCode = backendOutputNativeCode()
+    let entry = makeBackendOf(name = "llvm", outputCode = outputCode, families = llvmFamilies(), entry = 2)
+    let emitted = emitModule(entry = entry, target = defaultTarget(), module = 产物.module)
+    if emitted.failed:
+        print("compile-gaps", emitGapCount(result = emitted), emitted.detail)
+        assert(false, "发射有缺口")
+        return
+    let irPath = tempPath(tag = "compile", suffix = ".ll")
+    let binPath = tempPath(tag = "compile", suffix = "")
+    writeFile(irPath, emitted.text)
+    let 链 = runProcess(argv = linkArgs(irPath = irPath, binPath = binPath), keepOutput = true)
+    removeFile(path = irPath)
+    if 链.code != 0:
+        print("compile-failed", 链.code)
+        print(链.stderrText)
+        assert(false, "clang 链接失败")
+        return
+    let 跑 = runProcess(argv = [binPath], keepOutput = false)
+    removeFile(path = binPath)
+    if 跑.code != 0:
+        assert(false, "程序以非零码退出")
+        return
+    return
+
+; 链接参数：clang 在前，运行时库存在时补 -L / -l / rpath，最后是产物与输入。
+; 顺序照宿主：链接参数在前、`-o` 与输入在后，clang 对两者的位置敏感。
+linkArgs|func(irPath: String, binPath: String,) -> (Array<String>,):
+    var out: Array<String> = [toolPath(tool = "clang")]
+    let lib = runtimeLibrary()
+    if len(lib) > 0:
+        let dir = lib.slice(0, processLastSlash(text = lib))
+        out = out.append("-L" + dir)
+        out = out.append("-lPiniRuntime")
+        out = out.append("-Wl,-rpath," + dir)
+    out = out.append("-o")
+    out = out.append(binPath)
+    out = out.append(irPath)
+    return out

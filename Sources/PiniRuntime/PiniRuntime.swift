@@ -3717,3 +3717,140 @@ func _bkTaskEnter(_ h: UnsafeMutableRawPointer?) -> () -> Void {
     _bkTaskCurrent = _bkTaskBox(h)
     return { _bkTaskCurrent = previous }
 }
+
+// MARK: - 进程族（LLVM 腿的外部工具调用）
+
+/// 子进程句柄。归 `_BkBox` 族是为了共用 share count 与登记表：`bk_process_release` 与容器句柄
+/// 走同一条归还路径，不必为它单设一张活动表。不可分裂 —— 进程已经跑起来，复制句柄没有语义。
+private final class _BkProcessBox: _BkBox {
+    let process: Process
+    /// 收下的两路输出：capture 模式由临时文件读回并 strdup 到这里，直通模式留空。
+    var outText: UnsafeMutablePointer<CChar>?
+    var errText: UnsafeMutablePointer<CChar>?
+    var outPath: String?
+    var errPath: String?
+    var outHandle: FileHandle?
+    var errHandle: FileHandle?
+    var status: Int32 = -1
+    var settled = false
+
+    init(process: Process) { self.process = process }
+
+    override func cowCopy() -> _BkBox { fatalError("进程句柄不可分裂") }
+
+    deinit {
+        outHandle?.closeFile()
+        errHandle?.closeFile()
+        if let outText { free(outText) }
+        if let errText { free(errText) }
+        if let outPath { try? FileManager.default.removeItem(atPath: outPath) }
+        if let errPath { try? FileManager.default.removeItem(atPath: errPath) }
+    }
+}
+
+/// 临时文件路径：两路输出落在系统临时目录，进程退出后读回并删除。
+private func _bkProcessTempPath(_ tag: String) -> String {
+    NSTemporaryDirectory() + "pini_proc_\(tag)_\(UUID().uuidString)"
+}
+
+/// `processSpawn(argvText, capture) -> Proc` —— 起子进程：`argvText` 每行一个参数、首行可执行，
+/// 含 `/` 按路径直起，否则经 `/usr/bin/env` 走 PATH；文本承载串表是权宜（集合过不了外部 ABI）。
+/// `capture` 非零收两路输出，零则直通；起不来即陷阱。
+@_cdecl("bk_process_spawn")
+public func bk_process_spawn(
+    _ argvText: UnsafePointer<CChar>?, _ capture: Int32
+) -> UnsafeMutableRawPointer {
+    guard let argvText else { bk_panic("Pini runtime error: processSpawn: 参数为空") }
+    var items = String(cString: argvText)
+        .split(separator: "\n", omittingEmptySubsequences: false)
+        .map(String.init)
+    // 尾部换行会切出一个空项；参数表不以空项结尾，去掉它。中间的空项是合法参数，保留。
+    if items.last == "" { items.removeLast() }
+    guard let first = items.first, !first.isEmpty else {
+        bk_panic("Pini runtime error: processSpawn: 参数为空")
+    }
+    let process = Process()
+    if first.contains("/") {
+        process.executableURL = URL(fileURLWithPath: first)
+        process.arguments = Array(items.dropFirst())
+    } else {
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = items
+    }
+    let box = _BkProcessBox(process: process)
+    if capture != 0 {
+        let outPath = _bkProcessTempPath("out")
+        let errPath = _bkProcessTempPath("err")
+        guard FileManager.default.createFile(atPath: outPath, contents: nil),
+            FileManager.default.createFile(atPath: errPath, contents: nil),
+            let outHandle = FileHandle(forWritingAtPath: outPath),
+            let errHandle = FileHandle(forWritingAtPath: errPath)
+        else {
+            bk_panic("Pini runtime error: processSpawn: 无法创建输出临时文件")
+        }
+        process.standardOutput = outHandle
+        process.standardError = errHandle
+        box.outPath = outPath
+        box.errPath = errPath
+        box.outHandle = outHandle
+        box.errHandle = errHandle
+    }
+    do {
+        try process.run()
+    } catch {
+        bk_panic("Pini runtime error: processSpawn: 无法启动 \(first): \(error.localizedDescription)")
+    }
+    return _bkRegister(box)
+}
+
+/// 读回一路输出：文件缺失答空串，不把「没有输出」与「读失败」分成两个分支 ——
+/// 两种情形对调用方都是没有字节可用。
+private func _bkProcessReadText(_ path: String?) -> UnsafeMutablePointer<CChar>? {
+    guard let path, let data = FileManager.default.contents(atPath: path) else { return strdup("") }
+    return strdup(String(decoding: data, as: UTF8.self))
+}
+
+/// `processWait(proc) -> i32` —— 等子进程结束并交退出码，按 shell 惯例归一：
+/// 被信号杀死答 `128 + 信号`（`abort()` ⇒ 134），与宿主 `childExitStatus` 同规。
+/// 同一个句柄可重复问，第二次起答同一次结算的结果。
+@_cdecl("bk_process_wait")
+public func bk_process_wait(_ handle: UnsafeMutableRawPointer?) -> Int32 {
+    guard let handle else { return -1 }
+    let box = Unmanaged<_BkProcessBox>.fromOpaque(handle).takeUnretainedValue()
+    if box.settled { return box.status }
+    box.process.waitUntilExit()
+    box.status =
+        box.process.terminationReason == .uncaughtSignal
+        ? 128 + box.process.terminationStatus : box.process.terminationStatus
+    box.outHandle?.closeFile()
+    box.errHandle?.closeFile()
+    box.outHandle = nil
+    box.errHandle = nil
+    box.outText = _bkProcessReadText(box.outPath)
+    box.errText = _bkProcessReadText(box.errPath)
+    box.settled = true
+    return box.status
+}
+
+/// `processStdout(proc) -> *u8` —— 收下的标准输出，NUL 结尾。视图归句柄所有，
+/// 句柄释放后失效；调用方要留住就自己复制。
+@_cdecl("bk_process_stdout")
+public func bk_process_stdout(_ handle: UnsafeMutableRawPointer?) -> UnsafeMutablePointer<CChar>? {
+    guard let handle else { return nil }
+    let box = Unmanaged<_BkProcessBox>.fromOpaque(handle).takeUnretainedValue()
+    return box.outText
+}
+
+/// `processStderr(proc) -> *u8` —— 收下的标准错误，契约与 `bk_process_stdout` 同。
+@_cdecl("bk_process_stderr")
+public func bk_process_stderr(_ handle: UnsafeMutableRawPointer?) -> UnsafeMutablePointer<CChar>? {
+    guard let handle else { return nil }
+    let box = Unmanaged<_BkProcessBox>.fromOpaque(handle).takeUnretainedValue()
+    return box.errText
+}
+
+/// `processRelease(proc)` —— 归还句柄；最后一个份额归零时关文件、删临时文件、释放输出。
+@_cdecl("bk_process_release")
+public func bk_process_release(_ handle: UnsafeMutableRawPointer?) {
+    _bkReleaseShare(handle)
+}

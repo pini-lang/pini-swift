@@ -12,6 +12,7 @@ ir = "*"
 backend_kit = "*"
 backend_dump = "*"
 backend_llvm = "*"
+hostproc = "*"
 unicode = "*"
 testkit = "*"
 

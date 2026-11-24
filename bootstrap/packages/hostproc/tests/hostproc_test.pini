@@ -1,0 +1,8 @@
+; 进程族入口的冒烟：起一个只回显的程序，退出码与两路输出都对上才算通。
+; 只在这里验证 ABI 姿态；工具链定位与运行时库查找归 driver 的编译命令。
+进程回显|test() -> ():
+    var 参数: Array<String> = ["/bin/echo", "回显"]
+    let 结局 = runProcess(argv = 参数, keepOutput = true)
+    assert(结局.code == 0, "退出码应为零")
+    assert(len(结局.stdoutText) > 0, "标准输出应有字节")
+    return

@@ -21,7 +21,7 @@
 
 ### 0.3 量具口径
 
-**128 = `@_cdecl("bk_…")` 的匹配数**，即导出符号数，不是 `@_cdecl` 的字样出现数。
+**133 = `@_cdecl("bk_…")` 的匹配数**，即导出符号数，不是 `@_cdecl` 的字样出现数。
 两者相差 2：正文有两处注释提到 `@_cdecl` 却不导出符号。数出来差 1 或 2 时，先分清数的是哪一个。
 器械是 `tools/runtime-abi-check.py`。
 
@@ -32,7 +32,7 @@
 - 集合、并发、LazyRef、FFI 共用同一个运行时段，不另设独立 shim。
 - 新增符号同批登记本件，等式「清单数 = 导出数」是它唯一的自检方式。
 
-## 2. 符号清单（128 个）
+## 2. 符号清单（133 个）
 
 | 族 | 符号 | 数 |
 |---|---|---|
@@ -51,12 +51,13 @@
 | 字符串句柄 | `bk_str_handle_bytes` `bk_str_handle_len` `bk_str_handle_new` `bk_str_handle_release` `bk_str_handle_retain` | 5 |
 | 闭包 / 结构体胶水 | `bk_nominal_alloc` `bk_nominal_release` `bk_nominal_retain` `bk_slot_alloc` | 4 |
 | IO / 宿主查询 | `bk_append_file` `bk_argv` `bk_ensure_dir` `bk_exists` `bk_is_dir` `bk_list_dir` `bk_module_root` `bk_read_file` `bk_set_program_base` `bk_try_append_file` `bk_try_read_file` `bk_try_write_file` `bk_write_file` | 13 |
+| 进程 | `bk_process_release` `bk_process_spawn` `bk_process_stderr` `bk_process_stdout` `bk_process_wait` | 5 |
 | 任务 / 并发 | `bk_capabilities` `bk_scope_close` `bk_task_cancel` `bk_task_detach` `bk_task_is_cancelled` `bk_task_join` `bk_task_join_all` `bk_task_join_all_box` `bk_task_join_within` `bk_task_spawn` `bk_task_yield` | 11 |
 | 阻塞内建 | `bk_sleep` | 1 |
 | 让出族 | `bk_task_await` `bk_task_frame` `bk_task_slot` | 3 |
 | 调度驱动面 | `bk_task_bind_sched` `bk_task_state` | 2 |
 | 错误载荷 | `bk_cancel_error_create` `bk_error_code` `bk_error_create` `bk_error_from_enum` `bk_error_is_cancel` `bk_error_lookup` `bk_error_message` `bk_error_with_code` | 8 |
-| **合计** | | **128** |
+| **合计** | | **133** |
 
 ## 3. 语义约束
 
@@ -112,20 +113,32 @@
   调用方没有「可以继续」的分支可走。
 - 路径按 3.5 的基准解析，与 IO 族其余成员同规。
 
+### 3.9 进程
+
+- `spawn` 的入参是**每行一个参数的文本**，首行为可执行。含 `/` 按路径直起；否则经
+  `/usr/bin/env` 走 PATH —— 裸名与 shell 同口径，故 POSIX 前提写在此处，不留给调用方猜。
+- 文本承载串表是权宜：语言面还没有「集合过外部 ABI」的写法（`Array<T>` 过外部块报 E4-028）。
+  补上串表句柄后换签名，本条随之删除。
+- `capture` 非零时两路输出落到临时文件、退出时读回；零则子进程继承调用方的 stdout / stderr。
+- `wait` 结算一次并缓存：重复问答同一次结果。退出码按 shell 惯例归一，被信号杀死答 `128 + 信号`。
+- 两路输出是**句柄内视图**，NUL 结尾、不以长度定界；句柄释放后失效。调用方要留住须自己复制。
+- 起不来（可执行不存在、权限不足）即 `bk_panic`，不返错误码：调用方没有「进程没起来但继续」的分支。
+
 ## 4. 零调用点登记
 
 以下符号当前没有发射器调用点。**零调用点不等于该删** —— 每个都是某条路线的锚点。
 
 | 符号 | 数量 | 处置 |
 |---|---|---|
+| `bk_process_*` | 5 | 待接编译命令：`compile` / `run-llvm` / `test-llvm` 的进程入口，发射器不产出 |
 | `bk_ptr_*` | 6 | 保留。LLVM FFI 的预留面，删掉后接 FFI 时无处接线 |
 | `bk_task_is_cancelled` `bk_capabilities` `bk_task_yield` `bk_task_state` | 4 | 解释器与宿主观测面，发射器不产出 |
 | `bk_str_alloc` `bk_str_header_bytes` `bk_str_refcount` `bk_str_table_min_cap` `bk_handle_shares` `bk_scope_close` | 6 | 只被 ABI 测试或宿主直接调用；`bk_str_alloc` 的拼接调用点已并入 `bk_str_concat` |
 | `bk_str_handle_bytes` `bk_str_handle_len` `bk_str_handle_retain` `bk_str_handle_release` | 4 | C 侧读字节与收账的入口；发射器只发 `bk_str_handle_new` |
 | `bk_double_bits` `bk_parse_double` | 2 | 只由自举编译器在编译期调用，发射器不产出 |
 
-本表与编译器侧清单互补：`BuiltinInventory.swift` 列出已接线的 106 条，本表列出其余 22 条，
-两者合计即第 2 节的 128。互补关系由 `tools/builtin-inventory-check.py` 校验。
+本表与编译器侧清单互补：`BuiltinInventory.swift` 列出已接线的 106 条，本表列出其余 27 条，
+两者合计即第 2 节的 133。互补关系由 `tools/builtin-inventory-check.py` 校验。
 
 ## 5. 维护条款
 
