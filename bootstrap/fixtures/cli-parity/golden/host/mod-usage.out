@@ -1,0 +1,1 @@
+用法: pini mod {tidy|refresh|verify|graph} [--cycles] [模块根]

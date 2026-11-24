@@ -19,11 +19,39 @@ headers: Array<String> = []
 includePaths: Array<String> = []
 defines: Array<String> = []
 
-; 包清单：包名、包根相对路径、声明依赖、全部目标、构建排除项与 FFI 配置。
+; 依赖声明：名字、约束原文与所属 tap（平表记空串）；求解只读这三个字段。
+(Dependency)
+name: String = ""
+constraint: String = "*"
+tap: String = ""
+
+; tap 声明：名字与源，源由 `github:` / `git:` / `file:` 三种前缀之一起头。
+(TapDecl)
+name: String = ""
+spec: String = ""
+
+; 替换声明：名字与原文；版本 / 本地目录 / fork 三种形态在求解期判。
+(ReplaceDecl)
+name: String = ""
+spec: String = ""
+
+; 资源声明：不可 import、不进 MVS，求解只校验落点与摘要。
+(ResourceDecl)
+name: String = ""
+spec: String = ""
+tap: String = ""
+
+; 包清单：包名、版本、包根相对路径、依赖与 tap、全部目标、排除项与 FFI 配置。
+; `requires` 是 `dependencies` 的名字视图：边界检查与构建计划只认名字，不重复解约束。
 (PackageManifest)
 name: String = ""
+version: String = ""
 rootPath: String = ""
 requires: Array<String> = []
+dependencies: Array<Dependency> = []
+taps: Array<TapDecl> = []
+replaces: Array<ReplaceDecl> = []
+resources: Array<ResourceDecl> = []
 targets: Array<TargetSpec> = []
 excludes: Array<String> = []
 ffi: FFIConfig = FFIConfig()
@@ -40,6 +68,16 @@ manifest: PackageManifest = PackageManifest()
 steps: Array<BuildStep> = []
 scriptPath: String = ""
 scriptHash: String = ""
+errors: Array<ManifestError> = []
+
+; 模块头：只含依赖图需要的字段，不查 target；依赖包可以没有 target。
+(ModuleParse)
+manifest: PackageManifest = PackageManifest()
+errors: Array<ManifestError> = []
+
+; 字段汇总：清单与累计的错误；解析函数之间用它转手，免得各带一份参数表。
+(ModuleFields)
+manifest: PackageManifest = PackageManifest()
 errors: Array<ManifestError> = []
 
 ; FFI 解析结果：配置与错误并列；错误非空时配置仍可读，建计划前会整体拦下。
@@ -80,18 +118,18 @@ parsePackageManifest|func(text: String, rootPath: String, path: String,) -> (Pac
     var out = PackageParse()
     let doc = parseToml(text = text, path = path)
     out.errors = doc.errors
-    var manifest = PackageManifest()
-    manifest.rootPath = rootPath
     if !tomlHasTable(doc = doc, name = "package"):
         out.errors = out.errors.append(manifestError(kind = .errorTableMissing, path = path, detail = "package"))
-        out.manifest = manifest
+        out.manifest = PackageManifest()
         return out
-    manifest.name = tomlValue(doc = doc, table = "package", key = "name")
+    let fields = collectModuleFields(doc = doc, path = path, errors = out.errors)
+    var manifest = fields.manifest
+    out.errors = fields.errors
+    manifest.rootPath = rootPath
     if len(manifest.name) == 0:
         out.errors = out.errors.append(manifestError(kind = .errorPackageName, path = path, detail = "缺 name"))
     elif !isPathComponent(manifest.name):
         out.errors = out.errors.append(manifestError(kind = .errorPackageName, path = path, detail = manifest.name))
-    manifest.requires = tomlKeys(doc = doc, table = "require")
     manifest.targets = collectTargets(doc)
     manifest.excludes = tomlArray(doc = doc, table = "build", key = "exclude")
     let ffi = parseFFIConfig(doc = doc, path = path, errors = out.errors)
@@ -99,6 +137,157 @@ parsePackageManifest|func(text: String, rootPath: String, path: String,) -> (Pac
     out.errors = checkTargets(manifest = manifest, path = path, errors = ffi.errors)
     out.manifest = manifest
     return out
+
+; 解析模块头：依赖求解只读名字、版本、依赖、tap 与替换，不查 target 与 FFI。
+; 依赖包按包规则查会因缺 target 误报，故这条通道单独走一遍字段汇总。
+parseModuleManifest|func(text: String, path: String,) -> (ModuleParse,):
+    var out = ModuleParse()
+    let doc = parseToml(text = text, path = path)
+    out.errors = doc.errors
+    if !tomlHasTable(doc = doc, name = "package"):
+        out.errors = out.errors.append(manifestError(kind = .errorTableMissing, path = path, detail = "package"))
+        return out
+    let fields = collectModuleFields(doc = doc, path = path, errors = out.errors)
+    out.manifest = fields.manifest
+    out.errors = fields.errors
+    if len(out.manifest.name) == 0:
+        out.errors = out.errors.append(manifestError(kind = .errorPackageName, path = path, detail = "缺 name"))
+    elif !isPathComponent(out.manifest.name):
+        out.errors = out.errors.append(manifestError(kind = .errorPackageName, path = path, detail = out.manifest.name))
+    return out
+
+; 字段汇总：`[package]`、`[require]` 与具名子表、`[tap]`、`[replace]`、`[resources]`。
+; 约束不可解析就地记账，条目仍留在清单里——求解被拦下前，作者要看到是哪一个写错了。
+collectModuleFields|func(doc: TomlDocument, path: String, errors: Array<ManifestError>,) -> (ModuleFields,):
+    var out = ModuleFields()
+    out.errors = errors
+    out.manifest.name = tomlValue(doc = doc, table = "package", key = "name")
+    out.manifest.version = tomlValue(doc = doc, table = "package", key = "version")
+    out = appendRequireTable(fields = out, doc = doc, table = "require", tap = "", path = path)
+    let requireTables = subTablesOf(doc = doc, prefix = "require.")
+    var r = 0
+    while r < len(requireTables):
+        let table = requireTables[r]
+        out = appendRequireTable(fields = out, doc = doc, table = table, tap = table.substring(8, len(table)), path = path)
+        r = r + 1
+    out = appendTapTables(fields = out, doc = doc)
+    out = appendReplaceTable(fields = out, doc = doc)
+    out = appendResourceTable(fields = out, doc = doc, table = "resources", tap = "")
+    let resourceTables = subTablesOf(doc = doc, prefix = "resources.")
+    var s = 0
+    while s < len(resourceTables):
+        let table = resourceTables[s]
+        out = appendResourceTable(fields = out, doc = doc, table = table, tap = table.substring(10, len(table)))
+        s = s + 1
+    return out
+
+; 一张 require 表：名字、约束与所属 tap 逐条入账；空约束按 `*` 收，与「未回填」同义。
+appendRequireTable|func(fields: ModuleFields, doc: TomlDocument, table: String, tap: String, path: String,) -> (ModuleFields,):
+    var out = fields
+    let names = tomlKeys(doc = doc, table = table)
+    var i = 0
+    while i < len(names):
+        var dep = Dependency()
+        dep.name = names[i]
+        dep.constraint = tomlValue(doc = doc, table = table, key = dep.name)
+        if len(dep.constraint) == 0:
+            dep.constraint = "*"
+        dep.tap = tap
+        if !parseConstraint(dep.constraint).ok:
+            out.errors = out.errors.append(manifestError(kind = .errorVersionConstraint, path = path, detail = dep.name + "：" + dep.constraint))
+        out.manifest.dependencies = out.manifest.dependencies.append(dep)
+        out.manifest.requires = out.manifest.requires.append(dep.name)
+        i = i + 1
+    return out
+
+; tap 表：平表逐条收；`[tap.<名>]` 子表取它唯一的值，与平表同名时平表优先。
+appendTapTables|func(fields: ModuleFields, doc: TomlDocument,) -> (ModuleFields,):
+    var out = fields
+    let names = tomlKeys(doc = doc, table = "tap")
+    var i = 0
+    while i < len(names):
+        var decl = TapDecl()
+        decl.name = names[i]
+        decl.spec = tomlValue(doc = doc, table = "tap", key = decl.name)
+        out.manifest.taps = out.manifest.taps.append(decl)
+        i = i + 1
+    let tables = subTablesOf(doc = doc, prefix = "tap.")
+    var t = 0
+    while t < len(tables):
+        let name = tables[t].substring(4, len(tables[t]))
+        if findTap(out.manifest.taps, name) < 0:
+            var decl = TapDecl()
+            decl.name = name
+            decl.spec = firstValueOf(doc = doc, table = tables[t])
+            out.manifest.taps = out.manifest.taps.append(decl)
+        t = t + 1
+    return out
+
+; replace 表：只认平表；形态判在求解期，这里原样搬进清单。
+appendReplaceTable|func(fields: ModuleFields, doc: TomlDocument,) -> (ModuleFields,):
+    var out = fields
+    let names = tomlKeys(doc = doc, table = "replace")
+    var i = 0
+    while i < len(names):
+        var decl = ReplaceDecl()
+        decl.name = names[i]
+        decl.spec = tomlValue(doc = doc, table = "replace", key = decl.name)
+        out.manifest.replaces = out.manifest.replaces.append(decl)
+        i = i + 1
+    return out
+
+; 资源表：平表与具名子表同收，形状与 require 对齐。
+appendResourceTable|func(fields: ModuleFields, doc: TomlDocument, table: String, tap: String,) -> (ModuleFields,):
+    var out = fields
+    let names = tomlKeys(doc = doc, table = table)
+    var i = 0
+    while i < len(names):
+        var decl = ResourceDecl()
+        decl.name = names[i]
+        decl.spec = tomlValue(doc = doc, table = table, key = decl.name)
+        decl.tap = tap
+        out.manifest.resources = out.manifest.resources.append(decl)
+        i = i + 1
+    return out
+
+; 子表名：前缀命中且比前缀长，按首次出现顺序去重；`[require]` 自身不算子表。
+subTablesOf|func(doc: TomlDocument, prefix: String,) -> (Array<String>,):
+    var out: Array<String> = []
+    var i = 0
+    while i < len(doc.tables):
+        let name = doc.tables[i]
+        if startsWith(text = name, prefix = prefix) && len(name) > len(prefix) && !hasTableName(out, name):
+            out = out.append(name)
+        i = i + 1
+    return out
+
+; 表内首个标量：`[tap.<名>]` 子表只有一个键，取它即源。
+firstValueOf|func(doc: TomlDocument, table: String,) -> (String,):
+    var i = 0
+    while i < len(doc.entries):
+        let entry = doc.entries[i]
+        if entry.table == table && entry.row == -1:
+            return entry.value
+        i = i + 1
+    return ""
+
+; 名字命中：线性查够用，tap 表只有几条。
+findTap|func(_taps: Array<TapDecl>, _name: String,) -> (I32,):
+    var i = 0
+    while i < len(_taps):
+        if _taps[i].name == _name:
+            return i
+        i = i + 1
+    return -1
+
+; 文本命中：子表名去重与依赖名查重共用。
+hasTableName|func(_items: Array<String>, _text: String,) -> (Bool,):
+    var i = 0
+    while i < len(_items):
+        if _items[i] == _text:
+            return true
+        i = i + 1
+    return false
 
 ; 解析 [ffi]：缺表即全默认；abi 只认 C，库名不得带 -l，坏值逐条记账。
 parseFFIConfig|func(doc: TomlDocument, path: String, errors: Array<ManifestError>,) -> (FFIParse,):

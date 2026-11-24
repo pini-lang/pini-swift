@@ -20,6 +20,7 @@ errorExecutableCollision
 errorDependencyCycle
 errorFFIABI
 errorFFILibrary
+errorVersionConstraint
 errorBuildScriptSyntax
 errorBuildScriptDecl
 errorBuildStepName
@@ -82,6 +83,8 @@ manifestErrorKindName|func(_kind: ManifestErrorKind,) -> (String,):
             return "ffi.abi 只认 C"
         case errorFFILibrary:
             return "ffi.libs 的名字不带 -l"
+        case errorVersionConstraint:
+            return "版本约束不可解析"
         case errorBuildScriptSyntax:
             return "构建脚本读不出"
         case errorBuildScriptDecl:

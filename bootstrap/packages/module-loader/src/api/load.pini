@@ -135,6 +135,20 @@ loadTarget|func(packageAbs: String, packageRel: String, target: TargetPlan, excl
         i = i + 1
     return out
 
+; 整目录收集：不按 target 切，扫描规则与装载同一份；模块工具按目录对齐依赖声明时用它。
+collectDirectory|func(packageAbs: String, packageRel: String, excludes: Array<String>,) -> (SourceSet,):
+    var out = SourceSet()
+    let state = scan(absDir = packageAbs, rootRel = packageRel, relDir = "", excludes = excludes, state = ScanState())
+    out.errors = state.errors
+    var i = 0
+    while i < len(state.files):
+        var item = PendingUnit()
+        item.absPath = packageAbs + "/" + state.files[i]
+        item.unitPath = joinRel(parent = packageRel, child = state.files[i])
+        out.files = insertPending(items = out.files, value = item)
+        i = i + 1
+    return out
+
 ; 收集一个包的全部 target：文件按路径升序合并，重复路径只留一份。
 collectPackage|func(packageAbs: String, plan: PackagePlan,) -> (SourceSet,):
     var out = SourceSet()

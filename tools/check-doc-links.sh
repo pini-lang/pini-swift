@@ -33,7 +33,7 @@ for f in $cand; do
     ref="${ref//\`/}"
     [ -n "$ref" ] || continue
     case "$ref" in
-      pini.toml|*"<"*) continue ;;  # 概念名（语言清单文件名，见 project-spec §1）/ 占位符（deps/<name>/…），非路径引用
+      pini.toml|pini-summary.toml|*"<"*) continue ;;  # 概念名（清单与锁文件名，见 project-spec §1）/ 占位符（deps/<name>/…），非路径引用
     esac
     checked=$((checked + 1))
     if [ -e "$dir/$ref" ] || [ -e "$root/$ref" ]; then
