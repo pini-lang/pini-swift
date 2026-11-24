@@ -15,8 +15,9 @@ testGroupFormat|func() -> (String,):
 testGroupSkippedFormat|func() -> (String,):
     return "包 %s（%d 个测试，--skip 全数排除）\n"
 
+; 失败行带用例所在文件：只有断言文案时，同一句在几十个测试文件里定位不到。
 testFailFormat|func() -> (String,):
-    return " ✗ %s: %s\n"
+    return " ✗ %s（%s）: %s\n"
 
 testResultFormat|func() -> (String,):
     return "结果: %d 通过, %d 失败\n"

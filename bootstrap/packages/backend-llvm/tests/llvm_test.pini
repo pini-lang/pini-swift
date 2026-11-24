@@ -955,6 +955,12 @@ _backend_kit = "../../backend-kit"
     var plan = EmitTestPlan()
     plan.header = "测试目标: 工作区 /w（1 个测试 target）"
     plan.selection = selection
+    var 文件: Array<String> = []
+    var k = 0
+    while k < len(selection):
+        文件 = 文件.append("/w/probe.pini")
+        k = k + 1
+    plan.files = 文件
     var group = EmitTestGroup()
     group.label = "pkg / target"
     group.basePath = "/w/pkg"
@@ -963,7 +969,7 @@ _backend_kit = "../../backend-kit"
     plan.groups = [group]
     plan.fmtGroup = "包 %s（%d 个测试，%d 通过）\n"
     plan.fmtGroupSkipped = "包 %s（%d 个测试，--skip 全数排除）\n"
-    plan.fmtFail = " ✗ %s: %s\n"
+    plan.fmtFail = " ✗ %s（%s）: %s\n"
     plan.fmtResult = "结果: %d 通过, %d 失败\n"
     return plan
 

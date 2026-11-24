@@ -61,7 +61,8 @@ extension WorkspaceTestReport {
             let detail = suite.fullySkipped ? "--skip 全数排除" : "\(passedHere) 通过"
             lines.append("包 \(name)（\(suite.results.count) 个测试，\(detail)）")
             for result in suite.results where !result.passed {
-                lines.append(" ✗ \(result.name): \(result.message)")
+                let where_ = result.sourceFile.isEmpty ? "" : "（\(result.sourceFile)）"
+                lines.append(" ✗ \(result.name)\(where_): \(result.message)")
             }
         }
         lines.append(String(format: "结果: %d 通过, %d 失败（%.2f 秒）", passed, failed, elapsed))

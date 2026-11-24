@@ -1,4 +1,4 @@
-; 运行时段 C ABI 的 Pini 声明面：可经外部块表达的 126 个符号，按族分块。
+; 运行时段 C ABI 的 Pini 声明面：可经外部块表达的 131 个符号，按族分块。
 ; 符号清单以运行时 ABI 契约为权威；块名只是标签，不参与符号解析。
 ; 宽度不在 IR 的两条（bk_capabilities、bk_ptr_load_f32）走内建，不在这里声明。
 
@@ -132,6 +132,14 @@ bk_nominal_alloc: (I64, I32,) -> (*U8,)
 bk_nominal_release: (*U8,) -> (I32,)
 bk_nominal_retain: (*U8,) -> ()
 bk_slot_alloc: (I64,) -> (*U8,)
+
+; 进程族：argv 是每行一个参数的文本、首行为可执行；抓取位非零时两路输出归句柄。
+[process|foreign]
+bk_process_release: (*U8,) -> ()
+bk_process_spawn: (String, I32,) -> (*U8,)
+bk_process_stderr: (*U8,) -> (*U8,)
+bk_process_stdout: (*U8,) -> (*U8,)
+bk_process_wait: (*U8,) -> (I32,)
 
 ; IO 与宿主查询族：路径与内容按借出串传入，读出的缓冲按 *U8 交回。
 [io|foreign]

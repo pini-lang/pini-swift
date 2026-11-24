@@ -147,7 +147,7 @@ _ir = "../../ir"
 报告措辞|test() -> ():
     assert(testGroupFormat() == "包 %s（%d 个测试，%d 通过）\n", "组头格式应固定")
     assert(testGroupSkippedFormat() == "包 %s（%d 个测试，--skip 全数排除）\n", "全跳过格式应固定")
-    assert(testFailFormat() == " ✗ %s: %s\n", "失败行格式应固定")
+    assert(testFailFormat() == " ✗ %s（%s）: %s\n", "失败行格式应固定")
     assert(testResultFormat() == "结果: %d 通过, %d 失败\n", "汇总格式应固定")
     let header = testHeaderLine(rootLabel = "/w", targetCount = 13)
     assert(header.indexOf("工作区 /w") >= 0, "首行应带工作区标签")

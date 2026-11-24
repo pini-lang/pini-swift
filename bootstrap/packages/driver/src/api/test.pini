@@ -47,6 +47,7 @@ testEmitPlan|func(rootLabel: String, selection: TestSelection,) -> (EmitTestPlan
     i = 0
     while i < len(selection.refs):
         out.selection = out.selection.append(selection.refs[i].name)
+        out.files = out.files.append(selection.refs[i].sourceFile)
         i = i + 1
     out.fmtGroup = testGroupFormat()
     out.fmtGroupSkipped = testGroupSkippedFormat()

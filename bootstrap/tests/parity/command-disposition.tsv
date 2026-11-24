@@ -6,7 +6,7 @@ backends	-	已收口，--tsv 两侧同形
 bind	待补齐	工具面：C 头翻译，未开工
 build	待补齐	缺 --diagnostics-tsv、--no-stdlib、--print-plan、--shared、-o 五个开关
 check	-	已收口
-compile	待补齐	构建执行组：需 bk_process_* 进运行时，符号先登记 runtime-abi
+compile	-	已收口：发射后起 clang 链成原生程序并运行；退出码只对齐零 / 非零
 dap	待补齐	工具面：调试适配协议，未开工
 debug	待补齐	工具面：调试器，未开工
 emit	待补齐	缺 --backend 与 -o 两个开关

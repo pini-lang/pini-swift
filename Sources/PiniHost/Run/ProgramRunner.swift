@@ -101,11 +101,14 @@ public final class ProgramRunner: DebugHookHost {
         public let name: String
         public let passed: Bool
         public let message: String
+        /// 声明该用例的文件。报告只在失败行带上它 —— 一句断言文案在几十个测试文件里定位不到。
+        public let sourceFile: String
 
-        public init(name: String, passed: Bool, message: String) {
+        public init(name: String, passed: Bool, message: String, sourceFile: String = "") {
             self.name = name
             self.passed = passed
             self.message = message
+            self.sourceFile = sourceFile
         }
     }
 
@@ -205,14 +208,14 @@ public final class ProgramRunner: DebugHookHost {
         let args = function.params.map { Self.zeroValue(forTestParam: $0.type) }
         do {
             _ = try executor.callFunction(named: function.name, args: args)
-            return TestRunResult(name: function.name, passed: true, message: "")
+            return TestRunResult(name: function.name, passed: true, message: "", sourceFile: function.sourceFile)
         } catch let error as RuntimeError {
             if case .assertionFailed(let message, _) = error {
-                return TestRunResult(name: function.name, passed: false, message: message)
+                return TestRunResult(name: function.name, passed: false, message: message, sourceFile: function.sourceFile)
             }
-            return TestRunResult(name: function.name, passed: false, message: "\(error)")
+            return TestRunResult(name: function.name, passed: false, message: "\(error)", sourceFile: function.sourceFile)
         } catch {
-            return TestRunResult(name: function.name, passed: false, message: "\(error)")
+            return TestRunResult(name: function.name, passed: false, message: "\(error)", sourceFile: function.sourceFile)
         }
     }
 

@@ -23,6 +23,7 @@ final class FFILoader {
         lock.lock()
         defer { lock.unlock() }
         if processImage == nil { processImage = SystemDL.openDefault() }
+        preloadRuntimeIfPresent()
         for library in libraries where !preloadedLibraries.contains(library) {
             let opened = open(library, searchPaths: searchPaths)
             guard let handle = opened.handle else {
@@ -32,6 +33,40 @@ final class FFILoader {
             preloadedLibraries.insert(library)
             preloaded.append(Handle(label: library, handle: handle))
         }
+    }
+
+
+    /// 运行时段库：`bk_*` 全在这份动态库里，而 CLI 自身不链接它 —— 只查进程映像解析不到。
+    /// 找不到不报错：不用运行时段符号的程序照常跑，用户自己的库仍由 `[ffi].libs` 声明。
+    private func preloadRuntimeIfPresent() {
+        if preloadedLibraries.contains(FFILoader.runtimeLabel) { return }
+        guard let path = runtimeLibraryPath(), let handle = SystemDL.open(path) else { return }
+        preloadedLibraries.insert(FFILoader.runtimeLabel)
+        preloaded.append(Handle(label: FFILoader.runtimeLabel, handle: handle))
+    }
+
+    /// 运行时段库标签：报错清单里显示它，与 `[ffi].libs` 的写法区分开。
+    static let runtimeLabel = "PiniRuntime"
+
+    /// 运行时段库定位：`PINI_RUNTIME_LIB` 优先，否则取可执行文件同目录的 `libPiniRuntime.{dylib,so}`。
+    /// 与 `run-llvm` / `compile` 两条腿同一口径，三处因此不会指到不同的库。
+    private func runtimeLibraryPath() -> String? {
+        if let override = ProcessInfo.processInfo.environment["PINI_RUNTIME_LIB"],
+            !override.isEmpty, FileManager.default.fileExists(atPath: override)
+        {
+            return override
+        }
+        // 取可执行文件的绝对路径：`argv[0]` 是调用方的写法，测试会改工作目录，相对参拼出来落空。
+        let raw = Bundle.main.executablePath ?? CommandLine.arguments[0]
+        let absolute =
+            raw.hasPrefix("/") ? raw
+            : FileManager.default.currentDirectoryPath + "/" + raw
+        let dir = (absolute as NSString).deletingLastPathComponent
+        for ext in ["dylib", "so"] {
+            let candidate = (dir as NSString).appendingPathComponent("libPiniRuntime.\(ext)")
+            if FileManager.default.fileExists(atPath: candidate) { return candidate }
+        }
+        return nil
     }
 
     /// 解析符号：先按声明次序查预加载的库，再查进程映像。

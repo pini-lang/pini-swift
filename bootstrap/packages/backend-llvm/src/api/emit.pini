@@ -19,6 +19,8 @@ skipped: Bool = false
 (EmitTestPlan)
 header: String = ""
 selection: Array<String> = []
+; 与 selection 同序的文件名：失败行据此带出用例所在文件。
+files: Array<String> = []
 groups: Array<EmitTestGroup> = []
 fmtGroup: String = ""
 fmtGroupSkipped: String = ""

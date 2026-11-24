@@ -1,0 +1,10 @@
+[package]
+name = "hostproc"
+
+[lib]
+name = "hostproc"
+entry = "src/api/process.pini"
+
+[[test]]
+name = "hostproc-tests"
+entry = "tests"
