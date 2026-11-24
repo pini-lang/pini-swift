@@ -1,0 +1,218 @@
+[commands|import]
+_support = "../../../support"
+_semantics = "../../../semantics"
+_ir = "../../../ir"
+_backend_kit = "../../../backend-kit"
+_backend_dump = "../../../backend-dump"
+_backend_llvm = "../../../backend-llvm"
+_package = "../../../package"
+_hostproc = "../../../hostproc"
+
+; 构建执行组：run-llvm、test-llvm 与 build / emit 的开关都落在这一文件。
+; 通道选择、临时文件与外部工具只在这里出现；装配与降载仍走 降载工作区，命令层不另立一条链。
+; 链接参数与 compile 共用一份：两处各写一条，clang 的参数位置迟早会分叉。
+
+; 入口路径归一：不以 `/`、`./`、`../` 开头的路径补 `./`。
+; 运行时按程序基准解析裸相对路径，宿主按进程目录解析；补前缀后两侧落到同一处。
+entryPathOf|func(raw: String,) -> (String,):
+    if len(raw) == 0:
+        return raw
+    if raw.indexOf("/") == 0 || raw.indexOf("./") == 0 || raw.indexOf("../") == 0:
+        return raw
+    return "./" + raw
+
+; 链接参数：clang 在前，运行时库存在时补 -L / -l / rpath，最后是产物与输入。
+; 顺序照宿主：链接参数在前、`-o` 与输入在后，clang 对两者的位置敏感。
+linkArgs|func(irPath: String, binPath: String,) -> (Array<String>,):
+    var out: Array<String> = [toolPath(tool = "clang")]
+    let lib = runtimeLibrary()
+    if len(lib) > 0:
+        let dir = lib.slice(0, processLastSlash(text = lib))
+        out = out.append("-L" + dir)
+        out = out.append("-lPiniRuntime")
+        out = out.append("-Wl,-rpath," + dir)
+    out = out.append("-o")
+    out = out.append(binPath)
+    out = out.append(irPath)
+    return out
+
+; 共享库链接参数：`-shared` 加运行时库；运行时库缺失答空表，由调用方拒绝。
+; 发一个注定加载不了的库比不发更难排查，故这里不做「找不到就省掉参数」的降级。
+sharedLinkArgs|func(irPath: String, libPath: String,) -> (Array<String>,):
+    var empty: Array<String> = []
+    let lib = runtimeLibrary()
+    if len(lib) == 0:
+        return empty
+    let dir = lib.slice(0, processLastSlash(text = lib))
+    var out: Array<String> = [toolPath(tool = "clang"), "-shared", "-o", libPath, irPath]
+    out = out.append("-L" + dir)
+    out = out.append("-lPiniRuntime")
+    out = out.append("-Wl,-rpath," + dir)
+    return out
+
+; 动态库后缀：按盘上有无 Darwin 框架目录判，不在语言层猜系统名。
+sharedSuffix|func() -> (String,):
+    if exists("/System/Library/Frameworks"):
+        return "dylib"
+    return "so"
+
+; 产物落点：`-o` 说了算；没给时按块名落在当前目录。`-o` 指到已存在的目录时，文件名仍按块名补。
+sharedLibraryPath|func(outputPath: String, blockName: String,) -> (String,):
+    let fileName = "lib" + blockName + "." + sharedSuffix()
+    if len(outputPath) == 0:
+        return fileName
+    var pointsAtDirectory = false
+    var slashTail = false
+    let last = len(outputPath) - 1
+    if last >= 0 && ord(outputPath[last]) == 47:
+        pointsAtDirectory = true
+        slashTail = true
+    if exists(outputPath) && isDir(outputPath):
+        pointsAtDirectory = true
+    if pointsAtDirectory:
+        if slashTail:
+            return outputPath + fileName
+        return outputPath + "/" + fileName
+    return outputPath
+
+; 后端记录：llvm 走原生码，dump 走结构转储；未知名答空名，调用方据此报错。
+backendEntryFor|func(_name: String,) -> (BackendEntry,):
+    if _name == "dump":
+        return makeBackendOf(name = "dump", outputCode = backendOutputDumpCode(), families = backendFamilyCodes(), entry = 1)
+    if _name == "llvm":
+        return makeBackendOf(name = "llvm", outputCode = backendOutputNativeCode(), families = llvmFamilies(), entry = 2)
+    return BackendEntry()
+
+; 发射：两条腿返回同一形状，按记录名分派；调用点不再各自判后端。
+emitByBackend|func(entry: BackendEntry, module: IrModule,) -> (EmitResult,):
+    if entry.name == "dump":
+        return dumpModule(entry = entry, target = defaultTarget(), module = module)
+    return emitModule(entry = entry, target = defaultTarget(), module = module)
+
+; lli 参数：运行时段存在时先 --dlopen，再给 IR 路径；lli 没有链接期，库只能预载。
+lliArgs|func(irPath: String,) -> (Array<String>,):
+    var out: Array<String> = [toolPath(tool = "lli")]
+    let lib = runtimeLibrary()
+    if len(lib) > 0:
+        out = out.append("--dlopen=" + lib)
+    out = out.append(irPath)
+    return out
+
+; run-llvm：检查、降载、发射，交 lli 跑；退出码只对齐零 / 非零，非零落到断言的 1。
+runLLI|func(path: String, stdlib: StdlibOption,) -> ():
+    let report = checkWorkspace(root = path, stdlib = stdlib)
+    if report.errorCount > 0 || report.exitCode != 0:
+        if len(report.text) > 0:
+            print(report.text)
+        print("run-llvm-blocked", report.errorCount)
+        assert(false, "检查未通过")
+        return
+    let lowered = 降载工作区(root = path, stdlib = stdlib)
+    if lowered.packages == 0:
+        return
+    if len(lowered.check.errors) > 0:
+        print("run-llvm-blocked", len(lowered.check.errors))
+        assert(false, "结构校验未通过")
+        return
+    let entry = backendEntryFor("llvm")
+    let emitted = emitByBackend(entry = entry, module = lowered.module)
+    if emitted.failed:
+        print("run-llvm-gaps", emitGapCount(result = emitted), emitted.detail)
+        assert(false, "发射有缺口")
+        return
+    let irPath = tempPath(tag = "run-llvm", suffix = ".ll")
+    writeFile(irPath, emitted.text)
+    let ran = runProcess(argv = lliArgs(irPath = irPath), keepOutput = false)
+    removeFile(path = irPath)
+    if ran.code != 0:
+        assert(false, "程序以非零码退出")
+        return
+    return
+
+; test-llvm：与 test 同一套收集与筛选，差别只在最后一步——发射原生程序并运行。
+; 报告由产物自己打印，退出码按运行结局归一；列出清单时不发射。
+runTestNative|func(root: String, filter: String, skips: Array<String>, stdlib: StdlibOption,) -> ():
+    let text = prepareTestEmit(root = root, filter = filter, skips = skips, listOnly = false, stdlib = stdlib)
+    if len(text) == 0:
+        return
+    let irPath = tempPath(tag = "test-llvm", suffix = ".ll")
+    let binPath = tempPath(tag = "test-llvm", suffix = "")
+    writeFile(irPath, text)
+    let linked = runProcess(argv = linkArgs(irPath = irPath, binPath = binPath), keepOutput = true)
+    removeFile(path = irPath)
+    if linked.code != 0:
+        print("test-llvm-failed", linked.code)
+        print(linked.stderrText)
+        assert(false, "clang 链接失败")
+        return
+    let ran = runProcess(argv = [binPath], keepOutput = false)
+    removeFile(path = binPath)
+    if ran.code != 0:
+        assert(false, "测试未通过")
+        return
+    return
+
+; 构建共享库：检查、降载、发射、链接四段；没有 `|c` 条目直接拒绝，产物名取块名。
+runBuildShared|func(path: String, outputPath: String, stdlib: StdlibOption,) -> ():
+    let report = checkWorkspace(root = path, stdlib = stdlib)
+    if report.errorCount > 0 || report.exitCode != 0:
+        if len(report.text) > 0:
+            print(report.text)
+        print("build-shared-blocked", report.errorCount)
+        assert(false, "检查未通过")
+        return
+    let lowered = 降载工作区(root = path, stdlib = stdlib)
+    if lowered.packages == 0:
+        return
+    if len(lowered.check.errors) > 0:
+        print("build-shared-blocked", len(lowered.check.errors))
+        assert(false, "结构校验未通过")
+        return
+    if !hasExportBlock(block = lowered.module.cSurface):
+        print("build-shared-no-export")
+        assert(false, "模块没有带 |c 条目的导出块")
+        return
+    let entry = backendEntryFor("llvm")
+    let emitted = emitByBackend(entry = entry, module = lowered.module)
+    if emitted.failed:
+        print("build-shared-gaps", emitGapCount(result = emitted), emitted.detail)
+        assert(false, "发射有缺口")
+        return
+    let libPath = sharedLibraryPath(outputPath = outputPath, blockName = lowered.module.cSurface.name)
+    let parent = libPath.slice(0, processLastSlash(text = libPath))
+    if len(parent) > 0:
+        ensureDir(parent)
+    let irPath = tempPath(tag = "shared", suffix = ".ll")
+    writeFile(irPath, emitted.text)
+    let argv = sharedLinkArgs(irPath = irPath, libPath = libPath)
+    if len(argv) == 0:
+        removeFile(path = irPath)
+        print("build-shared-no-runtime")
+        assert(false, "找不到运行时库")
+        return
+    let linked = runProcess(argv = argv, keepOutput = true)
+    removeFile(path = irPath)
+    if linked.code != 0:
+        print("build-shared-failed", linked.code)
+        print(linked.stderrText)
+        assert(false, "clang 链接失败")
+        return
+    print("已生成 " + libPath)
+    return
+
+; 构建计划打印：只出计划文本，不翻译也不落盘；非目录入口没有计划，与宿主同口径各给一句。
+printBuildPlan|func(path: String,) -> ():
+    if !isDir(path):
+        print(path + " 不是包或工作区，没有构建计划")
+        return
+    let plan = planEntry(path)
+    if !plan.isOK():
+        print("build-plan-failed", plan.errorCount())
+        var i = 0
+        while i < len(plan.errors):
+            print("计划错误", manifestErrorKindName(plan.errors[i].kind), plan.errors[i].path, plan.errors[i].detail)
+            i = i + 1
+        assert(false, "构建计划未通过")
+        return
+    print(planFileText(plan))
+    return

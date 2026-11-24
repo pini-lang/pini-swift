@@ -69,36 +69,77 @@ printTestList|func(rootLabel: String, selection: TestSelection,) -> ():
     print(testListSummaryLine(selection = selection))
     return
 
-; 主流程：清单错与结构错都非零退出；发射成功后整份文本写标准输出，由脚本落盘。
-runTest|func(root: String, filter: String, skips: Array<String>, listOnly: Bool, stdlib: StdlibOption,) -> ():
+; 测试调用参数：根、筛选、跳过与「只列清单」；test 与 test-llvm 共用一份解析。
+(TestInvocation)
+root: String = ""
+filter: String = ""
+skips: Array<String> = []
+listOnly: Bool = false
+
+; 参数解析：`--filter` / `--skip` 收两种写法且可重复，`--list` 只列不跑，其余按位置参数当根。
+parseTestArgs|func(args: Array<String>, fallbackRoot: String,) -> (TestInvocation,):
+    var out = TestInvocation()
+    out.root = fallbackRoot
+    var cursor = 1
+    while cursor < len(args):
+        let arg: String = args[cursor]
+        if arg == "--filter" && cursor + 1 < len(args):
+            out.filter = args[cursor + 1]
+            cursor = cursor + 2
+        elif arg.indexOf("--filter=") == 0:
+            out.filter = arg.slice(9, len(arg))
+            cursor = cursor + 1
+        elif arg == "--skip" && cursor + 1 < len(args):
+            out.skips = out.skips.append(args[cursor + 1])
+            cursor = cursor + 2
+        elif arg.indexOf("--skip=") == 0:
+            out.skips = out.skips.append(arg.slice(7, len(arg)))
+            cursor = cursor + 1
+        elif arg == "--list":
+            out.listOnly = true
+            cursor = cursor + 1
+        else:
+            out.root = entryPathOf(raw = arg)
+            cursor = cursor + 1
+    return out
+
+; 测试发射：装配、发现、选择、发射四段；清单错与结构错都当场报并断言。
+; 列出清单时打印后答空串，调用方据此不再发射；成功交出整份 LLVM 文本。
+prepareTestEmit|func(root: String, filter: String, skips: Array<String>, listOnly: Bool, stdlib: StdlibOption,) -> (String,):
     let plan = planEntry(root)
     if !plan.isOK():
         print("workspace-plan-failed", plan.errorCount())
         assert(false, "工作区清单未通过")
-        return
+        return ""
     let 产物 = 降载工作区(root = root, stdlib = stdlib)
     if 产物.packages == 0:
         assert(false, "工作区装配失败")
-        return
+        return ""
     if len(产物.check.errors) > 0:
         print("test-blocked", len(产物.check.errors))
         assert(false, "结构校验未通过")
-        return
+        return ""
     let targets = testTargetsOf(plan = plan)
     let refs = discoverTests(module = 产物.module, targets = targets)
     let selection = selectTests(refs = refs, targets = targets, filter = filter, skips = skips)
     if selection.failed:
         print("test-error", selection.errorText)
         assert(false, selection.errorText)
-        return
+        return ""
     if listOnly:
         printTestList(rootLabel = root, selection = selection)
-        return
+        return ""
     let entry = makeBackendOf(name = "llvm", outputCode = backendOutputNativeCode(), families = llvmFamilies(), entry = 3)
     let emitted = emitTestModule(entry = entry, target = defaultTarget(), module = 产物.module, plan = testEmitPlan(rootLabel = root, selection = selection))
     if emitted.failed:
         print("test-emit-failed", emitted.detail, emitGapCount(result = emitted))
         assert(false, emitted.detail)
-        return
-    print(emitted.text)
+        return ""
+    return emitted.text
+
+; 主流程：只发射，整份文本写标准输出，落盘、链接与运行归脚本或 test-llvm。
+runTest|func(root: String, filter: String, skips: Array<String>, listOnly: Bool, stdlib: StdlibOption,) -> ():
+    let text = prepareTestEmit(root = root, filter = filter, skips = skips, listOnly = listOnly, stdlib = stdlib)
+    if len(text) > 0:
+        print(text)
     return

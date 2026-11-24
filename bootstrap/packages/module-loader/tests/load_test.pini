@@ -26,15 +26,16 @@ packageIndex|func(plan: BuildPlan, name: String,) -> (I32,):
         i = i + 1
     let loaded = loadTarget(packageAbs = root + "/" + pkg.rootPath, packageRel = pkg.rootPath, target = pkg.targets[binAt], excludes = pkg.excludes)
     assert(loaded.isOK(), "driver 装载应无错")
-    assert(loaded.unitCount() == 8, "driver 可执行目标有八个源文件")
+    assert(loaded.unitCount() == 9, "driver 可执行目标有九个源文件")
     assert(loaded.units[0].path == "packages/driver/src/api/artifacts.pini", "产物发射排在首位")
     assert(loaded.units[1].path == "packages/driver/src/api/assemble.pini", "装配链次之")
     assert(loaded.units[2].path == "packages/driver/src/api/check.pini", "检查通道居前")
-    assert(loaded.units[3].path == "packages/driver/src/api/digest.pini", "构建身份随其后")
-    assert(loaded.units[4].path == "packages/driver/src/api/inspect.pini", "只读命令随其后")
-    assert(loaded.units[5].path == "packages/driver/src/api/interfaces.pini", "接口记录居中")
-    assert(loaded.units[6].path == "packages/driver/src/api/main.pini", "入口居后")
-    assert(loaded.units[7].path == "packages/driver/src/api/test.pini", "测试入口在末位")
+    assert(loaded.units[3].path == "packages/driver/src/api/commands.pini", "构建执行组随其后")
+    assert(loaded.units[4].path == "packages/driver/src/api/digest.pini", "构建身份随其后")
+    assert(loaded.units[5].path == "packages/driver/src/api/inspect.pini", "只读命令随其后")
+    assert(loaded.units[6].path == "packages/driver/src/api/interfaces.pini", "接口记录居中")
+    assert(loaded.units[7].path == "packages/driver/src/api/main.pini", "入口居后")
+    assert(loaded.units[8].path == "packages/driver/src/api/test.pini", "测试入口在末位")
     return
 
 ; 全量收集：自举工作区全部 target 的源码都进源集，无收集错误、路径唯一且升序。

@@ -148,13 +148,18 @@ def switches_in(text):
 
 
 def self_commands():
-    """自举子命令 → 该子命令后面的参数解析正文。"""
+    """自举子命令 → 该子命令后面的参数解析正文。
+
+    命令名允许连字符（`run-llvm` / `test-llvm`）；全局选项（`--no-stdlib` / `--stdlib`）在
+    分派之前统一摘除，对每个子命令都成立，故一并算进每条正文。
+    """
     text = SELF_MAIN.read_text(encoding="utf-8")
-    marks = list(re.finditer(r'args\[0\] == "([A-Za-z]+)"', text))
+    marks = list(re.finditer(r'args\[0\] == "([A-Za-z][A-Za-z0-9-]*)"', text))
+    preamble = text[: marks[0].start()] if marks else ""
     table = {}
     for index, mark in enumerate(marks):
         end = marks[index + 1].start() if index + 1 < len(marks) else len(text)
-        table[mark.group(1)] = text[mark.end():end]
+        table[mark.group(1)] = preamble + text[mark.end():end]
     return table
 
 
