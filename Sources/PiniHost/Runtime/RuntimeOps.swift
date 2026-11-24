@@ -92,6 +92,12 @@ public enum RuntimeOps {
         case (.unownedRef(let a), .unownedRef(let b), .notEqual): return .bool(a.target !== b.target)
         case (.bool(let a), .bool(let b), .and): return .bool(a && b)
         case (.bool(let a), .bool(let b), .or): return .bool(a || b)
+        // 枚举值的相等按用例名与载荷逐项比，复用 `Value` 的 `==`；缺这条时解释通道只能比标量，
+        // 同一份源码在编译通道算得出、在解释通道报「期望 compatible」。
+        case (.enumValue(let a), .enumValue(let b), .equal):
+            return .bool(Value.enumValue(a) == Value.enumValue(b))
+        case (.enumValue(let a), .enumValue(let b), .notEqual):
+            return .bool(Value.enumValue(a) != Value.enumValue(b))
         case (.int(let a), .int(let b), .bitwiseAnd): return .int(a & b)
         case (.int(let a), .int(let b), .bitwiseOr): return .int(a | b)
         case (.int(let a), .int(let b), .bitwiseXor): return .int(a ^ b)
