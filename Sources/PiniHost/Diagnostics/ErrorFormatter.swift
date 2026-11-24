@@ -361,7 +361,9 @@ public enum ErrorFormatter {
         }
     }
 
-    private static func runtimeMessage(_ error: RuntimeError) -> String {
+    /// 运行时错误的正文（不带位置、不带诊断码）：测试报告只取这一格，
+    /// 位置由失败行单独给出 —— 两引擎那个格必须逐字节相同。
+    public static func runtimeMessage(_ error: RuntimeError) -> String {
         switch error {
         case .undefinedVariable(let name, _): return "未定义变量 '\(name)'"
         case .immutableVariable(let name, _): return "不可修改的变量 '\(name)'"

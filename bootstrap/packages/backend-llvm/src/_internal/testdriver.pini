@@ -91,6 +91,7 @@ emitTestDriver|func(sink: LineSink, module: IrModule, plan: EmitTestPlan, bundle
         appendLine(sink = sink, text = "  %d.o" + countText(i) + " = alloca i32")
         appendLine(sink = sink, text = "  store i32 0, ptr %d.o" + countText(i))
         appendLine(sink = sink, text = "  %d.m" + countText(i) + " = alloca ptr")
+        appendLine(sink = sink, text = "  %d.l" + countText(i) + " = alloca ptr")
         i = i + 1
     var temp = 0
     var headerPtr = ""
@@ -115,13 +116,6 @@ emitTestDriver|func(sink: LineSink, module: IrModule, plan: EmitTestPlan, bundle
         namePtrs = namePtrs.append(driverText(sink = sink, bundle = bundle, value = plan.selection[i], temp = temp))
         temp = temp + 1
         i = i + 1
-    ; 文件串与名字同序：失败行带出用例所在文件，一句断言文案才定位得到。
-    var filePtrs: Array<String> = []
-    i = 0
-    while i < len(plan.files):
-        filePtrs = filePtrs.append(driverText(sink = sink, bundle = bundle, value = plan.files[i], temp = temp))
-        temp = temp + 1
-        i = i + 1
     g = 0
     while g < len(plan.groups):
         let group = plan.groups[g]
@@ -133,6 +127,7 @@ emitTestDriver|func(sink: LineSink, module: IrModule, plan: EmitTestPlan, bundle
                 let fn = module.functions[findIrFunctionIndex(module = module, name = plan.selection[j])]
                 appendLine(sink = sink, text = "  store i32 0, ptr @__pini_test_failed")
                 appendLine(sink = sink, text = "  store ptr null, ptr @__pini_test_msg")
+                appendLine(sink = sink, text = "  store ptr null, ptr @__pini_test_loc")
                 appendLine(sink = sink, text = "  call void @" + mangleName(name = plan.selection[j]) + "(" + testArgs(module = module, fn = fn) + ")")
                 appendLine(sink = sink, text = "  %d.f" + countText(j) + " = load i32, ptr @__pini_test_failed")
                 appendLine(sink = sink, text = "  %d.b" + countText(j) + " = icmp ne i32 %d.f" + countText(j) + ", 0")
@@ -146,6 +141,8 @@ emitTestDriver|func(sink: LineSink, module: IrModule, plan: EmitTestPlan, bundle
                 appendLine(sink = sink, text = "  store i32 %d.z" + countText(j) + ", ptr %d.o" + countText(j))
                 appendLine(sink = sink, text = "  %d.mv" + countText(j) + " = load ptr, ptr @__pini_test_msg")
                 appendLine(sink = sink, text = "  store ptr %d.mv" + countText(j) + ", ptr %d.m" + countText(j))
+                appendLine(sink = sink, text = "  %d.lv" + countText(j) + " = load ptr, ptr @__pini_test_loc")
+                appendLine(sink = sink, text = "  store ptr %d.lv" + countText(j) + ", ptr %d.l" + countText(j))
                 j = j + 1
         g = g + 1
     if len(headerPtr) > 0:
@@ -167,7 +164,8 @@ emitTestDriver|func(sink: LineSink, module: IrModule, plan: EmitTestPlan, bundle
                 appendLine(sink = sink, text = "  br i1 %d.od" + countText(j) + ", label %d.show." + countText(j) + ", label %d.hide." + countText(j))
                 appendLine(sink = sink, text = "d.show." + countText(j) + ":")
                 appendLine(sink = sink, text = "  %d.om" + countText(j) + " = load ptr, ptr %d.m" + countText(j))
-                appendLine(sink = sink, text = "  call i32 (ptr, ...) @printf(ptr @fmt_test_fail, ptr " + namePtrs[j] + ", ptr " + filePtrs[j] + ", ptr %d.om" + countText(j) + ")")
+                appendLine(sink = sink, text = "  %d.lp" + countText(j) + " = load ptr, ptr %d.l" + countText(j))
+                appendLine(sink = sink, text = "  call i32 (ptr, ...) @printf(ptr @fmt_test_fail, ptr " + namePtrs[j] + ", ptr %d.lp" + countText(j) + ", ptr %d.om" + countText(j) + ")")
                 appendLine(sink = sink, text = "  br label %d.hide." + countText(j))
                 appendLine(sink = sink, text = "d.hide." + countText(j) + ":")
                 j = j + 1

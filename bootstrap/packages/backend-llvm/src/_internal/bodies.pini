@@ -37,6 +37,9 @@ ownedSlots: Array<String> = []
 ownedTypes: Array<I32> = []
 pendingSlot: I32 = -1
 testExit: Bool = false
+; 断言位置表：只在测试态非空，条目是「节点下标 → 文件:行:列」的两串平行数组。
+testLocNodes: Array<I32> = []
+testLocTexts: Array<String> = []
 taskDefs: TaskDefs = TaskDefs()
 givenDefs: GivenDefs = GivenDefs()
 lazyDefs: LazyRefDefs = LazyRefDefs()
@@ -720,7 +723,7 @@ emitExprCore|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
         out.text = ""
         return out
     if node.kind == 14:
-        out.ctx = emitAssert(ctx = out.ctx, module = module, node = node)
+        out.ctx = emitAssert(ctx = out.ctx, module = module, node = node, nodeId = nodeId)
         out.text = ""
         return out
     if node.kind == 15:
@@ -2391,9 +2394,18 @@ printValue|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (BodyCtx,):
     let node = irNodeAt(pool = module.nodes, id = nodeId)
     return printAnyValue(ctx = one.ctx, module = module, text = one.text, typeId = node.typeId)
 
+; 位置查表：命中答位置串，未命中答空串；表按节点下标存，线性扫一遍即可。
+testLocTextOf|func(ctx: BodyCtx, node: I32,) -> (String,):
+    var i = 0
+    while i < len(ctx.testLocNodes):
+        if ctx.testLocNodes[i] == node:
+            return ctx.testLocTexts[i]
+        i = i + 1
+    return ""
+
 ; 断言：条件为真直落；为假时测试函数置失败位并立刻返回，其余函数调陷阱。
-; 消息缺省一句固定串，不空指针；测试态的消息留给报告期打印，故不归还份额。
-emitAssert|func(ctx: BodyCtx, module: IrModule, node: IrNode,) -> (BodyCtx,):
+; 消息缺省一句固定串，不空指针；测试态的消息与位置留给报告期打印，故不归还份额。
+emitAssert|func(ctx: BodyCtx, module: IrModule, node: IrNode, nodeId: I32,) -> (BodyCtx,):
     var out = ctx
     if !out.testExit:
         useExtern(use = out.externs, name = "bk_panic")
@@ -2416,6 +2428,16 @@ emitAssert|func(ctx: BodyCtx, module: IrModule, node: IrNode,) -> (BodyCtx,):
     appendLine(sink = out.lines, text = "  br i1 " + cond.text + ", label %" + passLabel + ", label %" + failLabel)
     appendLine(sink = out.lines, text = failLabel + ":")
     if out.testExit:
+        ; 位置与消息同序存放：驱动器只在失败时读这两格，先写位置与消息再置位，读到的是完整一对。
+        ; 查不到条目时退回用例声明文件 —— 句子没有位置（手搭 IR），报告仍指得到文件。
+        var locText = testLocTextOf(ctx = out, node = nodeId)
+        if len(locText) == 0:
+            locText = module.functions[out.fnIndex].sourceFile
+        let locIndex = internString(pool = out.strings, value = locText)
+        let locId = out.temp
+        out.temp = locId + 1
+        let locAt = stringValue(lines = out.lines, pool = out.strings, index = locIndex, temp = locId)
+        appendLine(sink = out.lines, text = "  store ptr " + locAt + ", ptr @__pini_test_loc")
         appendLine(sink = out.lines, text = "  store ptr " + msgAt + ", ptr @__pini_test_msg")
         appendLine(sink = out.lines, text = "  store i32 1, ptr @__pini_test_failed")
         appendLine(sink = out.lines, text = "  ret void")

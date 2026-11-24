@@ -1,5 +1,6 @@
 [test|import]
 _support = "../../../support"
+_diagnostics = "../../../diagnostics"
 _package = "../../../package"
 _module_loader = "../../../module-loader"
 _semantics = "../../../semantics"
@@ -30,8 +31,51 @@ testTargetsOf|func(plan: BuildPlan,) -> (Array<TestTarget>,):
         i = i + 1
     return out
 
+; 单元源文本：按路径精确命中，未命中答空文本 —— 该文件的语句就不带位置。
+sourceTextOf|func(units: Array<CompilationUnit>, path: String,) -> (SourceText,):
+    var i = 0
+    while i < len(units):
+        if units[i].path == path:
+            return makeSourceText(units[i].text)
+        i = i + 1
+    return SourceText()
+
+; 断言位置收集：沿语句子树找断言节点，找到就登记这条语句的位置。
+; 位置表按创建序累积，最内层语句先创建先登记，故重访时已登记的条目不被改写。
+collectAssertLocs|func(plan: EmitTestPlan, pool: IrNodePool, node: I32, 位置: String,) -> (EmitTestPlan,):
+    if node < 0:
+        return plan
+    let one = irNodeAt(pool = pool, id = node)
+    var out = plan
+    if one.kind == irExprTag(.irAssertCall) && testLocOf(plan = out, node = node) == "":
+        out.locNodes = out.locNodes.append(node)
+        out.locTexts = out.locTexts.append(位置)
+    var i = 0
+    while i < len(one.kids):
+        out = collectAssertLocs(plan = out, pool = pool, node = one.kids[i], 位置 = 位置)
+        i = i + 1
+    return out
+
+; 断言位置表：逐函数扫语句位置表，偏移转行列后登记进计划；失败行据此指向断言所在行。
+testLocTable|func(plan: EmitTestPlan, module: IrModule, units: Array<CompilationUnit>,) -> (EmitTestPlan,):
+    var out = plan
+    var f = 0
+    while f < len(module.functions):
+        let fn = module.functions[f]
+        if len(fn.positions) > 0:
+            let text = sourceTextOf(units = units, path = fn.sourceFile)
+            if text.byteLength() > 0:
+                var i = 0
+                while i < len(fn.positions):
+                    let at = locationOf(text = text, offset = fn.positions[i].offset)
+                    let 位置 = fn.sourceFile + ":" + countText(at.line) + ":" + countText(at.column)
+                    out = collectAssertLocs(plan = out, pool = module.nodes, node = fn.positions[i].node, 位置 = 位置)
+                    i = i + 1
+        f = f + 1
+    return out
+
 ; 发射计划：把选择结果折成后端要的形状；报告措辞全部来自 testkit。
-testEmitPlan|func(rootLabel: String, selection: TestSelection,) -> (EmitTestPlan,):
+testEmitPlan|func(rootLabel: String, selection: TestSelection, module: IrModule, units: Array<CompilationUnit>,) -> (EmitTestPlan,):
     var out = EmitTestPlan()
     out.header = testHeaderLine(rootLabel = rootLabel, targetCount = len(selection.groups))
     var i = 0
@@ -47,12 +91,12 @@ testEmitPlan|func(rootLabel: String, selection: TestSelection,) -> (EmitTestPlan
     i = 0
     while i < len(selection.refs):
         out.selection = out.selection.append(selection.refs[i].name)
-        out.files = out.files.append(selection.refs[i].sourceFile)
         i = i + 1
     out.fmtGroup = testGroupFormat()
     out.fmtGroupSkipped = testGroupSkippedFormat()
     out.fmtFail = testFailFormat()
     out.fmtResult = testResultFormat()
+    out = testLocTable(plan = out, module = module, units = units)
     return out
 
 ; 清单：首行、逐目标、逐测试、汇总；只读装配结果，不发射。
@@ -130,7 +174,8 @@ prepareTestEmit|func(root: String, filter: String, skips: Array<String>, listOnl
         printTestList(rootLabel = root, selection = selection)
         return ""
     let entry = makeBackendOf(name = "llvm", outputCode = backendOutputNativeCode(), families = llvmFamilies(), entry = 3)
-    let emitted = emitTestModule(entry = entry, target = defaultTarget(), module = 产物.module, plan = testEmitPlan(rootLabel = root, selection = selection))
+    let 发射计划 = testEmitPlan(rootLabel = root, selection = selection, module = 产物.module, units = collectWorkspaceUnits(产物.units))
+    let emitted = emitTestModule(entry = entry, target = defaultTarget(), module = 产物.module, plan = 发射计划)
     if emitted.failed:
         print("test-emit-failed", emitted.detail, emitGapCount(result = emitted))
         assert(false, emitted.detail)

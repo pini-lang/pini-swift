@@ -19,13 +19,24 @@ skipped: Bool = false
 (EmitTestPlan)
 header: String = ""
 selection: Array<String> = []
-; 与 selection 同序的文件名：失败行据此带出用例所在文件。
-files: Array<String> = []
+; 断言位置表：节点下标与「文件:行:列」两串平行，只收测试态会置失败位的断言节点。
+; 稀疏不是缺陷：辅助函数里的断言也要有位置，故它按节点登记，不按用例登记。
+locNodes: Array<I32> = []
+locTexts: Array<String> = []
 groups: Array<EmitTestGroup> = []
 fmtGroup: String = ""
 fmtGroupSkipped: String = ""
 fmtFail: String = ""
 fmtResult: String = ""
+
+; 断言位置查表：命中答位置串，未命中答空串；表按节点下标存，线性扫一遍即可。
+testLocOf|func(plan: EmitTestPlan, node: I32,) -> (String,):
+    var i = 0
+    while i < len(plan.locNodes):
+        if plan.locNodes[i] == node:
+            return plan.locTexts[i]
+        i = i + 1
+    return ""
 
 ; 能力族：本后端声明为已接的族码，驱动按这份登记，测试也照抄，三处不再各写一串。
 ; 族码与 backend-kit 同序；未登记的族在缺口里写作「族未声明」，与「已声明但没接」分开。
@@ -190,7 +201,7 @@ emitLazyWrappers|func(sink: LineSink, bundle: EmitPass,) -> ():
     return
 
 ; 函数段：逐函数出定义；owned 非空只发该名单，测试模式跳过非测试 main 并给测试函数打开早退面。
-emitFunctions|func(sink: LineSink, module: IrModule, entry: BackendEntry, target: TargetProfile, testMode: Bool, bundle: EmitPass, owned: Array<String>, onlyOwned: Bool,) -> ():
+emitFunctions|func(sink: LineSink, module: IrModule, entry: BackendEntry, target: TargetProfile, testMode: Bool, bundle: EmitPass, owned: Array<String>, onlyOwned: Bool, plan: EmitTestPlan,) -> ():
     let families = irContractFamilies()
     let builtins = builtinTable()
     var i = 0
@@ -217,6 +228,8 @@ emitFunctions|func(sink: LineSink, module: IrModule, entry: BackendEntry, target
                 ctx.builtins = builtins
                 ctx.pointerBytes = target.pointerWidth
                 ctx.testExit = testMode && fn.isTest
+                ctx.testLocNodes = plan.locNodes
+                ctx.testLocTexts = plan.locTexts
                 ctx.lazyDefs = bundle.lazyDefs
                 ctx.taskDefs = bundle.taskDefs
                 ctx.givenDefs = bundle.givenDefs
@@ -345,7 +358,7 @@ emitModule|func(entry: BackendEntry, target: TargetProfile, module: IrModule,) -
     while i < len(元素钩子):
         appendLine(sink = sink, text = 元素钩子[i])
         i = i + 1
-    emitFunctions(sink = sink, module = module, entry = entry, target = target, testMode = false, bundle = bundle, owned = [], onlyOwned = false)
+    emitFunctions(sink = sink, module = module, entry = entry, target = target, testMode = false, bundle = bundle, owned = [], onlyOwned = false, plan = EmitTestPlan())
     emitTaskBodies(sink = sink, bundle = bundle)
     ; 导出给定块的槽与适配函数先登记，取址点才指向已声明的符号。
     prepareExportGivens(module = module, bundle = bundle)
@@ -429,10 +442,11 @@ emitTestModule|func(entry: BackendEntry, target: TargetProfile, module: IrModule
     while i < len(元素钩子):
         appendLine(sink = sink, text = 元素钩子[i])
         i = i + 1
-    emitFunctions(sink = sink, module = module, entry = entry, target = target, testMode = true, bundle = bundle, owned = [], onlyOwned = false)
+    emitFunctions(sink = sink, module = module, entry = entry, target = target, testMode = true, bundle = bundle, owned = [], onlyOwned = false, plan = plan)
     emitLazyWrappers(sink = sink, bundle = bundle)
     appendLine(sink = sink, text = "@__pini_test_failed = internal global i32 0")
     appendLine(sink = sink, text = "@__pini_test_msg = internal global ptr null")
+    appendLine(sink = sink, text = "@__pini_test_loc = internal global ptr null")
     let extra = emitTestDriver(sink = sink, module = module, plan = plan, bundle = bundle)
     emitExterns(sink = sink, bundle = bundle, module = module)
     emitConstants(sink = sink, extra = extra, bundle = bundle)
@@ -538,7 +552,7 @@ emitPartition|func(entry: BackendEntry, target: TargetProfile, module: IrModule,
     while i < len(胶水):
         appendLine(sink = sink, text = 胶水[i])
         i = i + 1
-    emitFunctions(sink = sink, module = module, entry = entry, target = target, testMode = false, bundle = bundle, owned = owned, onlyOwned = true)
+    emitFunctions(sink = sink, module = module, entry = entry, target = target, testMode = false, bundle = bundle, owned = owned, onlyOwned = true, plan = EmitTestPlan())
     emitDeclares(sink = sink, module = module, owned = owned)
     emitTaskBodies(sink = sink, bundle = bundle)
     emitGivenDefs(sink = sink, bundle = bundle)

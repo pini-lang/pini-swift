@@ -103,12 +103,19 @@ public final class ProgramRunner: DebugHookHost {
         public let message: String
         /// 声明该用例的文件。报告只在失败行带上它 —— 一句断言文案在几十个测试文件里定位不到。
         public let sourceFile: String
+        /// 失败点位置：语句边界补齐的源码位置，断言在辅助函数里失败时指向那一行而不是测试声明处。
+        /// 占位位置（行号 0）在这里折成 `nil`，报告据此退回「只带文件」。
+        public let location: SourceLocation?
 
-        public init(name: String, passed: Bool, message: String, sourceFile: String = "") {
+        public init(
+            name: String, passed: Bool, message: String, sourceFile: String = "",
+            location: SourceLocation? = nil
+        ) {
             self.name = name
             self.passed = passed
             self.message = message
             self.sourceFile = sourceFile
+            self.location = location
         }
     }
 
@@ -202,20 +209,29 @@ public final class ProgramRunner: DebugHookHost {
     }
 
     /// 跑一个收集到的测试：按参数类型注入零值后调用。失败是一条结果，不中断后续测试。
-    /// 断言失败只取消息本体（不带 `at <位置>`）：那是空位置，且另一后端的报告须逐字节相同。
-    /// 其余错误保留完整描述，含位置——那属于运行时故障，正是最需要位置的时候。
+    /// 断言失败取消息本体、其余错误取运行时正文：位置不再拼进消息，改由失败行单独给出，
+    /// 故另一后端的报告里同一格仍是同一个字符串。
     private func runOneTest(_ function: IRFunction, on executor: IRExecutor) -> TestRunResult {
         let args = function.params.map { Self.zeroValue(forTestParam: $0.type) }
         do {
             _ = try executor.callFunction(named: function.name, args: args)
-            return TestRunResult(name: function.name, passed: true, message: "", sourceFile: function.sourceFile)
+            return TestRunResult(
+                name: function.name, passed: true, message: "", sourceFile: function.sourceFile)
         } catch let error as RuntimeError {
-            if case .assertionFailed(let message, _) = error {
-                return TestRunResult(name: function.name, passed: false, message: message, sourceFile: function.sourceFile)
+            let message: String
+            if case .assertionFailed(let text, _) = error {
+                message = text
+            } else {
+                message = ErrorFormatter.runtimeMessage(error)
             }
-            return TestRunResult(name: function.name, passed: false, message: "\(error)", sourceFile: function.sourceFile)
+            return TestRunResult(
+                name: function.name, passed: false, message: message,
+                sourceFile: function.sourceFile,
+                location: error.location.isPlaceholder ? nil : error.location)
         } catch {
-            return TestRunResult(name: function.name, passed: false, message: "\(error)", sourceFile: function.sourceFile)
+            return TestRunResult(
+                name: function.name, passed: false, message: "\(error)",
+                sourceFile: function.sourceFile)
         }
     }
 
@@ -314,6 +330,15 @@ public final class ProgramRunner: DebugHookHost {
 }
 
 // MARK: - 错误
+
+extension ProgramRunner.TestRunResult {
+    /// 失败行的位置栏：有失败点就打 `文件:行:列`，只有声明文件就只打文件，两者都没有就整栏省掉。
+    /// 报告的三处拼装（工作区、模块、单文件）都读这一处，免得同一条规则各写一遍。
+    public var positionLabel: String {
+        if let location { return "（\(location.reportPosition)）" }
+        return sourceFile.isEmpty ? "" : "（\(sourceFile)）"
+    }
+}
 
 /// IR 路径上程序开跑之前可能被拒的原因。
 public enum ProgramRunError: LocalizedError {

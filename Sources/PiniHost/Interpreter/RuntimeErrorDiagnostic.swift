@@ -33,22 +33,4 @@ extension RuntimeError: DiagnosticProviding {
     public var diagnosticLocation: SourceLocation {
         self.location
     }
-    private var location: SourceLocation {
-        switch self {
-        case .undefinedVariable(_, let loc), .immutableVariable(_, let loc),
-            .typeMismatch(_, _, let loc), .divisionByZero(let loc),
-            .indexOutOfRange(let loc), .invalidOperation(_, let loc),
-            .mainNotFound(let loc), .notCallable(let loc),
-            .arityMismatch(_, _, let loc), .inaccessibleField(_, _, let loc),
-            .taskCancelled(_, let loc), .matchNotExhaustive(_, let loc),
-            .assertionFailed(_, let loc),
-            .argumentCountMismatch(_, _, _, let loc),
-            .undefinedNativeFunction(_, _, let loc),
-            .libraryNotFound(_, _, let loc),
-            .symbolNotFound(_, _, let loc),
-            .entryMainMismatch(_, _, let loc),
-            .variadicCallUnsupported(_, let loc), .stringHandleCallUnsupported(_, let loc):
-            return loc
-        }
-    }
 }

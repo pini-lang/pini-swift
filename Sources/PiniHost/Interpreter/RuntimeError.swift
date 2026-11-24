@@ -103,4 +103,63 @@ public enum RuntimeError: Error, CustomStringConvertible {
                 + "或把句柄的创建与读取都留在 C 侧 at \(loc)"
         }
     }
+
+    /// 位置补齐：占位位置（行号 0）换成语句边界的真实位置，已有位置的一律不动。
+    /// 判据在「缺不缺」而不在调用点 —— 内层语句边界先补，外层拿到的是已补过的错误。
+    public func fillingLocation(_ location: SourceLocation) -> RuntimeError {
+        guard self.location.isPlaceholder else { return self }
+        switch self {
+        case .undefinedVariable(let name, _): return .undefinedVariable(name: name, location: location)
+        case .immutableVariable(let name, _): return .immutableVariable(name: name, location: location)
+        case .typeMismatch(let expected, let got, _):
+            return .typeMismatch(expected: expected, got: got, location: location)
+        case .divisionByZero: return .divisionByZero(location: location)
+        case .indexOutOfRange: return .indexOutOfRange(location: location)
+        case .invalidOperation(let reason, _):
+            return .invalidOperation(reason: reason, location: location)
+        case .mainNotFound: return .mainNotFound(location: location)
+        case .entryMainMismatch(let entries, let declaredIn, _):
+            return .entryMainMismatch(entries: entries, declaredIn: declaredIn, location: location)
+        case .notCallable: return .notCallable(location: location)
+        case .arityMismatch(let expected, let got, _):
+            return .arityMismatch(expected: expected, got: got, location: location)
+        case .inaccessibleField(let typeName, let fieldName, _):
+            return .inaccessibleField(typeName: typeName, fieldName: fieldName, location: location)
+        case .taskCancelled(let reason, _):
+            return .taskCancelled(reason: reason, location: location)
+        case .matchNotExhaustive(let value, _):
+            return .matchNotExhaustive(value: value, location: location)
+        case .assertionFailed(let message, _):
+            return .assertionFailed(message: message, location: location)
+        case .argumentCountMismatch(let name, let expected, let got, _):
+            return .argumentCountMismatch(name: name, expected: expected, got: got, location: location)
+        case .undefinedNativeFunction(let name, let available, _):
+            return .undefinedNativeFunction(name: name, available: available, location: location)
+        case .libraryNotFound(let library, let searched, _):
+            return .libraryNotFound(library: library, searched: searched, location: location)
+        case .symbolNotFound(let symbol, let searched, _):
+            return .symbolNotFound(symbol: symbol, searched: searched, location: location)
+        case .variadicCallUnsupported(let name, _):
+            return .variadicCallUnsupported(name: name, location: location)
+        case .stringHandleCallUnsupported(let name, _):
+            return .stringHandleCallUnsupported(name: name, location: location)
+        }
+    }
+
+    /// 错误携带的位置：报告与诊断共用同一个读口，免得两处各解一次枚举。
+    public var location: SourceLocation {
+        switch self {
+        case .undefinedVariable(_, let loc), .immutableVariable(_, let loc),
+            .typeMismatch(_, _, let loc), .divisionByZero(let loc), .indexOutOfRange(let loc),
+            .invalidOperation(_, let loc), .mainNotFound(let loc),
+            .entryMainMismatch(_, _, let loc), .notCallable(let loc),
+            .arityMismatch(_, _, let loc), .inaccessibleField(_, _, let loc),
+            .taskCancelled(_, let loc), .matchNotExhaustive(_, let loc),
+            .assertionFailed(_, let loc), .argumentCountMismatch(_, _, _, let loc),
+            .undefinedNativeFunction(_, _, let loc), .libraryNotFound(_, _, let loc),
+            .symbolNotFound(_, _, let loc), .variadicCallUnsupported(_, let loc),
+            .stringHandleCallUnsupported(_, let loc):
+            return loc
+        }
+    }
 }
