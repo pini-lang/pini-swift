@@ -955,12 +955,6 @@ _backend_kit = "../../backend-kit"
     var plan = EmitTestPlan()
     plan.header = "测试目标: 工作区 /w（1 个测试 target）"
     plan.selection = selection
-    var 文件: Array<String> = []
-    var k = 0
-    while k < len(selection):
-        文件 = 文件.append("/w/probe.pini")
-        k = k + 1
-    plan.files = 文件
     var group = EmitTestGroup()
     group.label = "pkg / target"
     group.basePath = "/w/pkg"
@@ -993,6 +987,26 @@ _backend_kit = "../../backend-kit"
     assert(!发射含子串(text = result.text, needle = "call void @bk_panic"), "测试态不应走陷阱")
     let normal = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
     assert(发射含子串(text = normal.text, needle = "call void @bk_panic"), "普通态仍走陷阱")
+    return
+
+; 断言位置：测试态把失败断言的位置存进报告槽，跑器按它打印失败行；缺位置时退回用例文件。
+断言位置入报告|test() -> ():
+    var module = 发射造打印模块()
+    var fn = module.functions[0]
+    fn.name = "probeTest"
+    fn.isTest = true
+    fn.sourceFile = "/w/tests/probe.pini"
+    module.functions[0] = fn
+    let plan = 发射造测试计划(selection = ["probeTest"])
+    let result = emitTestModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module, plan = plan)
+    if result.failed:
+        assert(false, "缺口：" + result.detail)
+    assert(发射含子串(text = result.text, needle = "@__pini_test_loc = internal global ptr null"), "应有位置槽")
+    ; 常量按字节转义，故按长度核对：16 字节头 + 19 字节的用例路径 + 结尾 NUL。
+    assert(发射含子串(text = result.text, needle = "[36 x i8], ptr @.str1"), "缺位置应退回用例文件")
+    ; 生产态不出现位置槽：那一格只服务测试报告，普通发射的文本不因它改动。
+    let normal = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    assert(!发射含子串(text = normal.text, needle = "__pini_test_loc"), "普通态不应有位置槽")
     return
 
 ; 测试计划校验：选中名不在模块里即拒发，不合成一份少跑一条的跑器。

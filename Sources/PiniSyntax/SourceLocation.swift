@@ -23,3 +23,11 @@ public struct SourceLocation: Equatable, Sendable {
         self.fileName = fileName
     }
 }
+
+extension SourceLocation {
+    /// 行号为 0 是执行层的占位位置：语句没有携带源码位置时用它，报告据此退回「只带文件」。
+    public var isPlaceholder: Bool { line == 0 }
+
+    /// 报告位置串 `文件:行:列`。解释器侧拼报告、发射侧把它嵌进产物，两处必须同一种写法。
+    public var reportPosition: String { "\(fileName):\(line):\(column)" }
+}

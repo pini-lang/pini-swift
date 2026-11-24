@@ -67,9 +67,9 @@ if [ "$code" -ne 1 ]; then
     fail=1
 fi
 case "$report" in
-*"✗ 中条失败（"*"）: 故意失败"*) ;;
+*"✗ 中条失败（pkg/tests/basic_test.pini:"*"）: 故意失败"*) ;;
 *)
-    echo " 行不通  [测试自检] 报告缺失败行：$report" >&2
+    echo " 行不通  [测试自检] 失败行缺位置或措辞不符：$report" >&2
     fail=1
     ;;
 esac

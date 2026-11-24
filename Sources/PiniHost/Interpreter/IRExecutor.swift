@@ -1844,14 +1844,21 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
         var lastValue: Value = .null
         let trailingIndex = IRExecutor.trailingExprIndex(in: block)
         for (index, statement) in block.enumerated() {
-            if debugHook != nil, let location = block.position(at: index) {
+            let location = block.position(at: index)
+            if debugHook != nil, let location {
                 try debugPause(at: location)
             }
-            if case .exprStmt(let expr) = statement {
-                let value = try evaluate(expr)
-                if index == trailingIndex { lastValue = value }
-            } else {
-                try execute(statement)
+            do {
+                if case .exprStmt(let expr) = statement {
+                    let value = try evaluate(expr)
+                    if index == trailingIndex { lastValue = value }
+                } else {
+                    try execute(statement)
+                }
+            } catch let error as RuntimeError {
+                // 位置补齐的唯一入口：表达式求值抛错时只有语句边界知道自己在哪一行，
+                // 内层先补，外层拿到的是已带位置的错误，故最内层语句的位置胜出。
+                throw location.map { error.fillingLocation($0) } ?? error
             }
             // 语句边界是一个安全点：这一句之前死掉的对象在这里跑析构，输出次序与源码里的语句对齐。
             try drainDestructors()
@@ -2659,66 +2666,75 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
             position = index + 1
         }
 
-        while position < body.count {
-            let statement = body[position]
-            if debugHook != nil, let location = body.position(at: position) {
-                try debugPause(at: location)
-            }
-
-            if yieldable, let plan = yieldPlan(for: statement) {
-                // 操作数同步求值是刻意的：它**产出** future，因此不能等待某个 future。
-                // 嵌在里面的 join 由降级器拒绝，这次调用因此不在递归路径上。
-                let operand = try evaluate(plan.operand)
-                guard case .future(let fut) = operand else {
-                    throw RuntimeError.typeMismatch(
-                        expected: "Future<T, Error>",
-                        got: RuntimeOps.describeValueKind(operand),
-                        location: IRExecutor.noLocation
-                    )
+        // 位置补齐：整条语句循环包一层，失败的错误在离开循环前带上本语句的位置。
+        // 位置存在局部量里而不是执行器字段上：嵌套调用各有自己的局部量，内层先补、外层不再改写。
+        var startedStatement: Int? = nil
+        do {
+            while position < body.count {
+                startedStatement = position
+                let statement = body[position]
+                if debugHook != nil, let location = body.position(at: position) {
+                    try debugPause(at: location)
                 }
 
-                // 已落定的 future 不构成让出任务的理由：取值让 `await` 走 `wait` 的路径，不发生任务切换。
-                // 第三种情况是后端说「这次不行」：合规而非故障，因此等待静默占用线程。
-                // 在那里挂起会死锁，那不是 `await` 的降级读法，而是程序停住。
-                if fut.isFinished {
-                    let value = RuntimeOps.joinFuture(fut, timeoutMs: nil, form: .awaits)
-                    if let updated = try finishYield(plan, value: value) { last = updated }
-                } else if scheduler.yieldTask() == 1 {
-                    return .givenUp(
-                        IRYieldFrame(
-                            callable: callable,
-                            index: position,
-                            finish: { [weak self] value in
-                                guard let self = self else { return nil }
-                                // 子任务的生命周期在这里被消费掉，而这是进入 `finishYield` 的路径中唯一必须自己声明的一处。
-                                // 不声明的话子任务仍留在本函数体的作用域里，返回边界就会把已等待的失败读成「未 join」。
-                                // 于是函数体自己的 `ok` 会变成 `err(聚合)`，它对错误做的事全被丢弃。
-                                fut.detachFromParent()
-                                return try self.finishYield(plan, value: value)
-                            },
-                            awaited: fut,
-                            env: currentEnv,
-                            previousEnv: previousEnv,
-                            lastValue: last,
-                            callDepth: callDepth,
-                            callStackNames: callStackNames,
-                            deferStack: deferStack,
-                            currentFuture: currentFuture
+                if yieldable, let plan = yieldPlan(for: statement) {
+                    // 操作数同步求值是刻意的：它**产出** future，因此不能等待某个 future。
+                    // 嵌在里面的 join 由降级器拒绝，这次调用因此不在递归路径上。
+                    let operand = try evaluate(plan.operand)
+                    guard case .future(let fut) = operand else {
+                        throw RuntimeError.typeMismatch(
+                            expected: "Future<T, Error>",
+                            got: RuntimeOps.describeValueKind(operand),
+                            location: IRExecutor.noLocation
                         )
-                    )
+                    }
+
+                    // 已落定的 future 不构成让出任务的理由：取值让 `await` 走 `wait` 的路径，不发生任务切换。
+                    // 第三种情况是后端说「这次不行」：合规而非故障，因此等待静默占用线程。
+                    // 在那里挂起会死锁，那不是 `await` 的降级读法，而是程序停住。
+                    if fut.isFinished {
+                        let value = RuntimeOps.joinFuture(fut, timeoutMs: nil, form: .awaits)
+                        if let updated = try finishYield(plan, value: value) { last = updated }
+                    } else if scheduler.yieldTask() == 1 {
+                        return .givenUp(
+                            IRYieldFrame(
+                                callable: callable,
+                                index: position,
+                                finish: { [weak self] value in
+                                    guard let self = self else { return nil }
+                                    // 子任务的生命周期在这里被消费掉，而这是进入 `finishYield` 的路径中唯一必须自己声明的一处。
+                                    // 不声明的话子任务仍留在本函数体的作用域里，返回边界就会把已等待的失败读成「未 join」。
+                                    // 于是函数体自己的 `ok` 会变成 `err(聚合)`，它对错误做的事全被丢弃。
+                                    fut.detachFromParent()
+                                    return try self.finishYield(plan, value: value)
+                                },
+                                awaited: fut,
+                                env: currentEnv,
+                                previousEnv: previousEnv,
+                                lastValue: last,
+                                callDepth: callDepth,
+                                callStackNames: callStackNames,
+                                deferStack: deferStack,
+                                currentFuture: currentFuture
+                            )
+                        )
+                    } else {
+                        let value = RuntimeOps.joinFuture(fut, timeoutMs: nil, form: .awaits)
+                        if let updated = try finishYield(plan, value: value) { last = updated }
+                    }
+                } else if case .exprStmt(let expr) = statement {
+                    let value = try evaluate(expr)
+                    if position == trailingIndex { last = value }
                 } else {
-                    let value = RuntimeOps.joinFuture(fut, timeoutMs: nil, form: .awaits)
-                    if let updated = try finishYield(plan, value: value) { last = updated }
+                    try execute(statement)
                 }
-            } else if case .exprStmt(let expr) = statement {
-                let value = try evaluate(expr)
-                if position == trailingIndex { last = value }
-            } else {
-                try execute(statement)
+                // 与 `executeStatements` 同一处安全点：函数体是长跑的那一类语句序列，析构不该攒到调用方。
+                try drainDestructors()
+                position += 1
             }
-            // 与 `executeStatements` 同一处安全点：函数体是长跑的那一类语句序列，析构不该攒到调用方。
-            try drainDestructors()
-            position += 1
+        } catch let error as RuntimeError {
+            let location = startedStatement.flatMap { body.position(at: $0) }
+            throw location.map { error.fillingLocation($0) } ?? error
         }
         return .finished(last)
     }

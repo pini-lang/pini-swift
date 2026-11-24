@@ -1,4 +1,4 @@
 测试目标: 工作区 ./bootstrap/fixtures/test-basic/pkg（1 个测试 target）
 包 mini / mini-tests（4 个测试，3 通过）
- ✗ 中条失败（pkg/tests/basic_test.pini）: 故意失败
+ ✗ 中条失败（pkg/tests/basic_test.pini:8:5）: 故意失败
 结果: 3 通过, 1 失败

@@ -1674,7 +1674,7 @@ private func gateAndRunTests(
                 print(" ✓ \(r.name)")
             } else {
                 failed += 1
-                print(" ✗ \(r.name): \(r.message)")
+                print(" ✗ \(r.name)\(r.positionLabel): \(r.message)")
             }
         }
         if results.isEmpty { print(" （未找到 |test 测试函数）") }
@@ -1746,7 +1746,7 @@ private func runSingleFileTests(
                 print(" ✓ \(r.name)")
             } else {
                 failed += 1
-                print(" ✗ \(r.name): \(r.message)")
+                print(" ✗ \(r.name)\(r.positionLabel): \(r.message)")
             }
         }
         if results.isEmpty { print(" （未找到 |test 测试函数）") }

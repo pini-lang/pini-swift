@@ -75,6 +75,13 @@ public final class IREmitter {
     /// 中止本测试剩余语句后在调用边界收成一条失败结果；陷阱做不到「交回控制权」，故设此落点。
     private var currentTestExitLabel: String? = nil
 
+    /// 本测试用例的声明文件，仅在测试模式下非空：断言落点没有语句位置时用它当位置。
+    private var currentTestSourceFile: String? = nil
+
+    /// 正在发射的语句的源码位置。语句表带位置（`IRBlock.positions`），但表达式节点不带，
+    /// 故失败断言的落点只能从这里取；嵌套块进出时按栈式保存还原。
+    private var currentStatementLocation: SourceLocation? = nil
+
     private var builder = IRBuilder()
     private var bodyIR = ""
     /// 本函数局部槽的 `alloca`：统一收在入口块。发在声明点会让循环体内的槽每轮叠栈，
@@ -333,6 +340,7 @@ public final class IREmitter {
     /// 也不新增跨 ABI 面（运行时段符号的增删另有纪律）。
     static let testFailedGlobal = "__pini_test_failed"
     static let testMsgGlobal = "__pini_test_msg"
+    static let testLocGlobal = "__pini_test_loc"
 
     public init() {}
 
@@ -595,6 +603,7 @@ public final class IREmitter {
         if testMode {
             tail += "@\(Self.testFailedGlobal) = internal global i32 0\n"
             tail += "@\(Self.testMsgGlobal) = internal global ptr null\n"
+            tail += "@\(Self.testLocGlobal) = internal global ptr null\n"
         }
         for def in stringConstantDefs {
             tail += def + "\n"
@@ -854,6 +863,9 @@ public final class IREmitter {
         currentIsMain = function.name == "main" && !(testMode && function.isTest)
         currentIsTest = testMode && function.isTest
         currentTestExitLabel = currentIsTest ? "test.exit.\(builder.freshLabel())" : nil
+        // 断言位置的兜底：语句没有携带位置时（手搭 IR）退回用例声明处，失败行至少指得到文件。
+        currentTestSourceFile = currentIsTest && !function.sourceFile.isEmpty ? function.sourceFile : nil
+        currentStatementLocation = nil
         currentReturnType = function.returnType
         blockDepth = 0
         frameSlotDecls = []
@@ -1026,26 +1038,31 @@ public final class IREmitter {
         let headerPtr = testReportHeader.map { strPtr($0) }
         let passPrefix = strPtr(" \u{2713} ")
         let failPrefix = strPtr(" \u{2717} ")
+        let openParen = strPtr("（")
+        let closeParen = strPtr("）")
         let colon = strPtr(": ")
         let summaryFormat = strPtr("结果: %d 通过, %d 失败")
         let namePtrs = tests.map { strPtr($0.name) }
 
-        // 结果收集槽：每条测试一份「判定」与一份「消息」，用本帧 `alloca` 而非模块级数组 ——
-        // 驱动器单次调用，于是跨测试的共享状态只剩那两个插槽，可被逐条读清。
+        // 结果收集槽：每条测试一份「判定」「位置」与「消息」，用本帧 `alloca` 而非模块级数组 ——
+        // 驱动器单次调用，于是跨测试的共享状态只剩那三个插槽，可被逐条读清。
         // 先收后写：测试体里的 `print` 边跑边出，报告全部跑完才打，报告行才不会插进输出中间。
         let outcomeSlots = tests.map { _ in builder.freshTemp() }
         let messageSlots = tests.map { _ in builder.freshTemp() }
+        let locationSlots = tests.map { _ in builder.freshTemp() }
         for index in tests.indices {
             d += " \(outcomeSlots[index]) = alloca i32\n"
             d += " \(messageSlots[index]) = alloca ptr\n"
+            d += " \(locationSlots[index]) = alloca ptr\n"
         }
 
         // ── 第一趟：逐个跑、只收集（本趟一条输出都不产生）──────────────────
         for (index, test) in tests.enumerated() {
-            // 每条测试前把两个插槽归零。 行不通  不归零的话上一条的失败会**污染**下一条 ——
+            // 每条测试前把三个插槽归零。 行不通  不归零的话上一条的失败会**污染**下一条 ——
             // 驱动器问的是「本条跑完之后标志是不是 1」，不是「有没有人为它置过 1」。
             d += " store i32 0, ptr @\(Self.testFailedGlobal)\n"
             d += " store ptr null, ptr @\(Self.testMsgGlobal)\n"
+            d += " store ptr null, ptr @\(Self.testLocGlobal)\n"
 
             // 实参：按声明类型注入零值（与解释器 `zeroValue(forTestParam:)` 同规）。
             var args: [String] = []
@@ -1062,6 +1079,7 @@ public final class IREmitter {
             let prev = builder.freshTemp()
             let next = builder.freshTemp()
             let message = builder.freshTemp()
+            let location = builder.freshTemp()
             d += " \(flag) = load i32, ptr @\(Self.testFailedGlobal)\n"
             d += " \(bad) = icmp ne i32 \(flag), 0\n"
             d += " \(asInt) = zext i1 \(bad) to i32\n"
@@ -1071,6 +1089,8 @@ public final class IREmitter {
             d += " store i32 \(asInt), ptr \(outcomeSlots[index])\n"
             d += " \(message) = load ptr, ptr @\(Self.testMsgGlobal)\n"
             d += " store ptr \(message), ptr \(messageSlots[index])\n"
+            d += " \(location) = load ptr, ptr @\(Self.testLocGlobal)\n"
+            d += " store ptr \(location), ptr \(locationSlots[index])\n"
         }
 
         // ── 第二趟：写报告（首行 → 每条 → 收尾）────────────────────────────
@@ -1103,6 +1123,13 @@ public final class IREmitter {
             d += "\(failLabel):\n"
             printString(failPrefix)
             printString(namePtrs[index])
+            // 位置栏：`（文件:行:列）`。与解释器报告同一格同一个串 —— 位置在断言点存下，
+            // 指向真正失败的那条语句，而不是用例声明处。
+            let location = builder.freshTemp()
+            d += " \(location) = load ptr, ptr \(locationSlots[index])\n"
+            printString(openParen)
+            printString(location)
+            printString(closeParen)
             printString(colon)
             // 消息是断言点存下的那个串 —— 与解释器报告里那一格**同一个字符串**
             // （源里的消息字面量），故两腿这一格逐字节相同。
@@ -1259,8 +1286,12 @@ public final class IREmitter {
         pendingCleanup.append(seed)
         blockDepth += 1
         defer { blockDepth -= 1 }
-        for statement in block {
+        // 语句位置按块下标取；嵌套块进出时外层语句的位置必须还原，否则内层末句的位置会留给外层。
+        let outerLocation = currentStatementLocation
+        defer { currentStatementLocation = outerLocation }
+        for (index, statement) in block.enumerated() {
             if terminated { break }
+            if let location = block.position(at: index) { currentStatementLocation = location }
             emitStatement(statement)
         }
         // 终止路径（panic · return · break · continue）已在跳转前发过自己那一份副本，块尾不可达
@@ -3369,8 +3400,11 @@ public final class IREmitter {
         let msg = message ?? .stringConst(value: "assert failed")
         let rendered = emitExpr(msg)
         if let exitLabel = currentTestExitLabel {
-            // 顺序即语义：先把消息存好，再置失败事实，最后才离开本函数 ——
-            // 反过来的话，驱动器可能读到「已置失败、消息还没写」的中间态。
+            // 顺序即语义：先把位置与消息存好，再置失败事实，最后才离开本函数 ——
+            // 反过来的话，驱动器可能读到「已置失败、位置还没写」的中间态。
+            let position = currentStatementLocation?.reportPosition ?? currentTestSourceFile ?? ""
+            let location = emitStringConstant(position)
+            bodyIR += " store ptr \(location.ssaName), ptr @\(Self.testLocGlobal)\n"
             bodyIR += " store ptr \(rendered.ssaName), ptr @\(Self.testMsgGlobal)\n"
             bodyIR += " store i32 1, ptr @\(Self.testFailedGlobal)\n"
             bodyIR += builder.fmtBr(labelName: exitLabel) + "\n"
