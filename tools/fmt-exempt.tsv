@@ -7,3 +7,4 @@ bootstrap/tests/conformance/cases/diag-syntax/pkg/src/api.pini	unparseable	拒�
 bootstrap/tests/conformance/cases/unicode-zero-width/pkg/src/api.pini	unparseable	拒绝态：标识符含零宽字符，语料的被测对象
 bootstrap/fixtures/cli-parity/inputs/unclosed.pini	unparseable	拒绝态：括号未闭合，对照夹具的被测输入
 bootstrap/fixtures/cli-parity/inputs/indent.pini	unparseable	拒绝态：缩进错乱，对照夹具的被测输入
+bootstrap/fixtures/cli-parity/inputs/fmt-dirty.pini	variant	语法标本：待整理写法，`fmt --check` 的被测输入

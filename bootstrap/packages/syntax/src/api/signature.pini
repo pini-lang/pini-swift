@@ -1,0 +1,440 @@
+; 结构签名：把语法树机械派生成逐行指纹，`parse` 命令与格式化往返判据共用这一份。
+; 一行对应 main 的一条顶层语句；只写结构、名字与字面量原文，不写位置与空白。
+; 记号：语句 `名字[标签](子…)`，表达式 `名字:细节(子…)`；无子节点省括号。
+
+; 语句类别名：与表达式名分属两套词表，重名不合并。
+stmtSigName|func(_code: I32,) -> (String,):
+    if _code == stmtKindTag(.stmtBlock):
+        return "block"
+    if _code == stmtKindTag(.stmtVariable):
+        return "var"
+    if _code == stmtKindTag(.stmtAssign):
+        return "assign"
+    if _code == stmtKindTag(.stmtExpression):
+        return "exprStmt"
+    if _code == stmtKindTag(.stmtIf):
+        return "if"
+    if _code == stmtKindTag(.stmtWhile):
+        return "while"
+    if _code == stmtKindTag(.stmtFor):
+        return "for"
+    if _code == stmtKindTag(.stmtMatch):
+        return "match"
+    if _code == stmtKindTag(.stmtReturn):
+        return "return"
+    if _code == stmtKindTag(.stmtBreak):
+        return "break"
+    if _code == stmtKindTag(.stmtContinue):
+        return "continue"
+    if _code == stmtKindTag(.stmtPass):
+        return "pass"
+    if _code == stmtKindTag(.stmtDefer):
+        return "defer"
+    if _code == stmtKindTag(.stmtCapture):
+        return "capture"
+    if _code == stmtKindTag(.stmtUnroll):
+        return "unroll"
+    if _code == stmtKindTag(.stmtDetach):
+        return "detach"
+    return "stmtUnknown"
+
+; 表达式类别名：容器四类与语义类别同形，不加前缀。
+exprSigName|func(_code: I32,) -> (String,):
+    if _code == exprKindTag(.exprInteger):
+        return "int"
+    if _code == exprKindTag(.exprFloat):
+        return "float"
+    if _code == exprKindTag(.exprString):
+        return "string"
+    if _code == exprKindTag(.exprInterpolated):
+        return "interpolated"
+    if _code == exprKindTag(.exprTrue):
+        return "true"
+    if _code == exprKindTag(.exprFalse):
+        return "false"
+    if _code == exprKindTag(.exprNil):
+        return "nil"
+    if _code == exprKindTag(.exprIdentifier):
+        return "ident"
+    if _code == exprKindTag(.exprCase):
+        return "case"
+    if _code == exprKindTag(.exprMember):
+        return "member"
+    if _code == exprKindTag(.exprSubscript):
+        return "subscript"
+    if _code == exprKindTag(.exprSlice):
+        return "slice"
+    if _code == exprKindTag(.exprCall):
+        return "call"
+    if _code == exprKindTag(.exprUnary):
+        return "unary"
+    if _code == exprKindTag(.exprBinary):
+        return "binary"
+    if _code == exprKindTag(.exprTuple):
+        return "tuple"
+    if _code == exprKindTag(.exprArray):
+        return "array"
+    if _code == exprKindTag(.exprDictionary):
+        return "dict"
+    if _code == exprKindTag(.exprSet):
+        return "set"
+    if _code == exprKindTag(.exprFunction):
+        return "func"
+    if _code == exprKindTag(.exprCast):
+        return "cast"
+    if _code == exprKindTag(.exprTry):
+        return "try"
+    if _code == exprKindTag(.exprUnsafe):
+        return "unsafe"
+    if _code == exprKindTag(.exprWeakRef):
+        return "weak"
+    if _code == exprKindTag(.exprJoin):
+        return "join"
+    if _code == exprKindTag(.exprDictEntry):
+        return "entry"
+    if _code == exprKindTag(.exprGeneric):
+        return "generic"
+    return "exprUnknown"
+
+; 区间原文：名字、运算符与字面量都按字节区间取回原文，不另建词表。
+nodeText|func(bytes: Array<U8>, start: I32, end: I32,) -> (String,):
+    if start < 0 || end <= start:
+        return ""
+    return spellOf(bytes = bytes, start = start, end = end)
+
+; 单行化：字面量原文里的换行与制表换成转义写法，签名因此恒为一行。
+oneLine|func(_text: String,) -> (String,):
+    var out = ""
+    var i = 0
+    while i < len(_text):
+        let ch = _text.slice(i, i + 1)
+        if ch == "\n":
+            out = out + "\\n"
+        elif ch == "\t":
+            out = out + "\\t"
+        elif ch == "\r":
+            out = out + "\\r"
+        else:
+            out = out + ch
+        i = i + 1
+    return out
+
+; 去两端空白：运算符与区间片段只夹空白，逐字符扫到非空白为止。
+trimText|func(_text: String,) -> (String,):
+    var start = 0
+    while start < len(_text) && isBlankChar(_text.slice(start, start + 1)):
+        start = start + 1
+    var end = len(_text)
+    while end > start && isBlankChar(_text.slice(end - 1, end)):
+        end = end - 1
+    return _text.slice(start, end)
+
+isBlankChar|func(_ch: String,) -> (Bool,):
+    if _ch == " " || _ch == "\t" || _ch == "\n" || _ch == "\r":
+        return true
+    return false
+
+; 运算符原文：两处区间之间的片段去空白；越界答空串。
+betweenText|func(bytes: Array<U8>, from: I32, to: I32,) -> (String,):
+    if from < 0 || to < from:
+        return ""
+    return trimText(nodeText(bytes = bytes, start = from, end = to))
+
+; 标签写法：名字区间非空即追加 `[名字]`。
+labelSuffix|func(bytes: Array<U8>, start: I32, end: I32,) -> (String,):
+    if start < 0 || end <= start:
+        return ""
+    return "[" + nodeText(bytes = bytes, start = start, end = end) + "]"
+
+; 子节点拼接：空序列省括号，非空逐项以逗号相连。
+wrapKids|func(head: String, kids: Array<String>,) -> (String,):
+    if len(kids) == 0:
+        return head
+    var out = head + "("
+    var i = 0
+    while i < len(kids):
+        if i > 0:
+            out = out + ","
+        out = out + kids[i]
+        i = i + 1
+    return out + ")"
+
+; 类型签名：类别名加结构，容器按组件展开，标签只在元组上出现。
+typeSig|func(ast: Ast, bytes: Array<U8>, id: I32,) -> (String,):
+    if id < 0 || id >= len(ast.types):
+        return "-"
+    let node = ast.types[id]
+    if node.kind == typeKindTag(.typeNamed):
+        return nodeText(bytes = bytes, start = node.nameStart, end = node.nameEnd)
+    var parts: Array<String> = []
+    var i = 0
+    while i < len(node.kids):
+        parts = parts.append(typeSig(ast = ast, bytes = bytes, id = node.kids[i]))
+        i = i + 1
+    if node.kind == typeKindTag(.typeGeneric):
+        let name = nodeText(bytes = bytes, start = node.nameStart, end = node.nameEnd)
+        return wrapKids(head = name + "<", kids = parts) + ">"
+    if node.kind == typeKindTag(.typeOptional):
+        return wrapKids(head = "opt", kids = parts)
+    if node.kind == typeKindTag(.typePointer):
+        return wrapKids(head = "ptr", kids = parts)
+    if node.kind == typeKindTag(.typeTuple):
+        if len(node.labels) == 0:
+            return wrapKids(head = "tuple", kids = parts)
+        return wrapKids(head = "tuple[" + node.labels + "]", kids = parts)
+    if node.kind == typeKindTag(.typeFunction):
+        let ret = typeSig(ast = ast, bytes = bytes, id = node.ret)
+        return wrapKids(head = "func", kids = parts) + "->" + ret
+    if node.kind == typeKindTag(.typeArray):
+        return wrapKids(head = "array", kids = parts)
+    if node.kind == typeKindTag(.typeSet):
+        return wrapKids(head = "set", kids = parts)
+    if node.kind == typeKindTag(.typeDictionary):
+        return wrapKids(head = "dict", kids = parts)
+    if node.kind == typeKindTag(.typeResult):
+        return wrapKids(head = "result", kids = parts)
+    return wrapKids(head = "typeUnknown", kids = parts)
+
+; 子节点取值：越界或负号答 -1，调用方据此写占位符。
+kidAt|func(kids: Array<I32>, index: I32,) -> (I32,):
+    if index < 0 || index >= len(kids):
+        return -1
+    return kids[index]
+
+; 语句子节点：块与表达式分属两池，取用点按构造时约定的类别调用。
+stmtAt|func(ast: Ast, bytes: Array<U8>, kids: Array<I32>, index: I32,) -> (String,):
+    let child = kidAt(kids = kids, index = index)
+    if child < 0:
+        return "-"
+    return stmtSig(ast = ast, bytes = bytes, id = child)
+
+exprAtSig|func(ast: Ast, bytes: Array<U8>, kids: Array<I32>, index: I32,) -> (String,):
+    let child = kidAt(kids = kids, index = index)
+    if child < 0:
+        return "-"
+    return exprSig(ast = ast, bytes = bytes, id = child)
+
+; 语句签名：每个类别一支，子节点按构造顺序展开。
+stmtSig|func(ast: Ast, bytes: Array<U8>, id: I32,) -> (String,):
+    if id < 0 || id >= len(ast.stmts):
+        return "-"
+    let node = ast.stmts[id]
+    let head = stmtSigName(node.kind) + labelSuffix(bytes = bytes, start = node.nameStart, end = node.nameEnd)
+    if node.kind == stmtKindTag(.stmtVariable):
+        return varSig(ast = ast, bytes = bytes, node = node, head = head)
+    if node.kind == stmtKindTag(.stmtAssign):
+        return assignSig(ast = ast, bytes = bytes, node = node, head = head)
+    if node.kind == stmtKindTag(.stmtIf):
+        return ifSig(ast = ast, bytes = bytes, node = node, head = head)
+    if node.kind == stmtKindTag(.stmtMatch):
+        return matchSig(ast = ast, bytes = bytes, node = node, head = head)
+    if node.kind == stmtKindTag(.stmtWhile) || node.kind == stmtKindTag(.stmtFor):
+        return loopSig(ast = ast, bytes = bytes, node = node, head = head)
+    if node.kind == stmtKindTag(.stmtBlock):
+        var parts: Array<String> = []
+        var b = 0
+        while b < len(node.kids):
+            parts = parts.append(stmtAt(ast = ast, bytes = bytes, kids = node.kids, index = b))
+            b = b + 1
+        return wrapKids(head = head, kids = parts)
+    if node.kind == stmtKindTag(.stmtUnroll):
+        var trio: Array<String> = [exprAtSig(ast = ast, bytes = bytes, kids = node.kids, index = 0)]
+        trio = trio.append(exprAtSig(ast = ast, bytes = bytes, kids = node.kids, index = 1))
+        trio = trio.append(stmtAt(ast = ast, bytes = bytes, kids = node.kids, index = 2))
+        return wrapKids(head = head, kids = trio)
+    var one: Array<String> = []
+    if node.kind == stmtKindTag(.stmtExpression) || node.kind == stmtKindTag(.stmtReturn) || node.kind == stmtKindTag(.stmtDetach):
+        if len(node.kids) > 0 && node.kids[0] >= 0:
+            one = one.append(exprAtSig(ast = ast, bytes = bytes, kids = node.kids, index = 0))
+    if node.kind == stmtKindTag(.stmtDefer):
+        one = one.append(stmtAt(ast = ast, bytes = bytes, kids = node.kids, index = 0))
+    return wrapKids(head = head, kids = one)
+
+; 变量语句：`var` / `let` 只进前缀，类型括号恒写，缺标注记 `-`。
+varSig|func(ast: Ast, bytes: Array<U8>, node: StmtNode, head: String,) -> (String,):
+    var word = "let"
+    if node.op == kindTag(.kwVar):
+        word = "var"
+    var kids: Array<String> = [exprAtSig(ast = ast, bytes = bytes, kids = node.kids, index = 0)]
+    kids = kids.append(exprAtSig(ast = ast, bytes = bytes, kids = node.kids, index = 1))
+    let types = typeSig(ast = ast, bytes = bytes, id = node.typeId)
+    return wrapKids(head = head + ":" + word + "[" + types + "]", kids = kids)
+
+; 赋值语句：运算符写作两子之间的原文，复合赋值与简单赋值因此可区分。
+assignSig|func(ast: Ast, bytes: Array<U8>, node: StmtNode, head: String,) -> (String,):
+    let target = exprAtSig(ast = ast, bytes = bytes, kids = node.kids, index = 0)
+    let value = exprAtSig(ast = ast, bytes = bytes, kids = node.kids, index = 1)
+    var op = ""
+    if len(node.kids) == 2:
+        let left = ast.exprs[node.kids[0]]
+        let right = ast.exprs[node.kids[1]]
+        op = betweenText(bytes = bytes, from = left.end, to = right.start)
+    return head + ":" + op + "(" + target + "," + value + ")"
+
+; 条件语句：前两子是条件与体，其后每两子是一对 elif，落单的末子是 else。
+ifSig|func(ast: Ast, bytes: Array<U8>, node: StmtNode, head: String,) -> (String,):
+    var out = head + "(" + exprAtSig(ast = ast, bytes = bytes, kids = node.kids, index = 0)
+    out = out + "," + stmtAt(ast = ast, bytes = bytes, kids = node.kids, index = 1)
+    var k = 2
+    while k + 1 < len(node.kids):
+        out = out + ",elif(" + exprAtSig(ast = ast, bytes = bytes, kids = node.kids, index = k)
+        out = out + "," + stmtAt(ast = ast, bytes = bytes, kids = node.kids, index = k + 1) + ")"
+        k = k + 2
+    if k < len(node.kids):
+        out = out + ",else(" + stmtAt(ast = ast, bytes = bytes, kids = node.kids, index = k) + ")"
+    return out + ")"
+
+; 匹配语句：首子是主语，其后每两子是一支「模式、块」。
+matchSig|func(ast: Ast, bytes: Array<U8>, node: StmtNode, head: String,) -> (String,):
+    if len(node.kids) == 0:
+        return head
+    var out = head + "(" + exprAtSig(ast = ast, bytes = bytes, kids = node.kids, index = 0)
+    var k = 1
+    while k + 1 < len(node.kids):
+        out = out + ",case(" + exprAtSig(ast = ast, bytes = bytes, kids = node.kids, index = k)
+        out = out + "," + stmtAt(ast = ast, bytes = bytes, kids = node.kids, index = k + 1) + ")"
+        k = k + 2
+    return out + ")"
+
+; 循环语句：条件、体与可选 step 三段；step 单独起名，位置不靠猜。
+loopSig|func(ast: Ast, bytes: Array<U8>, node: StmtNode, head: String,) -> (String,):
+    var out = head + "(" + exprAtSig(ast = ast, bytes = bytes, kids = node.kids, index = 0)
+    out = out + "," + stmtAt(ast = ast, bytes = bytes, kids = node.kids, index = 1)
+    if node.kind == stmtKindTag(.stmtFor):
+        out = out + "," + exprAtSig(ast = ast, bytes = bytes, kids = node.kids, index = 2)
+        if len(node.kids) > 3:
+            out = out + ",step(" + stmtAt(ast = ast, bytes = bytes, kids = node.kids, index = 3) + ")"
+        return out + ")"
+    if len(node.kids) > 2:
+        out = out + ",step(" + stmtAt(ast = ast, bytes = bytes, kids = node.kids, index = 2) + ")"
+    return out + ")"
+
+; 参数签名：名字、类型、三个修饰位与缺省值都进签名。
+paramSig|func(ast: Ast, bytes: Array<U8>, id: I32,) -> (String,):
+    if id < 0 || id >= len(ast.decls):
+        return "-"
+    let node = ast.decls[id]
+    var head = "param:" + nodeText(bytes = bytes, start = node.nameStart, end = node.nameEnd)
+    head = head + "[" + typeSig(ast = ast, bytes = bytes, id = node.typeId) + "]"
+    if node.isUsing:
+        head = head + "using"
+    if node.isOwn:
+        head = head + "own"
+    if node.isSelf:
+        head = head + "self"
+    var kids: Array<String> = []
+    if node.body >= 0:
+        kids = kids.append(stmtSig(ast = ast, bytes = bytes, id = node.body))
+    return wrapKids(head = head, kids = kids)
+
+; 表达式签名：每个类别一支；细节位写名字、运算符或字面量原文。
+exprSig|func(ast: Ast, bytes: Array<U8>, id: I32,) -> (String,):
+    if id < 0 || id >= len(ast.exprs):
+        return "-"
+    let node = ast.exprs[id]
+    let name = exprSigName(node.kind)
+    if node.kind == exprKindTag(.exprFunction):
+        return funcSig(ast = ast, bytes = bytes, node = node, head = name)
+    var detail = ""
+    if node.kind == exprKindTag(.exprIdentifier) || node.kind == exprKindTag(.exprMember):
+        detail = nodeText(bytes = bytes, start = node.nameStart, end = node.nameEnd)
+    if node.kind == exprKindTag(.exprCase):
+        detail = nodeText(bytes = bytes, start = node.nameStart, end = node.nameEnd)
+    if node.kind == exprKindTag(.exprInteger) || node.kind == exprKindTag(.exprFloat):
+        detail = nodeText(bytes = bytes, start = node.start, end = node.end)
+    if node.kind == exprKindTag(.exprString):
+        detail = oneLine(nodeText(bytes = bytes, start = node.start, end = node.end))
+    if node.kind == exprKindTag(.exprJoin):
+        detail = "wait"
+        if node.op == kindTag(.kwAwait):
+            detail = "await"
+    if node.kind == exprKindTag(.exprBinary):
+        detail = binaryDetail(ast = ast, bytes = bytes, node = node)
+    if node.kind == exprKindTag(.exprUnary):
+        detail = unaryDetail(ast = ast, bytes = bytes, node = node)
+    if node.kind == exprKindTag(.exprGeneric) || node.kind == exprKindTag(.exprCast):
+        detail = typeSig(ast = ast, bytes = bytes, id = node.typeId)
+    if node.kind == exprKindTag(.exprTry):
+        detail = nodeText(bytes = bytes, start = node.nameStart, end = node.nameEnd)
+    var head = name
+    if len(detail) > 0:
+        head = name + ":" + detail
+    var kids: Array<String> = []
+    var i = 0
+    while i < len(node.kids):
+        kids = kids.append(exprSig(ast = ast, bytes = bytes, id = node.kids[i]))
+        i = i + 1
+    return wrapKids(head = head, kids = kids)
+
+; 二元细节：标签实参写 `名字=`，其余取两子之间的运算符原文。
+binaryDetail|func(ast: Ast, bytes: Array<U8>, node: ExprNode,) -> (String,):
+    if node.nameEnd > node.nameStart:
+        return nodeText(bytes = bytes, start = node.nameStart, end = node.nameEnd) + "="
+    if len(node.kids) < 2:
+        return ""
+    let left = ast.exprs[node.kids[0]]
+    let right = ast.exprs[node.kids[1]]
+    return betweenText(bytes = bytes, from = left.end, to = right.start)
+
+; 一元细节：前缀取节点起点到操作数起点，后缀取操作数终点到节点终点。
+unaryDetail|func(ast: Ast, bytes: Array<U8>, node: ExprNode,) -> (String,):
+    if len(node.kids) == 0:
+        return ""
+    let operand = ast.exprs[node.kids[0]]
+    let prefix = betweenText(bytes = bytes, from = node.start, to = operand.start)
+    if len(prefix) > 0:
+        return prefix
+    return betweenText(bytes = bytes, from = operand.end, to = node.end)
+
+; 函数字面量：末子之前是参数、末子是体，`op` 存返回类型。
+funcSig|func(ast: Ast, bytes: Array<U8>, node: ExprNode, head: String,) -> (String,):
+    var out = head + "("
+    var i = 0
+    while i < len(node.kids):
+        if i > 0:
+            out = out + ","
+        if i + 1 < len(node.kids):
+            out = out + paramSig(ast = ast, bytes = bytes, id = node.kids[i])
+        else:
+            out = out + stmtSig(ast = ast, bytes = bytes, id = node.kids[i])
+        i = i + 1
+    out = out + ")[" + typeSig(ast = ast, bytes = bytes, id = node.op) + "]"
+    if node.isAsync:
+        out = out + "async"
+    return out
+
+; main 声明：按名字找首个裸函数；方法与测试不算。
+mainDeclOf|func(ast: Ast, bytes: Array<U8>,) -> (I32,):
+    var i = 0
+    while i < len(ast.items):
+        let id = ast.items[i]
+        if id >= 0 && id < len(ast.decls):
+            let node = ast.decls[id]
+            if node.kind == declKindTag(.declFunction):
+                let name = nodeText(bytes = bytes, start = node.nameStart, end = node.nameEnd)
+                if name == "main":
+                    return id
+        i = i + 1
+    return -1
+
+; 签名行：main 函数的每条顶层语句一行；无 main 或无体答零行。
+signatureLines|func(ast: Ast, bytes: Array<U8>,) -> (Array<String>,):
+    var out: Array<String> = []
+    let main = mainDeclOf(ast = ast, bytes = bytes)
+    if main < 0:
+        return out
+    let body = ast.decls[main].body
+    if body < 0 || body >= len(ast.stmts):
+        return out
+    var i = 0
+    while i < len(ast.stmts[body].kids):
+        let text = stmtSig(ast = ast, bytes = bytes, id = ast.stmts[body].kids[i])
+        out = out.append("SIG|" + "\(i + 1)" + "|" + text)
+        i = i + 1
+    return out
+
+; 源文本直通：解析与词法各跑一遍，签名里的名字与字面量都按归一化字节取回。
+signatureOfText|func(_text: String,) -> (Array<String>,):
+    let parsed = parseFile(text = _text, file = "")
+    let lexed = lexTextIn(language = .langEnglish, text = _text)
+    return signatureLines(ast = parsed.ast, bytes = lexed.bytes)

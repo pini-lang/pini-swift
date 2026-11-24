@@ -40,6 +40,18 @@ fixture="$root/bootstrap/fixtures/test-basic"
 work="$root/bootstrap/.build/release/tests/gate"
 mkdir -p "$work" || exit 1
 
+# 重置目录：先移进 work 下的垃圾桶再重建，语义仍是「从零重来」。
+# 批量删除在部分沙箱里会被拦，移到一边同样隔离旧产物，不依赖删除能否落地。
+reset_dir() {
+    local target="$1"
+    if [ ! -e "$target" ]; then
+        return 0
+    fi
+    mkdir -p "$work/.trash" || return 1
+    mv "$target" "$work/.trash/$(basename "$target")-$RANDOM" || return 1
+    return 0
+}
+
 # 跑一轮：发射、链接、运行；报告走标准输出，诊断走标准错误，退出码即测试结果。
 run_case() {
     local name="$1"
@@ -195,7 +207,7 @@ fi
 
 # 生成模块：计划登记且产物在 .build 下才并入；缺计划、缺产物、脚本改动各报一条指向 build 的诊断。
 gen_fixture="$work/generated-load"
-rm -rf "$gen_fixture"
+reset_dir "$gen_fixture"
 cp -R "$root/bootstrap/fixtures/generated-load" "$gen_fixture"
 gen_plan="$gen_fixture/.build/debug/plan.toml"
 gen_out="$gen_fixture/.build/debug/packages/gendemo/generated/cstr.pini"
@@ -291,7 +303,7 @@ iface_expect() {
     esac
 }
 iface_fixture="$work/interfaces-cache"
-rm -rf "$iface_fixture"
+reset_dir "$iface_fixture"
 cp -R "$root/bootstrap/fixtures/interfaces-cache" "$iface_fixture"
 mkdir -p "$iface_fixture/.build/debug/packages/app" "$iface_fixture/.build/debug/packages/support"
 iface_expect "首次接口缓存应两份新写" "interfaces-ok 2 2 0" "$("$pini" interfaces "$iface_fixture" --no-stdlib 2>&1)"
@@ -337,7 +349,7 @@ pkg_expect() {
 }
 pkg_fixture="$work/packages-ir"
 pkg_dir="$pkg_fixture/.build/debug/packages"
-rm -rf "$pkg_fixture"
+reset_dir "$pkg_fixture"
 cp -R "$root/bootstrap/fixtures/packages-ir" "$pkg_fixture"
 mkdir -p "$pkg_dir/app" "$pkg_dir/cli" "$pkg_dir/support"
 pkg_expect "接口记录应三份新写" "interfaces-ok 3 3 0" "$("$pini" interfaces "$pkg_fixture" --no-stdlib 2>&1)"
@@ -451,7 +463,7 @@ wave_expect() {
 }
 
 cache_dir="$work/packages-cache"
-rm -rf "$cache_dir"
+reset_dir "$cache_dir"
 wave_expect "分波应出第一波" "wave 0 support" "$("$pini" plan "$pkg_fixture" --waves 2>&1)"
 wave_expect "第二波应是应用包" "wave 1 app" "$("$pini" plan "$pkg_fixture" --waves 2>&1)"
 wave_expect "第三波应是命令行包" "wave 2 cli" "$("$pini" plan "$pkg_fixture" --waves 2>&1)"
@@ -571,7 +583,7 @@ done
 
 # 导出面负例：方法不可发布，检查须报导出面码；夹具在构建目录里现造，不留源码树。
 bad_dir="$work/export-bad"
-rm -rf "$bad_dir"
+reset_dir "$bad_dir"
 mkdir -p "$bad_dir/pkg/src/api"
 cat > "$bad_dir/pini.toml" <<'TOML'
 [workspace]
@@ -606,7 +618,7 @@ fi
 # 模块工具组：tidy 对齐集合、refresh 写摘要、verify 比校验和、graph 出依赖树。
 # 改动型命令各用一份副本，源码树里的夹具只读；期望值按宿主同一份行为写死。
 mod_copy="$work/mod-tidy"
-rm -rf "$mod_copy"
+reset_dir "$mod_copy"
 cp -R "$root/bootstrap/fixtures/mod-tidy" "$mod_copy"
 tidy_out="$("$pini" "${stdlib_args[@]}" mod tidy "$mod_copy" 2>&1)"
 case "$tidy_out" in
@@ -697,7 +709,7 @@ if [ -z "$git_bin" ]; then
     fail=1
 else
     repo="$work/mod-repo"
-    rm -rf "$repo"
+    reset_dir "$repo"
     mkdir -p "$repo/src/api"
     cat > "$repo/pini.toml" <<'TOML'
 [package]
@@ -719,7 +731,7 @@ TOML
     "$git_bin" -C "$repo" -c user.name=pini -c user.email=pini@example.com commit -qm v11
     "$git_bin" -C "$repo" tag v1.1.0
     app_copy="$work/mod-git-app"
-    rm -rf "$app_copy"
+    reset_dir "$app_copy"
     mkdir -p "$app_copy/src/api"
     cat > "$app_copy/pini.toml" <<TOML
 [package]
@@ -767,8 +779,59 @@ TOML
     esac
 fi
 
+# 内存模型：自举通道跑析构与写时分裂两条示例，比示例 golden。
+# 覆盖 deinit 调用点、self 借出与 COW 分裂；同一条判据在宿主侧走 examples-gate。
+for case_name in deinit cow; do
+    if ! "$pini" --stdlib "$root/bootstrap/stdlib/src" run-llvm "$root/examples/$case_name.pini" > "$work/memory-$case_name.out" 2>&1; then
+        echo " 行不通  [测试自检] 自举通道跑 $case_name 失败" >&2
+        fail=1
+    elif ! cmp -s "$work/memory-$case_name.out" "$root/examples/golden/$case_name.pini.out"; then
+        echo " 行不通  [测试自检] 自举通道的 $case_name 输出与 golden 不同" >&2
+        fail=1
+    fi
+done
+
+# 格式化：整棵源码树在自举打印器下必须零改动，且二次打印不动；注释锚回按示例验保留。
+if ! "$pini" "${stdlib_args[@]}" fmt --check "$root/bootstrap/packages" "$root/bootstrap/stdlib" > "$work/fmt-check.out" 2>&1; then
+    echo " 行不通  [测试自检] 自举打印器把规范形源码判成待整理" >&2
+    fail=1
+elif [ -s "$work/fmt-check.out" ]; then
+    echo " 行不通  [测试自检] fmt --check 列出了待整理文件" >&2
+    cat "$work/fmt-check.out" >&2
+    fail=1
+fi
+for case_name in hello comments; do
+    if ! "$pini" "${stdlib_args[@]}" fmt "$root/examples/$case_name.pini" > "$work/fmt-$case_name.1.pini" 2>/dev/null; then
+        echo " 行不通  [测试自检] 格式化 $case_name 失败" >&2
+        fail=1
+        continue
+    fi
+    if ! "$pini" "${stdlib_args[@]}" fmt "$work/fmt-$case_name.1.pini" > "$work/fmt-$case_name.2.pini" 2>/dev/null ||
+        ! cmp -s "$work/fmt-$case_name.1.pini" "$work/fmt-$case_name.2.pini"; then
+        echo " 行不通  [测试自检] 格式化 $case_name 不幂等" >&2
+        fail=1
+    fi
+done
+if ! grep -q "^; 注释" "$work/fmt-comments.1.pini"; then
+    echo " 行不通  [测试自检] 注释未按源位置锚回" >&2
+    fail=1
+fi
+
+# 展开：unroll 摊平后按树重打，产物喂回 check 必须通过，且展开前的构造不再出现。
+if ! "$pini" "${stdlib_args[@]}" expand "$root/examples/unroll.pini" > "$work/expand-unroll.pini" 2>/dev/null; then
+    echo " 行不通  [测试自检] 展开 unroll 失败" >&2
+    fail=1
+elif grep -q "^ *unroll" "$work/expand-unroll.pini"; then
+    echo " 行不通  [测试自检] 展开产物仍含 unroll" >&2
+    fail=1
+elif ! "$pini" "${stdlib_args[@]}" check "$work/expand-unroll.pini" > "$work/expand-check.out" 2>&1; then
+    echo " 行不通  [测试自检] 展开产物过不了 check" >&2
+    cat "$work/expand-check.out" >&2
+    fail=1
+fi
+
 if [ "$fail" -ne 0 ]; then
     exit 1
 fi
-echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入，浮点常量走位模式，接口缓存按记录判失效，逐包产物按包发射且合并可链接，缓存按拓扑与内容判复用，分波按依赖深度，共享缓存按指纹复用，命令对照按签名锁定，导出面按符号表核对，构建执行组五条命令各有判据，模块工具组按副本验改写与抓取"
+echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入，浮点常量走位模式，接口缓存按记录判失效，逐包产物按包发射且合并可链接，缓存按拓扑与内容判复用，分波按依赖深度，共享缓存按指纹复用，命令对照按签名锁定，导出面按符号表核对，构建执行组五条命令各有判据，模块工具组按副本验改写与抓取，内存模型两条示例与 golden 一致，源码树零改动且格式化幂等，展开产物过检查"
 exit 0

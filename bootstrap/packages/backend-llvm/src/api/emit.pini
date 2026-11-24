@@ -106,7 +106,7 @@ alreadyEmitted|func(names: Array<String>, name: String,) -> (Bool,):
     return false
 
 ; 参数落槽：形参按各自槽位出 alloca 与 store，值名按位置编号。
-; 形参份额由调用方交出，故槽本身是这一份的持有者，函数出口要还。
+; 形参份额由调用方交出，槽是这一份的持有者，出口要还；析构的 self 是借出，不登记。
 ; 闭包的捕获槽只登记名字、不开 alloca：槽名指向外层变量地址，读与写都经它转发。
 seedParams|func(ctx: BodyCtx, module: IrModule, fn: IrFunction,) -> (BodyCtx,):
     var out = ctx
@@ -116,7 +116,8 @@ seedParams|func(ctx: BodyCtx, module: IrModule, fn: IrFunction,) -> (BodyCtx,):
         let ty = llvmTypeName(pool = module.types, typeId = fn.params[i].typeId)
         appendLine(sink = out.lines, text = "  " + slotName(slot = slot) + " = alloca " + ty)
         appendLine(sink = out.lines, text = "  store " + ty + " %p" + countText(i) + ", ptr " + slotName(slot = slot))
-        if irHoldsShare(pool = module.types, typeId = fn.params[i].typeId):
+        let borrowedSelf = i == 0 && isDeinitFunction(name = fn.name)
+        if irHoldsShare(pool = module.types, typeId = fn.params[i].typeId) && !borrowedSelf:
             out.ownedSlots = out.ownedSlots.append(slotName(slot = slot))
             out.ownedTypes = out.ownedTypes.append(fn.params[i].typeId)
         i = i + 1

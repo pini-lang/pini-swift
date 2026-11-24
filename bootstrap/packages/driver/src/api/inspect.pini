@@ -256,6 +256,19 @@ runTokens|func(path: String,) -> ():
         i = i + 1
     return
 
+; 结构签名：解析后逐行打印 main 的顶层语句指纹；`--sig` 与默认同出一份，不另立树形描述。
+runParse|func(path: String,) -> ():
+    if !exists(path) || isDir(path):
+        print("Error: 源文件不存在：" + path)
+        assert(false, "结构签名未生成")
+        return
+    let lines = signatureOfText(readFile(path))
+    var i = 0
+    while i < len(lines):
+        print(lines[i])
+        i = i + 1
+    return
+
 ; 输出档次对外名：宿主叫 machineCode / structuralDump / bytecode，内部枚举名不外泄。
 hostOutputName|func(_output: BackendOutput,) -> (String,):
     match _output:

@@ -698,7 +698,10 @@ emitExprCore|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
             else:
                 let shaped = storeValue(ctx = out.ctx, module = module, text = one.text, fromType = fromType, toType = argType)
                 out.ctx = shaped.ctx
-                if target >= 0:
+                if target >= 0 && isDeinitFunction(name = symbol):
+                    ; 析构的 self 是借出：调用方不交份额，方法出口也不还，两端成对。
+                    out.ctx = adoptValue(ctx = out.ctx, module = module, name = shaped.text, typeId = argType, adopt = 0)
+                elif target >= 0:
                     ; 形参归被调方所有：账上有就交出去，没有就另留一份，否则返回后被调方读到的是空壳。
                     out.ctx = adoptValue(ctx = out.ctx, module = module, name = shaped.text, typeId = argType, adopt = 1)
                 args = args + llvmTypeName(pool = module.types, typeId = argType) + " " + shaped.text
@@ -4159,6 +4162,23 @@ releaseGlueExists|func(module: IrModule, typeId: I32,) -> (Bool,):
 releaseGlueName|func(typeId: I32,) -> (String,):
     return "__release_box_" + countText(typeId)
 
+; 析构符号：按类型名查函数表，命中才答；`deinit` 只挂在对象上，故只有对象箱会命中。
+;  不变量  胶水在字段清扫之前调它：此刻字段还活着，析构体能读能写。
+deinitSymbolOf|func(module: IrModule, typeId: I32,) -> (String,):
+    let decl = declAt(table = module.decls, typeId = typeId)
+    if len(decl.name) == 0:
+        return ""
+    let symbol = instanceMethodName(method = "deinit", owner = decl.name)
+    if findFunction(module = module, name = symbol) < 0:
+        return ""
+    return symbol
+
+; 析构函数：符号以 `deinit__` 起头。它的 self 是借出，调用方不交份额、出口也不还。
+isDeinitFunction|func(name: String,) -> (Bool,):
+    if len(name) < 8:
+        return false
+    return name.slice(0, 8) == "deinit__"
+
 ; 字段归还：按字段类型选入口，名义与枚举字段递归走它自己的胶水。
 appendReleaseCall|func(lines: Array<String>, module: IrModule, name: String, typeId: I32,) -> (Array<String>,):
     var out = lines
@@ -4191,6 +4211,9 @@ appendFieldGlue|func(lines: Array<String>, module: IrModule, typeId: I32,) -> (A
     out = out.append("  %dead = icmp ne i32 %rc, 0")
     out = out.append("  br i1 %dead, label %sweep, label %done")
     out = out.append("sweep:")
+    let dtor = deinitSymbolOf(module = module, typeId = typeId)
+    if len(dtor) > 0:
+        out = out.append("  call void @" + dtor + "(ptr %box)")
     var i = 0
     while i < len(decl.fields):
         let fieldType = decl.fields[i].typeId

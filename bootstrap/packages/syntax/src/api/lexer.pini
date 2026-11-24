@@ -35,13 +35,22 @@ role: LexTextRole = .textComment
 start: I32 = 0
 end: I32 = 0
 
+; 旁路注释：区间从标记符到行尾，已去行尾空白；`ownLine` 表示该行除它之外没有记号。
+; 注释不进记号流，打印器靠这张表把注释锚回输出。
+(Comment)
+start: I32 = 0
+end: I32 = 0
+ownLine: Bool = true
+
 ; 词法结果：记号序列含布局记号与末尾的结束记号；问题与警告不参与记号流。
 ; `segments` 是段池，记号以基址与段数引用它；`bytes` 是归一化源字节，解析期按同一份比对。
+; `comments` 按出现顺序收集被跳过的注释，只供打印器使用。
 (LexResult)
 tokens: Array<Token> = []
 segments: Array<Segment> = []
 issues: Array<LexIssue> = []
 warnings: Array<LexWarning> = []
+comments: Array<Comment> = []
 bytes: Array<U8> = []
 
 ; 问题类别名：用于诊断消息与测试断言。

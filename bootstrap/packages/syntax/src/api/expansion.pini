@@ -1,5 +1,6 @@
 [expansion|import]
 _unicode = "../../../unicode"
+_diagnostics = "../../../diagnostics"
 
 ; 展开错误：码取 E3-014..018；`message` 已是成品文案，位置是出错节点的源内字节区间。
 (UnrollFault)
@@ -614,4 +615,17 @@ expandUnrolls|func(ast: Ast, bytes: Array<U8>,) -> (ExpandOutcome,):
     var out = ExpandOutcome()
     out.ast = worker.ast
     out.errors = worker.errors
+    return out
+
+; 展开错误转诊断：码与文案原样带出，主标签落在出错区间；文件路径由调用方给。
+unrollFaultDiagnostics|func(errors: Array<UnrollFault>, path: String,) -> (Array<Diagnostic>,):
+    var out: Array<Diagnostic> = []
+    var i = 0
+    while i < len(errors):
+        var one = makeDiagnostic(file = path, category = semanticCategory(), severity = errorSeverity(), code = errors[i].code, message = errors[i].message)
+        var labels: Array<Label> = []
+        labels = labels.append(makeLabel(start = errors[i].start, end = errors[i].end, message = "", primary = true))
+        one.labels = labels
+        out = out.append(one)
+        i = i + 1
     return out

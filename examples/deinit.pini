@@ -1,0 +1,24 @@
+; 析构 deinit：计数归零后先跑方法体、再清扫字段；弱引用在对象销毁后读成 nil
+; 运行：pini run examples/deinit.pini
+; 预期：体 / 甲 / 已释放 / 乙（赋值覆盖旧值时析构甲，函数返回时析构乙）
+{资源}
+名: String = ""
+
+{{资源}}
+deinit|self() -> ():
+    print(self.名)
+    return
+
+main|func() -> ():
+    var 首个 = 资源()
+    首个.名 = "甲"
+    var 观察 = weak 首个
+    print("体")
+    首个 = 资源()
+    首个.名 = "乙"
+    match 观察.value:
+        case none:
+            print("已释放")
+        case some(值,):
+            print(值.名)
+    return

@@ -1,0 +1,1 @@
+Error: 多个路径要配 -w 或 --check，否则多份输出在 stdout 上分不清边界

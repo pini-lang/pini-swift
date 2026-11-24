@@ -141,6 +141,45 @@ main|func() -> ():
             return
         runTokens(path = entryPathOf(raw = args[1]))
         return
+    if len(args) > 0 && args[0] == "fmt":
+        var write = false
+        var check = false
+        var paths: Array<String> = []
+        var c = 1
+        while c < len(args):
+            if args[c] == "-w" || args[c] == "--write":
+                write = true
+            elif args[c] == "--check":
+                check = true
+            else:
+                paths = paths.append(entryPathOf(raw = args[c]))
+            c = c + 1
+        if len(paths) == 0:
+            print("Error: fmt 需要至少一个路径")
+            assert(false, "格式化缺路径")
+            return
+        runFmt(paths = paths, write = write, check = check)
+        return
+    if len(args) > 0 && args[0] == "expand":
+        if len(args) != 2:
+            print("Error: expand 要且只要一个 .pini 路径")
+            assert(false, "展开参数不合规")
+            return
+        runExpand(path = entryPathOf(raw = args[1]))
+        return
+    if len(args) > 0 && args[0] == "parse":
+        var target = ""
+        var c = 1
+        while c < len(args):
+            if args[c] != "--sig":
+                target = args[c]
+            c = c + 1
+        if len(target) == 0:
+            print("Error: parse command requires a file path")
+            assert(false, "结构签名缺路径")
+            return
+        runParse(path = entryPathOf(raw = target))
+        return
     if len(args) > 0 && args[0] == "backends":
         var tsv = false
         var b = 1
@@ -439,7 +478,9 @@ isKnownCommand|func(name: String,) -> (Bool,):
         return true
     if name == "plan" || name == "version" || name == "--version" || name == "-v":
         return true
-    if name == "tokens" || name == "backends":
+    if name == "tokens" || name == "backends" || name == "parse" || name == "fmt":
+        return true
+    if name == "expand":
         return true
     if name == "compile" || name == "run-llvm" || name == "test-llvm":
         return true

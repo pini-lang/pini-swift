@@ -1,0 +1,48 @@
+; 结构签名：逐条语句一行，形状按构造顺序展开；断言比整行原文，不比行数。
+
+; 基本形状：调用、字面量与空 return 各就其位。
+基本形状|test() -> ():
+    let lines = signatureOfText("main|func() -> ():\n    print(\"hi\")\n    return\n")
+    assert(len(lines) == 2, "两条顶层语句")
+    assert(lines[0] == "SIG|1|exprStmt(call(ident:print,string:\"hi\"))", "调用与字符串原文")
+    assert(lines[1] == "SIG|2|return", "空 return 不带占位")
+    return
+
+; 无主函数：库文件不产签名行，不补占位。
+无主函数|test() -> ():
+    let lines = signatureOfText("f|func(a: I32,) -> (I32,):\n    return a\n")
+    assert(len(lines) == 0, "无 main 即零行")
+    return
+
+; 标签实参：标签写进二元细节位，位置实参只有运算符。
+标签实参|test() -> ():
+    let lines = signatureOfText("main|func() -> ():\n    f(k = 2)\n    g(3)\n    return\n")
+    assert(lines[0] == "SIG|1|exprStmt(call(ident:f,binary:k=(int:2)))", "标签进细节位")
+    assert(lines[1] == "SIG|2|exprStmt(call(ident:g,int:3))", "位置实参无标签")
+    return
+
+; 复合赋值：运算符取两子之间的原文，`=` 与 `+=` 因此可分。
+复合赋值|test() -> ():
+    let lines = signatureOfText("main|func() -> ():\n    a += 1\n    b = 2\n    return\n")
+    assert(lines[0] == "SIG|1|assign:+=(ident:a,int:1)", "复合赋值运算符")
+    assert(lines[1] == "SIG|2|assign:=(ident:b,int:2)", "简单赋值运算符")
+    return
+
+; 分支重建：elif 成对包一层，落单末子判作 else。
+分支重建|test() -> ():
+    let lines = signatureOfText("main|func() -> ():\n    if a:\n        b()\n    elif c:\n        d()\n    else:\n        e()\n    return\n")
+    assert(lines[0] == "SIG|1|if(ident:a,block(exprStmt(call(ident:b))),elif(ident:c,block(exprStmt(call(ident:d)))),else(block(exprStmt(call(ident:e)))))", "三支按条件、elif、else 展开")
+    return
+
+; 循环步块：step 单独起名，两个循环共用同一条重建规则。
+循环步块|test() -> ():
+    let lines = signatureOfText("main|func() -> ():\n    while x:\n        y()\n    step:\n        z()\n    return\n")
+    assert(lines[0] == "SIG|1|while(ident:x,block(exprStmt(call(ident:y))),step(block(exprStmt(call(ident:z)))))", "while 带 step")
+    return
+
+; 一元前后缀：原文从区间取，前缀与后缀各判一侧。
+一元前后缀|test() -> ():
+    let lines = signatureOfText("main|func() -> ():\n    var a = -b\n    c!\n    return\n")
+    assert(lines[0] == "SIG|1|var:var[-](ident:a,unary:-(ident:b))", "前缀一元")
+    assert(lines[1] == "SIG|2|exprStmt(unary:!(ident:c))", "后缀一元")
+    return

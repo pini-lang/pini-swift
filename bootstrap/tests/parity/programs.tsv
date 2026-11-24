@@ -25,6 +25,7 @@ control-if	单文件	ok	ok	ok	通过	通过	-	-	-
 control-while	单文件	ok	ok	ok	通过	通过	-	-	-
 cow	单文件	ok	ok	ok	通过	通过	-	-	-
 defer	单文件	ok	ok	ok	通过	通过	-	-	-
+deinit	单文件	ok	ok	ok	通过	通过	-	-	-
 dict-set	单文件	ok	ok	ok	通过	通过	-	-	-
 enum-dot-case	单文件	ok	ok	ok	通过	通过	-	-	-
 enum-named	单文件	ok	ok	ok	通过	通过	-	-	-

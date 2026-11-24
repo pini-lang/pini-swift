@@ -13,14 +13,14 @@ dap	-	无	-	无	待补齐
 debug	-	无	-	无	待补齐
 dump	-	有	-	自举独有	自举内部通道
 emit	--backend,-o	有	-	有	-
-expand	-	无	-	无	待补齐
-fmt	-	无	-	无	待补齐
+expand	-	有	-	有	-
+fmt	-	有	-	有	-
 help	-	无	-	无	待核
 interfaces	-	有	-	自举独有	自举内部通道
 lower	-	有	-	自举独有	自举内部通道
 lsp	-	无	-	无	待补齐
 mod	-	有	-	有	-
-parse	--sig	无	--sig	无	保留差异
+parse	--sig	有	-	有	-
 plan	-	有	-	自举独有	自举内部通道
 repl	-	无	-	无	待补齐
 run	-	无	-	无	待补齐

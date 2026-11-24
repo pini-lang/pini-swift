@@ -1,0 +1,4 @@
+main|func() -> ():
+    var 名字 = "Pini"
+    print(名字)
+    return

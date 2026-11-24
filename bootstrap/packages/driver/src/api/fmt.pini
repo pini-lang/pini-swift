@@ -1,0 +1,100 @@
+[fmt|import]
+_support = "../../../support"
+_syntax = "../../../syntax"
+_diagnostics = "../../../diagnostics"
+
+; 收集源文件：目录递归，点前缀整棵跳过，只收 `.pini` 后缀。
+collectSources|func(path: String, out: Array<String>,) -> (Array<String>,):
+    if isDir(path):
+        let names = listDir(path)
+        var i = 0
+        while i < len(names):
+            let name = names[i]
+            if len(name) > 0 && name.indexOf(".") != 0:
+                out = collectSources(path = path + "/" + name, out = out)
+            i = i + 1
+        return out
+    if len(path) >= 5 && path.substring(len(path) - 5, len(path)) == ".pini":
+        return out.append(path)
+    return out
+
+; 原样输出：去掉末尾换行再 print，免得多出一行空行。
+printWithoutTrailingNewline|func(text: String,) -> ():
+    var body = text
+    if len(body) > 0 && body.slice(len(body) - 1, len(body)) == "\n":
+        body = body.slice(0, len(body) - 1)
+    print(body)
+    return
+
+; 保真打印：解析后按树重排；`-w` 就地写，`--check` 列出待整理文件，默认单文件打标准输出。
+; 解析失败不跳过：静默跳过会把真错误变成通过，与宿主的处置一致。
+runFmt|func(paths: Array<String>, write: Bool, check: Bool,) -> ():
+    if len(paths) > 1 && !write && !check:
+        print("Error: 多个路径要配 -w 或 --check，否则多份输出在 stdout 上分不清边界")
+        assert(false, "多路径缺开关")
+        return
+    var files: Array<String> = []
+    var p = 0
+    while p < len(paths):
+        let before = len(files)
+        files = collectSources(path = paths[p], out = files)
+        if len(files) == before:
+            print("Error: " + paths[p] + " 下没有 .pini 文件")
+            assert(false, "格式化缺输入")
+        p = p + 1
+    var dirty = 0
+    var failed = 0
+    var i = 0
+    while i < len(files):
+        let source = readFile(files[i])
+        let result = printChecked(source)
+        if !result.ok:
+            print(" 行不通  [格式化] 解析失败：" + files[i])
+            failed = failed + 1
+        elif result.text == source:
+            if !write && !check:
+                printWithoutTrailingNewline(text = result.text)
+        else:
+            dirty = dirty + 1
+            if check:
+                print(files[i])
+            elif write:
+                writeFile(files[i], result.text)
+            else:
+                printWithoutTrailingNewline(text = result.text)
+        i = i + 1
+    if check && dirty > 0:
+        assert(false, "有文件需要整理")
+    if failed > 0:
+        assert(false, "有文件解析失败")
+    return
+
+; 诊断逐条打印：渲染文本自带换行，去掉一个再交给 print，免得叠出空行。
+printDiagnosticList|func(items: Array<Diagnostic>, text: SourceText,) -> ():
+    var i = 0
+    while i < len(items):
+        printWithoutTrailingNewline(text = renderDiagnostic(d = items[i], text = text))
+        i = i + 1
+    return
+
+; 展开打印：解析通过后跑 unroll 展开再按树打印，注释不进产物；错误按码与位置报出。
+runExpand|func(path: String,) -> ():
+    if !exists(path) || isDir(path):
+        print("Error: 源文件不存在：" + path)
+        assert(false, "展开未生成")
+        return
+    let normalized = printFoldNewlines(readFile(path))
+    let source = makeSourceText(normalized)
+    let parsed = parseFile(text = normalized, file = path)
+    if len(parsed.diagnostics) > 0:
+        printDiagnosticList(items = parsed.diagnostics, text = source)
+        assert(false, "展开前的解析未通过")
+        return
+    let bytes = tempUtf8Bytes(normalized)
+    let expanded = expandUnrolls(ast = parsed.ast, bytes = bytes)
+    if len(expanded.errors) > 0:
+        printDiagnosticList(items = unrollFaultDiagnostics(errors = expanded.errors, path = path), text = source)
+        assert(false, "展开未通过")
+        return
+    printWithoutTrailingNewline(text = printExpandedModule(ast = expanded.ast, bytes = bytes, source = source))
+    return

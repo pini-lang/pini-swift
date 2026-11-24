@@ -1,0 +1,61 @@
+[lifecycle_test|import]
+_syntax = "../../syntax"
+_module_loader = "../../module-loader"
+
+; 生命周期形状：`deinit` 只挂对象、零形参、零返回、不同步、每类型一个。
+; 判据看类别名与所属类型名，不看诊断措辞。
+
+; lifecycle造单元：装载后排序；形状检查只看语法树，不注册也不解析类型。
+lifecycle造单元|func(_src: String,) -> (Array<CompilationUnit>,):
+    let 装载 = loadUnit(path = "packages/p/src/api/p.pini", text = _src)
+    assert(!装载.failed, "样例应可加载")
+    return sortedUnits([装载.unit])
+
+; 首错一行：类别名加所属类型名，便于逐条比对。
+lifecycle首错|func(_检查: LifecycleCheck,) -> (String,):
+    if len(_检查.errors) == 0:
+        return ""
+    let 一条 = _检查.errors[0]
+    return lifecycleErrorName(一条.kind) + "：" + 一条.owner
+
+; 合法：对象上的零形参、零返回、同步析构不报。
+合法析构|test() -> ():
+    let 单元 = lifecycle造单元("{资源}\n名: String = \"\"\n\n{{资源}}\ndeinit|self() -> ():\n    return\n")
+    let 检查 = checkLifecycleShapes(units = 单元)
+    assert(!检查.failed, "合法析构不应报")
+
+; 非对象：挂在结构上即拒。
+结构上的析构|test() -> ():
+    let 单元 = lifecycle造单元("(值)\nx: I32 = 0\n\n((值))\ndeinit|self() -> ():\n    return\n")
+    let 检查 = checkLifecycleShapes(units = 单元)
+    assert(检查.failed, "结构上的析构应被拒")
+    assert(lifecycle首错(检查) == "`deinit` 只挂在对象类型上：值", "实得 " + lifecycle首错(检查))
+
+; 形参：带一个形参即拒。
+带形参的析构|test() -> ():
+    let 单元 = lifecycle造单元("{对象}\nn: I32 = 0\n\n{{对象}}\ndeinit|self(额外: I32,) -> ():\n    return\n")
+    let 检查 = checkLifecycleShapes(units = 单元)
+    assert(检查.failed, "带形参的析构应被拒")
+    assert(lifecycle首错(检查) == "`deinit` 不带形参：对象", "实得 " + lifecycle首错(检查))
+
+; 返回：写了返回类型即拒。
+带返回的析构|test() -> ():
+    let 单元 = lifecycle造单元("{对象}\nn: I32 = 0\n\n{{对象}}\ndeinit|self() -> (I32,):\n    return 0\n")
+    let 检查 = checkLifecycleShapes(units = 单元)
+    assert(检查.failed, "带返回的析构应被拒")
+    assert(lifecycle首错(检查) == "`deinit` 不返回值：对象", "实得 " + lifecycle首错(检查))
+
+; 异步：`=>` 即拒。
+异步析构|test() -> ():
+    let 单元 = lifecycle造单元("{对象}\nn: I32 = 0\n\n{{对象}}\ndeinit|self() => ():\n    return\n")
+    let 检查 = checkLifecycleShapes(units = 单元)
+    assert(检查.failed, "异步析构应被拒")
+    assert(lifecycle首错(检查) == "`deinit` 不能是异步函数：对象", "实得 " + lifecycle首错(检查))
+
+; 重复：跨扩展块各写一次即拒，第二处才报。
+重复析构|test() -> ():
+    let 单元 = lifecycle造单元("{甲}\nn: I32 = 0\n\n{{甲}}\ndeinit|self() -> ():\n    return\n\n{{甲}}\ndeinit|self() -> ():\n    return\n")
+    let 检查 = checkLifecycleShapes(units = 单元)
+    assert(检查.failed, "同类型两个析构应被拒")
+    assert(len(检查.errors) == 1, "只报第二处")
+    assert(lifecycle首错(检查) == "每个类型只能一个 `deinit`：甲", "实得 " + lifecycle首错(检查))
