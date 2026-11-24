@@ -27,3 +27,5 @@ mod-graph-cycles	mod	graph --cycles bootstrap/fixtures/mod-tree	在	同同同	�
 mod-verify	mod	verify bootstrap/fixtures/mod-tree	在	同同同	比锁文件校验和；夹具里的摘要由宿主生成
 mod-tidy-clean	mod	tidy bootstrap/fixtures/mod-tree	在	同同同	已对齐时只报无改动，不改写清单
 mod-usage	mod	-	在	同同异	缺子命令：用法落标准错误，退出码 1
+parse-sig	parse	--sig examples/hello.pini	在	同同异	结构签名自定词表：退出码与诊断同、全文异
+parse-tree	parse	examples/hello.pini	在	同同异	默认与 --sig 同出一份签名，宿主打印缩进树
