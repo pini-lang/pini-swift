@@ -18,3 +18,7 @@ backends	backends	在	0	0	-	-	0/0	同同异	异:文
 backends-tsv	backends	在	0	0	-	-	0/0	同同异	异:文
 check-unroll	check	在	0	0	-	-	0/0	同同异	异:文
 check-unroll-bad	check	在	1	1	E3-014@4:20	E3-014@4:20	1/1	同同异	异:文
+run-llvm-hello	run-llvm	在	0	0	-	-	0/0	同同同	同
+test-llvm-module	test-llvm	在	1	1	-	-	0/0	同同异	异:文
+build-print-plan	build	在	0	0	-	-	0/0	同同异	异:文
+build-shared	build	在	0	0	-	-	0/0	同同异	异:文

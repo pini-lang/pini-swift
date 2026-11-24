@@ -1,4 +1,4 @@
-# 对照夹具清单：每条用例一行，参数按空白切分，<ROOT> 在运行时换成仓库根。
+﻿# 对照夹具清单：每条用例一行，参数按空白切分，<ROOT> 在运行时换成仓库根。
 # 「自举」= 在 / 缺；「期望」= 三位签名，依次为退出码、首条诊断、全文的比对结果。
 # 签名只能变好：某位由「异」转「同」或换词，都必须改这一列，门禁会红。
 用例	命令	参数	自举	期望	说明
@@ -18,3 +18,7 @@ backends	backends	-	在	同同异	族表同形，自举只有两条通道
 backends-tsv	backends	--tsv	在	同同异	同上，多一行输出档次
 check-unroll	check	examples/unroll.pini	在	同同异	展开通过：多行多分量摊成多轮
 check-unroll-bad	check	bootstrap/fixtures/cli-parity/inputs/unroll-bad.pini	在	同同异	展开错误 E3-014，码与位置相同
+run-llvm-hello	run-llvm	examples/hello.pini	在	同同同	发射后交 lli 运行，两侧输出逐行相同
+test-llvm-module	test-llvm	bootstrap/fixtures/test-basic/pkg	在	同同异	与 test 同一套收集筛选；报告由产物自己打印
+build-print-plan	build	--print-plan bootstrap/fixtures/test-basic	在	同同异	只打印计划，不翻译也不落盘
+build-shared	build	--shared bootstrap/fixtures/export-c/pkg -o /tmp/pini_cli_parity_calc.dylib	在	同同异	出动态库；产物名取块名

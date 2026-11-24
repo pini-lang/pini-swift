@@ -5,14 +5,14 @@
 命令	宿主开关	自举	自举缺开关	状态	处置
 backends	--tsv	有	-	有	-
 bind	-	无	-	无	待补齐
-build	--diagnostics-tsv,--no-stdlib,--print-plan,--shared,-o	有	--diagnostics-tsv,--no-stdlib,--print-plan,--shared,-o	部分	待补齐
+build	--diagnostics-tsv,--no-stdlib,--print-plan,--shared,-o	有	-	有	-
 cases	-	有	-	自举独有	自举内部通道
 check	--diagnostics-tsv	有	-	有	-
 compile	-	有	-	有	-
 dap	-	无	-	无	待补齐
 debug	-	无	-	无	待补齐
 dump	-	有	-	自举独有	自举内部通道
-emit	--backend,-o	有	--backend,-o	部分	待补齐
+emit	--backend,-o	有	-	有	-
 expand	-	无	-	无	待补齐
 fmt	-	无	-	无	待补齐
 help	-	无	-	无	待核
@@ -24,8 +24,8 @@ parse	--sig	无	--sig	无	保留差异
 plan	-	有	-	自举独有	自举内部通道
 repl	-	无	-	无	待补齐
 run	-	无	-	无	待补齐
-run-llvm	-	无	-	无	待补齐
+run-llvm	-	有	-	有	-
 test	-	有	-	有	-
-test-llvm	-	无	-	无	待补齐
+test-llvm	-	有	-	有	-
 tokens	-	有	-	有	-
 version	-	有	-	有	-

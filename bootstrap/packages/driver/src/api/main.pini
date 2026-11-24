@@ -9,15 +9,6 @@ _backend_llvm = "../../../backend-llvm"
 _testkit = "../../../testkit"
 _hostproc = "../../../hostproc"
 
-; 入口路径归一：不以 `/`、`./`、`../` 开头的路径补 `./`。
-; 运行时按程序基准解析裸相对路径，宿主按进程目录解析；补前缀后两侧落到同一处。
-entryPathOf|func(raw: String,) -> (String,):
-    if len(raw) == 0:
-        return raw
-    if raw.indexOf("/") == 0 || raw.indexOf("./") == 0 || raw.indexOf("../") == 0:
-        return raw
-    return "./" + raw
-
 ; 驱动主程序：无参数只装配清单并打印产物行；子命令的根取位置参数，缺省从模块根上溯。
 ; check 跑完整检查，build 落构建计划，plan 打印计划，lower 走降载，dump 出结构转储，emit 出 LLVM 文本。
 ; cases 只列裸名用例位置；降载前先填表达式类型表并把池换成填表后的池；`--no-stdlib` 与 `--stdlib` 先摘出去。
@@ -52,6 +43,8 @@ main|func() -> ():
     var 分包 = false
     var 单包 = ""
     var 缓存目录 = ""
+    var backendName = "llvm"
+    var emitOutput = ""
     if len(args) > 0 && args[0] == "check":
         全量 = true
         var c = 1
@@ -85,36 +78,27 @@ main|func() -> ():
                 单包 = one.slice(10, len(one))
             elif len(one) > 12 && one.indexOf("--cache-dir=") == 0:
                 缓存目录 = one.slice(12, len(one))
+            elif len(one) > 10 && one.indexOf("--backend=") == 0:
+                backendName = one.slice(10, len(one))
+            elif one == "--backend" && e + 1 < len(args):
+                backendName = args[e + 1]
+                e = e + 1
+            elif one == "-o" && e + 1 < len(args):
+                emitOutput = args[e + 1]
+                e = e + 1
             else:
                 root = entryPathOf(raw = one)
             e = e + 1
     if len(args) > 0 && args[0] == "test":
-        var testRoot = workspaceRootOf(start = moduleRoot())
-        var testFilter = ""
-        var testSkips: Array<String> = []
-        var testListOnly = false
-        var cursor = 1
-        while cursor < len(args):
-            let arg: String = args[cursor]
-            if arg == "--filter" && cursor + 1 < len(args):
-                testFilter = args[cursor + 1]
-                cursor = cursor + 2
-            elif arg.indexOf("--filter=") == 0:
-                testFilter = arg.slice(9, len(arg))
-                cursor = cursor + 1
-            elif arg == "--skip" && cursor + 1 < len(args):
-                testSkips = testSkips.append(args[cursor + 1])
-                cursor = cursor + 2
-            elif arg.indexOf("--skip=") == 0:
-                testSkips = testSkips.append(arg.slice(7, len(arg)))
-                cursor = cursor + 1
-            elif arg == "--list":
-                testListOnly = true
-                cursor = cursor + 1
-            else:
-                testRoot = entryPathOf(raw = arg)
-                cursor = cursor + 1
-        runTest(root = testRoot, filter = testFilter, skips = testSkips, listOnly = testListOnly, stdlib = stdlib)
+        let invocation = parseTestArgs(args = args, fallbackRoot = workspaceRootOf(start = moduleRoot()))
+        runTest(root = invocation.root, filter = invocation.filter, skips = invocation.skips, listOnly = invocation.listOnly, stdlib = stdlib)
+        return
+    if len(args) > 0 && args[0] == "test-llvm":
+        let invocation = parseTestArgs(args = args, fallbackRoot = workspaceRootOf(start = moduleRoot()))
+        if invocation.listOnly:
+            runTest(root = invocation.root, filter = invocation.filter, skips = invocation.skips, listOnly = true, stdlib = stdlib)
+        else:
+            runTestNative(root = invocation.root, filter = invocation.filter, skips = invocation.skips, stdlib = stdlib)
         return
     if len(args) > 0 && args[0] == "cases":
         if len(args) > 1:
@@ -167,9 +151,35 @@ main|func() -> ():
         printBackendMatrix(tsv = tsv)
         return
     if len(args) > 0 && args[0] == "build":
-        if len(args) > 1:
-            root = entryPathOf(raw = args[1])
-        runBuild(root = root, stdlib = stdlib)
+        var showPlan = false
+        var shared = false
+        var outputPath = ""
+        var structured = false
+        var bc = 1
+        while bc < len(args):
+            let one: String = args[bc]
+            if one == "--print-plan":
+                showPlan = true
+            elif one == "--shared":
+                shared = true
+            elif one == "--diagnostics-tsv":
+                structured = true
+            elif one == "-o" && bc + 1 < len(args):
+                outputPath = args[bc + 1]
+                bc = bc + 1
+            else:
+                root = entryPathOf(raw = one)
+            bc = bc + 1
+        if showPlan && shared:
+            print("Error: --print-plan 只用于普通构建，不与 --shared 同用")
+            assert(false, "开关互斥")
+            return
+        if shared:
+            runBuildShared(path = root, outputPath = outputPath, stdlib = stdlib)
+        elif showPlan:
+            printBuildPlan(path = root)
+        else:
+            runBuild(root = root, stdlib = stdlib, structured = structured)
         return
     if len(args) > 0 && args[0] == "plan":
         var 分波 = false
@@ -241,6 +251,10 @@ main|func() -> ():
         return
     if 发射:
         if 分包:
+            if len(emitOutput) > 0 || backendName != "llvm":
+                print("Error: --packages 不与 -o / --backend 同用")
+                assert(false, "开关互斥")
+                return
             let written = writeArtifacts(root = root, stdlib = stdlib, onlyName = 单包, cacheDir = 缓存目录)
             if written.ok:
                 print("emit-packages-ok", written.packages, written.emitted, written.reused, written.bytes)
@@ -253,14 +267,21 @@ main|func() -> ():
         if len(产物.check.errors) > 0:
             print("emit-blocked", len(产物.check.errors))
             return
-        let entry = makeBackendOf(name = "llvm", outputCode = backendOutputNativeCode(), families = llvmFamilies(), entry = 2)
-        let emitted = emitModule(entry = entry, target = defaultTarget(), module = 产物.module)
+        let entry = backendEntryFor(backendName)
+        if len(entry.name) == 0:
+            print("Error: unknown backend '" + backendName + "'. Available: llvm, dump")
+            assert(false, "未知后端")
+            return
+        let emitted = emitByBackend(entry = entry, module = 产物.module)
         if emitted.failed:
             print("emit-gaps", emitGapCount(result = emitted), emitted.detail)
             var g = 0
             while g < len(emitted.gaps):
                 print("缺口", emitted.gaps[g])
                 g = g + 1
+            return
+        if len(emitOutput) > 0:
+            writeFile(emitOutput, emitted.text)
             return
         print("emit-ok", 产物.packages, emitted.lines, len(emitted.text))
         print("emit-backend", entry.name, backendOutputName(entry.output), len(entry.families))
@@ -277,6 +298,18 @@ main|func() -> ():
             assert(false, "compile 缺路径")
             return
         runCompile(path = entryPathOf(raw = 编译路径), stdlib = stdlib)
+        return
+    if len(args) > 0 && args[0] == "run-llvm":
+        var runPath = ""
+        var rc = 1
+        while rc < len(args):
+            runPath = args[rc]
+            rc = rc + 1
+        if len(runPath) == 0:
+            print("Error: run-llvm command requires a file path")
+            assert(false, "run-llvm 缺路径")
+            return
+        runLLI(path = entryPathOf(raw = runPath), stdlib = stdlib)
         return
     if len(args) > 0 && !isKnownCommand(name = args[0]):
         print("Error: Unknown command '" + args[0] + "'")
@@ -405,16 +438,20 @@ isKnownCommand|func(name: String,) -> (Bool,):
         return true
     if name == "tokens" || name == "backends":
         return true
-    if name == "compile":
+    if name == "compile" || name == "run-llvm" || name == "test-llvm":
         return true
     return false
 
 ; 执行期：补输入指纹、数缺头文件的步、落计划；自举侧不翻译，生成文本由宿主 bind 产出。
 ; 单文件入口与宿主同口径：只做检查、不落产物，输出与 `check` 那条腿一致。
-runBuild|func(root: String, stdlib: StdlibOption,) -> ():
+; 结构化开关只改单文件那条腿的输出形态；计划面是纯数据，两种形态共用一份文本。
+runBuild|func(root: String, stdlib: StdlibOption, structured: Bool,) -> ():
     if exists(root) && !isDir(root):
         let report = checkWorkspace(root = root, stdlib = stdlib)
-        if len(report.text) > 0:
+        if structured:
+            if len(report.tsv) > 0:
+                print(report.tsv)
+        elif len(report.text) > 0:
             print(report.text)
         if report.errorCount > 0 || report.exitCode != 0:
             print("workspace-check-failed", report.errorCount)
@@ -494,18 +531,3 @@ runCompile|func(path: String, stdlib: StdlibOption,) -> ():
         assert(false, "程序以非零码退出")
         return
     return
-
-; 链接参数：clang 在前，运行时库存在时补 -L / -l / rpath，最后是产物与输入。
-; 顺序照宿主：链接参数在前、`-o` 与输入在后，clang 对两者的位置敏感。
-linkArgs|func(irPath: String, binPath: String,) -> (Array<String>,):
-    var out: Array<String> = [toolPath(tool = "clang")]
-    let lib = runtimeLibrary()
-    if len(lib) > 0:
-        let dir = lib.slice(0, processLastSlash(text = lib))
-        out = out.append("-L" + dir)
-        out = out.append("-lPiniRuntime")
-        out = out.append("-Wl,-rpath," + dir)
-    out = out.append("-o")
-    out = out.append(binPath)
-    out = out.append(irPath)
-    return out

@@ -506,6 +506,69 @@ for symbol in calc_add calc_len calc_cfg_get calc_init calc_shutdown; do
     fi
 done
 
+# 构建执行组：run-llvm 交 lli，test-llvm 与「发射后脚本链接运行」同报告，
+# emit 后端可按名选，build --print-plan 不落盘，build --shared 出动态库且符号面同上面一致。
+# 标准库显式给路径：次代产物搬出自举目录后，按产物位置猜会落空，与命令对照夹具同一口径。
+stdlib_args=(--stdlib "$root/bootstrap/stdlib")
+run_out="$("$pini" "${stdlib_args[@]}" run-llvm "$root/examples/hello.pini" 2>/dev/null)"
+case "$run_out" in
+*"Hello, World!"*) ;;
+*)
+    echo " 行不通  [测试自检] run-llvm 未输出问候语：$run_out" >&2
+    fail=1
+    ;;
+esac
+
+native_report="$("$pini" "${stdlib_args[@]}" test-llvm "$fixture" 2>&1)"
+native_rc=$?
+scripted_report="$(run_case native-compare 2>&1)"
+if [ "$native_rc" -ne 1 ]; then
+    echo " 行不通  [测试自检] test-llvm 失败夹具应退出 1，实得 $native_rc" >&2
+    fail=1
+fi
+# 自举侧没有逐值退出原语，非零一律靠断言落地；断言文案不算报告正文，比正文前先摘掉这一行。
+native_body="$(echo "$native_report" | grep -v '^测试未通过$')"
+if [ "$native_body" != "$scripted_report" ]; then
+    echo " 行不通  [测试自检] test-llvm 报告应与发射后运行逐字相同" >&2
+    fail=1
+fi
+
+"$pini" "${stdlib_args[@]}" dump "$fixture" > "$work/dump-report.txt" 2>&1
+"$pini" "${stdlib_args[@]}" emit "$fixture" --backend dump -o "$work/dump-via-emit.txt"
+tail -n +3 "$work/dump-report.txt" > "$work/dump-body.txt"
+if [ "$(cat "$work/dump-body.txt")" != "$(cat "$work/dump-via-emit.txt")" ]; then
+    echo " 行不通  [测试自检] emit --backend dump 应与 dump 正文相同" >&2
+    fail=1
+fi
+
+plan_file="$fixture/.build/debug/plan.toml"
+rm -f "$plan_file"
+plan_out="$("$pini" "${stdlib_args[@]}" build "$fixture" --print-plan 2>&1)"
+case "$plan_out" in
+*"[plan]"*) ;;
+*)
+    echo " 行不通  [测试自检] build --print-plan 未打印计划：$plan_out" >&2
+    fail=1
+    ;;
+esac
+if [ -f "$plan_file" ]; then
+    echo " 行不通  [测试自检] build --print-plan 不应落盘" >&2
+    fail=1
+fi
+"$pini" "${stdlib_args[@]}" build "$fixture" > /dev/null 2>&1
+
+shared_out="$("$pini" "${stdlib_args[@]}" build --shared "$export_fixture/pkg" -o "$work/libcalc-command.dylib" 2>&1)"
+if [ ! -f "$work/libcalc-command.dylib" ]; then
+    echo " 行不通  [测试自检] build --shared 未出产物：$shared_out" >&2
+    fail=1
+fi
+for symbol in calc_add calc_init calc_shutdown; do
+    if ! has_export "$work/libcalc-command.dylib" "$symbol"; then
+        echo " 行不通  [测试自检] build --shared 缺符号 $symbol" >&2
+        fail=1
+    fi
+done
+
 # 导出面负例：方法不可发布，检查须报导出面码；夹具在构建目录里现造，不留源码树。
 bad_dir="$work/export-bad"
 rm -rf "$bad_dir"
@@ -543,5 +606,5 @@ fi
 if [ "$fail" -ne 0 ]; then
     exit 1
 fi
-echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入，浮点常量走位模式，接口缓存按记录判失效，逐包产物按包发射且合并可链接，缓存按拓扑与内容判复用，分波按依赖深度，共享缓存按指纹复用，命令对照按签名锁定，导出面按符号表核对"
+echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入，浮点常量走位模式，接口缓存按记录判失效，逐包产物按包发射且合并可链接，缓存按拓扑与内容判复用，分波按依赖深度，共享缓存按指纹复用，命令对照按签名锁定，导出面按符号表核对，构建执行组五条命令各有判据"
 exit 0

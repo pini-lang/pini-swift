@@ -1,0 +1,24 @@
+; 构建执行组的纯判据：后端名解析、动态库落点与测试参数解析。
+; 起进程与落盘不在这里验，那两条由门禁的端到端段承担。
+后端名解析|test() -> ():
+    assert(backendEntryFor("llvm").name == "llvm", "llvm 应可解析")
+    assert(backendEntryFor("dump").name == "dump", "dump 应可解析")
+    assert(len(backendEntryFor("nope").name) == 0, "未知名应答空")
+
+动态库落点|test() -> ():
+    let plain = sharedLibraryPath(outputPath = "", blockName = "calc")
+    assert(plain == "libcalc." + sharedSuffix(), "缺 -o 时按块名落在当前目录")
+    let inDir = sharedLibraryPath(outputPath = "/tmp/", blockName = "calc")
+    assert(inDir == "/tmp/libcalc." + sharedSuffix(), "目录写法应补文件名且不叠斜杠")
+    let named = sharedLibraryPath(outputPath = "/tmp/custom.dylib", blockName = "calc")
+    assert(named == "/tmp/custom.dylib", "-o 给文件名时原样采用")
+
+测试参数解析|test() -> ():
+    let plain = parseTestArgs(args = ["test", "pkg"], fallbackRoot = ".")
+    assert(plain.root == "./pkg", "位置参数按入口归一")
+    assert(!plain.listOnly, "默认不列清单")
+    let filtered = parseTestArgs(args = ["test", "--filter", "abc", "--skip=x", "--list"], fallbackRoot = ".")
+    assert(filtered.filter == "abc", "两段式筛选")
+    assert(len(filtered.skips) == 1 && filtered.skips[0] == "x", "等号式跳过")
+    assert(filtered.listOnly, "清单开关")
+    assert(filtered.root == ".", "无位置参数时用兜底根")
