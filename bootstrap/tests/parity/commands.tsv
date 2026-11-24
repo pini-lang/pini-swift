@@ -14,7 +14,7 @@ debug	-	无	-	无	待补齐
 dump	-	有	-	自举独有	自举内部通道
 emit	--backend,-o	有	-	有	-
 expand	-	无	-	无	待补齐
-fmt	-	无	-	无	待补齐
+fmt	-	有	-	有	待补齐
 help	-	无	-	无	待核
 interfaces	-	有	-	自举独有	自举内部通道
 lower	-	有	-	自举独有	自举内部通道

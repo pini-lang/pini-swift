@@ -1,0 +1,86 @@
+[fmt|import]
+_syntax = "../../../syntax"
+
+; 收集源文件：目录递归，点前缀整棵跳过，只收 `.pini` 后缀。
+collectSources|func(path: String, out: Array<String>,) -> (Array<String>,):
+    if isDir(path):
+        let names = listDir(path)
+        var i = 0
+        while i < len(names):
+            let name = names[i]
+            if len(name) > 0 && name.indexOf(".") != 0:
+                out = collectSources(path = path + "/" + name, out = out)
+            i = i + 1
+        return out
+    if len(path) >= 5 && path.substring(len(path) - 5, len(path)) == ".pini":
+        return out.append(path)
+    return out
+
+; 原样输出：去掉末尾换行再 print，免得多出一行空行。
+printWithoutTrailingNewline|func(text: String,) -> ():
+    var body = text
+    if len(body) > 0 && body.slice(len(body) - 1, len(body)) == "\n":
+        body = body.slice(0, len(body) - 1)
+    print(body)
+    return
+
+; 注释探测：行首（去缩进后）出现 `;` 或 `#` 即判为含整行注释；保留未实现时拒绝改写。
+hasLineComment|func(source: String,) -> (Bool,):
+    var start = 0
+    var i = 0
+    while i <= len(source):
+        if i == len(source) || source.slice(i, i + 1) == "\n":
+            var at = start
+            while at < i && source.slice(at, at + 1) == " ":
+                at = at + 1
+            if at < i:
+                let mark = source.slice(at, at + 1)
+                if mark == ";" || mark == "#":
+                    return true
+            start = i + 1
+        i = i + 1
+    return false
+
+; 保真打印：解析后按树重排；`-w` 就地写，`--check` 列出待整理文件，默认单文件打标准输出。
+; 解析失败不跳过：静默跳过会把真错误变成通过，与宿主的处置一致。
+runFmt|func(paths: Array<String>, write: Bool, check: Bool,) -> ():
+    var files: Array<String> = []
+    var p = 0
+    while p < len(paths):
+        let before = len(files)
+        files = collectSources(path = paths[p], out = files)
+        if len(files) == before:
+            print("Error: " + paths[p] + " 下没有 .pini 文件")
+            assert(false, "格式化缺输入")
+        p = p + 1
+    var dirty = 0
+    var failed = 0
+    var i = 0
+    while i < len(files):
+        let source = readFile(files[i])
+        if hasLineComment(source = source):
+            print(" 行不通  [格式化] 注释保留未实现：" + files[i])
+            failed = failed + 1
+            i = i + 1
+            continue
+        let result = printChecked(source)
+        if !result.ok:
+            print(" 行不通  [格式化] 解析失败：" + files[i])
+            failed = failed + 1
+        elif result.text == source:
+            if !write && !check:
+                printWithoutTrailingNewline(text = result.text)
+        else:
+            dirty = dirty + 1
+            if check:
+                print(files[i])
+            elif write:
+                writeFile(files[i], result.text)
+            else:
+                printWithoutTrailingNewline(text = result.text)
+        i = i + 1
+    if check && dirty > 0:
+        assert(false, "有文件需要整理")
+    if failed > 0:
+        assert(false, "有文件解析失败")
+    return
