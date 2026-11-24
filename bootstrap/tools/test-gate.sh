@@ -40,6 +40,18 @@ fixture="$root/bootstrap/fixtures/test-basic"
 work="$root/bootstrap/.build/release/tests/gate"
 mkdir -p "$work" || exit 1
 
+# 重置目录：先移进 work 下的垃圾桶再重建，语义仍是「从零重来」。
+# 批量删除在部分沙箱里会被拦，移到一边同样隔离旧产物，不依赖删除能否落地。
+reset_dir() {
+    local target="$1"
+    if [ ! -e "$target" ]; then
+        return 0
+    fi
+    mkdir -p "$work/.trash" || return 1
+    mv "$target" "$work/.trash/$(basename "$target")-$RANDOM" || return 1
+    return 0
+}
+
 # 跑一轮：发射、链接、运行；报告走标准输出，诊断走标准错误，退出码即测试结果。
 run_case() {
     local name="$1"
@@ -195,7 +207,7 @@ fi
 
 # 生成模块：计划登记且产物在 .build 下才并入；缺计划、缺产物、脚本改动各报一条指向 build 的诊断。
 gen_fixture="$work/generated-load"
-rm -rf "$gen_fixture"
+reset_dir "$gen_fixture"
 cp -R "$root/bootstrap/fixtures/generated-load" "$gen_fixture"
 gen_plan="$gen_fixture/.build/debug/plan.toml"
 gen_out="$gen_fixture/.build/debug/packages/gendemo/generated/cstr.pini"
@@ -291,7 +303,7 @@ iface_expect() {
     esac
 }
 iface_fixture="$work/interfaces-cache"
-rm -rf "$iface_fixture"
+reset_dir "$iface_fixture"
 cp -R "$root/bootstrap/fixtures/interfaces-cache" "$iface_fixture"
 mkdir -p "$iface_fixture/.build/debug/packages/app" "$iface_fixture/.build/debug/packages/support"
 iface_expect "首次接口缓存应两份新写" "interfaces-ok 2 2 0" "$("$pini" interfaces "$iface_fixture" --no-stdlib 2>&1)"
@@ -337,7 +349,7 @@ pkg_expect() {
 }
 pkg_fixture="$work/packages-ir"
 pkg_dir="$pkg_fixture/.build/debug/packages"
-rm -rf "$pkg_fixture"
+reset_dir "$pkg_fixture"
 cp -R "$root/bootstrap/fixtures/packages-ir" "$pkg_fixture"
 mkdir -p "$pkg_dir/app" "$pkg_dir/cli" "$pkg_dir/support"
 pkg_expect "接口记录应三份新写" "interfaces-ok 3 3 0" "$("$pini" interfaces "$pkg_fixture" --no-stdlib 2>&1)"
@@ -451,7 +463,7 @@ wave_expect() {
 }
 
 cache_dir="$work/packages-cache"
-rm -rf "$cache_dir"
+reset_dir "$cache_dir"
 wave_expect "分波应出第一波" "wave 0 support" "$("$pini" plan "$pkg_fixture" --waves 2>&1)"
 wave_expect "第二波应是应用包" "wave 1 app" "$("$pini" plan "$pkg_fixture" --waves 2>&1)"
 wave_expect "第三波应是命令行包" "wave 2 cli" "$("$pini" plan "$pkg_fixture" --waves 2>&1)"
@@ -571,7 +583,7 @@ done
 
 # 导出面负例：方法不可发布，检查须报导出面码；夹具在构建目录里现造，不留源码树。
 bad_dir="$work/export-bad"
-rm -rf "$bad_dir"
+reset_dir "$bad_dir"
 mkdir -p "$bad_dir/pkg/src/api"
 cat > "$bad_dir/pini.toml" <<'TOML'
 [workspace]
@@ -606,7 +618,7 @@ fi
 # 模块工具组：tidy 对齐集合、refresh 写摘要、verify 比校验和、graph 出依赖树。
 # 改动型命令各用一份副本，源码树里的夹具只读；期望值按宿主同一份行为写死。
 mod_copy="$work/mod-tidy"
-rm -rf "$mod_copy"
+reset_dir "$mod_copy"
 cp -R "$root/bootstrap/fixtures/mod-tidy" "$mod_copy"
 tidy_out="$("$pini" "${stdlib_args[@]}" mod tidy "$mod_copy" 2>&1)"
 case "$tidy_out" in
@@ -697,7 +709,7 @@ if [ -z "$git_bin" ]; then
     fail=1
 else
     repo="$work/mod-repo"
-    rm -rf "$repo"
+    reset_dir "$repo"
     mkdir -p "$repo/src/api"
     cat > "$repo/pini.toml" <<'TOML'
 [package]
@@ -719,7 +731,7 @@ TOML
     "$git_bin" -C "$repo" -c user.name=pini -c user.email=pini@example.com commit -qm v11
     "$git_bin" -C "$repo" tag v1.1.0
     app_copy="$work/mod-git-app"
-    rm -rf "$app_copy"
+    reset_dir "$app_copy"
     mkdir -p "$app_copy/src/api"
     cat > "$app_copy/pini.toml" <<TOML
 [package]
