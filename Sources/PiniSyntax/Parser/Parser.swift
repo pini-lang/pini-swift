@@ -3369,6 +3369,21 @@ public class Parser {
         if case .identifier(let name, _) = currentToken {
             advance()
 
+            // 限定类型名 `别名.类型`：别名由本文件的导入块绑定，恒等与查找只看末段名。
+            if case .dot = currentToken {
+                advance()
+                guard case .identifier(let member, _) = currentToken else {
+                    throw ParserError.invalidType(reason: "限定类型名的点号后缺类型名", location: currentLocation)
+                }
+                advance()
+                if case .lessThan = currentToken {
+                    throw ParserError.invalidType(
+                        reason: "限定类型名后不接泛型实参；把实参移进类型名一侧，或改用注入导入",
+                        location: loc)
+                }
+                return .qualified(owner: name, name: member, location: loc)
+            }
+
             // 检查是否是泛型类型
             if case .lessThan = currentToken {
                 // 注意：这里的 < 可能是泛型参数，需要检查后续是否是 >

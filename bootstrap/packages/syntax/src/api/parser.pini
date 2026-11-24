@@ -1002,9 +1002,22 @@ parseType|self() -> (I32,):
         return -1
     let start: I32 = self.current().start
     let nameStart: I32 = self.current().nameStart
-    let nameEnd: I32 = self.current().nameEnd
+    var nameEnd: I32 = self.current().nameEnd
+    var qualified = false
     self.advance()
+    ; 限定类型名 `别名.类型`：名字区间连前缀一起记，类型恒等与查表由语义层取末段。
+    if self.at(.dot):
+        self.advance()
+        qualified = true
+        if !self.at(.identifier):
+            self.report(code = "E2-008", message = "限定类型名的点号后缺类型名")
+            return -1
+        nameEnd = self.current().nameEnd
+        self.advance()
     if self.at(.opLt):
+        ; 限定泛型头不收：诊断照记，实参照吃，节点照建——解析器必须前进到右括号。
+        if qualified:
+            self.report(code = "E2-008", message = "限定类型名后不接泛型实参")
         self.advance()
         var args: Array<I32> = []
         self.skipNewlines()

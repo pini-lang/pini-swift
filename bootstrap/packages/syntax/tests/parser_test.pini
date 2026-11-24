@@ -1,3 +1,6 @@
+[parser_test|import]
+_support = "../../support"
+
 ; 函数声明：名字、参数、返回类型与体各就各位，顶层登记一条。
 函数声明形状|test() -> ():
     let result = parseText("f|func(a: I32,) -> (I32,):\n    return a\n")
@@ -919,4 +922,24 @@ defer单行|test() -> ():
     let 类型 = ast.typeAt(语句.typeId)
     assert(len(类型.kids) == 2, "两个分量")
     assert(类型.labels == "a,b", "标签串应逐分量，实得 " + 类型.labels)
+    return
+
+; 限定类型名：名字区间连别名前缀一起记，语义层取末段查表。
+限定类型名|test() -> ():
+    let source = "f|func(p: 几何.点,) -> ():\n    return\n"
+    let result = parseText(source)
+    assert(len(result.diagnostics) == 0, "不应有语法诊断")
+    let decl = result.ast.declAt(result.ast.itemAt(0))
+    let param = result.ast.declAt(decl.kids[0])
+    assert(result.ast.isType(id = param.typeId, kind = .typeNamed), "限定名仍记具名类型")
+    let node = result.ast.typeAt(param.typeId)
+    let text = nodeText(bytes = tempUtf8Bytes(source), start = node.nameStart, end = node.nameEnd)
+    assert(text == "几何.点", "名字区间含别名前缀")
+    return
+
+; 限定泛型头：`别名.类型<实参>` 不收，报缺类型名。
+限定泛型头|test() -> ():
+    let result = parseText("f|func(p: 几何.盒<I32>,) -> ():\n    return\n")
+    assert(len(result.diagnostics) > 0, "应报语法诊断")
+    assert(result.diagnostics[0].code == "E2-008", "错误码 E2-008")
     return

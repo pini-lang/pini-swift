@@ -369,32 +369,46 @@ resolveFunction|func(cursor: TypeCursor, pool: TypePool, node: TypeNode,) -> (Ty
     out.root = inserted.id
     return out
 
+; 限定类型名的末段：`别名.类型` 答 `类型`，裸名原样返回；标识符不含点号，取最后一个即可。
+bareTypeName|func(name: String,) -> (String,):
+    var at = -1
+    var i = 0
+    while i < len(name):
+        if ord(name[i]) == 46:
+            at = i
+        i = i + 1
+    if at < 0:
+        return name
+    return name.slice(at + 1, len(name))
+
 ; 具名类型：内建表、容器名、符号表依次判；容器不带实参即报个数不符。
 ; `StringHandle` 只在不透明句柄面上成立：外部符号走这一路，`|c` 条目待导出面接入同一个开关。
 ; 普通声明走到这里即报「名字只在外部面成立」，不静默放行。
 resolveNamed|func(cursor: TypeCursor, pool: TypePool, node: TypeNode, name: String,) -> (TypeResolution,):
     var out = TypeResolution()
     out.pool = pool
+    ; 限定名按末段查表：前缀只标来源，符号身份与内建名判定都只看末段。
+    let base = bareTypeName(name = name)
     var g = 0
     while g < len(cursor.world.genericBindings):
-        if cursor.world.genericBindings[g].name == name:
+        if cursor.world.genericBindings[g].name == base:
             out.root = cursor.world.genericBindings[g].typeId
             return out
         g = g + 1
-    if name == "StringHandle":
+    if base == "StringHandle":
         if !cursor.foreignFace:
             out.pool = addTypeError(pool = pool, error = makeTypeError(kind = .typeErrorForeignOnlyName, file = cursor.file, offset = node.start, name = name))
             return out
-        return internNamed(pool = pool, kind = .typeClassOpaque, name = name)
-    if isBuiltinType(name):
-        let inserted = intern(pool = pool, kind = .typeClassScalar, name = name, kids = [], ret = -1)
+        return internNamed(pool = pool, kind = .typeClassOpaque, name = base)
+    if isBuiltinType(base):
+        let inserted = intern(pool = pool, kind = .typeClassScalar, name = base, kids = [], ret = -1)
         out.pool = inserted.pool
         out.root = inserted.id
         return out
-    if containerMinArity(name) >= 0:
+    if containerMinArity(base) >= 0:
         out.pool = addTypeError(pool = pool, error = makeTypeError(kind = .typeErrorArityMismatch, file = cursor.file, offset = node.start, name = name))
         return out
-    let at = cursor.world.table.topIndex(keyOfText(name))
+    let at = cursor.world.table.topIndex(keyOfText(base))
     if at < 0:
         out.pool = addTypeError(pool = pool, error = makeTypeError(kind = .typeErrorUnknownName, file = cursor.file, offset = node.start, name = name))
         return out

@@ -38,6 +38,9 @@ public struct Parameter: Equatable, Sendable {
 /// 类型注解。`indirect`：`.pointer(element:)` 递归引用自身（FFI 的 `*T`）。
 public indirect enum TypeAnnotation: Equatable, Sendable {
     case simple(name: String, location: SourceLocation)
+    /// 限定类型名 `别名.类型`：别名由导入块绑定，类型恒等与可见性都只看末段名。
+    /// 只支持非泛型头；`别名.类型<T>` 在解析期报错，泛型实参本身仍可带限定名。
+    case qualified(owner: String, name: String, location: SourceLocation)
     /// 元组类型。labels[i] 对应 elements[i] 的可选标签（nil = 位置元素）；
     /// 命名元组 `(a: I32, b: String,)` 的 labels = ["a", "b"]。
     case tuple(labels: [String?], elements: [TypeAnnotation], location: SourceLocation)
@@ -49,11 +52,26 @@ public indirect enum TypeAnnotation: Equatable, Sendable {
 }
 
 extension TypeAnnotation {
+    /// 名字末段：`别名.类型` 取 `类型`，裸名与泛型头取自身，其余形状为 nil。
+    /// 查符号表与比内建名一律用它——别名前缀不进查找键。
+    public var typeName: String? {
+        switch self {
+        case .simple(let name, _): return name
+        case .qualified(_, let name, _): return name
+        case .generic(let name, _, _): return name
+        case .tuple, .function, .pointer: return nil
+        }
+    }
+
     /// 结构等价（忽略 SourceLocation），用于类型比对。
     /// 元组逐分量、泛型同名同元数、函数签名（参数 + 返回）逐位比较。
     public func isStructurallyEquivalent(to other: TypeAnnotation) -> Bool {
         switch (self, other) {
         case (.simple(let a, _), .simple(let b, _)):
+            return a == b
+        // 限定名与裸名按末段名比：同一类型在定义处写裸名、在引用处写 `别名.名`，仍是一种类型。
+        case (.qualified(_, let a, _), .simple(let b, _)), (.simple(let a, _), .qualified(_, let b, _)),
+            (.qualified(_, let a, _), .qualified(_, let b, _)):
             return a == b
         case (.tuple(_, let a, _), .tuple(_, let b, _)):
             // 标签不参与结构等价：位置元组与命名元组按元素类型序列比对即可互赋
@@ -83,6 +101,8 @@ extension TypeAnnotation {
         switch self {
         case .simple(let name, _):
             return name
+        case .qualified(let owner, let name, _):
+            return owner + "." + name
         case .tuple(let labels, let elements, _):
             let parts = elements.enumerated().map { i, t in
                 if let l = labels.indices.contains(i) ? labels[i] : nil {

@@ -150,4 +150,13 @@ struct FormatterLayoutTests: Sendable {
         let 一次 = 格式化(源码)
         #expect(格式化(一次) == 一次)
     }
+
+    @Test func 限定类型名原样打印() {
+        let 源码 = """
+            取点|func(p: 几何.点,) -> (几何.点,):
+                return p
+
+            """
+        #expect(格式化(源码) == 源码)
+    }
 }

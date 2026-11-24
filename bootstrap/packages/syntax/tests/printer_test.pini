@@ -36,6 +36,14 @@ _support = "../../support"
     assert(printed.text == source, "前后缀按源位置还原")
     return
 
+; 打印限定类型：类型位的 `别名.类型` 原样保留，不折回裸名。
+打印限定类型|test() -> ():
+    let source = "取点|func(p: 几何.点,) -> (几何.点,):\n    return p\n"
+    let printed = printChecked(source)
+    assert(printed.ok, "解析应通过")
+    assert(printed.text == source, "限定名与裸名不混")
+    return
+
 ; 展开打印：`unroll` 摊成多轮、模式名换成表里的字面量；注释不进产物。
 展开打印|test() -> ():
     let source = "; 头注\nmain|func() -> ():\n    unroll (码,) in [(1,), (2,)]:\n        print(码)\n    return\n"

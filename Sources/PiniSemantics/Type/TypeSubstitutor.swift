@@ -16,6 +16,10 @@ public final class TypeSubstitutor {
             }
             return type
 
+        // 限定名不是泛型形参：约束代入只认裸名，前缀原样留着。
+        case .qualified:
+            return type
+
         case .tuple(let labels, let elements, let loc):
             let substituted = elements.map { substitute(type: $0) }
             return .tuple(labels: labels, elements: substituted, location: loc)
