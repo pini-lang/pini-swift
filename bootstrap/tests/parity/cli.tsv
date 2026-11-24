@@ -29,3 +29,8 @@ mod-tidy-clean	mod	在	0	0	-	-	0/0	同同同	同
 mod-usage	mod	在	1	1	-	-	0/0	同同异	异:文
 parse-sig	parse	在	0	0	-	-	0/0	同同异	异:文
 parse-tree	parse	在	0	0	-	-	0/0	同同异	异:文
+fmt-file	fmt	在	0	0	-	-	0/0	同同同	同
+fmt-struct	fmt	在	0	0	-	-	0/0	同同同	同
+fmt-check-clean	fmt	在	0	0	-	-	0/0	同同同	同
+fmt-check-dirty	fmt	在	1	1	-	-	0/0	同同异	异:文
+fmt-multi-path	fmt	在	1	1	-	-	0/0	同同异	异:文

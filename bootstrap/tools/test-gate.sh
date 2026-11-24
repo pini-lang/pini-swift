@@ -779,8 +779,34 @@ for case_name in deinit cow; do
     fi
 done
 
+# 格式化：整棵源码树在自举打印器下必须零改动，且二次打印不动；注释锚回按示例验保留。
+if ! "$pini" "${stdlib_args[@]}" fmt --check "$root/bootstrap/packages" "$root/bootstrap/stdlib" > "$work/fmt-check.out" 2>&1; then
+    echo " 行不通  [测试自检] 自举打印器把规范形源码判成待整理" >&2
+    fail=1
+elif [ -s "$work/fmt-check.out" ]; then
+    echo " 行不通  [测试自检] fmt --check 列出了待整理文件" >&2
+    cat "$work/fmt-check.out" >&2
+    fail=1
+fi
+for case_name in hello comments; do
+    if ! "$pini" "${stdlib_args[@]}" fmt "$root/examples/$case_name.pini" > "$work/fmt-$case_name.1.pini" 2>/dev/null; then
+        echo " 行不通  [测试自检] 格式化 $case_name 失败" >&2
+        fail=1
+        continue
+    fi
+    if ! "$pini" "${stdlib_args[@]}" fmt "$work/fmt-$case_name.1.pini" > "$work/fmt-$case_name.2.pini" 2>/dev/null ||
+        ! cmp -s "$work/fmt-$case_name.1.pini" "$work/fmt-$case_name.2.pini"; then
+        echo " 行不通  [测试自检] 格式化 $case_name 不幂等" >&2
+        fail=1
+    fi
+done
+if ! grep -q "^; 注释" "$work/fmt-comments.1.pini"; then
+    echo " 行不通  [测试自检] 注释未按源位置锚回" >&2
+    fail=1
+fi
+
 if [ "$fail" -ne 0 ]; then
     exit 1
 fi
-echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入，浮点常量走位模式，接口缓存按记录判失效，逐包产物按包发射且合并可链接，缓存按拓扑与内容判复用，分波按依赖深度，共享缓存按指纹复用，命令对照按签名锁定，导出面按符号表核对，构建执行组五条命令各有判据，模块工具组按副本验改写与抓取，内存模型两条示例与 golden 一致"
+echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入，浮点常量走位模式，接口缓存按记录判失效，逐包产物按包发射且合并可链接，缓存按拓扑与内容判复用，分波按依赖深度，共享缓存按指纹复用，命令对照按签名锁定，导出面按符号表核对，构建执行组五条命令各有判据，模块工具组按副本验改写与抓取，内存模型两条示例与 golden 一致，源码树零改动且格式化幂等"
 exit 0
