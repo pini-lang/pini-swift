@@ -767,8 +767,20 @@ TOML
     esac
 fi
 
+# 内存模型：自举通道跑析构与写时分裂两条示例，比示例 golden。
+# 覆盖 deinit 调用点、self 借出与 COW 分裂；同一条判据在宿主侧走 examples-gate。
+for case_name in deinit cow; do
+    if ! "$pini" --stdlib "$root/bootstrap/stdlib/src" run-llvm "$root/examples/$case_name.pini" > "$work/memory-$case_name.out" 2>&1; then
+        echo " 行不通  [测试自检] 自举通道跑 $case_name 失败" >&2
+        fail=1
+    elif ! cmp -s "$work/memory-$case_name.out" "$root/examples/golden/$case_name.pini.out"; then
+        echo " 行不通  [测试自检] 自举通道的 $case_name 输出与 golden 不同" >&2
+        fail=1
+    fi
+done
+
 if [ "$fail" -ne 0 ]; then
     exit 1
 fi
-echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入，浮点常量走位模式，接口缓存按记录判失效，逐包产物按包发射且合并可链接，缓存按拓扑与内容判复用，分波按依赖深度，共享缓存按指纹复用，命令对照按签名锁定，导出面按符号表核对，构建执行组五条命令各有判据，模块工具组按副本验改写与抓取"
+echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入，浮点常量走位模式，接口缓存按记录判失效，逐包产物按包发射且合并可链接，缓存按拓扑与内容判复用，分波按依赖深度，共享缓存按指纹复用，命令对照按签名锁定，导出面按符号表核对，构建执行组五条命令各有判据，模块工具组按副本验改写与抓取，内存模型两条示例与 golden 一致"
 exit 0
