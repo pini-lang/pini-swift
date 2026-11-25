@@ -35,12 +35,12 @@ _support = "../../support"
     断言记号(t = lexed.tokenAt(5), kind = .eof, start = 11, end = 11)
     return
 
-; 35 个关键字全表：词长即消费数，位置逐条接续，错一条就错位。
+; 36 个关键字全表：词长即消费数，位置逐条接续，错一条就错位。
 关键字全表|test() -> ():
-    let lexed = lexText("var let func enum object if elif else match case while step for in try return break continue self own defer import export nil capture await wait unsafe test foreign detach pass using unroll weak")
-    let kinds: Array<TokenKind> = [.kwVar, .kwLet, .kwFunc, .kwEnum, .kwObject, .kwIf, .kwElif, .kwElse, .kwMatch, .kwCase, .kwWhile, .kwStep, .kwFor, .kwIn, .kwTry, .kwReturn, .kwBreak, .kwContinue, .kwSelf, .kwOwn, .kwDefer, .kwImport, .kwExport, .kwNil, .kwCapture, .kwAwait, .kwWait, .kwUnsafe, .kwTest, .kwForeign, .kwDetach, .kwPass, .kwUsing, .kwUnroll, .kwWeak]
-    let widths: Array<I32> = [3, 3, 4, 4, 6, 2, 4, 4, 5, 4, 5, 4, 3, 2, 3, 6, 5, 8, 4, 3, 5, 6, 6, 3, 7, 5, 4, 6, 4, 7, 6, 4, 5, 6, 4]
-    assert(len(kinds) == 35, "关键字表应含 35 项")
+    let lexed = lexText("var let func enum object if elif else match case while step for in try return break continue self own defer import export nil capture await wait unsafe test foreign detach pass using unroll weak as")
+    let kinds: Array<TokenKind> = [.kwVar, .kwLet, .kwFunc, .kwEnum, .kwObject, .kwIf, .kwElif, .kwElse, .kwMatch, .kwCase, .kwWhile, .kwStep, .kwFor, .kwIn, .kwTry, .kwReturn, .kwBreak, .kwContinue, .kwSelf, .kwOwn, .kwDefer, .kwImport, .kwExport, .kwNil, .kwCapture, .kwAwait, .kwWait, .kwUnsafe, .kwTest, .kwForeign, .kwDetach, .kwPass, .kwUsing, .kwUnroll, .kwWeak, .kwAs]
+    let widths: Array<I32> = [3, 3, 4, 4, 6, 2, 4, 4, 5, 4, 5, 4, 3, 2, 3, 6, 5, 8, 4, 3, 5, 6, 6, 3, 7, 5, 4, 6, 4, 7, 6, 4, 5, 6, 4, 2]
+    assert(len(kinds) == 36, "关键字表应含 36 项")
     断言连续(lexed = lexed, kinds = kinds, widths = widths)
     return
 
@@ -268,22 +268,26 @@ CRLF归一化|test() -> ():
 关键字词表同序|test() -> ():
     let 英 = keywordWords(.langEnglish)
     let 中 = keywordWords(.langChinese)
-    assert(len(英) == 35, "英文表应含 35 项")
-    assert(len(中) == 35, "中文表应含 35 项")
+    assert(len(英) == 36, "英文表应含 36 项")
+    assert(len(中) == 36, "中文表应含 36 项")
     var i = 0
     while i < len(英):
         let 英字节 = tempUtf8Bytes(英[i])
-        let 英期望 = 92
-        let 中期望 = 92
+        let 英期望 = 93
+        let 中期望 = 93
         if i < 34:
             assert(kindTag(keywordKind(language = .langEnglish, bytes = 英字节, start = 0, end = len(英字节))) == 8 + i, "英文第 " + "\(i)" + " 项")
+        elif i == 34:
+            assert(kindTag(keywordKind(language = .langEnglish, bytes = 英字节, start = 0, end = len(英字节))) == 92, "英文 weak")
         else:
-            assert(kindTag(keywordKind(language = .langEnglish, bytes = 英字节, start = 0, end = len(英字节))) == 英期望, "英文末项")
+            assert(kindTag(keywordKind(language = .langEnglish, bytes = 英字节, start = 0, end = len(英字节))) == 英期望, "英文 as")
         let 中字节 = tempUtf8Bytes(中[i])
         if i < 34:
             assert(kindTag(keywordKind(language = .langChinese, bytes = 中字节, start = 0, end = len(中字节))) == 8 + i, "中文第 " + "\(i)" + " 项")
+        elif i == 34:
+            assert(kindTag(keywordKind(language = .langChinese, bytes = 中字节, start = 0, end = len(中字节))) == 92, "中文 weak")
         else:
-            assert(kindTag(keywordKind(language = .langChinese, bytes = 中字节, start = 0, end = len(中字节))) == 中期望, "中文末项")
+            assert(kindTag(keywordKind(language = .langChinese, bytes = 中字节, start = 0, end = len(中字节))) == 中期望, "中文 as")
         i = i + 1
     return
 

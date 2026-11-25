@@ -316,4 +316,6 @@ public enum Keyword: String, CaseIterable {
     case `unroll` = "unroll"
     /// `weak` 是前缀表达式关键字：`weak 对象` 求值为 `WeakRef<T>`，不改对象的强计数。
     case `weak` = "weak"
+    /// `as` 是转换算子关键字：`操作数 as 类型`，比二元运算紧、比前缀一元松；反引号转义后仍可作标识符。
+    case `as` = "as"
 }

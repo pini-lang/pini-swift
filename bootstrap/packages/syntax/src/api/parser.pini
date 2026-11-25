@@ -1168,10 +1168,10 @@ parseExpression|self(_minPrecedence: I32,) -> (I32,):
             left = id
     return left
 ; 转换：`操作数 as 目标类型`，比二元紧、比前缀一元松，可连写左结合。
-; `as` 是上下文关键字：只在操作数已完整的位置按转换解释，其余位置是普通标识符。
+; `as` 是关键字，词法层已定类，此处只认记号。
 parseCast|self() -> (I32,):
     var left: I32 = self.parseUnary()
-    while left >= 0 && self.isIdentifierWord("as"):
+    while left >= 0 && self.at(.kwAs):
         self.advance()
         let target: I32 = self.parseType()
         let id: I32 = self.newExpr(kind = .exprCast, start = self.ast.exprAt(left).start, end = self.previousEnd())

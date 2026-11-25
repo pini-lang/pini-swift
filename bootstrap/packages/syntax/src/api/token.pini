@@ -68,6 +68,8 @@ kwPass
 kwUsing
 kwUnroll
 kwWeak
+; `as` 是转换算子关键字：`操作数 as 类型`。类别码追加在布局段之外，与 `weak` 同属特用码。
+kwAs
 ; 运算符；`opMul` 与 `opBitOr` 同时承担指针前缀与声明分隔，按位置区分角色。
 opAdd
 opSub
@@ -312,6 +314,8 @@ kindTag|func(_kind: TokenKind,) -> (I32,):
             return 41
         case kwWeak:
             return 92
+        case kwAs:
+            return 93
     return 0
 
 ; 类别名：诊断与测试用的可读拼写，取该类别的默认语言写法。
@@ -403,6 +407,8 @@ kindName|func(_kind: TokenKind,) -> (String,):
             return "unroll"
         case kwWeak:
             return "weak"
+        case kwAs:
+            return "as"
         case opAdd:
             return "+"
         case opSub:
@@ -694,6 +700,8 @@ kindFromTag|func(_tag: I32,) -> (TokenKind,):
             return .eof
         case 92:
             return .kwWeak
+        case 93:
+            return .kwAs
     return .unknown
 
 ; 同一类别判定：只比构造点算好的类别码，省掉每处重算。
@@ -705,9 +713,10 @@ isLiteralKind|func(_kind: TokenKind,) -> (Bool,):
     let tag = kindTag(_kind)
     return tag >= 1 && tag <= 7
 
+; 关键字区间：布局段 8..41，`weak` 与 `as` 追加在运算符区之后，各自单占一码。
 isKeywordKind|func(_kind: TokenKind,) -> (Bool,):
     let tag = kindTag(_kind)
-    return tag >= 8 && tag <= 41 || tag == 92
+    return tag >= 8 && tag <= 41 || tag == 92 || tag == 93
 
 isOperatorKind|func(_kind: TokenKind,) -> (Bool,):
     let tag = kindTag(_kind)

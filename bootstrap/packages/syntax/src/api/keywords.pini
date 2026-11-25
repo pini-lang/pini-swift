@@ -18,7 +18,7 @@ languageName|func(_language: KeywordLanguage,) -> (String,):
         return "中文"
     return "英文"
 
-; 关键字词表：下标即关键字类别区的序号，两种语言同序，靠 `kindFromTag(8 + 下标)` 得类别。
+; 关键字词表：两种语言同序，布局段按 `kindFromTag(8 + 下标)` 得类别，末两项另行追加。
 keywordWords|func(_language: KeywordLanguage,) -> (Array<String>,):
     if languageTag(_language) == 1:
         return [
@@ -57,6 +57,7 @@ keywordWords|func(_language: KeywordLanguage,) -> (Array<String>,):
             "使用",
             "展开",
             "弱引用",
+            "如同",
         ]
     return [
         "var",
@@ -94,6 +95,7 @@ keywordWords|func(_language: KeywordLanguage,) -> (Array<String>,):
         "using",
         "unroll",
         "weak",
+        "as",
     ]
 
 ; 关键字表：按语言把词表摊平成一块字节池；第 i 个词落在 starts[i] 起、宽 widths[i] 处。
@@ -132,9 +134,11 @@ keywordKindIn|func(table: KeywordTable, bytes: Array<U8>, start: I32, end: I32,)
     var index = 0
     while index < len(table.widths):
         if matchesTableWord(table = table, index = index, bytes = bytes, start = start, end = end):
-            ; `weak` 排在词表末位，类别码单独留在布局段之后，故不按 8 + 下标推。
+            ; 词表末两项的类别码追加在布局段之外，故不按 8 + 下标推。
             if index == 34:
                 return .kwWeak
+            if index == 35:
+                return .kwAs
             return kindFromTag(8 + index)
         index = index + 1
     return .identifier

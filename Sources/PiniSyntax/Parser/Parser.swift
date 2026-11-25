@@ -2653,12 +2653,11 @@ public class Parser {
     }
 
     /// `as` 显式转换：`操作数 as 目标类型`。比任何二元运算符紧、比前缀一元松，故挂在
-    /// `*` `/` `%` 的操作数位；连写左结合。`as` 不在关键字表内，仅当左侧操作数已完整、
-    /// 且当前记号是标识符 `as` 时按转换解释，其余位置它是普通标识符（可作变量名）。
+    /// `*` `/` `%` 的操作数位；连写左结合。`as` 是关键字，词法层已定类，此处只认记号。
     private func parseCast() throws -> Expression {
         var left = try parseUnary()
 
-        while case .identifier("as", _) = currentToken {
+        while case .keyword(.as, _) = currentToken {
             let loc = currentLocation
             advance()
             let target = try parseTypeAnnotation()
