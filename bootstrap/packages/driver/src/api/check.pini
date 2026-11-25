@@ -27,7 +27,7 @@ makeCheckDiagnostic|func(file: String, category: Category, code: String, message
         out = out.addLabel(makeLabel(start = offset, end = offset, message = "", primary = true))
     return out
 
-; 清单诊断：清单错误按输入输出类别报，路径就是清单文件；无专用码，沿用物理边界码。
+; 清单诊断：清单错误按输入输出类别报；成环取专用码，其余沿用物理边界码。
 planDiagnostics|func(_plan: BuildPlan,) -> (Array<Diagnostic>,):
     var out: Array<Diagnostic> = []
     var i = 0
@@ -36,7 +36,10 @@ planDiagnostics|func(_plan: BuildPlan,) -> (Array<Diagnostic>,):
         var message = manifestErrorKindName(error.kind)
         if len(error.detail) > 0:
             message = message + "：" + error.detail
-        out = out.append(makeCheckDiagnostic(file = error.path, category = ioCategory(), code = "E3-011", message = message, offset = -1))
+        var code = "E3-011"
+        if isErrorKind(e = error, kind = .errorDependencyCycle):
+            code = "E3-010"
+        out = out.append(makeCheckDiagnostic(file = error.path, category = ioCategory(), code = code, message = message, offset = -1))
         i = i + 1
     return out
 
@@ -53,7 +56,7 @@ loadDiagnostics|func(_ws: WorkspaceUnits,) -> (Array<Diagnostic>,):
         i = i + 1
     return out
 
-; 词法诊断：问题按词法类别报，码表里与词法问题最近的条目是 E1-004。
+; 词法诊断：组合附标错位取专用码，其余词法问题按词法类别报。
 lexicalDiagnostics|func(_units: Array<CompilationUnit>,) -> (Array<Diagnostic>,):
     var out: Array<Diagnostic> = []
     var u = 0
@@ -62,7 +65,10 @@ lexicalDiagnostics|func(_units: Array<CompilationUnit>,) -> (Array<Diagnostic>,)
         var i = 0
         while i < len(unit.issues):
             let issue = unit.issues[i]
-            out = out.append(makeCheckDiagnostic(file = unit.path, category = lexicalCategory(), code = "E1-004", message = "词法问题：" + issueName(issue.kind), offset = issue.start))
+            var code = "E1-004"
+            if isIssue(issue = issue, kind = .issueMisplacedCombiningMark):
+                code = "E1-005"
+            out = out.append(makeCheckDiagnostic(file = unit.path, category = lexicalCategory(), code = code, message = "词法问题：" + issueName(issue.kind), offset = issue.start))
             i = i + 1
         u = u + 1
     return out

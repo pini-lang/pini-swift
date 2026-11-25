@@ -1,0 +1,8 @@
+[case]
+name = "类型体内函数未写 self 修饰符"
+category = "diagnostics"
+kind = "error"
+code = "E2-024"
+line = 4
+col = 1
+spec = "语言参考 4.7 扩展块：方法须移到扩展块并写明 `|self`，块内函数报 E2-024"

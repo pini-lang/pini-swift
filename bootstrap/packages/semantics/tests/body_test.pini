@@ -187,7 +187,7 @@ types: ExprTypes = ExprTypes()
     let sample = 造体样例("f|func() -> (I32,):\n    pass\n")
     let hit = 查体(sample = sample, name = "f")
     assert(len(hit.errors) == 1, "应报一条缺失返回")
-    assert(bodyErrorCode(hit.errors[0].kind) == "E4-001", "实得 " + bodyErrorCode(hit.errors[0].kind))
+    assert(bodyErrorCode(hit.errors[0].kind) == "E4-041", "实得 " + bodyErrorCode(hit.errors[0].kind))
     assert(hit.errors[0].name == "f", "实得 " + hit.errors[0].name)
     assert(!hit.guarantees, "空体不保证返回")
     return

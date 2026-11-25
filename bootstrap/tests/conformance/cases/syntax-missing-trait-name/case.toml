@@ -1,0 +1,8 @@
+[case]
+name = "特征块缺特征名"
+category = "diagnostics"
+kind = "error"
+code = "E2-017"
+line = 1
+col = 2
+spec = "语言参考 4.1 模块结构：`<名称>` 特征块头缺名字报 E2-017"

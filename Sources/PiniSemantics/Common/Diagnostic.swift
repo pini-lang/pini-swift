@@ -344,3 +344,22 @@ extension TypeError: DiagnosticProviding {
         }
     }
 }
+
+/// 加载器的解析错误聚合：结构化行取首条，与单条直接抛出时同码同位。
+/// 其余 case 没有语法位置，位置留空、码取解析域通用码。
+extension LoaderError: DiagnosticProviding {
+    public var diagnosticCode: String {
+        if case .parseErrors(_, let errors) = self, let first = errors.first {
+            return first.diagnosticCode
+        }
+        return "\(DiagnosticDomain.parser.rawValue)-001"
+    }
+    public var diagnosticSeverity: DiagnosticSeverity { .error }
+    public var suggestion: String? { nil }
+    public var diagnosticLocation: SourceLocation {
+        if case .parseErrors(_, let errors) = self, let first = errors.first {
+            return first.diagnosticLocation
+        }
+        return SourceLocation(line: 1, column: 1, fileName: "")
+    }
+}

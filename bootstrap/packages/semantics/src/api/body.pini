@@ -53,7 +53,7 @@ bodyErrorName|func(_kind: BodyErrorKind,) -> (String,):
 isBodyError|func(error: BodyError, kind: BodyErrorKind,) -> (Bool,):
     return bodyErrorName(error.kind) == bodyErrorName(kind)
 
-; 诊断码：复用宿主已登记的码，不新增码表条目。
+; 诊断码：复用宿主已登记的码；出口不完整单列，不与类型不符混同。
 bodyErrorCode|func(_kind: BodyErrorKind,) -> (String,):
     match _kind:
         case bodyParamDuplicated:
@@ -65,7 +65,7 @@ bodyErrorCode|func(_kind: BodyErrorKind,) -> (String,):
         case bodyReturnValueMismatch:
             return "E4-001"
         case bodyReturnMissing:
-            return "E4-001"
+            return "E4-041"
     return "E4-001"
 
 ; 造错误：位置取语句或声明头的字节偏移。

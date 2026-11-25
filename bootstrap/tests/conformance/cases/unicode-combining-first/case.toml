@@ -1,0 +1,8 @@
+[case]
+name = "组合附加符号作首字符"
+category = "unicode"
+kind = "error"
+code = "E1-005"
+line = 1
+col = 1
+spec = "语言参考 2.5 标识符：组合附加符号可续写、不得作首字符"

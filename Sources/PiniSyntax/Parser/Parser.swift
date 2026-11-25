@@ -128,9 +128,22 @@ public class Parser {
         if check(expected) {
             return advance()
         }
+        // 文件在期待位之前结束：单列「意外到达文件末尾」，与「记号不符」分开报。
+        if isEOF() {
+            throw ParserError.unexpectedEOF(location: currentLocation)
+        }
         let expectedDesc = tokenDescription(expected)
         let actualDesc = tokenDescription(currentToken)
         throw ParserError.unexpectedToken(expected: expectedDesc, actual: actualDesc, location: currentLocation)
+    }
+
+    /// 块头定界符收尾：`(`/`{`/`[`/`<` 的闭合位缺记号即「缺少块结束」，
+    /// 与块体内部缺记号区分开——后者是普通记号不符，不是块没闭合。
+    private func expectBlockEnd(_ expected: Token) throws -> Token {
+        if check(expected) {
+            return advance()
+        }
+        throw ParserError.missingBlockEnd(location: currentLocation)
     }
 
     private func expectKeyword(_ keyword: Keyword) throws {
@@ -189,6 +202,23 @@ public class Parser {
             return true
         }
         return false
+    }
+
+    /// 当前位置之后只剩换行、缩进变动与文件末尾：句子写到一半就断了。
+    /// 与 isEOF 的差别在于它跨过行尾换行，故 `= ` 后直接换行的截断也能判出。
+    private func isAtFileEnd() -> Bool {
+        var idx = position
+        while idx < tokens.count {
+            switch tokens[idx] {
+            case .newline, .indent, .dedent:
+                idx += 1
+            case .eof(_):
+                return true
+            default:
+                return false
+            }
+        }
+        return true
     }
 
     private func tokenDescription(_ token: Token) -> String {
@@ -386,6 +416,10 @@ public class Parser {
             if isTopLevelDeclStart() {
                 return .traitDecl(try parseTraitDecl())
             }
+            // `< >`：名字位空缺，仍按特征头解析，由取名处报缺名。
+            if case .greaterThan(_) = peek(offset: 1) {
+                return .traitDecl(try parseTraitDecl())
+            }
             // 否则作为表达式语句处理（< 用作比较运算符）
             return .statement(try parseStatement())
         default:
@@ -505,7 +539,7 @@ public class Parser {
         advance()  // 跳过 [
 
         // 解析名称
-        let name = try parseIdentifier()
+        let name = try parseIdentifier(missing: ParserError.missingEnumName)
 
         // 解析可选泛型形参 <T, E>（枚举/对象/引用均可带）
         var genericParams: [GenericParam] = []
@@ -533,17 +567,17 @@ public class Parser {
             } else if checkKeyword(.foreign) {
                 // `[名称|foreign]`：外部 C 函数声明块。
                 advance()
-                _ = try expect(.rightBracket(loc))
+                _ = try expectBlockEnd(.rightBracket(loc))
                 return .foreignDecl(try parseForeignDecl(name: name, location: loc))
             } else if checkKeyword(.import) {
                 // `[当前文件名|import]` 块——引入外部模块。
                 advance()
-                _ = try expect(.rightBracket(loc))
+                _ = try expectBlockEnd(.rightBracket(loc))
                 return .importDecl(try parseImportBlock(headerName: name, location: loc))
             } else if checkKeyword(.export) {
                 // `[当前文件名|export]` 块——显式导出表。
                 advance()
-                _ = try expect(.rightBracket(loc))
+                _ = try expectBlockEnd(.rightBracket(loc))
                 return .exportDecl(try parseExportBlock(headerName: name, location: loc))
             } else {
                 throw ParserError.invalidDeclaration(reason: "无效的方括号声明修饰符", location: loc)
@@ -553,7 +587,7 @@ public class Parser {
         }
 
         // 期望 ]
-        _ = try expect(.rightBracket(loc))
+        _ = try expectBlockEnd(.rightBracket(loc))
 
         if isGiven {
             let givenDecl = try parseGivenDeclContent(name: name, genericParams: genericParams, location: loc)
@@ -581,7 +615,7 @@ public class Parser {
             // foreign 块结束：下一个顶层声明（顶格新声明头）
             if case .indent(_) = currentToken { advance(); skipNewlines(); continue }
             // 顶层函数 `name|func(...)` 或「裸函数签名 + 缩进体」→ foreign 块结束
-            if isBareFuncWithFuncModifierStart() || isBareFunctionWithBodyStart() { break }
+            if isFreeFunctionDeclStart() || isBareFunctionWithBodyStart() { break }
             // 类型 / 扩展块 / import 等声明头 → foreign 块结束。
             // 注意：不能用 isTopLevelDeclStart() 整体判断——符号条目也以标识符起头。
             if isForeignBlockEndMarker() { break }
@@ -747,19 +781,19 @@ public class Parser {
         // 闭合定界符：)) / }} / ]] / >>
         switch kind {
         case .structExt:
-            _ = try expect(.rightParen(loc)); _ = try expect(.rightParen(loc))
+            _ = try expectBlockEnd(.rightParen(loc)); _ = try expectBlockEnd(.rightParen(loc))
         case .objectExt:
-            _ = try expect(.rightBrace(loc)); _ = try expect(.rightBrace(loc))
+            _ = try expectBlockEnd(.rightBrace(loc)); _ = try expectBlockEnd(.rightBrace(loc))
         case .bracketExt:
-            _ = try expect(.rightBracket(loc)); _ = try expect(.rightBracket(loc))
+            _ = try expectBlockEnd(.rightBracket(loc)); _ = try expectBlockEnd(.rightBracket(loc))
         case .traitExt:
             // `>>` 闭合双态：词法合并的 `.rightShift`（`<<T>>` 紧邻形态，行内 `>>` 恒合并）与
             // 空格分隔的 `.greaterThan` ×2（`<<T >>`）都接受。
             if case .rightShift(_) = currentToken {
                 advance()
             } else {
-                _ = try expect(.greaterThan(loc))
-                _ = try expect(.greaterThan(loc))
+                _ = try expectBlockEnd(.greaterThan(loc))
+                _ = try expectBlockEnd(.greaterThan(loc))
             }
         }
 
@@ -781,16 +815,16 @@ public class Parser {
                 if !isTraitExt {
                     let hasSelfModifier = funcDecl.modifiers.contains("self") || funcDecl.modifiers.contains("own")
                     if !hasSelfModifier {
-                        throw ParserError.invalidStatement(
-                            reason: "扩展块内只允许 `|self`/`|own` 方法（规则 3.14）：`\(funcDecl.name)` 缺少方法修饰符，自由函数应移至模块顶层",
-                            location: funcDecl.location
-                        )
+                        throw ParserError.methodDefaultAssumptionTerminated(location: funcDecl.location)
                     }
                 }
                 methods.append(funcDecl)
                 skipNewlines()
             } else if isTopLevelDeclStart() {
                 break
+            } else if case .pipe(_) = currentToken {
+                // 行首 `|`：方法名空缺，`|self` / `|own` 修饰符悬空。
+                throw ParserError.missingMethodName(location: currentLocation)
             } else {
                 throw ParserError.invalidStatement(
                     reason: "扩展块内只允许方法声明（规则 3.14）：自由函数应移至模块顶层",
@@ -819,7 +853,7 @@ public class Parser {
         advance()  // 跳过 (
 
         // 解析名称
-        let name = try parseIdentifier()
+        let name = try parseIdentifier(missing: ParserError.missingStructName)
 
         // 内嵌组合：父类型名以「结构体内首行裸标识符」形式给出（下方检测）。
         var composedType: String? = nil
@@ -831,7 +865,7 @@ public class Parser {
         }
 
         // 期望 )
-        _ = try expect(.rightParen(loc))
+        _ = try expectBlockEnd(.rightParen(loc))
 
         // 内容态：类型体内只允许字段，方法移至扩展块。
         var fields: [FieldDecl] = []
@@ -876,11 +910,8 @@ public class Parser {
             if case .leftBrace(_) = currentToken { break }
             if case .identifier = currentToken, isBareFunctionDeclStart() {
                 // `name|func` 是顶级自由函数（类型体结束）；其余函数声明是类型体内方法 → 报错
-                if isBareFuncWithFuncModifierStart() { break }
-                throw ParserError.invalidStatement(
-                    reason: "类型体内禁止函数声明（规则 3.2）：`\(name)` 的方法应移至同文件扩展块 `((\(name)))` 中，并显式使用 `|self` 或 `|Self`",
-                    location: currentLocation
-                )
+                if isFreeFunctionDeclStart() { break }
+                throw ParserError.methodDefaultAssumptionTerminated(location: currentLocation)
             } else {
                 // 字段声明
                 let field = try parseFieldDecl()
@@ -910,7 +941,7 @@ public class Parser {
         _ = try expect(.leftBrace(loc))  // 跳过 {
 
         // 解析名称
-        let name = try parseIdentifier()
+        let name = try parseIdentifier(missing: ParserError.missingObjectName)
 
         // 解析泛型参数（可选）
         var genericParams: [GenericParam] = []
@@ -919,7 +950,7 @@ public class Parser {
         }
 
         // 期望 }
-        _ = try expect(.rightBrace(loc))
+        _ = try expectBlockEnd(.rightBrace(loc))
 
         return try parseObjectDeclContent(name: name, genericParams: genericParams, location: loc)
     }
@@ -952,11 +983,8 @@ public class Parser {
             if case .leftBrace(_) = currentToken { break }
             if case .identifier = currentToken, isBareFunctionDeclStart() {
                 // `name|func` 是顶级自由函数（类型体结束）；其余函数声明是类型体内方法 → 报错
-                if isBareFuncWithFuncModifierStart() { break }
-                throw ParserError.invalidStatement(
-                    reason: "类型体内禁止函数声明（规则 3.2）：`\(name)` 的方法应移至同文件扩展块 `\(bracket)` 中，并显式使用 `|self` 或 `|Self`",
-                    location: currentLocation
-                )
+                if isFreeFunctionDeclStart() { break }
+                throw ParserError.methodDefaultAssumptionTerminated(location: currentLocation)
             } else {
                 // 字段声明
                 let field = try parseFieldDecl()
@@ -1010,17 +1038,11 @@ public class Parser {
                 // `{{` 是对象扩展块（下一顶级声明）→ 结束类型体；单 `{` 是类型体内函数声明 → 报错
                 if case .leftBrace(_) = peek(offset: 1) { break }
                 // 类型体内禁止函数声明；方法须移到同文件扩展块并显式写 `|self` 或 `|Self`。
-                throw ParserError.invalidStatement(
-                    reason: "类型体内禁止函数声明（规则 3.2）：`\(name)` 的方法应移至同文件扩展块 `[[\(name)]]` 中，并显式使用 `|self` 或 `|Self`",
-                    location: currentLocation
-                )
+                throw ParserError.methodDefaultAssumptionTerminated(location: currentLocation)
             } else if case .identifier = currentToken, isBareFunctionDeclStart() {
                 // `name|func` 是顶级自由函数（类型体结束）；其余函数声明是类型体内方法 → 报错
-                if isBareFuncWithFuncModifierStart() { break }
-                throw ParserError.invalidStatement(
-                    reason: "类型体内禁止函数声明（规则 3.2）：`\(name)` 的方法应移至同文件扩展块 `[[\(name)]]` 中，并显式使用 `|self` 或 `|Self`",
-                    location: currentLocation
-                )
+                if isFreeFunctionDeclStart() { break }
+                throw ParserError.methodDefaultAssumptionTerminated(location: currentLocation)
             } else if case .identifier("实现", _) = currentToken, case .colon(_) = peek() {
                 // 枚举体的特征声明：`实现: 错误`。与 struct 体同形，只是枚举体不收字段，
                 // 故不能走字段解析，需在此单独消费。
@@ -1048,7 +1070,7 @@ public class Parser {
     private func parseEnumCase() throws -> EnumCase {
         let loc = currentLocation
 
-        let name = try parseIdentifier()
+        let name = try parseIdentifier(missing: ParserError.missingCaseName)
 
         var associatedParams: [AssociatedParam] = []
         if case .leftParen(_) = currentToken {
@@ -1131,7 +1153,7 @@ public class Parser {
         let loc = currentLocation
 
         // 字段名
-        let name = try parseIdentifier()
+        let name = try parseIdentifier(missing: ParserError.missingFieldName)
 
         // 期望 :
         _ = try expect(.colon(loc))
@@ -1153,7 +1175,15 @@ public class Parser {
 
     // MARK: - 函数签名解析
 
-    /// 解析「参数元组 + 返回类型标注」（`-> (返回,)` / `=> (返回,)`)。
+    /// 返回箭头是否在场：`->` 与 `=>` 两种写法都算写了返回。
+    /// 签名位与匿名函数字面量共用此判据，缺一即「缺少返回类型」。
+    private func isReturnArrowStart() -> Bool {
+        if case .arrow(_) = currentToken { return true }
+        if case .doubleArrow(_) = currentToken { return true }
+        return false
+    }
+
+    /// 解析「参数元组 + 返回类型标注」（`-> (返回,)` / `=> (返回,)`）。
     /// 裸声明函数（parseBareFuncDecl）与匿名函数（parseFuncLiteral）共用。
     private func parseFunctionSignature(loc: SourceLocation, position: UsingParamPosition) throws -> (params: [Parameter], returnTypes: [TypeAnnotation], returnLabels: [String?], isAsync: Bool) {
         // 参数元组
@@ -1170,7 +1200,10 @@ public class Parser {
         }
         _ = try expect(.rightParen(loc))
 
-        // 返回类型
+        // 返回类型：签名必写 `-> (返回,)` 或 `=> (返回,)`，两者皆缺即缺少返回类型。
+        if !isReturnArrowStart() {
+            throw ParserError.missingReturnType(location: currentLocation)
+        }
         var returnTypes: [TypeAnnotation] = []
         var returnLabels: [String?] = []
         var isAsync = false
@@ -1316,7 +1349,10 @@ public class Parser {
         }
         _ = try expect(.rightParen(loc))
 
-        // 返回类型
+        // 返回类型：签名必写 `-> (返回,)` 或 `=> (返回,)`，两者皆缺即缺少返回类型。
+        if !isReturnArrowStart() {
+            throw ParserError.missingReturnType(location: currentLocation)
+        }
         var returnTypes: [TypeAnnotation] = []
         var isAsync = false
         if case .arrow(_) = currentToken {
@@ -1446,12 +1482,17 @@ public class Parser {
         return false
     }
 
-    /// 判断是否是 `name|func(...)` 形式的裸函数（顶级自由函数，类型体内遇到即结束类型体）。
-    /// 类型体循环用它区分「顶级函数（break）」与「类型体内方法 / 函数（报错）」。
-    private func isBareFuncWithFuncModifierStart() -> Bool {
+    /// 顶级函数声明头：`名|func` / `名|unsafe` / `名|test` 后跟 `(...)`。
+    /// 三种修饰符只出现在模块顶层，类型体遇到其一即闭合，故它区分「顶级函数（break）」与「块内函数（报错）」。
+    private func isFreeFunctionDeclStart() -> Bool {
         guard case .identifier = currentToken else { return false }
         guard case .pipe(_) = peek(offset: 1) else { return false }
-        guard case .keyword(.func, _) = peek(offset: 2) else { return false }
+        switch peek(offset: 2) {
+        case .keyword(.func, _), .keyword(.unsafe, _), .keyword(.test, _):
+            break
+        default:
+            return false
+        }
         var offset = 3
         // 跳过可选的泛型 <T,>
         if case .lessThan(_) = peek(offset: offset) {
@@ -1525,7 +1566,10 @@ public class Parser {
         }
         _ = try expect(.rightParen(loc))
 
-        // 返回类型
+        // 返回类型：签名必写 `-> (返回,)` 或 `=> (返回,)`，两者皆缺即缺少返回类型。
+        if !isReturnArrowStart() {
+            throw ParserError.missingReturnType(location: currentLocation)
+        }
         var returnTypes: [TypeAnnotation] = []
         var returnLabels: [String?] = []
         var isAsync = false
@@ -1623,10 +1667,10 @@ public class Parser {
         advance()  // 跳过 <
 
         // 解析名称
-        let name = try parseIdentifier()
+        let name = try parseIdentifier(missing: ParserError.missingTraitName)
 
         // 期望 >
-        _ = try expect(.greaterThan(loc))
+        _ = try expectBlockEnd(.greaterThan(loc))
 
         // 泛型参数（可选，暂不处理）
         let genericParams: [GenericParam] = []
@@ -1713,7 +1757,10 @@ public class Parser {
         }
         _ = try expect(.rightParen(loc))
 
-        // 返回类型
+        // 返回类型：签名必写 `-> (返回,)` 或 `=> (返回,)`，两者皆缺即缺少返回类型。
+        if !isReturnArrowStart() {
+            throw ParserError.missingReturnType(location: currentLocation)
+        }
         var returnTypes: [TypeAnnotation] = []
         if case .arrow(_) = currentToken {
             advance()
@@ -1831,11 +1878,18 @@ public class Parser {
             skipNewlines()
         }
 
-        // DEDENT（收集模式下若已到 EOF 则容错收尾，避免假性 DEDENT 错误）
-        if !collectMode {
-            _ = try expect(.dedent(loc))
-        } else if check(.dedent(loc)) {
+        // DEDENT：块内读到文件末尾仍未见反缩进 = 缩进块没有闭合。
+        // 收集模式把同一事件记成一条诊断继续走，不再静默容错。
+        if check(.dedent(loc)) {
             advance()
+        } else if isEOF() {
+            if collectMode {
+                self.diagnostics.append(ParserError.missingDedent(location: loc))
+            } else {
+                throw ParserError.missingDedent(location: loc)
+            }
+        } else if !collectMode {
+            _ = try expect(.dedent(loc))
         }
 
         return Block(statements: statements, location: loc)
@@ -1875,11 +1929,18 @@ public class Parser {
             skipNewlines()
         }
 
-        // DEDENT（收集模式下若已到 EOF 则容错收尾，避免假性 DEDENT 错误）
-        if !collectMode {
-            _ = try expect(.dedent(loc))
-        } else if check(.dedent(loc)) {
+        // DEDENT：块内读到文件末尾仍未见反缩进 = 缩进块没有闭合。
+        // 收集模式把同一事件记成一条诊断继续走，不再静默容错。
+        if check(.dedent(loc)) {
             advance()
+        } else if isEOF() {
+            if collectMode {
+                self.diagnostics.append(ParserError.missingDedent(location: loc))
+            } else {
+                throw ParserError.missingDedent(location: loc)
+            }
+        } else if !collectMode {
+            _ = try expect(.dedent(loc))
         }
 
         return Block(statements: statements, location: loc)
@@ -1913,6 +1974,16 @@ public class Parser {
                 advance()
                 advance()
                 return try parseFor(label: labelName)
+            default:
+                break
+            }
+        }
+
+        // 标签位缺名：行首 `|` 后紧跟控制流关键字，说明标签名被漏写。
+        if case .pipe(_) = currentToken, case .keyword(let cfKeyword, _) = peek() {
+            switch cfKeyword {
+            case .if, .while, .for:
+                throw ParserError.missingLabel(location: currentLocation)
             default:
                 break
             }
@@ -2391,11 +2462,18 @@ public class Parser {
             skipNewlines()
         }
 
-        // DEDENT（收集模式下若已到 EOF 则容错收尾，避免假性 DEDENT 错误）
-        if !collectMode {
-            _ = try expect(.dedent(loc))
-        } else if check(.dedent(loc)) {
+        // DEDENT：块内读到文件末尾仍未见反缩进 = 缩进块没有闭合。
+        // 收集模式把同一事件记成一条诊断继续走，不再静默容错。
+        if check(.dedent(loc)) {
             advance()
+        } else if isEOF() {
+            if collectMode {
+                self.diagnostics.append(ParserError.missingDedent(location: loc))
+            } else {
+                throw ParserError.missingDedent(location: loc)
+            }
+        } else if !collectMode {
+            _ = try expect(.dedent(loc))
         }
 
         return Statement.matchStatement(
@@ -2880,6 +2958,10 @@ public class Parser {
             let name = try parseIdentifier()
             return .dotCaseRef(name: name, location: loc)
         default:
+            // 表达式位已到文件末尾（可跨行尾换行与块收尾）：这是截断，不是写错的表达式。
+            if isAtFileEnd() {
+                throw ParserError.unexpectedEOF(location: loc)
+            }
             throw ParserError.invalidExpression(reason: "无效的表达式", location: loc)
         }
     }
@@ -3485,7 +3567,7 @@ public class Parser {
         }
 
         while true {
-            let name = try parseIdentifier()
+            let name = try parseIdentifier(missing: ParserError.missingGenericParam)
 
             // 可选的约束：分隔符为 `:`，与扩展块特征约束 `((块:特征))` 同形；`|` 不作分隔符，
             // 那里是块形态的关键字位。
@@ -3591,7 +3673,10 @@ public class Parser {
 
     // MARK: - 辅助
 
-    private func parseIdentifier() throws -> String {
+    /// 读一个名字位：标识符与少数可作名字的关键字（`self` / `own` / `func` / `unsafe` /
+    /// `foreign` / `test`）放行。缺名时按调用方给的语境码报——同一处缺名在结构块、
+    /// 对象块、枚举块里含义不同，故由调用点决定码，不在此处一刀切。
+    private func parseIdentifier(missing: ((SourceLocation) -> ParserError)? = nil) throws -> String {
         switch currentToken {
         case .identifier(let name, _):
             advance()
@@ -3618,6 +3703,12 @@ public class Parser {
             advance()
             return "test"
         default:
+            if let missing = missing {
+                throw missing(currentLocation)
+            }
+            if isEOF() {
+                throw ParserError.unexpectedEOF(location: currentLocation)
+            }
             throw ParserError.expectedToken(token: "identifier", location: currentLocation)
         }
     }
