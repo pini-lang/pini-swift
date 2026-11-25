@@ -1,0 +1,79 @@
+; 外部内核版的字符串成员：本文件进装配后顶替 stdlib 里的同名成员，调用点与语料原样不动。
+; 每个成员只做三步——调到 C、把 owned 缓冲收成 String、归还缓冲；算法全在 pini_std.c。
+[pinistd|foreign]
+ps_trim: (String,) -> (*U8,)
+ps_starts_with: (String, String,) -> (I32,)
+ps_ends_with: (String, String,) -> (I32,)
+ps_replace: (String, String, String,) -> (*U8,)
+ps_repeat: (String, I32,) -> (*U8,)
+ps_pad_left: (String, I32, String,) -> (*U8,)
+ps_pad_right: (String, I32, String,) -> (*U8,)
+ps_last_index_of: (String, String,) -> (I32,)
+ps_is_empty: (String,) -> (I32,)
+ps_count: (String, String,) -> (I32,)
+ps_strip_prefix: (String, String,) -> (*U8,)
+ps_strip_suffix: (String, String,) -> (*U8,)
+ps_ensure_prefix: (String, String,) -> (*U8,)
+ps_ensure_suffix: (String, String,) -> (*U8,)
+ps_reversed: (String,) -> (*U8,)
+ps_capitalized: (String,) -> (*U8,)
+ps_center: (String, I32, String,) -> (*U8,)
+ps_truncate: (String, I32,) -> (*U8,)
+ps_free: (*U8,) -> ()
+
+; 取回：复制成 Pini 串后归还 C 侧那份，空指针读成空串。
+ps_take|unsafe(_p: *U8,) -> (String,):
+    var s = fromCString(_p)
+    ps_free(_p)
+    return s
+
+((String))
+trim|self() -> (String,):
+    var p = unsafe ps_trim(self)
+    return unsafe ps_take(p)
+startsWith|self(_prefix: String,) -> (Bool,):
+    return unsafe ps_starts_with(self, _prefix) != 0
+endsWith|self(_suffix: String,) -> (Bool,):
+    return unsafe ps_ends_with(self, _suffix) != 0
+replace|self(_old: String, _new: String,) -> (String,):
+    var p = unsafe ps_replace(self, _old, _new)
+    return unsafe ps_take(p)
+repeat|self(_times: I32,) -> (String,):
+    var p = unsafe ps_repeat(self, _times)
+    return unsafe ps_take(p)
+padLeft|self(_width: I32, _fill: String,) -> (String,):
+    var p = unsafe ps_pad_left(self, _width, _fill)
+    return unsafe ps_take(p)
+padRight|self(_width: I32, _fill: String,) -> (String,):
+    var p = unsafe ps_pad_right(self, _width, _fill)
+    return unsafe ps_take(p)
+lastIndexOf|self(_needle: String,) -> (I32,):
+    return unsafe ps_last_index_of(self, _needle)
+isEmpty|self() -> (Bool,):
+    return unsafe ps_is_empty(self) != 0
+count|self(_sub: String,) -> (I32,):
+    return unsafe ps_count(self, _sub)
+stripPrefix|self(_prefix: String,) -> (String,):
+    var p = unsafe ps_strip_prefix(self, _prefix)
+    return unsafe ps_take(p)
+stripSuffix|self(_suffix: String,) -> (String,):
+    var p = unsafe ps_strip_suffix(self, _suffix)
+    return unsafe ps_take(p)
+ensurePrefix|self(_prefix: String,) -> (String,):
+    var p = unsafe ps_ensure_prefix(self, _prefix)
+    return unsafe ps_take(p)
+ensureSuffix|self(_suffix: String,) -> (String,):
+    var p = unsafe ps_ensure_suffix(self, _suffix)
+    return unsafe ps_take(p)
+reversed|self() -> (String,):
+    var p = unsafe ps_reversed(self)
+    return unsafe ps_take(p)
+capitalized|self() -> (String,):
+    var p = unsafe ps_capitalized(self)
+    return unsafe ps_take(p)
+center|self(_width: I32, _fill: String,) -> (String,):
+    var p = unsafe ps_center(self, _width, _fill)
+    return unsafe ps_take(p)
+truncate|self(_width: I32,) -> (String,):
+    var p = unsafe ps_truncate(self, _width)
+    return unsafe ps_take(p)
