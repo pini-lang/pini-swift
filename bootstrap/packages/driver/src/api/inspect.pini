@@ -281,11 +281,12 @@ hostOutputName|func(_output: BackendOutput,) -> (String,):
     return "unknown"
 
 ; 后端矩阵：首列族，其后每后端一列；`--tsv` 多一行输出档次，与宿主同序。
-; 自举只有 llvm 与 dump 两条通道，列数少于宿主；格式一致，内容差异由夹具登记。
+; 自举有 llvm、json 与 dump 三条通道，列数少于宿主；格式一致，内容差异由夹具登记。
 printBackendMatrix|func(tsv: Bool,) -> ():
     let llvm = makeBackendOf(name = "llvm", outputCode = backendOutputNativeCode(), families = llvmFamilies(), entry = 2)
+    let json = makeBackendOf(name = "json", outputCode = backendOutputDumpCode(), families = backendFamilyCodes(), entry = 4)
     let dump = makeBackendOf(name = "dump", outputCode = backendOutputDumpCode(), families = backendFamilyCodes(), entry = 1)
-    var entries: Array<BackendEntry> = [llvm, dump]
+    var entries: Array<BackendEntry> = [llvm, json, dump]
     var header = "family"
     var c = 0
     while c < len(entries):

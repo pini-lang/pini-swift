@@ -5,6 +5,7 @@ _semantics = "../../../semantics"
 _ir = "../../../ir"
 _backend_kit = "../../../backend-kit"
 _backend_dump = "../../../backend-dump"
+_backend_json = "../../../backend-json"
 _backend_llvm = "../../../backend-llvm"
 _testkit = "../../../testkit"
 _hostproc = "../../../hostproc"
@@ -308,7 +309,7 @@ main|func() -> ():
             return
         let entry = backendEntryFor(backendName)
         if len(entry.name) == 0:
-            print("Error: unknown backend '" + backendName + "'. Available: llvm, dump")
+            print("Error: unknown backend '" + backendName + "'. Available: llvm, dump, json")
             assert(false, "未知后端")
             return
         let emitted = emitByBackend(entry = entry, module = 产物.module)

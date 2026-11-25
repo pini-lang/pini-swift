@@ -4,6 +4,7 @@ _semantics = "../../../semantics"
 _ir = "../../../ir"
 _backend_kit = "../../../backend-kit"
 _backend_dump = "../../../backend-dump"
+_backend_json = "../../../backend-json"
 _backend_llvm = "../../../backend-llvm"
 _package = "../../../package"
 _hostproc = "../../../hostproc"
@@ -75,18 +76,22 @@ sharedLibraryPath|func(outputPath: String, blockName: String,) -> (String,):
         return outputPath + "/" + fileName
     return outputPath
 
-; 后端记录：llvm 走原生码，dump 走结构转储；未知名答空名，调用方据此报错。
+; 后端记录：llvm 走原生码，dump 与 json 走结构转储；未知名答空名，调用方据此报错。
 backendEntryFor|func(_name: String,) -> (BackendEntry,):
     if _name == "dump":
         return makeBackendOf(name = "dump", outputCode = backendOutputDumpCode(), families = backendFamilyCodes(), entry = 1)
+    if _name == "json":
+        return makeBackendOf(name = "json", outputCode = backendOutputDumpCode(), families = backendFamilyCodes(), entry = 4)
     if _name == "llvm":
         return makeBackendOf(name = "llvm", outputCode = backendOutputNativeCode(), families = llvmFamilies(), entry = 2)
     return BackendEntry()
 
-; 发射：两条腿返回同一形状，按记录名分派；调用点不再各自判后端。
+; 发射：三条腿返回同一形状，按记录名分派；调用点不再各自判后端。
 emitByBackend|func(entry: BackendEntry, module: IrModule,) -> (EmitResult,):
     if entry.name == "dump":
         return dumpModule(entry = entry, target = defaultTarget(), module = module)
+    if entry.name == "json":
+        return jsonModule(entry = entry, target = defaultTarget(), module = module)
     return emitModule(entry = entry, target = defaultTarget(), module = module)
 
 ; lli 参数：运行时段存在时先 --dlopen，再给 IR 路径；lli 没有链接期，库只能预载。

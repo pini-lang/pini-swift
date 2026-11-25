@@ -115,6 +115,15 @@ headSlotCount|func() -> (I32,):
 payloadFirstSlot|func() -> (I32,):
     return 5
 
+; 结果槽数：标签、ok 载荷与错误字三格；错误槽类型擦除，故与载荷宽度无关。
+; 转储与外部读者按这条常量核对布局，不各自数槽。
+resultSlotCount|func() -> (I32,):
+    return 3
+
+; 可选槽数：标签与载荷两格。
+optionalSlotCount|func() -> (I32,):
+    return 2
+
 ; 造一个槽：序号、角色、名字与类型由调用方给。
 makeSlot|func(index: I32, role: SlotRole, name: String, typeId: I32,) -> (Slot,):
     var out = Slot()
