@@ -6,12 +6,13 @@ _module_loader = "../../../module-loader"
 ; 名字面是文件级：跨函数误用会漏报，但不会把合法名字判成未定义。
 ; 实参类型未知时 checkArg 放过，本层只落实个数与标签两类调用判据。
 
-; 表达式错误：未定义名、成员缺失、调用形状与类型名进值位四类，各带自己的诊断码。
+; 表达式错误：未定义名、成员缺失、调用形状、类型名进值位与类型实参不是类型五类，各带自己的诊断码。
 [ExprErrorKind]
 exprUndefined
 exprMemberFailed
 exprCallFailed
 exprTypeNameAsValue
+exprNotTypeName
 
 ; 表达式错误：类别、文件、位置、名字、细节与诊断码；码在造错时定死。
 (ExprError)
@@ -38,6 +39,8 @@ exprErrorName|func(_kind: ExprErrorKind,) -> (String,):
             return "调用不成立"
         case exprTypeNameAsValue:
             return "类型名进了值位"
+        case exprNotTypeName:
+            return "名字不是类型"
     return "表达式错误"
 
 ; 同一类别判定：枚举相等比较不可用，按名称比。
@@ -289,6 +292,58 @@ checkCallNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, by
         return out
     return appendExprError(out = out, unit = unit, offset = site.offset, kind = .exprCallFailed, name = name, detail = callErrorName(result.error.kind), code = callErrorCode(result.error.kind))
 
+; 泛型构造：名字须解析到声明或内建构造名；类型实参个数等于声明的类型形参个数。
+; 类型实参落到已知的非类型声明时按「名字不是类型」报；解析不到的名字放过。
+checkGenericNode|func(world: MemberWorld, unit: CompilationUnit, bytes: Array<U8>, shadow: Array<String>, node: I32, out: ExprCheck,) -> (ExprCheck,):
+    let generic = unit.ast.exprAt(node)
+    if generic.typeId < 0 || generic.typeId >= unit.ast.typeCount():
+        return out
+    let target = unit.ast.typeAt(generic.typeId)
+    let name = decodeRange(bytes = bytes, start = target.nameStart, end = target.nameEnd)
+    if hasName(items = shadow, value = name):
+        return out
+    let symbol = lookupTopByName(index = world.symbols, name = name)
+    if symbol < 0:
+        if isBuiltinConstructorName(name):
+            return out
+        return appendExprError(out = out, unit = unit, offset = target.start, kind = .exprUndefined, name = name, detail = "文件内没有这个函数", code = "E3-002")
+    let ref = symbolDecl(world = world, symbol = symbol)
+    if ref.unit < 0:
+        return out
+    let decl = world.units[ref.unit].ast.decls[ref.decl]
+    if !isFunctionDeclCode(decl.kind) && !isTypeDecl(decl):
+        return out
+    let expected = len(decl.generic)
+    let written = len(target.kids)
+    if expected != written:
+        return appendExprError(out = out, unit = unit, offset = target.start, kind = .exprCallFailed, name = name, detail = "类型实参 " + countText(written) + " 个，声明要 " + countText(expected) + " 个", code = "E4-006")
+    return checkGenericTypeArgs(world = world, unit = unit, bytes = bytes, target = target, out = out)
+
+; 内建构造名：这些名字不在符号表里，`名<...>(...)` 是类型构造，不按未定义函数判。
+; 名单与注释面的类型解析同集：容器、容器式包装、标量与外部句柄。
+isBuiltinConstructorName|func(_name: String,) -> (Bool,):
+    if containerMinArity(_name) >= 0:
+        return true
+    if isBuiltinType(_name):
+        return true
+    return _name == "StringHandle"
+
+; 类型实参逐个查名：落到已知的非类型声明（函数、外部符号）时报「名字不是类型」。
+; 符号表里没有的名字不报：未知类型名在全仓都没有判据，这里不单开一面。
+checkGenericTypeArgs|func(world: MemberWorld, unit: CompilationUnit, bytes: Array<U8>, target: TypeNode, out: ExprCheck,) -> (ExprCheck,):
+    var i = 0
+    while i < len(target.kids):
+        let kid = unit.ast.typeAt(target.kids[i])
+        if kid.kind == typeKindTag(.typeNamed):
+            let argName = decodeRange(bytes = bytes, start = kid.nameStart, end = kid.nameEnd)
+            let symbol = lookupTopByName(index = world.symbols, name = argName)
+            if symbol >= 0:
+                let ref = symbolDecl(world = world, symbol = symbol)
+                if ref.unit >= 0 && !isTypeDecl(world.units[ref.unit].ast.decls[ref.decl]):
+                    return appendExprError(out = out, unit = unit, offset = kid.start, kind = .exprNotTypeName, name = argName, detail = "类型实参要给类型名", code = "E3-003")
+        i = i + 1
+    return out
+
 ; 等待：操作数类型已知时必须是任务句柄；类型未写放过，留给降载面判。
 checkJoinNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, types: ExprTypes, node: I32, out: ExprCheck,) -> (ExprCheck,):
     let operand = unit.ast.childOf(id = node, index = 0)
@@ -461,6 +516,8 @@ checkUnitExprsSkipping|func(world: MemberWorld, unitIndex: I32, types: ExprTypes
             out = checkUnownedAccessNode(world = world, unit = unit, unitIndex = unitIndex, types = types, ranges = ranges, node = i, out = out)
         elif unit.ast.isCallExpr(i):
             out = checkCallNode(world = world, unit = unit, unitIndex = unitIndex, bytes = bytes, shadow = shadow, skips = skips, types = types, ranges = ranges, node = i, out = out)
+        elif unit.ast.isGenericExpr(i):
+            out = checkGenericNode(world = world, unit = unit, bytes = bytes, shadow = shadow, node = i, out = out)
         elif unit.ast.isJoinExpr(i):
             out = checkJoinNode(world = world, unit = unit, unitIndex = unitIndex, types = types, node = i, out = out)
         elif unit.ast.isWeakRefExpr(i):

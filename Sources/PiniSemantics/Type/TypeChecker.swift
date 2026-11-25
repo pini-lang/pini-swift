@@ -3368,6 +3368,14 @@ public final class TypeChecker {
                 } else {
                     try checkUnownedConstruction(arguments[0].expression, at: location)
                 }
+            } else if typeEnv.lookupVariable(name: typeName) == nil,
+                typeEnv.lookupFunction(name: typeName) != nil
+            {
+                // 非泛型函数带显式类型实参：声明的类型形参是 0 个，写几个都对不上。
+                // 不报这条时，推断会把 `f<T>` 当类型构造，错留到更远的返回位报成类型不匹配。
+                try report(
+                    TypeError.genericArgumentCountMismatch(
+                        typeName: typeName, expected: 0, got: typeArgs.count, location: location))
             }
 
         case .funcLiteral(let decl, _):

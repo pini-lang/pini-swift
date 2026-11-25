@@ -900,6 +900,23 @@ public final class SemanticAnalyzer {
         "F32", "F64", "Bool", "Char", "String", "Nothing",
     ]
 
+    /// 内建类型构造名：这些名字没有源码声明，`名<...>(...)` 是类型构造而不是函数调用。
+    /// 判据只用于泛型构造的名字面；名字表与自举侧的类型面同集。
+    private static let builtinConstructorNames: Set<String> = [
+        "Array", "Dictionary", "Set", "Optional", "Result", "Future", "WeakRef",
+        "LazyRef", "UnownedRef", "StringHandle", "Error", "CancelError",
+        "I8", "I16", "I32", "I64", "U8", "U16", "U32", "U64", "F32", "F64",
+        "Bool", "Char", "String", "Nothing", "Any",
+    ]
+
+    /// 符号是否表示一个类型：结构、对象、枚举与特征四类，其余（函数、变量、用例、参数、外部符号）都不是。
+    private static func isTypeSymbol(_ kind: SymbolKind) -> Bool {
+        switch kind {
+        case .struct, .object, .enum, .trait: return true
+        default: return false
+        }
+    }
+
     /// 注解 → 类型名；元组 / 函数 / 指针 / 泛型不判定（返回 ""）。
     private func typeNameOfAnnotation(_ annotation: TypeAnnotation) -> String {
         switch annotation {
@@ -1204,8 +1221,21 @@ public final class SemanticAnalyzer {
                 throw SemanticError.undefinedVariable(name: ".\(name)", location: location)
             }
 
-        case .genericConstruct:
-            break
+        case .genericConstruct(let typeName, let typeArgs, let arguments, let location):
+            // 名字面与普通调用同规：内建类型构造名没有源码声明，其余按未定义函数报。
+            // 判据与 `.call` 共用 requireDefined，词法遮蔽、跨包可见性与注入名因此不必各判一次。
+            if !Self.builtinConstructorNames.contains(typeName) {
+                try requireDefined(typeName, location, isFunction: true)
+            }
+            // 类型实参须是类型：只有落到已知的非类型声明才报；判不出的名字不校验。
+            for typeArg in typeArgs {
+                guard case .simple(let argName, let argLocation) = typeArg,
+                    let symbol = symbolTable.resolve(argName),
+                    !Self.isTypeSymbol(symbol.kind)
+                else { continue }
+                throw SemanticError.undefinedType(name: argName, location: argLocation)
+            }
+            for argument in arguments { try checkExpression(argument.expression) }
 
         case .join(let inner, _, _):
             try checkExpression(inner)

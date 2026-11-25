@@ -136,6 +136,52 @@ types: ExprTypes = ExprTypes()
     assert(check.errors[0].field == "名称", "实得 " + check.errors[0].field)
     return
 
+; 泛型实参个数：非泛型函数按 0 个算，写了类型实参就报 E4-006。
+泛型实参落到非泛型函数|test() -> ():
+    let 源 = "加一|func(x: I32,) -> (I32,):\n    return x\n\nf|func() -> (I32,):\n    return 加一<I32>(1)\n"
+    let 样例 = 造表达式样例(files = ["packages/p/src/api/p.pini"], texts = [源])
+    let check = checkUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
+    assert(len(check.errors) == 1, "应报一条，实得 " + exprError串(check))
+    assert(check.errors[0].code == "E4-006", "实得 " + check.errors[0].code)
+    assert(check.errors[0].name == "加一", "实得 " + check.errors[0].name)
+    return
+
+; 泛型实参相符放行：个数与声明一致时不报，类型能否解析归标注面。
+泛型实参相符放行|test() -> ():
+    let 源 = "配对|func<T, U>(a: T, b: U,) -> (T,):\n    return a\n\nf|func() -> (I32,):\n    return 配对<I32, String>(a = 1, b = \"x\")\n"
+    let 样例 = 造表达式样例(files = ["packages/p/src/api/p.pini"], texts = [源])
+    let check = checkUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
+    assert(len(check.errors) == 0, "合法泛型调用不该报，实得 " + exprError串(check))
+    return
+
+; 泛型构造名字缺失：符号表里没有这个名字，按未定义函数报 E3-002。
+泛型构造名字缺失|test() -> ():
+    let 源 = "f|func() -> ():\n    没有这个<I32>(1)\n    return\n"
+    let 样例 = 造表达式样例(files = ["packages/p/src/api/p.pini"], texts = [源])
+    let check = checkUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
+    assert(len(check.errors) == 1, "应报一条，实得 " + exprError串(check))
+    assert(check.errors[0].code == "E3-002", "实得 " + check.errors[0].code)
+    assert(check.errors[0].name == "没有这个", "实得 " + check.errors[0].name)
+    return
+
+; 泛型实参不是类型：实参落到函数名上，按「名字不是类型」报 E3-003。
+泛型实参不是类型|test() -> ():
+    let 源 = "加一|func(x: I32,) -> (I32,):\n    return x\n\n映射|func<T>(x: T,) -> (T,):\n    return x\n\nf|func() -> ():\n    映射<加一>(1)\n    return\n"
+    let 样例 = 造表达式样例(files = ["packages/p/src/api/p.pini"], texts = [源])
+    let check = checkUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
+    assert(len(check.errors) == 1, "应报一条，实得 " + exprError串(check))
+    assert(check.errors[0].code == "E3-003", "实得 " + check.errors[0].code)
+    assert(check.errors[0].name == "加一", "实得 " + check.errors[0].name)
+    return
+
+; 内建构造名放行：`Array<I32>()` 的名字不在符号表，但不是未定义函数。
+内建构造名放行|test() -> ():
+    let 源 = "f|func() -> ():\n    var a = Array<I32>()\n    print(len(a))\n    return\n"
+    let 样例 = 造表达式样例(files = ["packages/p/src/api/p.pini"], texts = [源])
+    let check = checkUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
+    assert(len(check.errors) == 0, "内建构造名不该报，实得 " + exprError串(check))
+    return
+
 ; 收齐错误串：测试断言失败时给出可读内容。
 exprError串|func(_check: ExprCheck,) -> (String,):
     var out = ""

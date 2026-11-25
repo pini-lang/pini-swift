@@ -119,32 +119,60 @@ public enum WorkspaceBuilder {
             packages: ordered.compactMap { packagesByName[$0] })
     }
 
-    /// 装载单个 target。普通库只取生产源码，可执行入口彼此隔离，测试入口只加入测试 target。
-    /// 标准库由调用方决定是否并入：编译器自身构建必须关，否则改标准库就要重建编译器。
-    public static func load(
-        package plan: WorkspacePackagePlan, target: WorkspaceTargetPlan,
-        withStdlib: Bool = true
-    ) throws -> WorkspaceLoadedTarget {
-        let loaded = try FileLoader.loadDirectory(
-            path: plan.rootPath, manifest: plan.manifest, withStdlib: false)
+    /// 工作区主张：标准库让位按整个工作区收集，与自举同一口径——邻居包的同名声明也生效。
+    /// 逐包读一次源码、逐 target 选单元，按文件名去重后取并集。
+    public static func claims(for plan: WorkspaceBuildPlan) throws -> FrontEnd.StdlibClaims {
+        var modules: [Module] = []
+        var seen = Set<String>()
+        for package in plan.packages {
+            let loaded = try FileLoader.loadDirectory(
+                path: package.rootPath, manifest: package.manifest, withStdlib: false)
+            for target in package.targets {
+                for unit in selectUnits(package: package, target: target, loaded: loaded)
+                where seen.insert(unit.fileName).inserted {
+                    modules.append(unit.module)
+                }
+            }
+        }
+        return FrontEnd.claims(in: modules)
+    }
+
+    /// 按 target 选源码单元：库取生产源码，可执行另加自己的入口，测试再并入测试根。
+    /// 目标为空不在这里报错：那是 `load` 的 sourceMissing，收集主张时跳过即可。
+    private static func selectUnits(
+        package plan: WorkspacePackagePlan, target: WorkspaceTargetPlan, loaded: Package
+    ) -> [FileUnit] {
         func relative(_ unit: FileUnit) -> String { loaded.relativeFileName(unit.fileName) }
         let production = loaded.fileUnits.filter { relative($0).hasPrefix("src/") }
         let executableEntries = Set(plan.manifest.targets.filter { $0.kind == .executable }.map(\.entry))
         let common = production.filter { !executableEntries.contains(relative($0)) }
-        var selected: [FileUnit]
         switch target.kind {
         case .library:
-            selected = common
+            return common
         case .executable:
-            selected = common + production.filter { relative($0) == target.entry }
+            return common + production.filter { relative($0) == target.entry }
         case .test:
             let prefix = target.entry.hasSuffix("/") ? target.entry : target.entry + "/"
-            selected =
+            return
                 common
                 + loaded.fileUnits.filter {
                     relative($0) == target.entry || relative($0).hasPrefix(prefix)
                 }
         }
+    }
+
+    /// 装载单个 target。普通库只取生产源码，可执行入口彼此隔离，测试入口只加入测试 target。
+    /// 标准库由调用方决定是否并入：编译器自身构建必须关，否则改标准库就要重建编译器。
+    public static func load(
+        package plan: WorkspacePackagePlan, target: WorkspaceTargetPlan,
+        withStdlib: Bool = true,
+        claims: FrontEnd.StdlibClaims? = nil
+    ) throws -> WorkspaceLoadedTarget {
+        let loaded = try FileLoader.loadDirectory(
+            path: plan.rootPath, manifest: plan.manifest, withStdlib: false)
+        func relative(_ unit: FileUnit) -> String { loaded.relativeFileName(unit.fileName) }
+        let production = loaded.fileUnits.filter { relative($0).hasPrefix("src/") }
+        var selected = selectUnits(package: plan, target: target, loaded: loaded)
         guard !selected.isEmpty else {
             throw WorkspaceError.sourceMissing(package: plan.name, target: target.name)
         }
@@ -171,7 +199,11 @@ public enum WorkspaceBuilder {
                     missing: drift.missingInRequire, extra: drift.extraInRequire)
             }
         }
-        let assembled = withStdlib ? interfacePackage.assemblingStdlib() : interfacePackage
+        let assembled =
+            withStdlib
+            ? interfacePackage.assemblingStdlib(
+                claims: claims ?? FrontEnd.claims(in: interfacePackage.fileUnits.map(\.module)))
+            : interfacePackage
         return WorkspaceLoadedTarget(
             package: assembled, publicInterface: interface)
     }

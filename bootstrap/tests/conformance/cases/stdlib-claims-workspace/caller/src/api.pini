@@ -1,0 +1,6 @@
+; 正例：本包用标准库的函数形态；另一个包声明同名项不应影响这里。
+计数|func(_arr: Array<I32>,) -> (I32,):
+    return countWhere<I32>(arr = _arr, pred = 正)
+
+正|func(_x: I32,) -> (Bool,):
+    return _x > 0

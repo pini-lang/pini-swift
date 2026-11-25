@@ -2221,10 +2221,12 @@ private func buildWorkspace(_ plan: WorkspaceBuildPlan, withStdlib: Bool) throws
     // 记录用首次写入 interface.txt 的文本，与产物逐字节一致。
     var interfaceTexts: [String: String] = [:]
     var sourceDigests: [String: String] = [:]
+    // 让位主张按整个工作区收集：邻居包的同名声明也摘掉标准库那份，与自举同口径。
+    let claims = withStdlib ? try WorkspaceBuilder.claims(for: plan) : nil
     for package in plan.packages {
         for target in package.targets where target.isBuiltByDefault {
             let loaded = try WorkspaceBuilder.load(
-                package: package, target: target, withStdlib: withStdlib)
+                package: package, target: target, withStdlib: withStdlib, claims: claims)
             if reportedWarnings.insert(package.name).inserted {
                 emitLexerWarnings(loaded.package.warnings)
             }
@@ -2288,11 +2290,20 @@ private func checkWorkspace(_ plan: WorkspaceBuildPlan, withStdlib: Bool) {
     var texts: [String: String] = [:]
     var hashes: [String: String] = [:]
     var failures = 0
+    var claims: FrontEnd.StdlibClaims? = nil
+    if withStdlib {
+        do {
+            claims = try WorkspaceBuilder.claims(for: plan)
+        } catch {
+            if !diagnosticRow(error) { printError(formatCLIError(error: error, source: nil)) }
+            exit(1)
+        }
+    }
     for package in plan.packages {
         guard let target = package.targets.first(where: { $0.isBuiltByDefault }) else { continue }
         do {
             let loaded = try WorkspaceBuilder.load(
-                package: package, target: target, withStdlib: withStdlib)
+                package: package, target: target, withStdlib: withStdlib, claims: claims)
             emitLexerWarnings(loaded.package.warnings)
             let analyzer = SemanticAnalyzer()
             try analyzer.analyze(package: loaded.package)
