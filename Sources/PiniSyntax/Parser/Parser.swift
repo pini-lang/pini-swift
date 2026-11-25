@@ -868,20 +868,13 @@ public class Parser {
             // 遇到缩进 token 先消费；遇到反缩进（体结束）或下一个顶层声明即收尾。
             if case .indent(_) = currentToken { advance(); skipNewlines() }
             if case .dedent(_) = currentToken { advance(); break }
-            // 类型体结束：顶格下一类型块头（`(`/`[`/`<`）；`{` 在类型体内是函数声明 → 报错。
+            // 类型体结束：顶格下一类型块头（`(`/`[`/`<`/`{`）；行首 `{名}` 恒为对象声明糖。
             // 注意：不能用 isTopLevelDeclStart()——它把 `name(...)` 裸函数也当顶级声明，会让下面的检查失效。
             if case .leftParen(_) = currentToken { break }
             if case .leftBracket(_) = currentToken { break }
             if case .lessThan(_) = currentToken { break }
-            if case .leftBrace(_) = currentToken {
-                // `{{` 是对象扩展块（下一顶级声明）→ 结束类型体；单 `{` 是类型体内函数声明 → 报错
-                if case .leftBrace(_) = peek(offset: 1) { break }
-                // 类型体内禁止函数声明；方法须移到同文件扩展块并显式写 `|self` 或 `|Self`。
-                throw ParserError.invalidStatement(
-                    reason: "类型体内禁止函数声明（规则 3.2）：`\(name)` 的方法应移至同文件扩展块 `((\(name)))` 中，并显式使用 `|self` 或 `|Self`",
-                    location: currentLocation
-                )
-            } else if case .identifier = currentToken, isBareFunctionDeclStart() {
+            if case .leftBrace(_) = currentToken { break }
+            if case .identifier = currentToken, isBareFunctionDeclStart() {
                 // `name|func` 是顶级自由函数（类型体结束）；其余函数声明是类型体内方法 → 报错
                 if isBareFuncWithFuncModifierStart() { break }
                 throw ParserError.invalidStatement(
@@ -952,19 +945,12 @@ public class Parser {
             // 遇到缩进 token 先消费；遇到反缩进（体结束）或下一个顶层声明即收尾。
             if case .indent(_) = currentToken { advance(); skipNewlines() }
             if case .dedent(_) = currentToken { advance(); break }
-            // 类型体结束：顶格下一类型块头（`(`/`[`/`<`）；`{` 在类型体内是函数声明 → 报错。
+            // 类型体结束：顶格下一类型块头（`(`/`[`/`<`/`{`）；行首 `{名}` 恒为对象声明糖。
             if case .leftParen(_) = currentToken { break }
             if case .leftBracket(_) = currentToken { break }
             if case .lessThan(_) = currentToken { break }
-            if case .leftBrace(_) = currentToken {
-                // `{{` 是对象扩展块（下一顶级声明）→ 结束类型体；单 `{` 是类型体内函数声明 → 报错
-                if case .leftBrace(_) = peek(offset: 1) { break }
-                // 类型体内禁止函数声明；方法须移到同文件扩展块并显式写 `|self` 或 `|Self`。
-                throw ParserError.invalidStatement(
-                    reason: "类型体内禁止函数声明（规则 3.2）：`\(name)` 的方法应移至同文件扩展块 `\(bracket)` 中，并显式使用 `|self` 或 `|Self`",
-                    location: currentLocation
-                )
-            } else if case .identifier = currentToken, isBareFunctionDeclStart() {
+            if case .leftBrace(_) = currentToken { break }
+            if case .identifier = currentToken, isBareFunctionDeclStart() {
                 // `name|func` 是顶级自由函数（类型体结束）；其余函数声明是类型体内方法 → 报错
                 if isBareFuncWithFuncModifierStart() { break }
                 throw ParserError.invalidStatement(
