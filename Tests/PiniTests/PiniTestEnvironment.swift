@@ -19,11 +19,13 @@ enum PiniTestEnvironment {
         return URL(fileURLWithPath: #filePath).deletingLastPathComponent()
     }()
 
-    /// 仓内构建产物，按优先序。只给路径、不验可执行：调用方要自己区分「没有产物」与
-    /// 「产物早于某个内建」两种情形。
+    /// 仓内构建产物，release 优先：门禁与 CI 只认 release，debug 只作本地调试兜底。
+    /// 只给路径、不验可执行：调用方要自己区分「没有产物」与「产物早于某个内建」两种情形。
     static var repositoryCLICandidates: [String] {
-        ["/.build/debug/pini", "/.build/out/Products/Debug/pini"]
-            .map { repositoryRoot.path + $0 }
+        [
+            "/.build/release/pini", "/.build/out/Products/Release/pini",
+            "/.build/debug/pini", "/.build/out/Products/Debug/pini",
+        ].map { repositoryRoot.path + $0 }
     }
 
     /// 环境变量优先，其次仓内第一份可执行产物；都没有时 nil，由调用方决定怎么响亮跳过。
