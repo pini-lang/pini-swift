@@ -1,0 +1,8 @@
+[case]
+name = "注释里的双向控制字符"
+category = "diagnostics"
+kind = "warning"
+code = "E7-009"
+line = 1
+col = 4
+spec = "参考件 §2.5 双向控制字符在注释与字符串里只告警；自举在词法层记警告，退出码仍为零"

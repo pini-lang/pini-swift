@@ -1,0 +1,8 @@
+[case]
+name = "标识符混用高风险脚本"
+category = "diagnostics"
+kind = "error"
+code = "E1-006"
+line = 2
+col = 9
+spec = "参考件 §2.5 高风险脚本混写报错、中文与拉丁组合不受限；主标签落在标识符起点"

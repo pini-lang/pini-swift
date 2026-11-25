@@ -24,7 +24,7 @@ CATEGORIES = {
     "legal", "illegal", "unicode", "path", "diagnostics",
     "package", "cinterop", "determinism",
 }
-KINDS = {"error", "pass", "reject", "stable"}
+KINDS = {"error", "pass", "reject", "stable", "warning"}
 REQUIRED = ("name", "category", "kind", "spec")
 TIMEOUT = 180
 
@@ -161,6 +161,41 @@ def compare_error(case, root, host, boot):
     return deviations, f"期望 {expected[0]}@{expected[1]}:{expected[2]}"
 
 
+def compare_warning(case, root, host, boot):
+    """警告用例：两条通道都报该码与位置，且退出码为零 —— 警告不阻断编译。
+
+    警告不走结构化通道（宿主的 TSV 只出错误），故两侧都按文本解析：
+    宿主是「[码]」一行加「at 路径:行:列」一行，自举是「路径:行:列: 类别 [码] 消息」一行。
+    """
+    deviations = {}
+    expected = (case["code"], int(case["line"]), int(case["col"]))
+
+    code, out, err = run([str(host), "check", str(root / "pkg")], root)
+    text = out + "\n" + err
+    found = re.search(r"\[(E\d-\d{3})\]\s*\n\s*at [^\n]*:(\d+):(\d+)", text)
+    if found:
+        got = (found.group(1), int(found.group(2)), int(found.group(3)))
+        if got != expected:
+            deviations["host"] = "\t".join(str(item) for item in got)
+    else:
+        deviations["host"] = f"exit={code}|无诊断"
+    if code != 0:
+        deviations["host"] = f"退出码应为 0，实得 {code}"
+
+    code, out, err = run([str(boot), "check", str(root)], root)
+    text = out + "\n" + err
+    found = re.search(r":(\d+):(\d+): [^\n]*\[(E\d-\d{3})\]", text)
+    if found:
+        got = (found.group(3), int(found.group(1)), int(found.group(2)))
+        if got != expected:
+            deviations["bootstrap"] = "\t".join(str(item) for item in got)
+    else:
+        deviations["bootstrap"] = f"exit={code}|无诊断"
+    if code != 0:
+        deviations["bootstrap"] = f"退出码应为 0，实得 {code}"
+    return deviations, f"期望 {expected[0]}@{expected[1]}:{expected[2]}"
+
+
 def stage_of(output, err):
     """失败摘要取阶段名，不取整行：整行带路径会随工作目录变，基线才对得上。"""
     lines = (output.strip().splitlines() or err.strip().splitlines() or ["无输出"])
@@ -224,7 +259,7 @@ def compare_reject(case, root, host, boot):
     return deviations, "两条通道都必须拒绝"
 
 
-COMPARERS = {"error": compare_error, "pass": compare_pass, "reject": compare_reject, "stable": compare_stable}
+COMPARERS = {"error": compare_error, "pass": compare_pass, "reject": compare_reject, "stable": compare_stable, "warning": compare_warning}
 
 
 def load_baseline():
