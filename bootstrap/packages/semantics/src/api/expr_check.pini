@@ -289,6 +289,31 @@ checkCallNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, by
         return out
     return appendExprError(out = out, unit = unit, offset = site.offset, kind = .exprCallFailed, name = name, detail = callErrorName(result.error.kind), code = callErrorCode(result.error.kind))
 
+; 泛型构造：显式类型实参个数须等于声明的类型形参个数，非泛型函数按 0 个算。
+; 名字解析不到、或落到既非函数也非类型时放过：未定义名与外部构造各归自己的面。
+checkGenericNode|func(world: MemberWorld, unit: CompilationUnit, bytes: Array<U8>, shadow: Array<String>, node: I32, out: ExprCheck,) -> (ExprCheck,):
+    let generic = unit.ast.exprAt(node)
+    if generic.typeId < 0 || generic.typeId >= unit.ast.typeCount():
+        return out
+    let target = unit.ast.typeAt(generic.typeId)
+    let name = decodeRange(bytes = bytes, start = target.nameStart, end = target.nameEnd)
+    if hasName(items = shadow, value = name):
+        return out
+    let symbol = lookupTopByName(index = world.symbols, name = name)
+    if symbol < 0:
+        return out
+    let ref = symbolDecl(world = world, symbol = symbol)
+    if ref.unit < 0:
+        return out
+    let decl = world.units[ref.unit].ast.decls[ref.decl]
+    if !isFunctionDeclCode(decl.kind) && !isTypeDecl(decl):
+        return out
+    let expected = len(decl.generic)
+    let written = len(target.kids)
+    if expected == written:
+        return out
+    return appendExprError(out = out, unit = unit, offset = target.start, kind = .exprCallFailed, name = name, detail = "类型实参 " + countText(written) + " 个，声明要 " + countText(expected) + " 个", code = "E4-006")
+
 ; 等待：操作数类型已知时必须是任务句柄；类型未写放过，留给降载面判。
 checkJoinNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, types: ExprTypes, node: I32, out: ExprCheck,) -> (ExprCheck,):
     let operand = unit.ast.childOf(id = node, index = 0)
@@ -461,6 +486,8 @@ checkUnitExprsSkipping|func(world: MemberWorld, unitIndex: I32, types: ExprTypes
             out = checkUnownedAccessNode(world = world, unit = unit, unitIndex = unitIndex, types = types, ranges = ranges, node = i, out = out)
         elif unit.ast.isCallExpr(i):
             out = checkCallNode(world = world, unit = unit, unitIndex = unitIndex, bytes = bytes, shadow = shadow, skips = skips, types = types, ranges = ranges, node = i, out = out)
+        elif unit.ast.isGenericExpr(i):
+            out = checkGenericNode(world = world, unit = unit, bytes = bytes, shadow = shadow, node = i, out = out)
         elif unit.ast.isJoinExpr(i):
             out = checkJoinNode(world = world, unit = unit, unitIndex = unitIndex, types = types, node = i, out = out)
         elif unit.ast.isWeakRefExpr(i):
