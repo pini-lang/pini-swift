@@ -5,10 +5,10 @@ Error: Parse Error [E2-006]
   ~
 
 invalid expression: 无效的表达式
-Error: Parse Error [E2-006]
+Error: Parse Error [E2-023]
   at bootstrap/fixtures/cli-parity/inputs/indent.pini:6:1
 
   
   ~
 
-invalid expression: 无效的表达式
+unexpected end of file
