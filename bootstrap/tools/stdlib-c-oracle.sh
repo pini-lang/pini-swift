@@ -17,8 +17,8 @@ fail() {
     exit 1
 }
 
-[ -x "$pini" ] || fail "缺可执行的 pini（$pini）；先 swift build -c release --disable-sandbox"
-command -v "$cc_bin" > /dev/null 2>&1 || fail "缺 C 编译器（$cc_bin）"
+[ -x "$pini" ] || fail "缺可执行的 pini（${pini}）；先 swift build -c release --disable-sandbox"
+command -v "$cc_bin" > /dev/null 2>&1 || fail "缺 C 编译器（${cc_bin}）"
 
 case "$(uname -s)" in
     Darwin) ext="dylib"; install_flag="-install_name @rpath/libpinistd.dylib" ;;
