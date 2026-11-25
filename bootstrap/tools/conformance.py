@@ -94,11 +94,20 @@ def bootstrap_binary():
 
 def prepare(case):
     dest = WORK / case["slug"]
-    if dest.exists():
-        shutil.rmtree(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(case["dir"], dest)
+    shutil.copytree(case["dir"], dest, dirs_exist_ok=True)
+    prune_stale(src=case["dir"], dest=dest)
     return dest
+
+
+def prune_stale(src, dest):
+    """删掉副本里源已没有的项：只动差集，不整树重删。"""
+    for path in sorted(dest.rglob("*"), reverse=True):
+        if not (src / path.relative_to(dest)).exists():
+            if path.is_dir():
+                path.rmdir()
+            else:
+                path.unlink()
 
 
 def run(command, cwd, env=None):
@@ -314,6 +323,8 @@ def main():
     host = host_binary()
     boot = bootstrap_binary()
     baseline = load_baseline()
+    # 复用工作目录：整树清空在单轮里等于一次批量删除，会撞上宿主的删除审计。
+    WORK.mkdir(parents=True, exist_ok=True)
     fresh = {}
     used = set()
     failures = []

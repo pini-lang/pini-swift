@@ -91,6 +91,51 @@ types: ExprTypes = ExprTypes()
     assert(check.errors[1].code == "E4-005", "实得 " + check.errors[1].code)
     return
 
+; 给定块名字进值位：裸写报错；显式构造 `名()` 与成员接收者不在此判。
+给定块名不进值位|test() -> ():
+    let 源 = "[配置|given]\n名称: String = \"默认\"\n\n取|func(配: 配置,) -> (String,):\n    return 配.名称\n\nf|func() -> ():\n    取(配 = 配置,)\n"
+    let 样例 = 造表达式样例(files = ["packages/p/src/api/p.pini"], texts = [源])
+    let check = checkUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
+    assert(len(check.errors) == 1, "应报一条，实得 " + exprError串(check))
+    assert(check.errors[0].code == "E4-015", "实得 " + check.errors[0].code)
+    assert(check.errors[0].name == "配置", "实得 " + check.errors[0].name)
+    return
+
+; 显式构造放行：`配置()` 是合法值，类型名本身不进值位。
+给定块显式构造放行|test() -> ():
+    let 源 = "[配置|given]\n名称: String = \"默认\"\n\n取|func(配: 配置,) -> (String,):\n    return 配.名称\n\nf|func() -> ():\n    取(配 = 配置(),)\n"
+    let 样例 = 造表达式样例(files = ["packages/p/src/api/p.pini"], texts = [源])
+    let check = checkUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
+    assert(len(check.errors) == 0, "显式构造不该报，实得 " + exprError串(check))
+    return
+
+; 成员接收者放行：own 方法挂在类型名上，`配置.取数()` 不是把类型名当值。
+给定块作接收者放行|test() -> ():
+    let 源 = "[配置|given]\n名称: String = \"默认\"\n\n((配置))\n取数|own() -> (I32,):\n    return 3\n\nf|func() -> ():\n    配置.取数()\n"
+    let 样例 = 造表达式样例(files = ["packages/p/src/api/p.pini"], texts = [源])
+    let check = checkUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
+    assert(len(check.errors) == 0, "接收者位不该报，实得 " + exprError串(check))
+    return
+
+; 取用位缺默认实例：省略实参时形参类型不是给定块，省略式调用只能拒。
+取用位缺默认实例|test() -> ():
+    let 源 = "取值|func(using 配: I32,) -> (I32,):\n    return 配\n\nf|func() -> ():\n    取值()\n"
+    let 样例 = 造表达式样例(files = ["packages/p/src/api/p.pini"], texts = [源])
+    let check = checkUnitExprs(world = 样例.world, unitIndex = 0, types = 样例.types)
+    assert(len(check.errors) == 1, "应报一条，实得 " + exprError串(check))
+    assert(check.errors[0].code == "E6-007", "实得 " + check.errors[0].code)
+    return
+
+; 给定块字段缺初值：默认实例不完整，按字段报一条；带初值的字段不报。
+给定块字段缺初值|test() -> ():
+    let 一 = loadUnit(path = "packages/p/src/api/p.pini", text = "[配置|given]\n名称: String\n次数: I32 = 0\n")
+    assert(!一.failed, "样例应可加载")
+    let check = checkGivenShapes(units = [一.unit])
+    assert(len(check.errors) == 1, "应报一条，实得 " + "\(len(check.errors))")
+    assert(check.errors[0].owner == "配置", "实得 " + check.errors[0].owner)
+    assert(check.errors[0].field == "名称", "实得 " + check.errors[0].field)
+    return
+
 ; 收齐错误串：测试断言失败时给出可读内容。
 exprError串|func(_check: ExprCheck,) -> (String,):
     var out = ""
