@@ -1,0 +1,957 @@
+[bind_clang|import]
+_unicode = "../../../unicode"
+_support = "../../../support"
+_hostproc = "../../../hostproc"
+
+; 头文件翻译的外部面：定位 clang、跑 AST 转储、收宏并求值。
+; 纯映射与块文本渲染在 bind.pini；这一份只碰进程与文件，判据靠端到端对照。
+
+; 浮点字面量：宏展开后的十进制写法交给运行时 strtod 口径解析。
+[float|foreign]
+bk_parse_double: (String,) -> (F64,)
+
+; 扫描态：当前文件按 dump 顺序更新；typedef 表与声明序都在这里累计。
+{BindScan}
+currentFile: String = ""
+typedefNames: Array<String> = []
+typedefSpellings: Array<String> = []
+decls: Array<BindDecl> = []
+skipped: Array<BindSkip> = []
+fromIncluded: I32 = 0
+
+; 一条宏定义：body 只对对象式宏有意义；file 是归一后的绝对路径。
+(BindMacro)
+name: String = ""
+body: String = ""
+isFunctionLike: Bool = false
+file: String = ""
+
+; 宏收集结果：一张定义表加收集期跳过项；工具失败时 ok 为零、detail 带命令行。
+(BindMacroSet)
+macros: Array<BindMacro> = []
+skipped: Array<BindSkip> = []
+ok: Bool = true
+detail: String = ""
+
+; 展开结果：与入参同名同序；工具失败时 ok 为零。
+(BindBodySet)
+bodies: Array<String> = []
+ok: Bool = true
+detail: String = ""
+
+; 翻译结果：块名、文本、跳过项与来自被包含头文件的条数。
+(BindResult)
+blockName: String = ""
+text: String = ""
+skipped: Array<BindSkip> = []
+fromIncluded: I32 = 0
+ok: Bool = true
+detail: String = ""
+
+; 宏求值的中间值：ok 为零即失败；浮点只来自字面量。
+(BindNumber)
+ok: Bool = false
+isFloat: Bool = false
+intValue: I64 = 0
+floatValue: F64 = 0.0
+
+; 宏常量：整数或浮点两态，类型由值域定。
+(BindMacroValue)
+ok: Bool = false
+isFloat: Bool = false
+intValue: I64 = 0
+floatValue: F64 = 0.0
+
+; 表达式记号：0 整数、1 浮点、2 运算符、3 左括号、4 右括号、5 其它。
+(BindTok)
+kind: I32 = 0
+text: String = ""
+
+; 求值游标：引用语义承载，解析期只经它前进。
+{BindEval}
+toks: Array<BindTok> = []
+at: I32 = 0
+
+; 环境变量：起 /usr/bin/printenv 取一行；未设置时答空串。
+bindEnvValue|func(_name: String,) -> (String,):
+    let run = runProcess(argv = ["/usr/bin/printenv", _name], keepOutput = true)
+    return stripTrailingNewline(text = run.stdoutText)
+
+; 当前目录：进程族没有 cwd 查询，起 /bin/pwd 取一次。
+bindCurrentDirectory|func() -> (String,):
+    let run = runProcess(argv = ["/bin/pwd"], keepOutput = true)
+    return stripTrailingNewline(text = run.stdoutText)
+
+; clang 定位：PINI_CLANG / PINI_CC 优先，其次按 PATH 顺序找第一个；找不到答空串。
+; 只探存在不探可执行：不可执行时起进程会报错，那时的报错比这里猜更准。
+bindClangPath|func() -> (String,):
+    let override = bindEnvValue("PINI_CLANG")
+    if len(override) > 0 && exists(override) && !isDir(override):
+        return override
+    let fallback = bindEnvValue("PINI_CC")
+    if len(fallback) > 0 && exists(fallback) && !isDir(fallback):
+        return fallback
+    let path = bindEnvValue("PATH")
+    let dirs = path.split(":")
+    var i = 0
+    while i < len(dirs):
+        let candidate = dirs[i] + "/clang"
+        if exists(candidate) && !isDir(candidate):
+            return candidate
+        i = i + 1
+    return ""
+
+bindRunTool|func(_clang: String, _args: Array<String>,) -> (ProcessOutcome,):
+    var argv: Array<String> = [_clang]
+    var i = 0
+    while i < len(_args):
+        argv = argv.append(_args[i])
+        i = i + 1
+    return runProcess(argv = argv, keepOutput = true)
+
+bindCommandText|func(_clang: String, _args: Array<String>,) -> (String,):
+    var text = _clang
+    var i = 0
+    while i < len(_args):
+        text = text + " " + _args[i]
+        i = i + 1
+    return text
+
+; 选项拼参数：包含路径与定义按声明序拼，两者都是 C 工具认识的写法。
+bindOptionArgs|func(_options: BindOptions,) -> (Array<String>,):
+    var out: Array<String> = []
+    var i = 0
+    while i < len(_options.includePaths):
+        out = out.append("-I" + _options.includePaths[i])
+        i = i + 1
+    i = 0
+    while i < len(_options.defines):
+        out = out.append("-D" + _options.defines[i])
+        i = i + 1
+    return out
+
+; 目标宽度：只认四个 __SIZEOF_* 宏，缺项落默认值。
+bindParseTarget|func(_text: String,) -> (BindTarget,):
+    var out = BindTarget()
+    let lines = _text.split("\n")
+    var i = 0
+    while i < len(lines):
+        let line = lines[i]
+        if bindStartsWith(line, "#define "):
+            let parts = line.split(" ")
+            if len(parts) >= 3:
+                if parts[1] == "__SIZEOF_INT__":
+                    out.intWidth = bindParseI32(parts[2], 4)
+                elif parts[1] == "__SIZEOF_LONG__":
+                    out.longWidth = bindParseI32(parts[2], 8)
+                elif parts[1] == "__SIZEOF_LONG_LONG__":
+                    out.longLongWidth = bindParseI32(parts[2], 8)
+                elif parts[1] == "__SIZEOF_POINTER__":
+                    out.pointerWidth = bindParseI32(parts[2], 8)
+        i = i + 1
+    return out
+
+bindParseI32|func(_text: String, _fallback: I32,) -> (I32,):
+    if len(_text) == 0:
+        return _fallback
+    var value = 0
+    var i = 0
+    while i < len(_text):
+        let code = ord(_text[i])
+        if code < 48 || code > 57:
+            return _fallback
+        value = value * 10 + (code - 48)
+        i = i + 1
+    return value
+
+; 类型拼写：优先取 desugaredQualType；typedef 名本身不在映射表里，展开后的拼写才是依据。
+bindTypeSpelling|func(_doc: JsonDocument, _typeIndex: I32,) -> (String,):
+    if _typeIndex < 0:
+        return ""
+    let desugared = jsonMemberValueOf(_doc, _typeIndex, "desugaredQualType")
+    if desugared >= 0:
+        return bindTrim(jsonTextOf(_doc, desugared))
+    let plain = jsonMemberValueOf(_doc, _typeIndex, "qualType")
+    if plain >= 0:
+        return bindTrim(jsonTextOf(_doc, plain))
+    return ""
+
+; 文件归属：loc.file 只在变化时出现，故按 dump 顺序走完整棵树再判归属。
+bindScanUpdateFile|func(_scan: BindScan, _doc: JsonDocument, _node: I32, _cwd: String,) -> ():
+    let loc = jsonMemberValueOf(_doc, _node, "loc")
+    if loc < 0:
+        return
+    let file = jsonMemberValueOf(_doc, loc, "file")
+    if file >= 0:
+        _scan.currentFile = bindAbsolutePath(_cwd, jsonTextOf(_doc, file))
+
+bindScanDescend|func(_scan: BindScan, _doc: JsonDocument, _node: I32, _cwd: String,) -> ():
+    let inner = jsonMemberValueOf(_doc, _node, "inner")
+    if inner < 0:
+        return
+    let count = jsonChildCount(_doc, inner)
+    var i = 0
+    while i < count:
+        let child = jsonChildAt(_doc, inner, i)
+        bindScanUpdateFile(_scan, _doc, child, _cwd)
+        bindScanDescend(_scan, _doc, child, _cwd)
+        i = i + 1
+
+bindNodeText|func(_doc: JsonDocument, _node: I32, _key: String,) -> (String,):
+    let at = jsonMemberValueOf(_doc, _node, _key)
+    if at < 0:
+        return ""
+    return jsonTextOf(_doc, at)
+
+bindNodeBool|func(_doc: JsonDocument, _node: I32, _key: String,) -> (Bool,):
+    let at = jsonMemberValueOf(_doc, _node, _key)
+    if at < 0:
+        return false
+    return jsonBoolOf(_doc, at)
+
+; 函数声明：返回类型取整串第一个 `(` 之前的部分，形参取直接子节点里的 ParmVarDecl。
+bindScanFunction|func(_doc: JsonDocument, _node: I32, _name: String,) -> (BindDecl,):
+    var out = BindDecl()
+    out.kind = .bindDeclFunction
+    out.name = _name
+    let typeIndex = jsonMemberValueOf(_doc, _node, "type")
+    let spelling = bindTypeSpelling(_doc, typeIndex)
+    let at = spelling.indexOf("(")
+    if at >= 0:
+        out.returnType = spelling.slice(0, at)
+    else:
+        out.returnType = spelling
+    var params: Array<String> = []
+    let inner = jsonMemberValueOf(_doc, _node, "inner")
+    if inner >= 0:
+        let count = jsonChildCount(_doc, inner)
+        var i = 0
+        while i < count:
+            let child = jsonChildAt(_doc, inner, i)
+            if bindNodeText(_doc, child, "kind") == "ParmVarDecl":
+                let childType = jsonMemberValueOf(_doc, child, "type")
+                params = params.append(bindTypeSpelling(_doc, childType))
+            i = i + 1
+    out.params = params
+    out.isVariadic = spelling.indexOf("...") >= 0
+    out.isStatic = bindNodeText(_doc, _node, "storageClass") == "static"
+    out.isDeleted = bindNodeBool(_doc, _node, "explicitlyDeleted")
+    return out
+
+bindScanVariable|func(_doc: JsonDocument, _node: I32, _name: String,) -> (BindDecl,):
+    var out = BindDecl()
+    out.kind = .bindDeclVariable
+    out.name = _name
+    let typeIndex = jsonMemberValueOf(_doc, _node, "type")
+    out.typeText = bindTypeSpelling(_doc, typeIndex)
+    out.isStatic = bindNodeText(_doc, _node, "storageClass") == "static"
+    return out
+
+; 顶级声明：typedef 表先收，再按 isImplicit 过滤；结构体、枚举与 typedef 记跳过。
+bindScanTop|func(_scan: BindScan, _doc: JsonDocument, _node: I32, _headerAbs: String, _cwd: String,) -> ():
+    bindScanUpdateFile(_scan, _doc, _node, _cwd)
+    var inHeader = false
+    if len(_scan.currentFile) > 0:
+        inHeader = _scan.currentFile == _headerAbs
+    let kind = bindNodeText(_doc, _node, "kind")
+    let name = bindNodeText(_doc, _node, "name")
+    if kind == "TypedefDecl" && len(name) > 0:
+        _scan.typedefNames = _scan.typedefNames.append(name)
+        let typeIndex = jsonMemberValueOf(_doc, _node, "type")
+        _scan.typedefSpellings = _scan.typedefSpellings.append(bindTypeSpelling(_doc, typeIndex))
+    if bindNodeBool(_doc, _node, "isImplicit"):
+        bindScanDescend(_scan, _doc, _node, _cwd)
+        return
+    if kind == "FunctionDecl" && len(name) > 0:
+        if !inHeader:
+            _scan.fromIncluded = _scan.fromIncluded + 1
+        _scan.decls = _scan.decls.append(bindScanFunction(_doc, _node, name))
+    elif kind == "VarDecl" && len(name) > 0:
+        if !inHeader:
+            _scan.fromIncluded = _scan.fromIncluded + 1
+        _scan.decls = _scan.decls.append(bindScanVariable(_doc, _node, name))
+    elif kind == "RecordDecl" && inHeader && len(name) > 0:
+        var what = "结构体"
+        if bindNodeText(_doc, _node, "tagUsed") == "union":
+            what = "联合"
+        _scan.skipped = _scan.skipped.append(bindMakeSkip(name, "按值" + what + "不生成：Pini 的 ABI 面接不住", false))
+    elif kind == "EnumDecl" && inHeader && len(name) > 0:
+        _scan.skipped = _scan.skipped.append(bindMakeSkip(name, "枚举不生成：常量不是宏，`cc -E` 展不开", false))
+    elif kind == "TypedefDecl" && inHeader && len(name) > 0:
+        _scan.skipped = _scan.skipped.append(bindMakeSkip(name, "typedef 不生成：它是 C 侧的名字，不是符号", false))
+    bindScanDescend(_scan, _doc, _node, _cwd)
+
+; 顶级声明挂在根的 `inner` 数组上；根对象的其余成员是 id、loc 一类元数据。
+bindScanAst|func(_doc: JsonDocument, _headerAbs: String, _cwd: String,) -> (BindScan,):
+    let scan = BindScan()
+    if !_doc.ok:
+        return scan
+    let inner = jsonMemberValueOf(_doc, 0, "inner")
+    if inner < 0:
+        return scan
+    let count = jsonChildCount(_doc, inner)
+    var i = 0
+    while i < count:
+        bindScanTop(scan, _doc, jsonChildAt(_doc, inner, i), _headerAbs, _cwd)
+        i = i + 1
+    return scan
+
+; 名字前缀：字母、数字与下划线连读；空名即不是 #define 行。
+bindIdentPrefix|func(_text: String,) -> (String,):
+    var i = 0
+    while i < len(_text):
+        let ch = _text[i]
+        if !isLetterScalar(ord(ch)) && !isNumberScalar(ord(ch)) && ord(ch) != 95:
+            break
+        i = i + 1
+    return _text.slice(0, i)
+
+; 实现保留名：双下划线开头、或 `_` 加大写字母开头；收进生成物会撞 C 侧实现的命名面。
+bindIsReservedName|func(_name: String,) -> (Bool,):
+    if bindStartsWith(_name, "__"):
+        return true
+    if !bindStartsWith(_name, "_"):
+        return false
+    if len(_name) < 2:
+        return true
+    let second = ord(_name[1])
+    return second >= 65 && second <= 90
+
+; 标记行里的文件名：取首个与末个引号之间的内容。
+bindMarkerFile|func(_line: String,) -> (String,):
+    let first = _line.indexOf("\"")
+    if first < 0:
+        return ""
+    var last = -1
+    var i = len(_line) - 1
+    while i > first:
+        if ord(_line[i]) == 34:
+            last = i
+            i = first
+        else:
+            i = i - 1
+    if last < 0:
+        return ""
+    return _line.slice(first + 1, last)
+
+; 宏收集：`-E -dD` 保留 #define 与行标记，据此判每条宏定义在哪个文件。
+; 同名只留第一处；内置与命令行来源不算头文件，收进来只会污染清单。
+bindCollectMacros|func(_clang: String, _options: BindOptions, _headerAbs: String, _cwd: String,) -> (BindMacroSet,):
+    var out = BindMacroSet()
+    var args: Array<String> = ["-E", "-dD"]
+    let extra = bindOptionArgs(_options)
+    var i = 0
+    while i < len(extra):
+        args = args.append(extra[i])
+        i = i + 1
+    args = args.append(_headerAbs)
+    let run = bindRunTool(_clang, args)
+    if run.code != 0:
+        out.ok = false
+        out.detail = "C 工具执行失败：`" + bindCommandText(_clang, args) + "`\n" + run.stderrText
+        return out
+    let lines = run.stdoutText.split("\n")
+    var currentFile = ""
+    var seen: Array<String> = []
+    i = 0
+    while i < len(lines):
+        let line = lines[i]
+        if bindStartsWith(line, "# "):
+            currentFile = bindMarkerFile(line)
+            i = i + 1
+            continue
+        if len(currentFile) > 0 && !bindStartsWith(currentFile, "<") && bindStartsWith(line, "#define "):
+            let rest = line.slice(8, len(line))
+            let name = bindIdentPrefix(rest)
+            if len(name) > 0 && !bindIsReservedName(name) && !bindContains(seen, name):
+                seen = seen.append(name)
+                let after = rest.slice(len(name), len(rest))
+                var functionLike = false
+                if bindStartsWith(after, "("):
+                    functionLike = true
+                var body = ""
+                if !functionLike:
+                    body = bindTrim(after)
+                var macro = BindMacro()
+                macro.name = name
+                macro.body = body
+                macro.isFunctionLike = functionLike
+                macro.file = bindAbsolutePath(_cwd, currentFile)
+                out.macros = out.macros.append(macro)
+        i = i + 1
+    i = 0
+    while i < len(out.macros):
+        let macro = out.macros[i]
+        if macro.file == _headerAbs:
+            if macro.isFunctionLike:
+                out.skipped = out.skipped.append(bindMakeSkip(macro.name, "函数式宏要实参才能展开，不能取成常量；要用请写 C shim", true))
+            elif len(macro.body) == 0:
+                out.skipped = out.skipped.append(bindMakeSkip(macro.name, "空宏没有值", true))
+        i = i + 1
+    return out
+
+; 展开：把整棵包含树与每条对象式宏写进一份探针源，一次 `-E -P` 后按标记读回。
+; 进程族没有标准输入，探针只能落文件；返回前经 rm 清理。
+bindExpandMacros|func(_clang: String, _options: BindOptions, _headerAbs: String, _names: Array<String>,) -> (BindBodySet,):
+    var out = BindBodySet()
+    var source = "#include \"" + _headerAbs + "\"\n"
+    var i = 0
+    while i < len(_names):
+        source = source + "PINI_BIND_MACRO_" + bindCountText(i) + "__ " + _names[i] + "\n"
+        i = i + 1
+    if len(_names) == 0:
+        return out
+    let probe = tempPath(tag = "bind", suffix = ".c")
+    writeFile(probe, source)
+    var args: Array<String> = ["-E", "-P"]
+    let extra = bindOptionArgs(_options)
+    i = 0
+    while i < len(extra):
+        args = args.append(extra[i])
+        i = i + 1
+    args = args.append(probe)
+    let run = bindRunTool(_clang, args)
+    removeFile(path = probe)
+    if run.code != 0:
+        out.ok = false
+        out.detail = "C 工具执行失败：`" + bindCommandText(_clang, args) + "`\n" + run.stderrText
+        return out
+    out.bodies = bindExtractBodies(run.stdoutText, len(_names))
+    return out
+
+bindExtractBodies|func(_text: String, _count: I32,) -> (Array<String>,):
+    var bodies: Array<String> = []
+    var i = 0
+    while i < _count:
+        bodies = bodies.append("")
+        i = i + 1
+    let lines = _text.split("\n")
+    var current = -1
+    i = 0
+    while i < len(lines):
+        let line = lines[i]
+        let index = bindMarkerIndex(line, _count)
+        if index >= 0:
+            current = index
+            let prefix = "PINI_BIND_MACRO_" + bindCountText(index) + "__"
+            bodies[current] = bodies[current] + bindRemovePrefix(line, prefix)
+        elif current >= 0:
+            bodies[current] = bodies[current] + " " + line
+        i = i + 1
+    i = 0
+    while i < _count:
+        bodies[i] = bindTrim(bodies[i])
+        i = i + 1
+    return bodies
+
+; 标记下标：`PINI_BIND_MACRO_<n>__` 里的 n；不在范围或不是标记行答 -1。
+bindMarkerIndex|func(_line: String, _count: I32,) -> (I32,):
+    let at = _line.indexOf("PINI_BIND_MACRO_")
+    if at < 0:
+        return -1
+    var i = at + 16
+    var value = 0
+    var digits = 0
+    while i < len(_line):
+        let code = ord(_line[i])
+        if code < 48 || code > 57:
+            break
+        value = value * 10 + (code - 48)
+        digits = digits + 1
+        i = i + 1
+    if digits == 0 || value >= _count:
+        return -1
+    return value
+
+bindRemovePrefix|func(_line: String, _prefix: String,) -> (String,):
+    let at = _line.indexOf(_prefix)
+    if at < 0:
+        return _line
+    return _line.slice(at + len(_prefix), len(_line))
+
+; 记号化：只认整数四则、位运算、括号与字面量；浮点只作字面量，不参与运算。
+bindLexMacro|func(_text: String,) -> (Array<BindTok>,):
+    var out: Array<BindTok> = []
+    var i = 0
+    while i < len(_text):
+        let code = ord(_text[i])
+        if bindIsSpace(code):
+            i = i + 1
+            continue
+        if code == 40:
+            var tok = BindTok()
+            tok.kind = 3
+            tok.text = "("
+            out = out.append(tok)
+            i = i + 1
+            continue
+        if code == 41:
+            var tok = BindTok()
+            tok.kind = 4
+            tok.text = ")"
+            out = out.append(tok)
+            i = i + 1
+            continue
+        if isNumberScalar(ord(_text[i])) || code == 46:
+            let start = i
+            var seenDot = false
+            var seenExponent = false
+            var isHex = false
+            if code == 48 && i + 1 < len(_text):
+                let next = ord(_text[i + 1])
+                if next == 120 || next == 88:
+                    isHex = true
+            var going = true
+            while i < len(_text) && going:
+                let c = ord(_text[i])
+                if c >= 48 && c <= 57 || c >= 65 && c <= 70 || c >= 97 && c <= 102 || c == 120 || c == 88:
+                    i = i + 1
+                elif c == 46:
+                    seenDot = true
+                    i = i + 1
+                elif c == 101 || c == 69:
+                    if isHex:
+                        i = i + 1
+                    else:
+                        seenExponent = true
+                        i = i + 1
+                        if i < len(_text):
+                            let sign = ord(_text[i])
+                            if sign == 43 || sign == 45:
+                                i = i + 1
+                else:
+                    going = false
+            var literal = _text.slice(start, i)
+            var stripping = true
+            while stripping && len(literal) > 0:
+                let last = ord(literal[len(literal) - 1])
+                if last == 117 || last == 85 || last == 108 || last == 76:
+                    literal = literal.slice(0, len(literal) - 1)
+                else:
+                    stripping = false
+            var tok = BindTok()
+            if seenDot || seenExponent:
+                tok.kind = 1
+            else:
+                tok.kind = 0
+            tok.text = literal
+            out = out.append(tok)
+            continue
+        if i + 1 < len(_text):
+            let pair = _text.slice(i, i + 2)
+            if pair == "<<" || pair == ">>":
+                var tok = BindTok()
+                tok.kind = 2
+                tok.text = pair
+                out = out.append(tok)
+                i = i + 2
+                continue
+        if code == 43 || code == 45 || code == 42 || code == 47 || code == 37 || code == 38 || code == 124 || code == 94 || code == 126:
+            var tok = BindTok()
+            tok.kind = 2
+            tok.text = "\(_text[i])"
+            out = out.append(tok)
+            i = i + 1
+            continue
+        let start = i
+        while i < len(_text):
+            let ch = _text[i]
+            if isLetterScalar(ord(ch)) || isNumberScalar(ord(ch)) || ord(ch) == 95:
+                i = i + 1
+            else:
+                break
+        if i == start:
+            i = i + 1
+        var tok = BindTok()
+        tok.kind = 5
+        tok.text = _text.slice(start, i)
+        out = out.append(tok)
+    return out
+
+bindDigitValue|func(_code: I32,) -> (I32,):
+    if _code >= 48 && _code <= 57:
+        return _code - 48
+    if _code >= 97 && _code <= 102:
+        return _code - 87
+    if _code >= 65 && _code <= 70:
+        return _code - 55
+    return -1
+
+; 整数字面量：0x 十六进制、前导 0 八进制、其余十进制；溢出即拒，与宿主同口径。
+bindParseIntLiteral|func(_literal: String,) -> (BindNumber,):
+    var out = BindNumber()
+    if len(_literal) == 0:
+        return out
+    var radix: I64 = 10
+    var start = 0
+    if len(_literal) > 2 && ord(_literal[0]) == 48:
+        let second = ord(_literal[1])
+        if second == 120 || second == 88:
+            radix = 16
+            start = 2
+    elif len(_literal) > 1 && ord(_literal[0]) == 48:
+        radix = 8
+        start = 1
+    let max: I64 = 9223372036854775807
+    var value: I64 = 0
+    var i = start
+    while i < len(_literal):
+        let digit = bindDigitValue(ord(_literal[i]))
+        if digit < 0:
+            return out
+        let d64: I64 = digit as I64
+        if value > (max - d64) / radix:
+            return out
+        value = value * radix + d64
+        i = i + 1
+    if i == start:
+        return out
+    out.ok = true
+    out.intValue = value
+    return out
+
+bindEvalPeekOp|func(_eval: BindEval,) -> (String,):
+    if _eval.at >= len(_eval.toks):
+        return ""
+    let tok = _eval.toks[_eval.at]
+    if tok.kind == 2:
+        return tok.text
+    return ""
+
+bindEvalAdvance|func(_eval: BindEval,) -> ():
+    _eval.at = _eval.at + 1
+
+bindEvalIsParen|func(_eval: BindEval, _kind: I32,) -> (Bool,):
+    if _eval.at >= len(_eval.toks):
+        return false
+    return _eval.toks[_eval.at].kind == _kind
+
+bindNumberFail|func() -> (BindNumber,):
+    return BindNumber()
+
+; 一元：负号与按位取反都落成 I64 运算；`~` 的 I64 通道由与全 1 异或实现。
+bindEvalUnary|func(_eval: BindEval,) -> (BindNumber,):
+    let op = bindEvalPeekOp(_eval)
+    if op == "-" || op == "+" || op == "~":
+        bindEvalAdvance(_eval)
+        let operand = bindEvalUnary(_eval)
+        if !operand.ok:
+            return operand
+        if op == "+":
+            return operand
+        if op == "~":
+            if operand.isFloat:
+                return bindNumberFail()
+            let minusOne: I64 = 0 - 1
+            var out = BindNumber()
+            out.ok = true
+            out.intValue = operand.intValue ^ minusOne
+            return out
+        if operand.isFloat:
+            let zero: F64 = 0.0
+            var out = BindNumber()
+            out.ok = true
+            out.isFloat = true
+            out.floatValue = zero - operand.floatValue
+            return out
+        let zero: I64 = 0
+        var out = BindNumber()
+        out.ok = true
+        out.intValue = zero - operand.intValue
+        return out
+    return bindEvalPrimary(_eval)
+
+bindEvalPrimary|func(_eval: BindEval,) -> (BindNumber,):
+    if _eval.at >= len(_eval.toks):
+        return bindNumberFail()
+    let tok = _eval.toks[_eval.at]
+    bindEvalAdvance(_eval)
+    if tok.kind == 0:
+        return bindParseIntLiteral(tok.text)
+    if tok.kind == 1:
+        var out = BindNumber()
+        out.ok = true
+        out.isFloat = true
+        out.floatValue = unsafe bk_parse_double(tok.text)
+        return out
+    if tok.kind == 3:
+        let value = bindEvalOr(_eval)
+        if !value.ok:
+            return value
+        if !bindEvalIsParen(_eval, 4):
+            return bindNumberFail()
+        bindEvalAdvance(_eval)
+        return value
+    return bindNumberFail()
+
+bindEvalCombine|func(_left: BindNumber, _right: BindNumber, _op: String,) -> (BindNumber,):
+    var out = BindNumber()
+    if !_left.ok || !_right.ok || _left.isFloat || _right.isFloat:
+        return out
+    let a = _left.intValue
+    let b = _right.intValue
+    out.ok = true
+    if _op == "+":
+        out.intValue = a + b
+    elif _op == "-":
+        out.intValue = a - b
+    elif _op == "*":
+        out.intValue = a * b
+    elif _op == "/":
+        let zero: I64 = 0
+        if b == zero:
+            return bindNumberFail()
+        out.intValue = a / b
+    elif _op == "%":
+        let zero: I64 = 0
+        if b == zero:
+            return bindNumberFail()
+        out.intValue = a % b
+    elif _op == "&":
+        out.intValue = a & b
+    elif _op == "|":
+        out.intValue = a | b
+    elif _op == "^":
+        out.intValue = a ^ b
+    elif _op == "<<" || _op == ">>":
+        let zero: I64 = 0
+        let limit: I64 = 63
+        if b < zero || b > limit:
+            return bindNumberFail()
+        if _op == "<<":
+            out.intValue = a << b
+        else:
+            out.intValue = a >> b
+    else:
+        return bindNumberFail()
+    return out
+
+bindEvalOr|func(_eval: BindEval,) -> (BindNumber,):
+    var value = bindEvalXor(_eval)
+    while value.ok && bindEvalPeekOp(_eval) == "|":
+        let op = bindEvalPeekOp(_eval)
+        bindEvalAdvance(_eval)
+        value = bindEvalCombine(value, bindEvalXor(_eval), op)
+    return value
+
+bindEvalXor|func(_eval: BindEval,) -> (BindNumber,):
+    var value = bindEvalAnd(_eval)
+    while value.ok && bindEvalPeekOp(_eval) == "^":
+        let op = bindEvalPeekOp(_eval)
+        bindEvalAdvance(_eval)
+        value = bindEvalCombine(value, bindEvalAnd(_eval), op)
+    return value
+
+bindEvalAnd|func(_eval: BindEval,) -> (BindNumber,):
+    var value = bindEvalShift(_eval)
+    while value.ok && bindEvalPeekOp(_eval) == "&":
+        let op = bindEvalPeekOp(_eval)
+        bindEvalAdvance(_eval)
+        value = bindEvalCombine(value, bindEvalShift(_eval), op)
+    return value
+
+bindEvalShift|func(_eval: BindEval,) -> (BindNumber,):
+    var value = bindEvalAdditive(_eval)
+    var going = value.ok
+    while going:
+        let op = bindEvalPeekOp(_eval)
+        if op == "<<" || op == ">>":
+            bindEvalAdvance(_eval)
+            value = bindEvalCombine(value, bindEvalAdditive(_eval), op)
+            going = value.ok
+        else:
+            going = false
+    return value
+
+bindEvalAdditive|func(_eval: BindEval,) -> (BindNumber,):
+    var value = bindEvalMultiplicative(_eval)
+    var going = value.ok
+    while going:
+        let op = bindEvalPeekOp(_eval)
+        if op == "+" || op == "-":
+            bindEvalAdvance(_eval)
+            value = bindEvalCombine(value, bindEvalMultiplicative(_eval), op)
+            going = value.ok
+        else:
+            going = false
+    return value
+
+bindEvalMultiplicative|func(_eval: BindEval,) -> (BindNumber,):
+    var value = bindEvalUnary(_eval)
+    var going = value.ok
+    while going:
+        let op = bindEvalPeekOp(_eval)
+        if op == "*" || op == "/" || op == "%":
+            bindEvalAdvance(_eval)
+            value = bindEvalCombine(value, bindEvalUnary(_eval), op)
+            going = value.ok
+        else:
+            going = false
+    return value
+
+; 宏值求值：整串必须恰好是一个常量表达式；多出来的记号与浮点算式都算失败。
+bindEvalMacro|func(_text: String,) -> (BindMacroValue,):
+    var out = BindMacroValue()
+    if len(_text) == 0:
+        return out
+    let eval = BindEval()
+    eval.toks = bindLexMacro(_text)
+    let value = bindEvalOr(eval)
+    if !value.ok || eval.at != len(eval.toks):
+        return out
+    out.ok = true
+    out.isFloat = value.isFloat
+    out.intValue = value.intValue
+    out.floatValue = value.floatValue
+    return out
+
+; 宏的声明类型按值域定：装得进 I32 就是 I32，否则 I64；浮点一律 F64。
+bindMacroTypeName|func(_value: BindMacroValue,) -> (String,):
+    if _value.isFloat:
+        return "F64"
+    let low: I64 = 0 - 2147483648
+    let high: I64 = 2147483647
+    if _value.intValue >= low && _value.intValue <= high:
+        return "I32"
+    return "I64"
+
+bindClangVersion|func(_clang: String,) -> (String,):
+    let run = bindRunTool(_clang, ["--version"])
+    if run.code != 0:
+        return _clang
+    let lines = run.stdoutText.split("\n")
+    if len(lines) == 0:
+        return _clang
+    return lines[0]
+
+bindTrimTrailingNewline|func(_text: String,) -> (String,):
+    var out = _text
+    while len(out) > 0:
+        let last = ord(out[len(out) - 1])
+        if last == 10 || last == 13:
+            out = out.slice(0, len(out) - 1)
+        else:
+            return out
+    return out
+
+; 翻译主链：头文件与工具先判，其次宽度、AST、宏；任一步失败即带命令行与原文返回。
+bindTranslate|func(_options: BindOptions,) -> (BindResult,):
+    var out = BindResult()
+    let cwd = bindCurrentDirectory()
+    let headerAbs = bindAbsolutePath(cwd, _options.header)
+    if !exists(headerAbs):
+        out.ok = false
+        out.detail = "头文件不存在：" + headerAbs
+        return out
+    let clang = bindClangPath()
+    if len(clang) == 0:
+        out.ok = false
+        out.detail = "找不到 clang：AST 只有 clang 会输出。装一份，或用 PINI_CLANG 指定路径"
+        return out
+    let widthRun = bindRunTool(clang, ["-dM", "-E", "-x", "c", "/dev/null"])
+    if widthRun.code != 0:
+        out.ok = false
+        out.detail = "C 工具执行失败：`" + bindCommandText(clang, ["-dM", "-E", "-x", "c", "/dev/null"]) + "`\n" + widthRun.stderrText
+        return out
+    let target = bindParseTarget(widthRun.stdoutText)
+    var astArgs: Array<String> = ["-Xclang", "-ast-dump=json", "-fsyntax-only", "-fno-builtin"]
+    let extra = bindOptionArgs(_options)
+    var i = 0
+    while i < len(extra):
+        astArgs = astArgs.append(extra[i])
+        i = i + 1
+    astArgs = astArgs.append(headerAbs)
+    let astRun = bindRunTool(clang, astArgs)
+    if astRun.code != 0:
+        out.ok = false
+        out.detail = "C 工具执行失败：`" + bindCommandText(clang, astArgs) + "`\n" + astRun.stderrText
+        return out
+    let doc = parseJson(astRun.stdoutText)
+    if !doc.ok:
+        out.ok = false
+        out.detail = "C 工具执行失败：`" + bindCommandText(clang, astArgs) + "`\nAST 输出不是 JSON"
+        return out
+    let scan = bindScanAst(doc, headerAbs, cwd)
+    var entries: Array<String> = []
+    var skipped = scan.skipped
+    var seen: Array<String> = []
+    i = 0
+    while i < len(scan.decls):
+        let decl = scan.decls[i]
+        let entry = bindEntryOfDecl(decl, scan.typedefNames, scan.typedefSpellings, target.longWidth)
+        if entry.ok:
+            if bindContains(seen, decl.name):
+                skipped = skipped.append(bindMakeSkip(decl.name, "同名重复声明，保留第一处", false))
+            else:
+                seen = seen.append(decl.name)
+                entries = entries.append(entry.text)
+        elif len(entry.reason) > 0:
+            skipped = skipped.append(bindMakeSkip(decl.name, entry.reason, false))
+        i = i + 1
+    let macroSet = bindCollectMacros(clang, _options, headerAbs, cwd)
+    if !macroSet.ok:
+        out.ok = false
+        out.detail = macroSet.detail
+        return out
+    var names: Array<String> = []
+    var objectLike: Array<BindMacro> = []
+    i = 0
+    while i < len(macroSet.macros):
+        let macro = macroSet.macros[i]
+        if !macro.isFunctionLike && len(macro.body) > 0:
+            names = names.append(macro.name)
+            objectLike = objectLike.append(macro)
+        i = i + 1
+    let expanded = bindExpandMacros(clang, _options, headerAbs, names)
+    if !expanded.ok:
+        out.ok = false
+        out.detail = expanded.detail
+        return out
+    var macroFailures: Array<BindSkip> = []
+    i = 0
+    while i < len(objectLike):
+        let macro = objectLike[i]
+        let body = expanded.bodies[i]
+        let value = bindEvalMacro(body)
+        if value.ok:
+            entries = entries.append(macro.name + "|macro: " + bindMacroTypeName(value))
+        elif macro.file == headerAbs:
+            macroFailures = macroFailures.append(bindMakeSkip(macro.name, "展开结果 `" + body + "` 不是数值常量", true))
+        i = i + 1
+    i = 0
+    while i < len(macroSet.skipped):
+        skipped = skipped.append(macroSet.skipped[i])
+        i = i + 1
+    i = 0
+    while i < len(macroFailures):
+        skipped = skipped.append(macroFailures[i])
+        i = i + 1
+    var block = _options.blockName
+    if len(block) == 0:
+        block = bindDefaultBlockName(_options.header)
+    out.ok = true
+    out.blockName = block
+    out.skipped = skipped
+    out.fromIncluded = scan.fromIncluded
+    out.text = bindRenderText(block, entries, skipped, _options, headerAbs, bindClangVersion(clang))
+    return out
+
+; 命令入口：参数由 main 解析好再交进来；写入与报告都走标准输出。
+runBind|func(_options: BindOptions,) -> ():
+    let result = bindTranslate(_options)
+    if !result.ok:
+        print("Error: " + result.detail)
+        assert(false, "bind 失败")
+        return
+    if len(_options.outputPath) > 0:
+        writeFile(_options.outputPath, result.text)
+        print("已写入 " + _options.outputPath + "（块 " + result.blockName + "，跳过 " + bindCountText(len(result.skipped)) + " 条）")
+    else:
+        print(bindTrimTrailingNewline(result.text))
+    var i = 0
+    while i < len(result.skipped):
+        print("跳过 " + result.skipped[i].name + "：" + result.skipped[i].reason)
+        i = i + 1
+    if result.fromIncluded > 0:
+        print("其中 " + bindCountText(result.fromIncluded) + " 条声明来自被包含的头文件")
+    return

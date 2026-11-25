@@ -1,0 +1,108 @@
+; 头翻译纯函数面：块名、路径、类型白名单、条目、渲染与宏求值六组判据。
+; 起 clang 与扫 AST 的部分不在这里验，端到端对照由门禁的 bind 夹具承担。
+头翻译默认块名|test() -> ():
+    assert(bindDefaultBlockName("/a/cstr.h") == "cstr", "去扩展名")
+    assert(bindDefaultBlockName("/a/9lives.h") == "_9lives", "首字符是数字时补下划线")
+    assert(bindDefaultBlockName("/a/c++") == "c__", "非字母数字换下划线")
+    return
+
+头翻译路径归一|test() -> ():
+    assert(bindAbsolutePath("/a/b", "../c") == "/a/c", "折掉 ..")
+    assert(bindAbsolutePath("/a/b", "/x/./y/") == "/x/y", "折掉 . 与尾斜杠")
+    assert(bindAbsolutePath("/", "a") == "/a", "根目录不叠斜杠")
+    assert(bindAbsolutePath("/a", "./b/../c") == "/a/c", "混写也归一")
+    return
+
+头翻译标量映射|test() -> ():
+    let none: Array<String> = []
+    let u64 = bindPiniValue("unsigned long", 0, none, none, 8)
+    assert(u64.ok && u64.text == "U64", "LP64 的 unsigned long")
+    let long4 = bindPiniValue("long", 0, none, none, 4)
+    assert(long4.ok && long4.text == "I32", "LLP64 的 long 只接有符号")
+    let uint = bindPiniValue("unsigned int", 0, none, none, 8)
+    assert(!uint.ok, "unsigned int 没有对应宽度")
+    let f64 = bindPiniValue("double", 0, none, none, 8)
+    assert(f64.ok && f64.text == "F64", "double")
+    let wide = bindPiniValue("__int128", 0, none, none, 8)
+    assert(!wide.ok, "未知宽度不接")
+    let viaTypedef = bindPiniValue("size_word", 0, ["size_word"], ["unsigned long"], 8)
+    assert(viaTypedef.ok && viaTypedef.text == "U64", "typedef 回溯到展开拼写")
+    return
+
+头翻译指针与回调|test() -> ():
+    let none: Array<String> = []
+    let borrowed = bindPiniParam("const char *", none, none, 8)
+    assert(borrowed.ok && borrowed.text == "String", "const char * 形参借出成串")
+    let pointer = bindPiniParam("int *", none, none, 8)
+    assert(pointer.ok && pointer.text == "*U8", "其余指针退成 *U8")
+    let callback = bindPiniParam("int (*)(int, int)", none, none, 8)
+    assert(callback.ok && callback.text == "(I32, I32,) -> (I32,)", "形参位承接回调")
+    let returned = bindPiniReturn("void", none, none, 8)
+    assert(returned.ok && returned.text == "", "void 返回映射成空串")
+    let pointerReturn = bindPiniReturn("int (*)(int)", none, none, 8)
+    assert(!pointerReturn.ok, "返回位拒函数指针")
+    return
+
+头翻译条目|test() -> ():
+    let none: Array<String> = []
+    var printfDecl = BindDecl()
+    printfDecl.kind = .bindDeclFunction
+    printfDecl.name = "printf"
+    printfDecl.returnType = "int"
+    printfDecl.params = ["const char *"]
+    printfDecl.isVariadic = true
+    let printfEntry = bindFunctionEntry(printfDecl, none, none, 8)
+    assert(printfEntry.ok, "变参函数应可生成")
+    assert(printfEntry.text == "printf|varargs: (String,) -> (I32,)", "变参标志与形参表")
+    printfDecl.isStatic = true
+    let staticEntry = bindFunctionEntry(printfDecl, none, none, 8)
+    assert(!staticEntry.ok && staticEntry.reason.contains("静态函数"), "静态函数带理由跳过")
+    var tableDecl = BindDecl()
+    tableDecl.kind = .bindDeclVariable
+    tableDecl.name = "table_size"
+    tableDecl.typeText = "const int"
+    let tableEntry = bindVariableEntry(tableDecl, none, none, 8)
+    assert(tableEntry.ok && tableEntry.text == "table_size|readonly: I32", "顶层 const 作只读")
+    tableDecl.isStatic = true
+    let silent = bindVariableEntry(tableDecl, none, none, 8)
+    assert(!silent.ok && len(silent.reason) == 0, "静态数据符号静默跳过")
+    return
+
+头翻译渲染|test() -> ():
+    var options = BindOptions()
+    options.header = "/tmp/x.h"
+    let text = bindRenderText("x", ["a: I32"], [], options, "/tmp/x.h", "clang 1")
+    var expected = "; 由 C 头文件翻译生成，勿手改。\n"
+    expected = expected + "; 来源: /tmp/x.h\n"
+    expected = expected + "; 工具: clang 1\n"
+    expected = expected + "; 参数: （无）\n"
+    expected = expected + "; 指针一律 `*U8`；类型区分交给手写的给定块，原拼写见来源头文件。\n"
+    expected = expected + "; 跳过 0 条（结构体 / 枚举 / 函数式宏 / 认不出的类型），理由见 bind 报告。\n"
+    expected = expected + "\n[x|foreign]\na: I32\n"
+    assert(text == expected, "渲染逐字对上")
+    options.includePaths = ["inc"]
+    options.defines = ["_X"]
+    let withArgs = bindRenderText("x", [], [], options, "/tmp/x.h", "clang 1")
+    assert(withArgs.contains("; 参数: -Iinc -D_X"), "参数行按声明序拼")
+    return
+
+头翻译宏求值|test() -> ():
+    let shift = bindEvalMacro("(1 << 4)")
+    let sixteen: I64 = 16
+    assert(shift.ok && !shift.isFloat && shift.intValue == sixteen, "移位按 I64 算")
+    assert(bindMacroTypeName(shift) == "I32", "装得进 I32")
+    let hex = bindEvalMacro("0x10")
+    assert(hex.ok && hex.intValue == sixteen, "十六进制")
+    let ratio = bindEvalMacro("1.5")
+    assert(ratio.ok && ratio.isFloat, "浮点字面量")
+    assert(bindMacroTypeName(ratio) == "F64", "浮点宏的类型")
+    let notConstant = bindEvalMacro("FUNC(1)")
+    assert(!notConstant.ok, "函数式宏展开前的写法不是常量")
+    let inverted = bindEvalMacro("~0")
+    let minusOne: I64 = 0 - 1
+    assert(inverted.ok && inverted.intValue == minusOne, "按位取反走异或全 1")
+    let divided = bindEvalMacro("1 / 0")
+    assert(!divided.ok, "除以零即失败")
+    let huge = bindEvalMacro("9223372036854775807")
+    assert(huge.ok && bindMacroTypeName(huge) == "I64", "超出 I32 的值域落 I64")
+    return

@@ -38,3 +38,4 @@ expand-unroll	expand	examples/unroll.pini	在	同同同	展开 unroll：模式�
 expand-no-unroll	expand	examples/comments.pini	在	同同同	无 unroll 时与 fmt 同形，仅注释不进产物
 expand-bad	expand	bootstrap/fixtures/cli-parity/inputs/unroll-bad.pini	在	同同异	展开错误 E3-014，码与位置相同；诊断走标准输出，与宿主分流不同
 expand-fold	expand	bootstrap/fixtures/cli-parity/inputs/fold.pini	在	同同异	常量折叠未接：宿主折成结果，自举保留原文
+bind-header	bind	bootstrap/fixtures/bind/include/calc.h -I bootstrap/fixtures/bind/include -o /tmp/pini_cli_parity_bind.pini	在	同同异	头翻译：生成物与宿主逐字节相同，控制台分流不同

@@ -1,0 +1,4 @@
+跳过 calc_word：typedef 不生成：它是 C 侧的名字，不是符号
+跳过 calc_point：按值结构体不生成：Pini 的 ABI 面接不住
+跳过 calc_color：枚举不生成：常量不是宏，`cc -E` 展不开
+跳过 calc_static：静态函数没有外部符号，链接期找不到它
