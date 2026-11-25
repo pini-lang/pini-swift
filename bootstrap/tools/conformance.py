@@ -24,7 +24,7 @@ CATEGORIES = {
     "legal", "illegal", "unicode", "path", "diagnostics",
     "package", "cinterop", "determinism",
 }
-KINDS = {"error", "pass", "reject", "stable"}
+KINDS = {"error", "pass", "reject", "stable", "warning"}
 REQUIRED = ("name", "category", "kind", "spec")
 TIMEOUT = 180
 
@@ -94,11 +94,20 @@ def bootstrap_binary():
 
 def prepare(case):
     dest = WORK / case["slug"]
-    if dest.exists():
-        shutil.rmtree(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(case["dir"], dest)
+    shutil.copytree(case["dir"], dest, dirs_exist_ok=True)
+    prune_stale(src=case["dir"], dest=dest)
     return dest
+
+
+def prune_stale(src, dest):
+    """删掉副本里源已没有的项：只动差集，不整树重删。"""
+    for path in sorted(dest.rglob("*"), reverse=True):
+        if not (src / path.relative_to(dest)).exists():
+            if path.is_dir():
+                path.rmdir()
+            else:
+                path.unlink()
 
 
 def run(command, cwd, env=None):
@@ -158,6 +167,41 @@ def compare_error(case, root, host, boot):
         deviations["bootstrap"] = f"exit={code}|无诊断"
     elif (boot_row[6], boot_row[1], boot_row[2]) != expected:
         deviations["bootstrap"] = f"{boot_row[6]}\t{boot_row[1]}\t{boot_row[2]}"
+    return deviations, f"期望 {expected[0]}@{expected[1]}:{expected[2]}"
+
+
+def compare_warning(case, root, host, boot):
+    """警告用例：两条通道都报该码与位置，且退出码为零 —— 警告不阻断编译。
+
+    警告不走结构化通道（宿主的 TSV 只出错误），故两侧都按文本解析：
+    宿主是「[码]」一行加「at 路径:行:列」一行，自举是「路径:行:列: 类别 [码] 消息」一行。
+    """
+    deviations = {}
+    expected = (case["code"], int(case["line"]), int(case["col"]))
+
+    code, out, err = run([str(host), "check", str(root / "pkg")], root)
+    text = out + "\n" + err
+    found = re.search(r"\[(E\d-\d{3})\]\s*\n\s*at [^\n]*:(\d+):(\d+)", text)
+    if found:
+        got = (found.group(1), int(found.group(2)), int(found.group(3)))
+        if got != expected:
+            deviations["host"] = "\t".join(str(item) for item in got)
+    else:
+        deviations["host"] = f"exit={code}|无诊断"
+    if code != 0:
+        deviations["host"] = f"退出码应为 0，实得 {code}"
+
+    code, out, err = run([str(boot), "check", str(root)], root)
+    text = out + "\n" + err
+    found = re.search(r":(\d+):(\d+): [^\n]*\[(E\d-\d{3})\]", text)
+    if found:
+        got = (found.group(3), int(found.group(1)), int(found.group(2)))
+        if got != expected:
+            deviations["bootstrap"] = "\t".join(str(item) for item in got)
+    else:
+        deviations["bootstrap"] = f"exit={code}|无诊断"
+    if code != 0:
+        deviations["bootstrap"] = f"退出码应为 0，实得 {code}"
     return deviations, f"期望 {expected[0]}@{expected[1]}:{expected[2]}"
 
 
@@ -224,7 +268,7 @@ def compare_reject(case, root, host, boot):
     return deviations, "两条通道都必须拒绝"
 
 
-COMPARERS = {"error": compare_error, "pass": compare_pass, "reject": compare_reject, "stable": compare_stable}
+COMPARERS = {"error": compare_error, "pass": compare_pass, "reject": compare_reject, "stable": compare_stable, "warning": compare_warning}
 
 
 def load_baseline():
@@ -279,6 +323,8 @@ def main():
     host = host_binary()
     boot = bootstrap_binary()
     baseline = load_baseline()
+    # 复用工作目录：整树清空在单轮里等于一次批量删除，会撞上宿主的删除审计。
+    WORK.mkdir(parents=True, exist_ok=True)
     fresh = {}
     used = set()
     failures = []

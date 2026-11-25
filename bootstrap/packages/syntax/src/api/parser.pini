@@ -23,6 +23,7 @@ ast: Ast = Ast()
 segments: Array<Segment> = []
 diagnostics: Array<Diagnostic> = []
 issues: Array<LexIssue> = []
+warnings: Array<LexWarning> = []
 
 ; 解析文本：默认按英文关键字；文件名留空，位置映射由调用方补。
 parseText|func(_text: String,) -> (ParseResult,):
@@ -52,6 +53,7 @@ parseFileIn|func(language: KeywordLanguage, text: String, file: String,) -> (Par
     out.segments = lexed.segments
     out.diagnostics = p.diagnostics
     out.issues = lexed.issues
+    out.warnings = lexed.warnings
     return out
 
 binaryPrecedence|func(_kind: TokenKind,) -> (I32,):

@@ -45,6 +45,10 @@ column: I32 = 1
 errorSeverity|func() -> (Severity,):
     return .severityError
 
+; 警告严重度：不阻断编译的提示取它，退出码仍为零。
+warningSeverity|func() -> (Severity,):
+    return .severityWarning
+
 ; 语法类别：解析阶段的诊断取它。
 syntaxCategory|func() -> (Category,):
     return .categorySyntax

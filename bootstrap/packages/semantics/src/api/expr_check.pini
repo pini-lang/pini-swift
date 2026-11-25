@@ -6,11 +6,12 @@ _module_loader = "../../../module-loader"
 ; 名字面是文件级：跨函数误用会漏报，但不会把合法名字判成未定义。
 ; 实参类型未知时 checkArg 放过，本层只落实个数与标签两类调用判据。
 
-; 表达式错误：未定义名、成员缺失与调用形状三类，各带自己的诊断码。
+; 表达式错误：未定义名、成员缺失、调用形状与类型名进值位四类，各带自己的诊断码。
 [ExprErrorKind]
 exprUndefined
 exprMemberFailed
 exprCallFailed
+exprTypeNameAsValue
 
 ; 表达式错误：类别、文件、位置、名字、细节与诊断码；码在造错时定死。
 (ExprError)
@@ -35,6 +36,8 @@ exprErrorName|func(_kind: ExprErrorKind,) -> (String,):
             return "成员不存在"
         case exprCallFailed:
             return "调用不成立"
+        case exprTypeNameAsValue:
+            return "类型名进了值位"
     return "表达式错误"
 
 ; 同一类别判定：枚举相等比较不可用，按名称比。
@@ -122,14 +125,28 @@ mergeNames|func(items: Array<String>, add: Array<String>,) -> (Array<String>,):
 
 ; 未定义名：文件级名字面都不含这个名字时报；位置取标识符起点。
 ; 生成面跳过的名字由调用方单列：这里不报未定义，留给 E4-046 说「翻译没产出」。
-checkIdentifierNode|func(world: MemberWorld, unit: CompilationUnit, bytes: Array<U8>, locals: Array<String>, skips: Array<String>, node: I32, out: ExprCheck,) -> (ExprCheck,):
+; 给定块名字是类型而不是实例：裸写它进值位要拒，默认实例只能经 `using` 取用。
+checkIdentifierNode|func(world: MemberWorld, unit: CompilationUnit, bytes: Array<U8>, locals: Array<String>, shadow: Array<String>, skips: Array<String>, node: I32, out: ExprCheck,) -> (ExprCheck,):
     let expr = unit.ast.exprAt(node)
     let name = decodeRange(bytes = bytes, start = expr.nameStart, end = expr.nameEnd)
     if knownName(world = world, unit = unit, locals = locals, name = name):
+        if !hasName(items = shadow, value = name) && isGivenTypeName(world = world, name = name):
+            return appendExprError(out = out, unit = unit, offset = expr.start, kind = .exprTypeNameAsValue, name = name, detail = "给定块类型名不是值，默认实例须经取用参数取得", code = "E4-015")
         return out
     if hasName(items = skips, value = name):
         return out
     return appendExprError(out = out, unit = unit, offset = expr.start, kind = .exprUndefined, name = name, detail = "文件内没有这个名字", code = "E3-001")
+
+; 给定块名字：顶层符号指向 `[名|given]` 声明才算；同名局部由调用方先排除。
+; 显式构造 `名(...)` 的被调方在遍历里已跳过，走不到这里，故不必再排除调用位。
+isGivenTypeName|func(world: MemberWorld, name: String,) -> (Bool,):
+    let symbol = lookupTopByName(index = world.symbols, name = name)
+    if symbol < 0:
+        return false
+    let ref = symbolDecl(world = world, symbol = symbol)
+    if ref.unit < 0:
+        return false
+    return isGivenDeclCode(world.units[ref.unit].ast.decls[ref.decl].kind)
 
 ; 成员缺失：接收者是顶层类型名且不是局部遮蔽时，按名义成员判一次。
 ; 类型名位不暴露字段，这与成员面的语义一致；接收者是变量时留给类型推导。
@@ -252,7 +269,7 @@ checkCallNode|func(world: MemberWorld, unit: CompilationUnit, unitIndex: I32, by
     if site.symbol < 0:
         site.builtin = findBuiltinFunction(functions = world.functions, name = name)
     if site.symbol < 0 && site.builtin < 0:
-        ; 枚举项构造不是顶层符号，也不是未定义函数。
+        ; 枚举项构造不是顶层符号，也不是未定义函数；构造不判标签面，位置与具名都放过。
         let owner = uniqueCaseOwner(index = world.symbols, name = name)
         if len(owner) > 0:
             return out
@@ -333,6 +350,31 @@ calleeNodeIds|func(unit: CompilationUnit,) -> (Array<I32>,):
         i = i + 1
     return out
 
+; 声明位的符号引用：导出条目的符号名也占一个表达式池节点，但它指向符号而不是值。
+; 它和调用位同类，值位判定跳过；否则 `名|c = 配置` 里的目标名会被当成裸写类型名。
+declReferenceExprs|func(unit: CompilationUnit,) -> (Array<I32>,):
+    var out: Array<I32> = []
+    var i = 0
+    while i < len(unit.ast.decls):
+        let decl = unit.ast.decls[i]
+        if isExportEntryCode(decl.kind) && len(decl.kids) > 0:
+            out = out.append(decl.kids[0])
+        i = i + 1
+    return out
+
+; 成员接收者节点：`名.成员` 的接收者是类型名位，成员面另判，不进值位判定。
+; own 方法与类型成员就挂在类型名上，把接收者当值会连合法写法一起拒掉。
+memberReceiverIds|func(unit: CompilationUnit,) -> (Array<I32>,):
+    var out: Array<I32> = []
+    var i = 0
+    while i < unit.ast.exprCount():
+        if unit.ast.isMemberExpr(i):
+            let recv = unit.ast.childOf(id = i, index = 0)
+            if recv >= 0:
+                out = out.append(recv)
+        i = i + 1
+    return out
+
 ; 整数表包含：表小，线性扫够用。
 containsId|func(items: Array<I32>, value: I32,) -> (Bool,):
     var i = 0
@@ -388,6 +430,7 @@ checkUnitExprs|func(world: MemberWorld, unitIndex: I32, types: ExprTypes,) -> (E
     return checkUnitExprsSkipping(world = world, unitIndex = unitIndex, types = types, skips = 空跳过)
 
 ; 带跳过表的单元检查：跳过名不报未定义，由 E4-046 单独说「翻译没产出」。
+; 名字引用位（被调方与导出目标）不按值位判，值位只认真正的取值处。
 checkUnitExprsSkipping|func(world: MemberWorld, unitIndex: I32, types: ExprTypes, skips: Array<String>,) -> (ExprCheck,):
     var out = ExprCheck()
     if unitIndex < 0 || unitIndex >= len(world.units):
@@ -396,13 +439,23 @@ checkUnitExprsSkipping|func(world: MemberWorld, unitIndex: I32, types: ExprTypes
     let bytes = unitBytes(unit)
     let known = unitBareNames(unit = unit)
     let shadow = localOnlyNames(unit = unit)
-    let callees = calleeNodeIds(unit = unit)
+    var callees = calleeNodeIds(unit = unit)
+    let refs = declReferenceExprs(unit = unit)
+    var r = 0
+    while r < len(refs):
+        callees = callees.append(refs[r])
+        r = r + 1
+    let receivers = memberReceiverIds(unit = unit)
+    var m = 0
+    while m < len(receivers):
+        callees = callees.append(receivers[m])
+        m = m + 1
     let ranges = unsafeRangesOf(unit = unit)
     var i = 0
     while i < unit.ast.exprCount():
         if unit.ast.isIdentifierExpr(i):
             if !containsId(items = callees, value = i):
-                out = checkIdentifierNode(world = world, unit = unit, bytes = bytes, locals = known, skips = skips, node = i, out = out)
+                out = checkIdentifierNode(world = world, unit = unit, bytes = bytes, locals = known, shadow = shadow, skips = skips, node = i, out = out)
         elif unit.ast.isMemberExpr(i):
             out = checkMemberNode(world = world, unit = unit, bytes = bytes, shadow = shadow, node = i, out = out)
             out = checkUnownedAccessNode(world = world, unit = unit, unitIndex = unitIndex, types = types, ranges = ranges, node = i, out = out)

@@ -12,6 +12,7 @@ issueBadEscape
 issueNumberFormat
 issueUnterminatedInterpolation
 issueMisplacedCombiningMark
+issueMixedScripts
 
 ; 词法问题：出错字节区间；同一条输入上的问题按出现顺序登记。
 (LexIssue)
@@ -72,6 +73,8 @@ issueName|func(_kind: LexIssueKind,) -> (String,):
             return "插值未闭合"
         case issueMisplacedCombiningMark:
             return "组合附标错位"
+        case issueMixedScripts:
+            return "标识符混用高风险脚本"
     return "未知字节"
 
 ; 同一问题类别判定：枚举相等比较不可用，按名称比。
