@@ -238,7 +238,7 @@ def main(argv: list[str]) -> int:
         if bad_hits > shown:
             print(f"   仅显示前 {shown} 处。")
         return 1
-    print(f"🎉 [注释门禁] 通过（{len(targets)} 个文件；判据 C1–C8 + 阳性对照）")
+    print(f"[注释门禁] 通过（{len(targets)} 个文件；判据 C1–C8 + 阳性对照）")
     return 0
 
 
