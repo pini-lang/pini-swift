@@ -2,3 +2,5 @@
 跳过 calc_point：按值结构体不生成：Pini 的 ABI 面接不住
 跳过 calc_color：枚举不生成：常量不是宏，`cc -E` 展不开
 跳过 calc_static：静态函数没有外部符号，链接期找不到它
+跳过 CALC_FN：函数式宏要实参才能展开，不能取成常量；要用请写 C shim
+跳过 CALC_EMPTY：空宏没有值

@@ -106,3 +106,12 @@
     let huge = bindEvalMacro("9223372036854775807")
     assert(huge.ok && bindMacroTypeName(huge) == "I64", "超出 I32 的值域落 I64")
     return
+
+; 行标记还原：非 ASCII 字节在标记里写成八进制，还原后须与原路径逐字节相同。
+标记路径还原|test() -> ():
+    assert(bindUnescapeMarker("a\\142c") == "abc", "八进制按字节还原")
+    let escaped = "Pini\\350\\257\\255\\350\\250\\200/calc.h"
+    assert(bindUnescapeMarker(escaped) == "Pini语言/calc.h", "非 ASCII 路径还原")
+    assert(bindUnescapeMarker("plain.h") == "plain.h", "无反斜杠原样返回")
+    assert(bindMarkerFile("# 1 \"calc.h\" 2") == "calc.h", "标记取引号内的路径")
+    return

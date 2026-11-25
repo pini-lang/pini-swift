@@ -318,6 +318,50 @@ bindIsReservedName|func(_name: String,) -> (Bool,):
     return second >= 65 && second <= 90
 
 ; 标记行里的文件名：取首个与末个引号之间的内容。
+; 行标记是 C 字面量：非 ASCII 字节写成三位八进制（`\350\257\255`），反斜杠与引号各自转义。
+; 不还原时含非 ASCII 的路径比不中，宏的归属会整体丢失。
+bindUnescapeMarker|func(_text: String,) -> (String,):
+    if _text.indexOf("\\") < 0:
+        return _text
+    var builder = ByteBuilder()
+    let pieces = chars(_text)
+    var i = 0
+    while i < len(pieces):
+        let code = ord(pieces[i])
+        if code != 92 || i + 1 >= len(pieces):
+            builder = builder.appendScalar(code)
+            i = i + 1
+            continue
+        let next = ord(pieces[i + 1])
+        if next >= 48 && next <= 55:
+            var value = 0
+            var taken = 0
+            i = i + 1
+            while taken < 3 && i < len(pieces):
+                let digit = ord(pieces[i])
+                if digit < 48 || digit > 55:
+                    break
+                value = value * 8 + (digit - 48)
+                taken = taken + 1
+                i = i + 1
+            builder = builder.appendByte(value as U8)
+            continue
+        if next == 92 || next == 34:
+            builder = builder.appendByte(next as U8)
+        i = i + 2
+    let bytes = builder.bytes
+    var out = ""
+    i = 0
+    while i < len(bytes):
+        let scalar = jsonScalarAt(bytes, i)
+        if scalar.width <= 0:
+            out = out + "\(chr(65533))"
+            i = i + 1
+        else:
+            out = out + "\(chr(scalar.code))"
+            i = i + scalar.width
+    return out
+
 bindMarkerFile|func(_line: String,) -> (String,):
     let first = _line.indexOf("\"")
     if first < 0:
@@ -332,7 +376,7 @@ bindMarkerFile|func(_line: String,) -> (String,):
             i = i - 1
     if last < 0:
         return ""
-    return _line.slice(first + 1, last)
+    return bindUnescapeMarker(_line.slice(first + 1, last))
 
 ; 宏收集：`-E -dD` 保留 #define 与行标记，据此判每条宏定义在哪个文件。
 ; 同名只留第一处；内置与命令行来源不算头文件，收进来只会污染清单。
