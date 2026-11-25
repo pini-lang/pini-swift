@@ -25,7 +25,7 @@ enum SubscriptReadStrategy {
             }
             // P2-A：负索引尾部计数（i<0 → len+i；-1=末元素，-len=首元素）。
             let idx = i < 0 ? arr.count + i : i
-            // `a[i]` 是安全断言通道：返回元素本身（静态类型 `T`），越界即 panic——与 LLVM 侧 `@bk_array_get` 一致。
+            // `a[i]` 是安全断言通道：返回元素本身（静态类型 `T`），越界即 panic——与 LLVM 侧 `@pini_array_get` 一致。
             // 容错需求走 `.get(i)`（返回 Optional），界内且性能敏感处走 `unsafe .getUnchecked(i)`。
             guard idx >= 0, idx < arr.count else {
                 throw RuntimeError.indexOutOfRange(location: loc)

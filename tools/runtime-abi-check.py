@@ -3,7 +3,7 @@
 
 WHY THIS EXISTS
 ---------------
-`docs/spec/runtime-abi.md` claims to be the single authority for the `bk_*`
+`docs/spec/runtime-abi.md` claims to be the single authority for the `pini_*`
 surface, and its own maintenance clause states the only self-check it has:
 "清单数 = 导出数". That equation is worth nothing unless something computes it.
 This script computes it.
@@ -11,7 +11,7 @@ This script computes it.
 THREE SIDES
 -----------
     contract   the family table in section 2 (names + per-family counts + total)
-    exports    `@_cdecl("bk_...")` in PiniRuntime.swift
+    exports    `@_cdecl("pini_...")` in PiniRuntime.swift
     arithmetic each family row's count equals the names listed in that row
 
     contract-without-export   a name in the table that nothing exports
@@ -20,8 +20,8 @@ THREE SIDES
     total-mismatch            the stated total is not the sum of the rows
 
 The doc records a known measuring trap: `@_cdecl` appears twice in prose without
-exporting anything, so counting occurrences gives 99 while the export count is
-97. This script counts `@_cdecl("<name>")` only, which is the documented unit.
+exporting anything, so counting occurrences gives 135 while the export count is
+133. This script counts `@_cdecl("<name>")` only, which is the documented unit.
 
 Usage:
     python3 tools/runtime-abi-check.py [--quiet]
@@ -40,8 +40,8 @@ CONTRACT = os.path.join(ROOT, "docs/spec/runtime-abi.md")
 RUNTIME = os.path.join(ROOT, "Sources/PiniRuntime/PiniRuntime.swift")
 
 ROW = re.compile(r"^\|\s*([^|]+?)\s*\|(.+?)\|\s*\*{0,2}(\d+)\*{0,2}\s*\|\s*$")
-NAME = re.compile(r"`(bk_[A-Za-z0-9_]+)`")
-EXPORT = re.compile(r'@_cdecl\("(bk_[A-Za-z0-9_]+)"\)')
+NAME = re.compile(r"`(pini_[A-Za-z0-9_]+)`")
+EXPORT = re.compile(r'@_cdecl\("(pini_[A-Za-z0-9_]+)"\)')
 
 
 def read(path):
@@ -102,7 +102,7 @@ def main():
 
     if not quiet:
         print("contract: %d families, %d names, total %s" % (len(counts), len(names), total))
-        print("runtime:  %d exported bk_* symbols" % len(exported))
+        print("runtime:  %d exported pini_* symbols" % len(exported))
         print()
 
     for line in failures:

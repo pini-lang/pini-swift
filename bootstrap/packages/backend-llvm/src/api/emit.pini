@@ -335,18 +335,18 @@ emitModule|func(entry: BackendEntry, target: TargetProfile, module: IrModule,) -
     let 元素钩子 = llvmAggHooks(module = module)
     if len(胶水) > 0:
         ; 胶水体自己要用三条归还入口与 free，登记一次，免得只在胶水里出现的符号漏声明。
-        useExtern(use = bundle.externs, name = "bk_str_release")
-        useExtern(use = bundle.externs, name = "bk_handle_release")
-        useExtern(use = bundle.externs, name = "bk_nominal_release")
+        useExtern(use = bundle.externs, name = "pini_str_release")
+        useExtern(use = bundle.externs, name = "pini_handle_release")
+        useExtern(use = bundle.externs, name = "pini_nominal_release")
         useExtern(use = bundle.externs, name = "free")
     if len(拷贝胶水) > 0:
         ; 拷贝胶水另要分配与三条留份入口。
-        useExtern(use = bundle.externs, name = "bk_nominal_alloc")
-        useExtern(use = bundle.externs, name = "bk_str_retain")
-        useExtern(use = bundle.externs, name = "bk_handle_retain")
-        useExtern(use = bundle.externs, name = "bk_nominal_retain")
+        useExtern(use = bundle.externs, name = "pini_nominal_alloc")
+        useExtern(use = bundle.externs, name = "pini_str_retain")
+        useExtern(use = bundle.externs, name = "pini_handle_retain")
+        useExtern(use = bundle.externs, name = "pini_nominal_retain")
     if len(元素钩子) > 0:
-        useExtern(use = bundle.externs, name = "bk_nominal_retain")
+        useExtern(use = bundle.externs, name = "pini_nominal_retain")
     i = 0
     while i < len(胶水):
         appendLine(sink = sink, text = 胶水[i])
@@ -420,17 +420,17 @@ emitTestModule|func(entry: BackendEntry, target: TargetProfile, module: IrModule
     let 拷贝胶水 = llvmCopyGlues(module = module)
     let 元素钩子 = llvmAggHooks(module = module)
     if len(胶水) > 0:
-        useExtern(use = bundle.externs, name = "bk_str_release")
-        useExtern(use = bundle.externs, name = "bk_handle_release")
-        useExtern(use = bundle.externs, name = "bk_nominal_release")
+        useExtern(use = bundle.externs, name = "pini_str_release")
+        useExtern(use = bundle.externs, name = "pini_handle_release")
+        useExtern(use = bundle.externs, name = "pini_nominal_release")
         useExtern(use = bundle.externs, name = "free")
     if len(拷贝胶水) > 0:
-        useExtern(use = bundle.externs, name = "bk_nominal_alloc")
-        useExtern(use = bundle.externs, name = "bk_str_retain")
-        useExtern(use = bundle.externs, name = "bk_handle_retain")
-        useExtern(use = bundle.externs, name = "bk_nominal_retain")
+        useExtern(use = bundle.externs, name = "pini_nominal_alloc")
+        useExtern(use = bundle.externs, name = "pini_str_retain")
+        useExtern(use = bundle.externs, name = "pini_handle_retain")
+        useExtern(use = bundle.externs, name = "pini_nominal_retain")
     if len(元素钩子) > 0:
-        useExtern(use = bundle.externs, name = "bk_nominal_retain")
+        useExtern(use = bundle.externs, name = "pini_nominal_retain")
     i = 0
     while i < len(胶水):
         appendLine(sink = sink, text = 胶水[i])
@@ -538,17 +538,17 @@ emitPartition|func(entry: BackendEntry, target: TargetProfile, module: IrModule,
     var bundle = EmitPass()
     let 胶水 = partitionGlues(module = module)
     if len(胶水) > 0:
-        useExtern(use = bundle.externs, name = "bk_str_release")
-        useExtern(use = bundle.externs, name = "bk_handle_release")
-        useExtern(use = bundle.externs, name = "bk_nominal_release")
+        useExtern(use = bundle.externs, name = "pini_str_release")
+        useExtern(use = bundle.externs, name = "pini_handle_release")
+        useExtern(use = bundle.externs, name = "pini_nominal_release")
         useExtern(use = bundle.externs, name = "free")
     if len(llvmCopyGlues(module = module)) > 0:
-        useExtern(use = bundle.externs, name = "bk_nominal_alloc")
-        useExtern(use = bundle.externs, name = "bk_str_retain")
-        useExtern(use = bundle.externs, name = "bk_handle_retain")
-        useExtern(use = bundle.externs, name = "bk_nominal_retain")
+        useExtern(use = bundle.externs, name = "pini_nominal_alloc")
+        useExtern(use = bundle.externs, name = "pini_str_retain")
+        useExtern(use = bundle.externs, name = "pini_handle_retain")
+        useExtern(use = bundle.externs, name = "pini_nominal_retain")
     if len(llvmAggHooks(module = module)) > 0:
-        useExtern(use = bundle.externs, name = "bk_nominal_retain")
+        useExtern(use = bundle.externs, name = "pini_nominal_retain")
     i = 0
     while i < len(胶水):
         appendLine(sink = sink, text = 胶水[i])

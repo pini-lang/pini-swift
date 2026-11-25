@@ -18,16 +18,16 @@ import Synchronization
 // 句柄的 share count 住在运行时而非 ARC：LLVM 后端里 `var b = a` 只把不透明句柄（裸 `ptr`）复制到另一个
 // alloca 槽，ARC 看不见这次别名 ⇒ `isKnownUniquelyReferenced` 恒真；故按 `shares` 判分裂：别名点 retain、写前 ensure_unique。
 
-// 份额契约（codegen 与运行时的分工）：`bk_*_create` 产出 shares == 1 的 box，归还责任随句柄走 —— 变量槽或
+// 份额契约（codegen 与运行时的分工）：`pini_*_create` 产出 shares == 1 的 box，归还责任随句柄走 —— 变量槽或
 // 被写入的父容器。写入口只搬字节、不 retain，故调用方须自带一份（别名先 retain），入口必消费：落槽则接管、
 // 不落槽（重复元素 / 既有键）则归还。box `deinit` 对句柄型元素递减一份 share。
 
 /// 所有容器 box 的公共基类：携带 share count 与深拷协议。
-/// 以基类承载使 `bk_handle_*` 系列可类型无关地操作任意容器句柄（`fromOpaque` 后动态转型），
+/// 以基类承载使 `pini_handle_*` 系列可类型无关地操作任意容器句柄（`fromOpaque` 后动态转型），
 /// 无需 IR 侧按类型分派 retain/split，也免去查三张 live 表的 O(n) 判型。
 private class _BkBox {
     /// 持有此句柄的「变量槽」数目（显式 share count）。
-    /// 创建时为 1；`bk_handle_retain` 递增；分裂或 `bk_*_destroy` 递减。
+    /// 创建时为 1；`pini_handle_retain` 递增；分裂或 `pini_*_destroy` 递减。
     var shares: Int = 1
 
     /// 深拷自身用于 COW 分裂：新 box `shares == 1`，且对每个 `tag == .handle` 的
@@ -35,7 +35,7 @@ private class _BkBox {
     func cowCopy() -> _BkBox { fatalError("_BkBox.cowCopy 未实现") }
 }
 
-/// 活动句柄统一登记表（数组/字典/集合共用）：平衡 `bk_*_create` 的 `passRetained`。
+/// 活动句柄统一登记表（数组/字典/集合共用）：平衡 `pini_*_create` 的 `passRetained`。
 /// 按对象身份索引，增删都是常数时间；表长等于活跃句柄数，若用列表则每次释放要线性扫描而退化成平方。
 /// 建句柄与释放句柄都可能落在任一任务线程，故表的增删由 `_liveHandlesLock` 守护；释放动作在锁外做。
 nonisolated(unsafe) private var _liveHandles: [ObjectIdentifier: Unmanaged<_BkBox>] = [:]
@@ -70,7 +70,7 @@ private func _bkReleaseShare(_ h: UnsafeMutableRawPointer?) {
 /// （容器在 `_BkBox.shares`，字符串在自己的头格）；常量串的 retain 是无操作，故不必分辨。
 private func _bkRetainIfHandle(_ elemBox: UnsafeRawPointer, _ tag: Int32) {
     if _BkTag(rawValue: tag) == .str {
-        bk_str_retain(elemBox.load(as: UnsafeMutablePointer<CChar>?.self))
+        pini_str_retain(elemBox.load(as: UnsafeMutablePointer<CChar>?.self))
         return
     }
     guard _BkTag(rawValue: tag) == .handle else { return }
@@ -83,11 +83,11 @@ private func _bkRetainIfHandle(_ elemBox: UnsafeRawPointer, _ tag: Int32) {
 /// `tag` 必须与 box 内容一致：`.str` 与 `.handle` 记在不同计数上，错 tag 会让两族的计数互串。
 private func _bkReleaseIfHandle(_ elemBox: UnsafeRawPointer, _ tag: Int32) {
     if _BkTag(rawValue: tag) == .str {
-        bk_str_release(elemBox.load(as: UnsafeMutablePointer<CChar>?.self))
+        pini_str_release(elemBox.load(as: UnsafeMutablePointer<CChar>?.self))
         return
     }
     if _BkTag(rawValue: tag) == .char {
-        bk_char_release(elemBox.load(as: Int64.self))
+        pini_char_release(elemBox.load(as: Int64.self))
         return
     }
     guard _BkTag(rawValue: tag) == .handle else { return }
@@ -273,18 +273,18 @@ private func _bkWriteStderr(_ text: String) {
 /// 可重入：聚合值打印是递归的，求值期间的用户代码也可能再打印。
 private let _bkPrintLock = NSRecursiveLock()
 
-@_cdecl("bk_print_lock")
-public func bk_print_lock() {
+@_cdecl("pini_print_lock")
+public func pini_print_lock() {
     _bkPrintLock.lock()
 }
 
-@_cdecl("bk_print_unlock")
-public func bk_print_unlock() {
+@_cdecl("pini_print_unlock")
+public func pini_print_unlock() {
     _bkPrintLock.unlock()
 }
 
-@_cdecl("bk_panic")
-public func bk_panic(_ msg: UnsafePointer<CChar>?) -> Never {
+@_cdecl("pini_panic")
+public func pini_panic(_ msg: UnsafePointer<CChar>?) -> Never {
     if let msg { _bkWriteStderr(String(cString: msg)) }
     _bkWriteStderr("\n")
     if let flag = getenv("PINI_PANIC_ABORT"), flag.pointee != 0 {
@@ -298,40 +298,40 @@ public func bk_panic(_ msg: UnsafePointer<CChar>?) -> Never {
 /// 别名绑定（`var b = a`、容器传参等）：递增 share count，使后续任一侧的写触发分裂。
 /// codegen 在容器句柄被复制进新变量槽时发射本调用；不发射则退化为「共享且原地改」（错误语义）。
 /// 裸份额操作，不校验在册：传入的必须是仍存活的容器句柄，否则计数改到已回收的对象上。
-@_cdecl("bk_handle_retain")
-public func bk_handle_retain(_ h: UnsafeMutableRawPointer?) {
+@_cdecl("pini_handle_retain")
+public func pini_handle_retain(_ h: UnsafeMutableRawPointer?) {
     guard let h else { return }
     Unmanaged<_BkBox>.fromOpaque(h).takeUnretainedValue().shares += 1
 }
 
 /// 写入前的独占化：共享则深拷分裂并返回**新句柄**，独占则原样返回。
 /// 调用方必须把返回值写回持有该句柄的变量槽（值语义要求）。
-@_cdecl("bk_handle_ensure_unique")
-public func bk_handle_ensure_unique(_ h: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? {
+@_cdecl("pini_handle_ensure_unique")
+public func pini_handle_ensure_unique(_ h: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? {
     guard let h else { return nil }
     return _bkEnsureUnique(h)
 }
 
 /// 嵌套写路径的中间层独占化：确保 `parent[i]` 处的嵌套句柄独占，并就地更新父槽。
-/// 不能拆成 ensure_unique + `bk_array_set`：后者会 `_bkReleaseIfHandle(old)` 再递减一次同一份 share，
+/// 不能拆成 ensure_unique + `pini_array_set`：后者会 `_bkReleaseIfHandle(old)` 再递减一次同一份 share，
 /// 导致内层提前回收。故只改写句柄字节、不释放旧句柄；前置条件是 `parent` 已独占，违反即 panic 暴露缺陷。
-@_cdecl("bk_array_ensure_unique_at")
-public func bk_array_ensure_unique_at(_ arr: UnsafeMutableRawPointer?, _ i: Int32) -> UnsafeMutableRawPointer? {
+@_cdecl("pini_array_ensure_unique_at")
+public func pini_array_ensure_unique_at(_ arr: UnsafeMutableRawPointer?, _ i: Int32) -> UnsafeMutableRawPointer? {
     guard let arr else { return nil }
     let box = Unmanaged<_BkArrayBox>.fromOpaque(arr).takeUnretainedValue()
     guard box.shares <= 1 else {
-        bk_panic("Pini runtime error: bk_array_ensure_unique_at requires a unique parent handle (shares=\(box.shares))")
+        pini_panic("Pini runtime error: pini_array_ensure_unique_at requires a unique parent handle (shares=\(box.shares))")
     }
     _bkArraySplitStorage(box)
     let idx = Int(i)
     guard idx >= 0, idx < box.count else {
-        bk_panic("Pini runtime error: array index \(idx) out of bounds (size \(box.count))")
+        pini_panic("Pini runtime error: array index \(idx) out of bounds (size \(box.count))")
     }
     guard let slot = box.storage.elements[idx] else {
-        bk_panic("Pini runtime error: array element \(idx) is uninitialized")
+        pini_panic("Pini runtime error: array element \(idx) is uninitialized")
     }
     guard _BkTag(rawValue: box.storage.tags[idx]) == .handle else {
-        bk_panic("Pini runtime error: array element \(idx) is not a nested container handle")
+        pini_panic("Pini runtime error: array element \(idx) is not a nested container handle")
     }
     let old = slot.load(as: UnsafeMutableRawPointer.self)
     let new = _bkEnsureUnique(old)
@@ -341,30 +341,30 @@ public func bk_array_ensure_unique_at(_ arr: UnsafeMutableRawPointer?, _ i: Int3
 }
 
 /// 当前 share count（仅供测试/诊断，IR 不发射）。
-@_cdecl("bk_handle_shares")
-public func bk_handle_shares(_ h: UnsafeMutableRawPointer?) -> Int32 {
+@_cdecl("pini_handle_shares")
+public func pini_handle_shares(_ h: UnsafeMutableRawPointer?) -> Int32 {
     guard let h else { return 0 }
     return Int32(Unmanaged<_BkBox>.fromOpaque(h).takeUnretainedValue().shares)
 }
 
-/// 释放一份 share（归零则回收）。三个类型化 `bk_*_destroy` 均委托至此。
-/// 与 `bk_handle_retain` 成对；多减一次就是双释放，这里不查在册。
-@_cdecl("bk_handle_release")
-public func bk_handle_release(_ h: UnsafeMutableRawPointer?) {
+/// 释放一份 share（归零则回收）。三个类型化 `pini_*_destroy` 均委托至此。
+/// 与 `pini_handle_retain` 成对；多减一次就是双释放，这里不查在册。
+@_cdecl("pini_handle_release")
+public func pini_handle_release(_ h: UnsafeMutableRawPointer?) {
     _bkReleaseShare(h)
 }
 
 /// 创建长度为 `len` 的数组，返回不透明句柄。
-@_cdecl("bk_array_create")
-public func bk_array_create(_ len: Int32) -> UnsafeMutableRawPointer {
+@_cdecl("pini_array_create")
+public func pini_array_create(_ len: Int32) -> UnsafeMutableRawPointer {
     return _bkRegister(_BkArrayBox(count: Int(len)))
 }
 
 /// 给数组登记聚合元素的成员钩子：深拷时逐成员保留、销毁时逐成员归还。
 ///  注意  必须在第一次写入之前调用（创建后立刻）；存储已被共享时登记只落在当前 box 上，
 /// 兄弟 box 各自带自己的那一份 —— 而元素类型相同的数组本就该有同一对函数。
-@_cdecl("bk_array_set_element_hooks")
-public func bk_array_set_element_hooks(
+@_cdecl("pini_array_set_element_hooks")
+public func pini_array_set_element_hooks(
     _ arr: UnsafeMutableRawPointer?,
     _ retain: (@convention(c) (UnsafeMutableRawPointer) -> Void)?,
     _ release: (@convention(c) (UnsafeMutableRawPointer) -> Void)?
@@ -376,35 +376,35 @@ public func bk_array_set_element_hooks(
 }
 
 /// 数组长度（元素个数）。
-@_cdecl("bk_array_len")
-public func bk_array_len(_ arr: UnsafeMutableRawPointer?) -> Int32 {
+@_cdecl("pini_array_len")
+public func pini_array_len(_ arr: UnsafeMutableRawPointer?) -> Int32 {
     guard let arr else { return 0 }
     let box = Unmanaged<_BkArrayBox>.fromOpaque(arr).takeUnretainedValue()
     return Int32(box.count)
 }
 
 /// 读取下标 `i` 处的元素 box，返回运行时拥有的稳定 `ptr`，codegen 据此 `load T`；越界或槽未初始化
-/// 经 `bk_panic` 终止（与解释器报错一致）。稳定期到该槽被 `bk_array_set` 重写或本数组被释放为止；
+/// 经 `pini_panic` 终止（与解释器报错一致）。稳定期到该槽被 `pini_array_set` 重写或本数组被释放为止；
 /// 与兄弟数组共享存储的写入不会动到它（那条路先分裂成私有存储）。
-@_cdecl("bk_array_get")
-public func bk_array_get(_ arr: UnsafeMutableRawPointer?, _ i: Int32) -> UnsafeMutableRawPointer {
-    guard let arr else { bk_panic("Pini runtime error: array handle is null") }
+@_cdecl("pini_array_get")
+public func pini_array_get(_ arr: UnsafeMutableRawPointer?, _ i: Int32) -> UnsafeMutableRawPointer {
+    guard let arr else { pini_panic("Pini runtime error: array handle is null") }
     let box = Unmanaged<_BkArrayBox>.fromOpaque(arr).takeUnretainedValue()
     let idx = Int(i)
     guard idx >= 0, idx < box.count else {
-        bk_panic("Pini runtime error: array index \(idx) out of bounds (size \(box.count))")
+        pini_panic("Pini runtime error: array index \(idx) out of bounds (size \(box.count))")
     }
     guard let ptr = box.storage.elements[idx] else {
-        bk_panic("Pini runtime error: array element \(idx) is uninitialized")
+        pini_panic("Pini runtime error: array element \(idx) is uninitialized")
     }
     return ptr
 }
 
 /// 写下标 `i`：两层分裂后把 `src` 的 `elemBytes` 字节 memcpy 进新箱、先释放该槽旧箱，返回须写回的句柄。
 /// 份额由调用方自带：本入口只搬字节，覆盖或销毁时按 tag 归还旧元素 —— 少带即悬垂，多带即泄漏。
-/// Swift 名带 `_unsafe`；C 符号仍是 `bk_array_set`，生成 IR 不受影响。
-@_cdecl("bk_array_set")
-public func bk_array_set_unsafe(
+/// Swift 名带 `_unsafe`；C 符号仍是 `pini_array_set`，生成 IR 不受影响。
+@_cdecl("pini_array_set")
+public func pini_array_set_unsafe(
     _ arr: UnsafeMutableRawPointer?, _ i: Int32, _ src: UnsafeRawPointer,
     _ elemBytes: Int32, _ elemTag: Int32
 ) -> UnsafeMutableRawPointer? {
@@ -418,7 +418,7 @@ public func bk_array_set_unsafe(
     _bkArraySplitStorage(box)
     let idx = Int(i)
     guard idx >= 0, idx < box.count else {
-        bk_panic("Pini runtime error: array index \(idx) out of bounds (size \(box.count))")
+        pini_panic("Pini runtime error: array index \(idx) out of bounds (size \(box.count))")
     }
     let n = Int(elemBytes)
     guard n > 0 else { return target }
@@ -433,17 +433,17 @@ public func bk_array_set_unsafe(
 }
 
 /// 追加一个元素，返回新数组（调用方须用返回值替换原句柄）；输入与其内容不受影响，空句柄视作空数组。
-/// 与 `bk_array_set` 分工：后者写既有容器（写前必分裂），前者产出新容器，故须补 `_bkArraySplitStorage`。
+/// 与 `pini_array_set` 分工：后者写既有容器（写前必分裂），前者产出新容器，故须补 `_bkArraySplitStorage`。
 /// 份额：新数组接管 `src` 那一份，本入口只搬字节、不 retain；别名那份由发射层补。
-@_cdecl("bk_array_append")
-public func bk_array_append_unsafe(
+@_cdecl("pini_array_append")
+public func pini_array_append_unsafe(
     _ arr: UnsafeMutableRawPointer?, _ src: UnsafeRawPointer,
     _ elemBytes: Int32, _ elemTag: Int32
 ) -> UnsafeMutableRawPointer {
     let width = Int(elemBytes)
     guard width > 0 else {
-        bk_panic(
-            "Pini runtime error: bk_array_append needs a positive element width (from the codegen element ABI)")
+        pini_panic(
+            "Pini runtime error: pini_array_append needs a positive element width (from the codegen element ABI)")
     }
     let source = arr.map { Unmanaged<_BkArrayBox>.fromOpaque($0).takeUnretainedValue() }
     let count = source?.count ?? 0
@@ -484,8 +484,8 @@ public func bk_array_append_unsafe(
 
 /// 释放数组句柄的一份 share；归零才真正回收，并按元素 tag 逐格归还。
 /// 与兄弟数组共享元素存储时，归还推迟到最后一个持有者离开。
-@_cdecl("bk_array_destroy")
-public func bk_array_destroy(_ arr: UnsafeMutableRawPointer?) {
+@_cdecl("pini_array_destroy")
+public func pini_array_destroy(_ arr: UnsafeMutableRawPointer?) {
     _bkReleaseShare(arr)
 }
 
@@ -493,7 +493,7 @@ public func bk_array_destroy(_ arr: UnsafeMutableRawPointer?) {
 
 /// LazyRef 的引用语义承载：闭包 code/env + 元素类型 + once 锁 + 缓存 box，惰性物化恰一次、地址稳定。
 /// 闭包调用走 codegen 的类型特化 wrapper（统一 `ptr` 返回，规避 I32/F64/指针的返回寄存器差异），
-/// 运行时取回后 memcpy 到堆缓存。不参与 COW 分裂、复制共享同一 box，生命周期由 `bk_runtime_cleanup` 兜底。
+/// 运行时取回后 memcpy 到堆缓存。不参与 COW 分裂、复制共享同一 box，生命周期由 `pini_runtime_cleanup` 兜底。
 private final class _BkLazyRefBox: _BkBox {
     let wrapper: UnsafeMutableRawPointer?
     let code: UnsafeMutableRawPointer?
@@ -521,11 +521,11 @@ private final class _BkLazyRefBox: _BkBox {
     }
 }
 
-/// 创建 LazyRef：`bk_lazyref_create(wrapper, code, env, elemBytes, elemTag)` → 不透明句柄。
+/// 创建 LazyRef：`pini_lazyref_create(wrapper, code, env, elemBytes, elemTag)` → 不透明句柄。
 /// `wrapper` = codegen 生成的类型特化装箱函数（`ptr (ptr code, ptr env, ptr out) -> ptr`，统一 ABI）；
 /// `code` = 初始化闭包 code（wrapper 内部调用）；`env` = 闭包捕获环境。
-@_cdecl("bk_lazyref_create")
-public func bk_lazyref_create(
+@_cdecl("pini_lazyref_create")
+public func pini_lazyref_create(
     _ wrapper: UnsafeMutableRawPointer?,
     _ code: UnsafeMutableRawPointer?,
     _ env: UnsafeMutableRawPointer?,
@@ -540,15 +540,15 @@ public func bk_lazyref_create(
 
 /// 同步阻塞获取 `.value`（once）：首访加锁调用 `wrapper(code, env, out)` 求值并缓存，后续返回缓存。
 /// 返回元素 box 指针（运行时拥有、稳定），codegen 据此 `load T`。
-@_cdecl("bk_lazyref_value")
-public func bk_lazyref_value(_ h: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer {
-    guard let h else { bk_panic("Pini runtime error: lazyref handle is null") }
+@_cdecl("pini_lazyref_value")
+public func pini_lazyref_value(_ h: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer {
+    guard let h else { pini_panic("Pini runtime error: lazyref handle is null") }
     let box = Unmanaged<_BkLazyRefBox>.fromOpaque(h).takeUnretainedValue()
     box.lock.lock()
     defer { box.lock.unlock() }
     if let c = box.cached { return c }
     guard let wrapper = box.wrapper, let code = box.code else {
-        bk_panic("Pini runtime error: lazyref initializer is null")
+        pini_panic("Pini runtime error: lazyref initializer is null")
     }
     // wrapper ABI：`ptr (ptr code, ptr env, ptr out) -> ptr`——运行时分配堆输出 box，
     // wrapper 写入 T 并返回 out；规避「wrapper 内 alloca 返回栈地址」逃逸 UB。
@@ -560,11 +560,11 @@ public func bk_lazyref_value(_ h: UnsafeMutableRawPointer?) -> UnsafeMutableRawP
     return box.cached!
 }
 
-/// 释放 LazyRef 的一份 share（归零才回收；进程退出 `bk_runtime_cleanup` 亦兜底）。
+/// 释放 LazyRef 的一份 share（归零才回收；进程退出 `pini_runtime_cleanup` 亦兜底）。
 ///  注意  发射器目前**不产出**本调用点：LazyRef 句柄只在进程退出时由退出钩子统一回收，
 /// 循环里反复创建会累积到退出。
-@_cdecl("bk_lazyref_destroy")
-public func bk_lazyref_destroy(_ h: UnsafeMutableRawPointer?) {
+@_cdecl("pini_lazyref_destroy")
+public func pini_lazyref_destroy(_ h: UnsafeMutableRawPointer?) {
     _bkReleaseShare(h)
 }
 
@@ -605,11 +605,11 @@ private final class _BkWeakRefBox: _BkBox {
     }
 }
 
-/// 建弱引用：`bk_weak_create(object)` → 不透明句柄。不增加强计数，只把对象头第三格
+/// 建弱引用：`pini_weak_create(object)` → 不透明句柄。不增加强计数，只把对象头第三格
 /// （弱引用旁表指针）装上；同一对象的多条弱引用共用一张表。
-@_cdecl("bk_weak_create")
-public func bk_weak_create(_ object: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer {
-    guard let object else { bk_panic("Pini runtime error: weak target is null") }
+@_cdecl("pini_weak_create")
+public func pini_weak_create(_ object: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer {
+    guard let object else { pini_panic("Pini runtime error: weak target is null") }
     _bkWeakTableLock.lock()
     let slot = object.advanced(by: 16).assumingMemoryBound(to: UInt.self)
     var raw = slot.pointee
@@ -620,23 +620,23 @@ public func bk_weak_create(_ object: UnsafeMutableRawPointer?) -> UnsafeMutableR
     }
     _bkWeakTableLock.unlock()
     guard let pointer = UnsafeMutableRawPointer(bitPattern: raw) else {
-        bk_panic("Pini runtime error: weak table pointer is null")
+        pini_panic("Pini runtime error: weak table pointer is null")
     }
     let entry = Unmanaged<_BkWeakEntry>.fromOpaque(pointer).takeUnretainedValue()
     return _bkRegister(_BkWeakRefBox(entry: entry))
 }
 
 /// 读弱引用：目标存活答对象指针，已销毁答空指针。调用方把非空结果包成 `some` 并留一份计数。
-@_cdecl("bk_weak_value")
-public func bk_weak_value(_ h: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? {
+@_cdecl("pini_weak_value")
+public func pini_weak_value(_ h: UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer? {
     guard let h else { return nil }
     let box = Unmanaged<_BkWeakRefBox>.fromOpaque(h).takeUnretainedValue()
     return box.entry.liveObject()
 }
 
 /// 释放弱引用句柄的一份 share；旁表本身随对象或进程存活，不在本入口回收。
-@_cdecl("bk_weak_destroy")
-public func bk_weak_destroy(_ h: UnsafeMutableRawPointer?) {
+@_cdecl("pini_weak_destroy")
+public func pini_weak_destroy(_ h: UnsafeMutableRawPointer?) {
     _bkReleaseShare(h)
 }
 
@@ -665,13 +665,13 @@ private let _bkGivenSlotLock = NSLock()
 /// 取某类型的默认实例：`slot` 是发射层定义的静态全局（`@__given_<T>`），首调时由 `initFn` 写入初值，
 /// 此后永远返回同一地址。`init_fn` 的 ABI 为 `ptr (ptr out) -> ptr`：运行时把分配好的输出缓冲交给它，
 /// 它写入 T 并返回该缓冲。 行不通  不得持 `_bkGivenSlotLock` 调 `initFn`（初值可能取用另一类型的默认实例 ⇒ 自死锁）。
-@_cdecl("bk_given_get")
-public func bk_given_get(
+@_cdecl("pini_given_get")
+public func pini_given_get(
     _ slot: UnsafeMutablePointer<UnsafeMutableRawPointer?>?,
     _ initFn: UnsafeMutableRawPointer?,
     _ bytes: Int
 ) -> UnsafeMutableRawPointer {
-    guard let slot else { bk_panic("Pini runtime error: given slot is null") }
+    guard let slot else { pini_panic("Pini runtime error: given slot is null") }
     let boxPtr: UnsafeMutableRawPointer
     _bkGivenSlotLock.lock()
     if let existing = slot.pointee {
@@ -687,7 +687,7 @@ public func bk_given_get(
     box.lock.lock()
     defer { box.lock.unlock() }
     if let cached = box.cached { return cached }
-    guard let initFn else { bk_panic("Pini runtime error: given initializer is null") }
+    guard let initFn else { pini_panic("Pini runtime error: given initializer is null") }
     let buf = UnsafeMutableRawPointer.allocate(
         byteCount: box.bytes, alignment: MemoryLayout<Int>.alignment)
     let invoke = unsafeBitCast(
@@ -731,8 +731,8 @@ private func _bkWaitTaskSideQuiescent(milliseconds: Int) -> Bool {
 /// 进程收尾时清空活动句柄表（数组 / 字典 / 集合）。只清表、不逐个释放：表里同时有容器与它的
 /// 元素，退出期无从定序（元素账在外层 deinit 里），逐个释放会让外层二次访问已回收的元素。
 /// 幂等：程序入口与退出钩子都会调，先到的那次生效。内存随进程结束由系统回收。
-@_cdecl("bk_runtime_cleanup")
-public func bk_runtime_cleanup() {
+@_cdecl("pini_runtime_cleanup")
+public func pini_runtime_cleanup() {
     if _bkRuntimeCleaned { return }
     guard _bkWaitTaskSideQuiescent(milliseconds: 500) else { return }
     _bkRuntimeCleaned = true
@@ -746,14 +746,14 @@ public func bk_runtime_cleanup() {
 /// 先打完更不容易被回收路径上的意外打断。
 private func _bkAtExitCleanup() {
     _bkReportYields()
-    bk_runtime_cleanup()
+    pini_runtime_cleanup()
 }
 
 private let _bkAtExitToken = atexit(_bkAtExitCleanup)
 
 /// 保证进程退出钩子真的被登记。
 /// Swift 全局 `let` 惰性初始化：`atexit(_bkAtExitCleanup)` 仅在该声明被求值时发生，没有读者就永不生效。
-/// 由首个真实并发入口（`bk_task_spawn`）触发 ⇒ 不用任务的程序不受「活动句柄兜底回收」保护。
+/// 由首个真实并发入口（`pini_task_spawn`）触发 ⇒ 不用任务的程序不受「活动句柄兜底回收」保护。
 private func _bkEnsureProcessExitHook() {
     _ = _bkAtExitToken
 }
@@ -770,7 +770,7 @@ private enum _BkTag: Int32 {
     case str = 3
     case handle = 4
     /// 不透明的 i64 字：8 字节载荷字，其类型身份不在本层（由发射层解释）。
-    /// 用途单一：`bk_task_join_all` 的聚合结果是「成员 ok 载荷」的数组，而载荷被擦除为 i64 宽度。
+    /// 用途单一：`pini_task_join_all` 的聚合结果是「成员 ok 载荷」的数组，而载荷被擦除为 i64 宽度。
     ///  行不通  不是 `.i32`（比较宽度 4）也不是 `.handle`（COW 会把字里的位型当句柄 retain/release）。
     case i64 = 5
     /// 裸指针（`*T` / 任务句柄）：不参与计数，比较按指针值；与 `str` 分开，销毁时才不会把指针当串释放。
@@ -804,7 +804,7 @@ private func _bkBoxesEqual(_ a: UnsafeRawPointer, _ aTag: Int32, _ b: UnsafeRawP
     case .char:
         // `Char` 按值比较：内联形态整字相等，指针形态要按字节内容判，不能比地址。
         return a.load(as: Int64.self) == b.load(as: Int64.self)
-            || bk_char_equal(a.load(as: Int64.self), b.load(as: Int64.self)) == 1
+            || pini_char_equal(a.load(as: Int64.self), b.load(as: Int64.self)) == 1
     case .aggregate:
         // 聚合按字节判等要宽度，而这里只有 tag ⇒ 字典 / 集合的键不收聚合（发射层已拒绝）。
         return false
@@ -815,7 +815,7 @@ private func _bkBoxesEqual(_ a: UnsafeRawPointer, _ aTag: Int32, _ b: UnsafeRawP
 
 /// 字典真实存储：每条目记「键 box（运行时拥有、稳定指针）+ 键 tag + 值 box + 值宽度」。
 /// 键/值查找走 `_bkBoxesEqual`（tag + 字节内容），与 LLVM 端 boxed-raw 模型一致，天然支持任意宽度键/值。
-/// 键/值各以「运行时拥有的稳定 `ptr`」承载，使 `bk_dict_key_at`/`bk_dict_val_at` 可安全返回指针。
+/// 键/值各以「运行时拥有的稳定 `ptr`」承载，使 `pini_dict_key_at`/`pini_dict_val_at` 可安全返回指针。
 private final class _BkDictBox: _BkBox {
     struct Entry {
         let key: UnsafeMutableRawPointer
@@ -850,14 +850,14 @@ private final class _BkDictBox: _BkBox {
 }
 
 /// 创建空字典，返回不透明句柄。
-@_cdecl("bk_dict_create")
-public func bk_dict_create() -> UnsafeMutableRawPointer {
+@_cdecl("pini_dict_create")
+public func pini_dict_create() -> UnsafeMutableRawPointer {
     return _bkRegister(_BkDictBox())
 }
 
 /// 字典条目数。
-@_cdecl("bk_dict_len")
-public func bk_dict_len(_ dict: UnsafeMutableRawPointer?) -> Int32 {
+@_cdecl("pini_dict_len")
+public func pini_dict_len(_ dict: UnsafeMutableRawPointer?) -> Int32 {
     guard let dict else { return 0 }
     return Int32(Unmanaged<_BkDictBox>.fromOpaque(dict).takeUnretainedValue().entries.count)
 }
@@ -865,13 +865,13 @@ public func bk_dict_len(_ dict: UnsafeMutableRawPointer?) -> Int32 {
 /// 写键值：`val` 的 `valBytes` 字节 memcpy 进新箱（替换先释放旧值），按 (keyBytes, keyTag) 经 `_bkBoxesEqual`
 /// 定位条目。写前 `_bkEnsureUnique` 分裂，返回须写回的句柄；空句柄或零宽 panic。
 /// 份额：值落槽即接管一份、覆盖时先还旧值；键只在首次插入时接管，键已存在则新键就地归还。
-@_cdecl("bk_dict_set")
-public func bk_dict_set_unsafe(
+@_cdecl("pini_dict_set")
+public func pini_dict_set_unsafe(
     _ dict: UnsafeMutableRawPointer?,
     _ key: UnsafeRawPointer, _ keyBytes: Int32, _ keyTag: Int32,
     _ val: UnsafeRawPointer, _ valBytes: Int32, _ valTag: Int32
 ) -> UnsafeMutableRawPointer? {
-    guard let dict else { bk_panic("Pini runtime error: dict handle is null") }
+    guard let dict else { pini_panic("Pini runtime error: dict handle is null") }
     let target = _bkEnsureUnique(dict)
     let box = Unmanaged<_BkDictBox>.fromOpaque(target).takeUnretainedValue()
     let kn = Int(keyBytes)
@@ -905,51 +905,51 @@ public func bk_dict_set_unsafe(
 }
 
 /// 读取键对应的值 box（命中返回运行时拥有的稳定 `ptr`，调用方据此 `load T`）。
-/// 缺失即 panic：字典缺键与数组越界同义，安全断言通道 panic，与 `bk_array_get` 及解释器同口径。
-@_cdecl("bk_dict_get")
-public func bk_dict_get(
+/// 缺失即 panic：字典缺键与数组越界同义，安全断言通道 panic，与 `pini_array_get` 及解释器同口径。
+@_cdecl("pini_dict_get")
+public func pini_dict_get(
     _ dict: UnsafeMutableRawPointer?,
     _ key: UnsafeRawPointer, _ keyBytes: Int32, _ keyTag: Int32
 ) -> UnsafeMutableRawPointer? {
-    guard let dict else { bk_panic("Pini runtime error: dict handle is null") }
+    guard let dict else { pini_panic("Pini runtime error: dict handle is null") }
     let box = Unmanaged<_BkDictBox>.fromOpaque(dict).takeUnretainedValue()
     let kn = Int(keyBytes);
     guard kn > 0 else {
-        bk_panic("Pini runtime error: dict key not found (empty key)")
+        pini_panic("Pini runtime error: dict key not found (empty key)")
     }
     guard
         let entry = box.entries.first(where: { stored in
             _bkBoxesEqual(key, keyTag, stored.key, stored.keyTag)
         })
     else {
-        bk_panic("Pini runtime error: dict key not found (missing key is out-of-bounds-equivalent, safe-assert channel)")
+        pini_panic("Pini runtime error: dict key not found (missing key is out-of-bounds-equivalent, safe-assert channel)")
     }
     return entry.val
 }
 
 /// 嵌套写路径的中间层独占化（字典版）：确保 `parent[key]` 处的嵌套句柄独占，并就地更新条目值 box。
-/// 与 `bk_array_ensure_unique_at` 同契约：`_bkEnsureUnique` 已把本槽的 share 转移给副本，故只改写字节、
+/// 与 `pini_array_ensure_unique_at` 同契约：`_bkEnsureUnique` 已把本槽的 share 转移给副本，故只改写字节、
 /// 不再 release 旧句柄（否则二次递减 → use-after-free）；`parent` 已独占、键存在是前置条件。
-@_cdecl("bk_dict_ensure_unique_at")
-public func bk_dict_ensure_unique_at(
+@_cdecl("pini_dict_ensure_unique_at")
+public func pini_dict_ensure_unique_at(
     _ dict: UnsafeMutableRawPointer?,
     _ key: UnsafeRawPointer, _ keyBytes: Int32, _ keyTag: Int32
 ) -> UnsafeMutableRawPointer? {
     guard let dict else { return nil }
     let box = Unmanaged<_BkDictBox>.fromOpaque(dict).takeUnretainedValue()
     guard box.shares <= 1 else {
-        bk_panic("Pini runtime error: bk_dict_ensure_unique_at requires a unique parent handle (shares=\(box.shares))")
+        pini_panic("Pini runtime error: pini_dict_ensure_unique_at requires a unique parent handle (shares=\(box.shares))")
     }
-    guard Int(keyBytes) > 0 else { bk_panic("Pini runtime error: dict key box has zero width") }
+    guard Int(keyBytes) > 0 else { pini_panic("Pini runtime error: dict key box has zero width") }
     guard
         let idx = box.entries.firstIndex(where: { stored in
             _bkBoxesEqual(key, keyTag, stored.key, stored.keyTag)
         })
     else {
-        bk_panic("Pini runtime error: dict key not found for nested write")
+        pini_panic("Pini runtime error: dict key not found for nested write")
     }
     guard _BkTag(rawValue: box.entries[idx].valTag) == .handle else {
-        bk_panic("Pini runtime error: dict value is not a nested container handle")
+        pini_panic("Pini runtime error: dict value is not a nested container handle")
     }
     let slot = box.entries[idx].val
     let old = slot.load(as: UnsafeMutableRawPointer.self)
@@ -959,15 +959,15 @@ public func bk_dict_ensure_unique_at(
 }
 
 /// 释放字典句柄的一份 share；归零才回收，并逐条归还键与值（各按自己的 tag）。
-@_cdecl("bk_dict_destroy")
-public func bk_dict_destroy(_ dict: UnsafeMutableRawPointer?) {
+@_cdecl("pini_dict_destroy")
+public func pini_dict_destroy(_ dict: UnsafeMutableRawPointer?) {
     _bkReleaseShare(dict)
 }
 
 // MARK: 集合（保序去重）
 
 /// 集合真实存储：元素以 (稳定 box 指针, tag) 记录，插入时按 `_bkBoxesEqual` 去重。
-/// 稳定指针使 `bk_set_at` 可安全返回元素 box。
+/// 稳定指针使 `pini_set_at` 可安全返回元素 box。
 private final class _BkSetBox: _BkBox {
     var elems: [(ptr: UnsafeMutableRawPointer, tag: Int32, bytes: Int)] = []
 
@@ -989,14 +989,14 @@ private final class _BkSetBox: _BkBox {
 }
 
 /// 创建空集合，返回不透明句柄。
-@_cdecl("bk_set_create")
-public func bk_set_create() -> UnsafeMutableRawPointer {
+@_cdecl("pini_set_create")
+public func pini_set_create() -> UnsafeMutableRawPointer {
     return _bkRegister(_BkSetBox())
 }
 
 /// 集合元素数。
-@_cdecl("bk_set_len")
-public func bk_set_len(_ set: UnsafeMutableRawPointer?) -> Int32 {
+@_cdecl("pini_set_len")
+public func pini_set_len(_ set: UnsafeMutableRawPointer?) -> Int32 {
     guard let set else { return 0 }
     return Int32(Unmanaged<_BkSetBox>.fromOpaque(set).takeUnretainedValue().elems.count)
 }
@@ -1004,12 +1004,12 @@ public func bk_set_len(_ set: UnsafeMutableRawPointer?) -> Int32 {
 /// 插入元素（去重）：`elem` 的 `elemBytes` 字节按 (bytes, tag) 经 `_bkBoxesEqual` 判定是否已存在。
 /// COW：写前 `_bkEnsureUnique` 分裂，返回实际被写入的句柄（调用方须写回槽）。
 /// 份额：元素入集合时接管一份；重复元素不落槽，那一份由本入口就地归还（调用方仍须自带一份）。
-@_cdecl("bk_set_add")
-public func bk_set_add_unsafe(
+@_cdecl("pini_set_add")
+public func pini_set_add_unsafe(
     _ set: UnsafeMutableRawPointer?, _ elem: UnsafeRawPointer,
     _ elemBytes: Int32, _ elemTag: Int32
 ) -> UnsafeMutableRawPointer? {
-    guard let set else { bk_panic("Pini runtime error: set handle is null") }
+    guard let set else { pini_panic("Pini runtime error: set handle is null") }
     let target = _bkEnsureUnique(set)
     let box = Unmanaged<_BkSetBox>.fromOpaque(target).takeUnretainedValue()
     let n = Int(elemBytes); guard n > 0 else { return target }
@@ -1025,54 +1025,54 @@ public func bk_set_add_unsafe(
 }
 
 /// 释放集合句柄的一份 share；归零才回收，并逐元素归还（各按自己的 tag）。
-@_cdecl("bk_set_destroy")
-public func bk_set_destroy(_ set: UnsafeMutableRawPointer?) {
+@_cdecl("pini_set_destroy")
+public func pini_set_destroy(_ set: UnsafeMutableRawPointer?) {
     _bkReleaseShare(set)
 }
 
 // MARK: 容器格式化迭代（LLVM `print` 对齐解释器 `stringify`）
 
-/// 字典第 `idx` 个条目的「键 box」指针（运行时拥有，稳定）。越界经 `bk_panic` 终止（与解释器一致）。
-@_cdecl("bk_dict_key_at")
-public func bk_dict_key_at(_ dict: UnsafeMutableRawPointer?, _ idx: Int32) -> UnsafeMutableRawPointer {
-    guard let dict else { bk_panic("Pini runtime error: dict handle is null") }
+/// 字典第 `idx` 个条目的「键 box」指针（运行时拥有，稳定）。越界经 `pini_panic` 终止（与解释器一致）。
+@_cdecl("pini_dict_key_at")
+public func pini_dict_key_at(_ dict: UnsafeMutableRawPointer?, _ idx: Int32) -> UnsafeMutableRawPointer {
+    guard let dict else { pini_panic("Pini runtime error: dict handle is null") }
     let box = Unmanaged<_BkDictBox>.fromOpaque(dict).takeUnretainedValue()
     let i = Int(idx)
     guard i >= 0, i < box.entries.count else {
-        bk_panic("Pini runtime error: dict index \(i) out of bounds (size \(box.entries.count))")
+        pini_panic("Pini runtime error: dict index \(i) out of bounds (size \(box.entries.count))")
     }
     return box.entries[i].key
 }
 
 /// 字典第 `idx` 个条目的「值 box」指针（运行时拥有，稳定）。
-@_cdecl("bk_dict_val_at")
-public func bk_dict_val_at(_ dict: UnsafeMutableRawPointer?, _ idx: Int32) -> UnsafeMutableRawPointer {
-    guard let dict else { bk_panic("Pini runtime error: dict handle is null") }
+@_cdecl("pini_dict_val_at")
+public func pini_dict_val_at(_ dict: UnsafeMutableRawPointer?, _ idx: Int32) -> UnsafeMutableRawPointer {
+    guard let dict else { pini_panic("Pini runtime error: dict handle is null") }
     let box = Unmanaged<_BkDictBox>.fromOpaque(dict).takeUnretainedValue()
     let i = Int(idx)
     guard i >= 0, i < box.entries.count else {
-        bk_panic("Pini runtime error: dict index \(i) out of bounds (size \(box.entries.count))")
+        pini_panic("Pini runtime error: dict index \(i) out of bounds (size \(box.entries.count))")
     }
     return box.entries[i].val
 }
 
 /// 集合第 `idx` 个元素的 box 指针（运行时拥有，稳定）。
-@_cdecl("bk_set_at")
-public func bk_set_at(_ set: UnsafeMutableRawPointer?, _ idx: Int32) -> UnsafeMutableRawPointer {
-    guard let set else { bk_panic("Pini runtime error: set handle is null") }
+@_cdecl("pini_set_at")
+public func pini_set_at(_ set: UnsafeMutableRawPointer?, _ idx: Int32) -> UnsafeMutableRawPointer {
+    guard let set else { pini_panic("Pini runtime error: set handle is null") }
     let box = Unmanaged<_BkSetBox>.fromOpaque(set).takeUnretainedValue()
     let i = Int(idx)
     guard i >= 0, i < box.elems.count else {
-        bk_panic("Pini runtime error: set index \(i) out of bounds (size \(box.elems.count))")
+        pini_panic("Pini runtime error: set index \(i) out of bounds (size \(box.elems.count))")
     }
     return box.elems[i].ptr
 }
 
-/// 字典是否含指定键（与 `bk_dict_get` 同源的 `_bkBoxesEqual` 判定）。
+/// 字典是否含指定键（与 `pini_dict_get` 同源的 `_bkBoxesEqual` 判定）。
 /// 本 shim 目前零调用点：`collection.contains` 已声明为 trait 方法但尚未降载，字典在语言层也没有
 /// 构造入口 ⇒ 它是该特性落地时的接线点，不是某个在用实现的重复。
-@_cdecl("bk_dict_contains")
-public func bk_dict_contains(_ dict: UnsafeMutableRawPointer?, _ key: UnsafeRawPointer, _ keyBytes: Int32, _ keyTag: Int32) -> Int32 {
+@_cdecl("pini_dict_contains")
+public func pini_dict_contains(_ dict: UnsafeMutableRawPointer?, _ key: UnsafeRawPointer, _ keyBytes: Int32, _ keyTag: Int32) -> Int32 {
     guard let dict else { return 0 }
     let box = Unmanaged<_BkDictBox>.fromOpaque(dict).takeUnretainedValue()
     let kn = Int(keyBytes)
@@ -1088,38 +1088,38 @@ public func bk_dict_contains(_ dict: UnsafeMutableRawPointer?, _ key: UnsafeRawP
 /// `*T` 原始指针的 load/store 原语，供 LLVM 后端接 FFI：在 `p + offsetBytes` 处读写标量，
 /// 字节宽度按类型固定（C ABI 纪律，不泄漏 Swift 类型）。语言层的 `load` / `store` 不经过本族
 /// （发射器直出指令、解释器直操作 Swift 指针）⇒ 本族零调用点，是 FFI 的接线面（当前显式 unsupported）。
-@_cdecl("bk_ptr_load_i8")
-public func bk_ptr_load_i8(_ p: UnsafeMutableRawPointer?, _ offsetBytes: Int64) -> Int8 {
+@_cdecl("pini_ptr_load_i8")
+public func pini_ptr_load_i8(_ p: UnsafeMutableRawPointer?, _ offsetBytes: Int64) -> Int8 {
     guard let p else { return 0 }
     return p.advanced(by: Int(offsetBytes)).load(as: Int8.self)
 }
 
-@_cdecl("bk_ptr_load_i32")
-public func bk_ptr_load_i32(_ p: UnsafeMutableRawPointer?, _ offsetBytes: Int64) -> Int32 {
+@_cdecl("pini_ptr_load_i32")
+public func pini_ptr_load_i32(_ p: UnsafeMutableRawPointer?, _ offsetBytes: Int64) -> Int32 {
     guard let p else { return 0 }
     return p.advanced(by: Int(offsetBytes)).load(as: Int32.self)
 }
 
-@_cdecl("bk_ptr_load_i64")
-public func bk_ptr_load_i64(_ p: UnsafeMutableRawPointer?, _ offsetBytes: Int64) -> Int64 {
+@_cdecl("pini_ptr_load_i64")
+public func pini_ptr_load_i64(_ p: UnsafeMutableRawPointer?, _ offsetBytes: Int64) -> Int64 {
     guard let p else { return 0 }
     return p.advanced(by: Int(offsetBytes)).load(as: Int64.self)
 }
 
-@_cdecl("bk_ptr_load_f32")
-public func bk_ptr_load_f32(_ p: UnsafeMutableRawPointer?, _ offsetBytes: Int64) -> Float {
+@_cdecl("pini_ptr_load_f32")
+public func pini_ptr_load_f32(_ p: UnsafeMutableRawPointer?, _ offsetBytes: Int64) -> Float {
     guard let p else { return 0 }
     return p.advanced(by: Int(offsetBytes)).load(as: Float.self)
 }
 
-@_cdecl("bk_ptr_load_f64")
-public func bk_ptr_load_f64(_ p: UnsafeMutableRawPointer?, _ offsetBytes: Int64) -> Double {
+@_cdecl("pini_ptr_load_f64")
+public func pini_ptr_load_f64(_ p: UnsafeMutableRawPointer?, _ offsetBytes: Int64) -> Double {
     guard let p else { return 0 }
     return p.advanced(by: Int(offsetBytes)).load(as: Double.self)
 }
 
-@_cdecl("bk_ptr_store")
-public func bk_ptr_store(_ p: UnsafeMutableRawPointer?, _ offsetBytes: Int64, _ src: UnsafeRawPointer, _ bytes: Int32) {
+@_cdecl("pini_ptr_store")
+public func pini_ptr_store(_ p: UnsafeMutableRawPointer?, _ offsetBytes: Int64, _ src: UnsafeRawPointer, _ bytes: Int32) {
     guard let p else { return }
     let n = Int(bytes)
     guard n > 0 else { return }
@@ -1134,12 +1134,12 @@ public func bk_ptr_store(_ p: UnsafeMutableRawPointer?, _ offsetBytes: Int64, _ 
 private let _bkStrHeaderBytes = 16
 
 /// 头长对外的读取口：发射器与测试用它自检「IR 里的常量布局」与运行时段一致，防两处各写一份而漂移。
-@_cdecl("bk_str_header_bytes")
-public func bk_str_header_bytes() -> Int32 { Int32(_bkStrHeaderBytes) }
+@_cdecl("pini_str_header_bytes")
+public func pini_str_header_bytes() -> Int32 { Int32(_bkStrHeaderBytes) }
 
 /// 带索引表槽的最小容量对外的读取口：发射器据此决定字面量要不要留槽，测试据此钉住两边相等。
-@_cdecl("bk_str_table_min_cap")
-public func bk_str_table_min_cap() -> Int32 { Int32(_bkStrTableMinCap) }
+@_cdecl("pini_str_table_min_cap")
+public func pini_str_table_min_cap() -> Int32 { Int32(_bkStrTableMinCap) }
 
 /// 用户指针 → 头基址。
 @inline(__always) private func _bkStrHead(_ p: UnsafeRawPointer) -> UnsafeMutableRawPointer {
@@ -1419,7 +1419,7 @@ private func _bkStrCharAtBlocked(
     cursor.count = count
     let k = idx - block * 64
     guard k < count else {
-        bk_panic("Pini runtime error: string index out of range")
+        pini_panic("Pini runtime error: string index out of range")
     }
     let start = Int(cursor.offsets[k])
     let end = Int(cursor.offsets[k + 1])
@@ -1522,7 +1522,7 @@ private func _bkStrJoin(
 ) -> UnsafeMutableRawPointer {
     let need = lhsLength + rhsLength
     guard need < Int(Int32.max) else {
-        bk_panic("Pini runtime error: string exceeds 2 GiB")
+        pini_panic("Pini runtime error: string exceeds 2 GiB")
     }
     if ownsLhs, let lhs {
         let rc = _bkStrRefCount(lhs)
@@ -1552,10 +1552,10 @@ private func _bkStrJoin(
     return out
 }
 
-/// 字符串的**别名点 retain**（与 `bk_handle_retain` 同一条归还规则的不同族）。
+/// 字符串的**别名点 retain**（与 `pini_handle_retain` 同一条归还规则的不同族）。
 /// `rc == 0` 的只读段常量空转 —— 这条替代了旧的全局登记表，锁随之消失。
-@_cdecl("bk_str_retain")
-public func bk_str_retain(_ p: UnsafeMutablePointer<CChar>?) {
+@_cdecl("pini_str_retain")
+public func pini_str_retain(_ p: UnsafeMutablePointer<CChar>?) {
     guard let p else { return }
     let rc = _bkStrRC(p)
     guard _bkStrAtomicLoad(rc) > 0 else { return }
@@ -1563,22 +1563,22 @@ public func bk_str_retain(_ p: UnsafeMutablePointer<CChar>?) {
 }
 
 /// 字符串的**释放**：计数递减，归零则归还内存。只读段常量与已归零指针 ⇒ 无操作。
-@_cdecl("bk_str_release")
-public func bk_str_release(_ p: UnsafeMutablePointer<CChar>?) {
+@_cdecl("pini_str_release")
+public func pini_str_release(_ p: UnsafeMutablePointer<CChar>?) {
     guard let p else { return }
     _bkStrReleaseRaw(p)
 }
 
 /// 分配一条空串（容量 `byteCount` 字节，不含 NUL），供发射层累积拼接用。
 /// 旧契约「载荷由调用方写、不置零」已退役：长度与容量必须经本文件维护，绕过它的写入会让头不可信。
-@_cdecl("bk_str_alloc")
-public func bk_str_alloc(_ byteCount: Int64) -> UnsafeMutablePointer<CChar> {
+@_cdecl("pini_str_alloc")
+public func pini_str_alloc(_ byteCount: Int64) -> UnsafeMutablePointer<CChar> {
     return _bkStrAlloc(Int(max(byteCount, 0))).assumingMemoryBound(to: CChar.self)
 }
 
 /// `lhs + rhs`：两边都是带头串，读头的长度而非 `strlen`。`ownsLhs` 为真时消耗左操作数那份引用。
-@_cdecl("bk_str_concat")
-public func bk_str_concat(
+@_cdecl("pini_str_concat")
+public func pini_str_concat(
     _ lhs: UnsafeMutablePointer<CChar>?, _ rhs: UnsafeMutablePointer<CChar>?, _ ownsLhs: Int32
 ) -> UnsafeMutablePointer<CChar> {
     let left = lhs.map { UnsafeRawPointer($0) }
@@ -1592,9 +1592,9 @@ public func bk_str_concat(
     return joined.assumingMemoryBound(to: CChar.self)
 }
 
-/// 追加一条裸 C 串（无头的栈缓冲 / 格式化产物）：长度现算，其余同 `bk_str_concat`。
-@_cdecl("bk_str_append_cstr")
-public func bk_str_append_cstr(
+/// 追加一条裸 C 串（无头的栈缓冲 / 格式化产物）：长度现算，其余同 `pini_str_concat`。
+@_cdecl("pini_str_append_cstr")
+public func pini_str_append_cstr(
     _ lhs: UnsafeMutablePointer<CChar>?, _ rhs: UnsafePointer<CChar>?, _ ownsLhs: Int32
 ) -> UnsafeMutablePointer<CChar> {
     let left = lhs.map { UnsafeRawPointer($0) }
@@ -1612,16 +1612,16 @@ public func bk_str_append_cstr(
 }
 
 /// 把一条既有 C 串（无头的栈缓冲或外部输入）复制成带头串，计数 = 1。
-/// 发射器的 `heapCopyOfStackString` 与 FFI 取回都走这里：复制语义不变，结果可被 `bk_str_release` 回收。
-@_cdecl("bk_str_dup")
-public func bk_str_dup(_ source: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar> {
+/// 发射器的 `heapCopyOfStackString` 与 FFI 取回都走这里：复制语义不变，结果可被 `pini_str_release` 回收。
+@_cdecl("pini_str_dup")
+public func pini_str_dup(_ source: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar> {
     guard let source else { return _bkStrDup("") }
     return _bkStrDup(source)
 }
 
 /// 当前引用计数（仅供测试 / 诊断，IR 不发射）：`rc == 0` 读成 0，即不可变常量。
-@_cdecl("bk_str_refcount")
-public func bk_str_refcount(_ p: UnsafeMutablePointer<CChar>?) -> Int32 {
+@_cdecl("pini_str_refcount")
+public func pini_str_refcount(_ p: UnsafeMutablePointer<CChar>?) -> Int32 {
     guard let p else { return 0 }
     return max(_bkStrRefCount(p), 0)
 }
@@ -1630,26 +1630,26 @@ public func bk_str_refcount(_ p: UnsafeMutablePointer<CChar>?) -> Int32 {
 
 /// `print(F64)` 的文本展示：委托 `String(Double)`，即最短往返表示（往返恒等、定点/指数切换阈值、
 /// 定点恒带小数点、`e±NN` 两位指数由标准库保证）。解释器 stringify 同样走它 ⇒ 两后端同一语义。
-/// 返回带头串（计数 1），由持有位置按 `bk_str_release` 归还。
-@_cdecl("bk_double_to_string")
-public func bk_double_to_string(_ v: Double) -> UnsafeMutablePointer<CChar>? {
+/// 返回带头串（计数 1），由持有位置按 `pini_str_release` 归还。
+@_cdecl("pini_double_to_string")
+public func pini_double_to_string(_ v: Double) -> UnsafeMutablePointer<CChar>? {
     return _bkStrDup(String(v))
 }
 
 // MARK: - 编译期浮点字面量：取值与位模式
 
-/// `bk_parse_double(text)`：按 C `strtod` 口径把十进制拼写解析成 double。自举降载据此填
+/// `pini_parse_double(text)`：按 C `strtod` 口径把十进制拼写解析成 double。自举降载据此填
 /// `irFloatConst.floatValue`；宿主用 `Double(text)`，两者同为正确舍入，故取值逐位相同。
-@_cdecl("bk_parse_double")
-public func bk_parse_double(_ text: UnsafePointer<CChar>?) -> Double {
+@_cdecl("pini_parse_double")
+public func pini_parse_double(_ text: UnsafePointer<CChar>?) -> Double {
     guard let text else { return 0 }
     return strtod(text, nil)
 }
 
-/// `bk_double_bits(value)`：取 IEEE-754 位模式。发射侧对指数写法与零写十六进制常量，
+/// `pini_double_bits(value)`：取 IEEE-754 位模式。发射侧对指数写法与零写十六进制常量，
 /// 与宿主的 `%016llX` 拼法同形；值不经十进制往返，故不受格式化影响。
-@_cdecl("bk_double_bits")
-public func bk_double_bits(_ value: Double) -> Int64 {
+@_cdecl("pini_double_bits")
+public func pini_double_bits(_ value: Double) -> Int64 {
     return Int64(bitPattern: value.bitPattern)
 }
 
@@ -1658,8 +1658,8 @@ public func bk_double_bits(_ value: Double) -> Int64 {
 /// `readFile(path)`：把整个文件读成 NUL 结尾、`malloc` 分配的 UTF-8 C 串；缺失、不可读或
 /// 非法 UTF-8 时返回 NULL。放在运行时段是因为 LLI 的 JIT 在读之前无从得知大小；契约同 `strdup`，
 /// 调用方负责 free；解码走与解释器同一份 Foundation 逻辑。
-@_cdecl("bk_read_file")
-public func bk_read_file(_ path: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {
+@_cdecl("pini_read_file")
+public func pini_read_file(_ path: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {
     // 失败仍返 nil（发射侧把它折成陷阱），而陷阱文案是**不带路径**的通用句：
     // 非字面量实参不能折进常量，一条只覆盖部分调用形态的消息比不覆盖更糟。
     // 带路径的详细诊断留给可接住的那条路 —— 它把诊断当值交给调用者。
@@ -1671,8 +1671,8 @@ public func bk_read_file(_ path: UnsafePointer<CChar>?) -> UnsafeMutablePointer<
 
 /// 把 Swift String 落成 NUL 结尾、`malloc` 分配的 UTF-8 C 串：调用方负责 free，与解释器的
 /// `toCString` 桥同契约。不能返回 `_bkStrAlloc` 块的内部指针 —— libc 的 `free` 拒绝非基址。
-@_cdecl("bk_cstr")
-public func bk_cstr(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {
+@_cdecl("pini_cstr")
+public func pini_cstr(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {
     guard let s else { return nil }
     let length = Int(_bkStrLen(s).pointee)
     guard let raw = malloc(length + 1) else { return nil }
@@ -1680,11 +1680,11 @@ public func bk_cstr(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? 
     return raw.assumingMemoryBound(to: CChar.self)
 }
 
-/// 取回：外部 C 串复制成计数串（调用方持有 +1，返回后按 `bk_str_release` 归还）。
-/// 空指针与 `bk_str_dup` 同一约定 —— 读成空串，不让 NUL 读取落到空地址上。
-@_cdecl("bk_str_from_cstr")
-public func bk_str_from_cstr(_ source: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar> {
-    return bk_str_dup(source)
+/// 取回：外部 C 串复制成计数串（调用方持有 +1，返回后按 `pini_str_release` 归还）。
+/// 空指针与 `pini_str_dup` 同一约定 —— 读成空串，不让 NUL 读取落到空地址上。
+@_cdecl("pini_str_from_cstr")
+public func pini_str_from_cstr(_ source: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar> {
+    return pini_str_dup(source)
 }
 
 // MARK: - 字符串句柄（C 侧可持有的串）
@@ -1714,37 +1714,37 @@ private final class _BkStringHandle {
     deinit { storage.deallocate() }
 }
 
-/// 创建：复制一条 C 串，计数 = 1。空指针按空串处理（与 `bk_str_dup` 同一约定）。
-@_cdecl("bk_str_handle_new")
-public func bk_str_handle_new(_ source: UnsafePointer<CChar>?) -> UnsafeMutableRawPointer? {
+/// 创建：复制一条 C 串，计数 = 1。空指针按空串处理（与 `pini_str_dup` 同一约定）。
+@_cdecl("pini_str_handle_new")
+public func pini_str_handle_new(_ source: UnsafePointer<CChar>?) -> UnsafeMutableRawPointer? {
     return Unmanaged.passRetained(_BkStringHandle(source)).toOpaque()
 }
 
-/// 字节视图（UTF-8，不以 NUL 为界读；字节数见 `bk_str_handle_len`）。句柄释放后即失效。
-@_cdecl("bk_str_handle_bytes")
-public func bk_str_handle_bytes(_ handle: UnsafeRawPointer?) -> UnsafePointer<UInt8>? {
+/// 字节视图（UTF-8，不以 NUL 为界读；字节数见 `pini_str_handle_len`）。句柄释放后即失效。
+@_cdecl("pini_str_handle_bytes")
+public func pini_str_handle_bytes(_ handle: UnsafeRawPointer?) -> UnsafePointer<UInt8>? {
     guard let handle else { return nil }
     let box = Unmanaged<_BkStringHandle>.fromOpaque(handle).takeUnretainedValue()
     return UnsafeRawPointer(box.storage).assumingMemoryBound(to: UInt8.self)
 }
 
 /// 字节数（不是字素数）。空句柄读成 0。
-@_cdecl("bk_str_handle_len")
-public func bk_str_handle_len(_ handle: UnsafeRawPointer?) -> Int64 {
+@_cdecl("pini_str_handle_len")
+public func pini_str_handle_len(_ handle: UnsafeRawPointer?) -> Int64 {
     guard let handle else { return 0 }
     return Int64(Unmanaged<_BkStringHandle>.fromOpaque(handle).takeUnretainedValue().length)
 }
 
 /// 保留一份：计数 +1，返回同一个指针，便于链式写法。空句柄原样返回。
-@_cdecl("bk_str_handle_retain")
-public func bk_str_handle_retain(_ handle: UnsafeRawPointer?) -> UnsafeMutableRawPointer? {
+@_cdecl("pini_str_handle_retain")
+public func pini_str_handle_retain(_ handle: UnsafeRawPointer?) -> UnsafeMutableRawPointer? {
     guard let handle else { return nil }
     return Unmanaged<_BkStringHandle>.fromOpaque(handle).retain().toOpaque()
 }
 
 /// 释放一份：计数归零时释放拷贝。空句柄是无操作。
-@_cdecl("bk_str_handle_release")
-public func bk_str_handle_release(_ handle: UnsafeRawPointer?) {
+@_cdecl("pini_str_handle_release")
+public func pini_str_handle_release(_ handle: UnsafeRawPointer?) {
     guard let handle else { return }
     Unmanaged<_BkStringHandle>.fromOpaque(handle).release()
 }
@@ -1754,7 +1754,7 @@ public func bk_str_handle_release(_ handle: UnsafeRawPointer?) {
 // `call`，直到 clang 才以 `use of undefined value` 拒绝。语义一律镜像解释器， 行不通  不另造第二套解释。
 
 /// 把一组 Swift 字符串装成语言层 `Array<String>`：每槽是一个 8 字节的 C 串指针 box。
-///  注意  不能把字节直接塞进槽：发射层读元素是先 `bk_array_get` 拿 box 指针、再 `load i8*`
+///  注意  不能把字节直接塞进槽：发射层读元素是先 `pini_array_get` 拿 box 指针、再 `load i8*`
 /// ⇒ box 内容必须是指针、宽度必须是 8。
 private func _bkStringArray(_ items: [String]) -> UnsafeMutableRawPointer {
     let box = _BkArrayBox(count: items.count)
@@ -1791,7 +1791,7 @@ private func _bkStringArray(_ items: [String]) -> UnsafeMutableRawPointer {
 }
 
 /// 造一块承载一个长字素的带头串：计数 1、长度按字节写、字素数恒为 1。
-///  注意  块与普通串同构（`bk_char_to_heap_string` 的产物也是这一形），故它的份额由串的计数规则管。
+///  注意  块与普通串同构（`pini_char_to_heap_string` 的产物也是这一形），故它的份额由串的计数规则管。
 private func _bkCharBlock(
     _ bytes: UnsafePointer<CChar>, _ count: Int
 ) -> UnsafeMutablePointer<CChar> {
@@ -1838,10 +1838,10 @@ private func _bkCharCopyTo(_ value: Int64, _ buffer: UnsafeMutablePointer<CChar>
 }
 
 /// `Char` 落成**带头串**（计数 1）：消费点按串的规矩归还。
-///  注意  不能返回到栈缓冲 —— `bk_str_concat` 与 `bk_str_release` 都要读载荷前的头，
+///  注意  不能返回到栈缓冲 —— `pini_str_concat` 与 `pini_str_release` 都要读载荷前的头，
 /// 栈上那块没有头，读到的会是相邻变量。
-@_cdecl("bk_char_to_heap_string")
-public func bk_char_to_heap_string(_ value: Int64) -> UnsafeMutablePointer<CChar> {
+@_cdecl("pini_char_to_heap_string")
+public func pini_char_to_heap_string(_ value: Int64) -> UnsafeMutablePointer<CChar> {
     if _bkCharIsPointer(value) {
         return _bkStrFromBytes(_bkCharPointer(value), _bkCharLength(value))
     }
@@ -1852,24 +1852,24 @@ public func bk_char_to_heap_string(_ value: Int64) -> UnsafeMutablePointer<CChar
 }
 
 /// `Char` 的保留：只有指针形态进堆，内联形态是纯值 ⇒ 原样返回。
-///  注意  指针形态指向一条带头串（与 `bk_char_to_heap_string` 的产物同构），故计数就是那条串的计数。
-@_cdecl("bk_char_retain")
-public func bk_char_retain(_ value: Int64) -> Int64 {
+///  注意  指针形态指向一条带头串（与 `pini_char_to_heap_string` 的产物同构），故计数就是那条串的计数。
+@_cdecl("pini_char_retain")
+public func pini_char_retain(_ value: Int64) -> Int64 {
     guard _bkCharIsPointer(value) else { return value }
-    bk_str_retain(UnsafeMutablePointer(mutating: _bkCharPointer(value)))
+    pini_str_retain(UnsafeMutablePointer(mutating: _bkCharPointer(value)))
     return value
 }
 
 /// `Char` 的归还：内联形态零动作；指针形态减那份串的计数，归零即归还整块。
-@_cdecl("bk_char_release")
-public func bk_char_release(_ value: Int64) {
+@_cdecl("pini_char_release")
+public func pini_char_release(_ value: Int64) {
     guard _bkCharIsPointer(value) else { return }
-    bk_str_release(UnsafeMutablePointer(mutating: _bkCharPointer(value)))
+    pini_str_release(UnsafeMutablePointer(mutating: _bkCharPointer(value)))
 }
 
 /// 两个 `Char` 判等：内联值先比整字，只有一侧是指针形态时才落回字节比较。
-@_cdecl("bk_char_equal")
-public func bk_char_equal(_ lhs: Int64, _ rhs: Int64) -> Int32 {
+@_cdecl("pini_char_equal")
+public func pini_char_equal(_ lhs: Int64, _ rhs: Int64) -> Int32 {
     if lhs == rhs { return 1 }
     let count = _bkCharLength(lhs)
     guard count == _bkCharLength(rhs), count > 0 else { return 0 }
@@ -1890,9 +1890,9 @@ public func bk_char_equal(_ lhs: Int64, _ rhs: Int64) -> Int32 {
     }
 }
 
-/// `Char` 与 `String` 判等：长度先比，再比字节。判据与 `bk_string_contains` 同一条。
-@_cdecl("bk_char_equal_string")
-public func bk_char_equal_string(_ value: Int64, _ text: UnsafePointer<CChar>?) -> Int32 {
+/// `Char` 与 `String` 判等：长度先比，再比字节。判据与 `pini_string_contains` 同一条。
+@_cdecl("pini_char_equal_string")
+public func pini_char_equal_string(_ value: Int64, _ text: UnsafePointer<CChar>?) -> Int32 {
     guard let text else { return 0 }
     let count = _bkCharLength(value)
     guard count == Int(_bkStrLen(text).pointee), count > 0 else { return 0 }
@@ -1907,11 +1907,11 @@ public func bk_char_equal_string(_ value: Int64, _ text: UnsafePointer<CChar>?) 
 
 /// `chars(String) -> Array<Char>` —— 按**字素簇**切分。元素是八字节按值槽（不计数、不释放）。
 ///  注意  元素在取出时已复制到堆上，故结果不依赖源串的寿命；七字节以内直接内联，零分配。
-@_cdecl("bk_chars")
-public func bk_chars(_ s: UnsafePointer<CChar>?) -> UnsafeMutableRawPointer {
-    guard let s else { return bk_array_create(0) }
+@_cdecl("pini_chars")
+public func pini_chars(_ s: UnsafePointer<CChar>?) -> UnsafeMutableRawPointer {
+    guard let s else { return pini_array_create(0) }
     let text = _bkStrSwiftString(s)
-    var handle = bk_array_create(Int32(text.count))
+    var handle = pini_array_create(Int32(text.count))
     var index: Int32 = 0
     var cursor = text.startIndex
     while cursor < text.endIndex {
@@ -1920,7 +1920,7 @@ public func bk_chars(_ s: UnsafePointer<CChar>?) -> UnsafeMutableRawPointer {
         let hi = text.utf8.distance(from: text.utf8.startIndex, to: next)
         let start = UnsafeRawPointer(s).advanced(by: lo).assumingMemoryBound(to: CChar.self)
         var word = _bkCharPack(start, hi - lo)
-        handle = bk_array_set_unsafe(handle, index, &word, 8, 0) ?? handle
+        handle = pini_array_set_unsafe(handle, index, &word, 8, 0) ?? handle
         index += 1
         cursor = next
     }
@@ -1929,36 +1929,36 @@ public func bk_chars(_ s: UnsafePointer<CChar>?) -> UnsafeMutableRawPointer {
 
 /// `tempUtf8Bytes(String) -> Array<U8>` —— UTF-8 字节副本；元素宽度 1、tag 0（纯标量）。
 /// 临时桥：字节文本模型直接持有缓冲区后，这个名字随之移除。
-@_cdecl("bk_temp_utf8_bytes")
-public func bk_temp_utf8_bytes(_ s: UnsafePointer<CChar>?) -> UnsafeMutableRawPointer {
-    guard let s else { return bk_array_create(0) }
+@_cdecl("pini_temp_utf8_bytes")
+public func pini_temp_utf8_bytes(_ s: UnsafePointer<CChar>?) -> UnsafeMutableRawPointer {
+    guard let s else { return pini_array_create(0) }
     let bytes = Array(_bkStrSwiftString(s).utf8)
-    var handle = bk_array_create(Int32(bytes.count))
+    var handle = pini_array_create(Int32(bytes.count))
     for (index, byte) in bytes.enumerated() {
         var value = byte
-        handle = bk_array_set_unsafe(handle, Int32(index), &value, 1, 0) ?? handle
+        handle = pini_array_set_unsafe(handle, Int32(index), &value, 1, 0) ?? handle
     }
     return handle
 }
 
 /// `tempByteToInt(U8) -> I32` —— 零扩展取 0..255；临时数值桥的一半。
-@_cdecl("bk_temp_byte_to_int")
-public func bk_temp_byte_to_int(_ b: Int8) -> Int32 {
+@_cdecl("pini_temp_byte_to_int")
+public func pini_temp_byte_to_int(_ b: Int8) -> Int32 {
     return Int32(UInt8(bitPattern: b))
 }
 
 /// `tempIntToByte(I32) -> U8` —— 取低 8 位，负值按补码截断；临时数值桥的另一半。
-@_cdecl("bk_temp_int_to_byte")
-public func bk_temp_int_to_byte(_ value: Int32) -> Int8 {
+@_cdecl("pini_temp_int_to_byte")
+public func pini_temp_int_to_byte(_ value: Int32) -> Int8 {
     return Int8(truncatingIfNeeded: value)
 }
 
 /// `chr(I32) -> Char` —— 码点到单字符。越界（负数 / 超上界 / 代理区）**panic**，不回哨兵值，
 /// 与解释器 `builtinChr` 同口径。单标量最多四字节，故必定内联。
-@_cdecl("bk_chr")
-public func bk_chr(_ code: Int32) -> Int64 {
+@_cdecl("pini_chr")
+public func pini_chr(_ code: Int32) -> Int64 {
     guard code >= 0, let scalar = Unicode.Scalar(UInt32(code)) else {
-        bk_panic("Pini runtime error: chr 的参数超出 Unicode 标量范围（\(code)）")
+        pini_panic("Pini runtime error: chr 的参数超出 Unicode 标量范围（\(code)）")
     }
     var piece = String(Character(scalar))
     var word: Int64 = 0
@@ -1972,8 +1972,8 @@ public func bk_chr(_ code: Int32) -> Int64 {
 }
 
 /// `ord(Char) -> I32` —— **首个 Unicode 标量**的值；空字素回 -1（同解释器）。
-@_cdecl("bk_ord")
-public func bk_ord(_ c: Int64) -> Int32 {
+@_cdecl("pini_ord")
+public func pini_ord(_ c: Int64) -> Int32 {
     return withUnsafeTemporaryAllocation(
         of: CChar.self, capacity: Swift.max(_bkCharLength(c), 8)
     ) { buffer in
@@ -1988,8 +1988,8 @@ public func bk_ord(_ c: Int64) -> Int32 {
 
 /// `is_letter(Char) -> Bool` —— 首字符的 Unicode 字母属性（同解释器 `first.isLetter`）。
 ///  行不通  返回值是 `i32` 而非 C 的 `_Bool`：后者在 C ABI 里是零扩展的 i8，而语言的 Bool 是 i1。
-@_cdecl("bk_is_letter")
-public func bk_is_letter(_ c: Int64) -> Int32 {
+@_cdecl("pini_is_letter")
+public func pini_is_letter(_ c: Int64) -> Int32 {
     return withUnsafeTemporaryAllocation(
         of: CChar.self, capacity: Swift.max(_bkCharLength(c), 8)
     ) { buffer in
@@ -2002,8 +2002,8 @@ public func bk_is_letter(_ c: Int64) -> Int32 {
 }
 
 /// `is_number(Char) -> Bool` —— 同解释器 `first.isNumber`。
-@_cdecl("bk_is_number")
-public func bk_is_number(_ c: Int64) -> Int32 {
+@_cdecl("pini_is_number")
+public func pini_is_number(_ c: Int64) -> Int32 {
     return withUnsafeTemporaryAllocation(
         of: CChar.self, capacity: Swift.max(_bkCharLength(c), 8)
     ) { buffer in
@@ -2018,29 +2018,29 @@ public func bk_is_number(_ c: Int64) -> Int32 {
 /// `argv() -> Array<String>` —— 进程参数里去掉可执行文件自己之后的裸参数数组。
 /// 两边对称的判据是「第一个元素是层名」：解释器的 `argv` 是脚本路径之后的裸参数，而原生二进制
 /// 没有脚本路径 ⇒ 同样去掉第一个；自举 `main.pini` 的分派依赖这一条。
-@_cdecl("bk_argv")
-public func bk_argv() -> UnsafeMutableRawPointer {
+@_cdecl("pini_argv")
+public func pini_argv() -> UnsafeMutableRawPointer {
     return _bkStringArray(Array(CommandLine.arguments.dropFirst()))
 }
 
 /// `listDir(String) -> Array<String>` —— 目录条目名（不含目录部分）+ UTF-8 字节序升序，与解释器
 /// `IRExecutor` 的 `listDir` 同义（排序要紧：文件系统返回顺序不稳定，不排序则顺序相关判据会假绿）。
-/// 路径按 `bk_read_file` 的口径解析；列不全时 panic， 行不通  不返回半个目录。
-@_cdecl("bk_list_dir")
-public func bk_list_dir(_ path: UnsafePointer<CChar>?) -> UnsafeMutableRawPointer {
-    guard let path else { bk_panic("Pini runtime error: listDir: 路径为空") }
+/// 路径按 `pini_read_file` 的口径解析；列不全时 panic， 行不通  不返回半个目录。
+@_cdecl("pini_list_dir")
+public func pini_list_dir(_ path: UnsafePointer<CChar>?) -> UnsafeMutableRawPointer {
+    guard let path else { pini_panic("Pini runtime error: listDir: 路径为空") }
     let dirPath = _bkResolveIOPath(String(cString: path))
     var isDirectory: ObjCBool = false
     guard FileManager.default.fileExists(atPath: dirPath, isDirectory: &isDirectory),
         isDirectory.boolValue
     else {
-        bk_panic("Pini runtime error: listDir: 不是目录或不存在 \(dirPath)")
+        pini_panic("Pini runtime error: listDir: 不是目录或不存在 \(dirPath)")
     }
     let entries: [String]
     do {
         entries = try FileManager.default.contentsOfDirectory(atPath: dirPath)
     } catch {
-        bk_panic("Pini runtime error: listDir: 无法列出目录 \(dirPath): \(error.localizedDescription)")
+        pini_panic("Pini runtime error: listDir: 无法列出目录 \(dirPath): \(error.localizedDescription)")
     }
     let ordered = entries.sorted {
         Array($0.utf8).lexicographicallyPrecedes(Array($1.utf8))
@@ -2051,16 +2051,16 @@ public func bk_list_dir(_ path: UnsafePointer<CChar>?) -> UnsafeMutableRawPointe
 /// `exists(String) -> Bool` —— 路径存在（文件或目录皆可）； 行不通  不 panic。
 /// 与 `listDir` / `readFile` 的操作类语义相反：路径不存在是**正常答案**。
 ///  注意  父目录不可读时底层查询同样答「不存在」，本符号不区分这两者。
-@_cdecl("bk_exists")
-public func bk_exists(_ path: UnsafePointer<CChar>?) -> Int32 {
+@_cdecl("pini_exists")
+public func pini_exists(_ path: UnsafePointer<CChar>?) -> Int32 {
     guard let path else { return 0 }
     return FileManager.default.fileExists(atPath: _bkResolveIOPath(String(cString: path))) ? 1 : 0
 }
 
 /// `isDir(String) -> Bool` —— 存在**且**是目录；「不存在」与「是文件」同答 false。
 /// 返 `i32` 而非 C 的 `_Bool`：后者在 C ABI 里是零扩展 i8，与本层 Bool 的 i1 对不上。
-@_cdecl("bk_is_dir")
-public func bk_is_dir(_ path: UnsafePointer<CChar>?) -> Int32 {
+@_cdecl("pini_is_dir")
+public func pini_is_dir(_ path: UnsafePointer<CChar>?) -> Int32 {
     guard let path else { return 0 }
     var isDirectory: ObjCBool = false
     let present = FileManager.default.fileExists(
@@ -2070,10 +2070,10 @@ public func bk_is_dir(_ path: UnsafePointer<CChar>?) -> Int32 {
 
 /// `ensureDir(String)` —— 幂等建目录，中间层一并创建。没有返回值：建不出来即陷阱，
 /// 调用方没有「可以继续」的分支可走，故不返布尔。
-@_cdecl("bk_ensure_dir")
-public func bk_ensure_dir(_ path: UnsafePointer<CChar>?) {
+@_cdecl("pini_ensure_dir")
+public func pini_ensure_dir(_ path: UnsafePointer<CChar>?) {
     guard let path else {
-        bk_panic("Pini runtime error: ensureDir: 路径为空")
+        pini_panic("Pini runtime error: ensureDir: 路径为空")
         return
     }
     let target = _bkResolveIOPath(String(cString: path))
@@ -2081,7 +2081,7 @@ public func bk_ensure_dir(_ path: UnsafePointer<CChar>?) {
         try FileManager.default.createDirectory(
             atPath: target, withIntermediateDirectories: true)
     } catch {
-        bk_panic("Pini runtime error: IO 错误: 无法创建目录 \(target): \(error.localizedDescription)")
+        pini_panic("Pini runtime error: IO 错误: 无法创建目录 \(target): \(error.localizedDescription)")
     }
 }
 
@@ -2155,21 +2155,21 @@ private func _bkReadFileCore(_ path: UnsafePointer<CChar>?) -> _BkIOReadOutcome 
 
 /// `writeFile(path, content)` —— 整份内容写入 `path`，就地截断（ 行不通  非原子替换）、跟随符号链接。
 /// 写入用与解释器写分支**同一个** Foundation 调用 ⇒ 两侧是同一份实现，失败原因串也相同。
-/// 不返回值：写失败即 `bk_panic`，成功没有可回传的结果。
-@_cdecl("bk_write_file")
-public func bk_write_file(_ path: UnsafePointer<CChar>?, _ content: UnsafePointer<CChar>?) {
+/// 不返回值：写失败即 `pini_panic`，成功没有可回传的结果。
+@_cdecl("pini_write_file")
+public func pini_write_file(_ path: UnsafePointer<CChar>?, _ content: UnsafePointer<CChar>?) {
     if case .failure(let message) = _bkWriteFileCore(path, content) {
-        bk_panic("Pini runtime error: " + message)
+        pini_panic("Pini runtime error: " + message)
     }
 }
 
 /// `appendFile(path, content)` —— 追加到目标末尾；目标不存在则创建（POSIX `"a"`）。
-/// 与 `bk_write_file` 共用同一段打开/写入形状（解释器侧的 `.fileAppend` 臂逐句同构），否则第一次改动
-/// 就会分叉。 行不通  本函数不截断，`bk_write_file` 也永不追加。
-@_cdecl("bk_append_file")
-public func bk_append_file(_ path: UnsafePointer<CChar>?, _ content: UnsafePointer<CChar>?) {
+/// 与 `pini_write_file` 共用同一段打开/写入形状（解释器侧的 `.fileAppend` 臂逐句同构），否则第一次改动
+/// 就会分叉。 行不通  本函数不截断，`pini_write_file` 也永不追加。
+@_cdecl("pini_append_file")
+public func pini_append_file(_ path: UnsafePointer<CChar>?, _ content: UnsafePointer<CChar>?) {
     if case .failure(let message) = _bkAppendFileCore(path, content) {
-        bk_panic("Pini runtime error: " + message)
+        pini_panic("Pini runtime error: " + message)
     }
 }
 
@@ -2180,8 +2180,8 @@ public func bk_append_file(_ path: UnsafePointer<CChar>?, _ content: UnsafePoint
 /// 错误就是返回值（`0` = 成功）。两边都不引线程局部「上次错误」——嵌套调用下会互相覆盖。
 
 /// `tryReadFile(path)` —— 读全文；失败写错误对象字到 `outErr` 并返回 null。
-@_cdecl("bk_try_read_file")
-public func bk_try_read_file(
+@_cdecl("pini_try_read_file")
+public func pini_try_read_file(
     _ path: UnsafePointer<CChar>?, _ outErr: UnsafeMutablePointer<Int64>?
 ) -> UnsafeMutablePointer<CChar>? {
     switch _bkReadFileCore(path) {
@@ -2195,8 +2195,8 @@ public func bk_try_read_file(
 }
 
 /// `tryWriteFile(path, content)` —— 就地截断写；返回 `0` 或错误对象字。
-@_cdecl("bk_try_write_file")
-public func bk_try_write_file(
+@_cdecl("pini_try_write_file")
+public func pini_try_write_file(
     _ path: UnsafePointer<CChar>?, _ content: UnsafePointer<CChar>?
 ) -> Int64 {
     switch _bkWriteFileCore(path, content) {
@@ -2206,8 +2206,8 @@ public func bk_try_write_file(
 }
 
 /// `tryAppendFile(path, content)` —— 追加写；返回 `0` 或错误对象字。
-@_cdecl("bk_try_append_file")
-public func bk_try_append_file(
+@_cdecl("pini_try_append_file")
+public func pini_try_append_file(
     _ path: UnsafePointer<CChar>?, _ content: UnsafePointer<CChar>?
 ) -> Int64 {
     switch _bkAppendFileCore(path, content) {
@@ -2240,8 +2240,8 @@ private func _bkResolveIOPath(_ path: String) -> String {
 
 /// 注入程序基准（绝对路径），入口函数体最前调用一次。
 /// 入参可以是常量串：本函数 `strdup` 一份自持，调用方不必保留。`nil` 清除注入态。
-@_cdecl("bk_set_program_base")
-public func bk_set_program_base(_ base: UnsafePointer<CChar>?) {
+@_cdecl("pini_set_program_base")
+public func pini_set_program_base(_ base: UnsafePointer<CChar>?) {
     var copy: UnsafeMutablePointer<CChar>? = nil
     if let base { copy = strdup(base) }
     _bkProgramBaseLock.lock()
@@ -2251,9 +2251,9 @@ public func bk_set_program_base(_ base: UnsafePointer<CChar>?) {
 
 /// `moduleRoot() -> String` —— 程序基准的绝对路径；未注入时答**进程 CWD**。
 /// 取值式与解释器同一条（`programBase ?? 当前工作目录`）⇒ 两通道同一串。
-/// 分配契约同 `bk_cstr`：`strdup`、**调用方释放**。
-@_cdecl("bk_module_root")
-public func bk_module_root() -> UnsafeMutablePointer<CChar>? {
+/// 分配契约同 `pini_cstr`：`strdup`、**调用方释放**。
+@_cdecl("pini_module_root")
+public func pini_module_root() -> UnsafeMutablePointer<CChar>? {
     _bkProgramBaseLock.lock()
     let base = _bkProgramBase.map { String(cString: $0) }
     _bkProgramBaseLock.unlock()
@@ -2263,8 +2263,8 @@ public func bk_module_root() -> UnsafeMutablePointer<CChar>? {
 /// `substring(start, end) -> String`：第 2 参数是 end（绝对下标）而非长度，按字素簇切、负值尾计数、
 /// 双端夹取到 `[0, len]`、`hi <= lo` 得空串——逐字节 memcpy 表达不了字素语义。分配也必须在此发生：
 /// 调用点 `alloca` 在循环里不到函数返回不回收。语义镜像 `IRExecutor.stringSubstring`；结果 strdup、调用方释放。
-@_cdecl("bk_substring")
-public func bk_substring(
+@_cdecl("pini_substring")
+public func pini_substring(
     _ s: UnsafePointer<CChar>?, _ start: Int32, _ end: Int32
 ) -> UnsafeMutablePointer<CChar>? {
     guard let s else { return _bkStrDup("") }
@@ -2302,11 +2302,11 @@ public func bk_substring(
 /// 名义箱的分配：`malloc(size)`，写头四格。布局与发射层的聚合体定义逐字节对应：
 /// 强计数 @0、弱计数 @4、类型标识 @8、旁表指针 @16（12–15 是指针 8 字节对齐的填充）。
 /// `size` 由发射层用「过尾指针的整数形式」算好；字段不在这里初始化 —— 构造点逐格覆盖。
-@_cdecl("bk_nominal_alloc")
-public func bk_nominal_alloc(_ size: Int64, _ typeID: Int32) -> UnsafeMutableRawPointer? {
-    guard size > 0 else { bk_panic("Pini runtime error: nominal box size must be positive") }
+@_cdecl("pini_nominal_alloc")
+public func pini_nominal_alloc(_ size: Int64, _ typeID: Int32) -> UnsafeMutableRawPointer? {
+    guard size > 0 else { pini_panic("Pini runtime error: nominal box size must be positive") }
     guard let raw = malloc(Int(size)) else {
-        bk_panic("Pini runtime error: nominal box allocation failed")
+        pini_panic("Pini runtime error: nominal box allocation failed")
     }
     raw.storeBytes(of: Int32(1), toByteOffset: 0, as: Int32.self)
     raw.storeBytes(of: Int32(0), toByteOffset: 4, as: Int32.self)
@@ -2316,13 +2316,13 @@ public func bk_nominal_alloc(_ size: Int64, _ typeID: Int32) -> UnsafeMutableRaw
 }
 
 /// 被闭包捕获的变量槽：闭包与帧共享同一个盒。
-/// 与 `bk_nominal_alloc` 刻意不同：没有引用计数头，槽是裸的零初始化数据块，读写由发射层直接
+/// 与 `pini_nominal_alloc` 刻意不同：没有引用计数头，槽是裸的零初始化数据块，读写由发射层直接
 /// `load`/`store`（盒子本体不参与计数）。分配为 `malloc`，不释放：寿命归闭包，与闭包 env 同阶。
-@_cdecl("bk_slot_alloc")
-public func bk_slot_alloc(_ size: Int64) -> UnsafeMutableRawPointer? {
-    guard size > 0 else { bk_panic("Pini runtime error: captured slot size must be positive") }
+@_cdecl("pini_slot_alloc")
+public func pini_slot_alloc(_ size: Int64) -> UnsafeMutableRawPointer? {
+    guard size > 0 else { pini_panic("Pini runtime error: captured slot size must be positive") }
     guard let raw = malloc(Int(size)) else {
-        bk_panic("Pini runtime error: captured slot allocation failed")
+        pini_panic("Pini runtime error: captured slot allocation failed")
     }
     // 零初始化：栈 `alloca` 是未初始化的，而捕获槽可能在被写之前就被闭包读到
     // （`capture` 声明只要求变量存在，不要求已赋值）⇒ 零比垃圾更能暴露问题（0 比随机数好认）。
@@ -2333,8 +2333,8 @@ public func bk_slot_alloc(_ size: Int64) -> UnsafeMutableRawPointer? {
 /// 名义箱的别名点 retain：头格 +1。
 /// 只需要箱指针——三族名义箱的头都在同一偏移（第 0 格），故不需要类型分派；按类型递归的是释放胶水
 /// （发射层合成的 `__release_*`）。
-@_cdecl("bk_nominal_retain")
-public func bk_nominal_retain(_ box: UnsafeMutableRawPointer?) {
+@_cdecl("pini_nominal_retain")
+public func pini_nominal_retain(_ box: UnsafeMutableRawPointer?) {
     guard let box else { return }
     box.assumingMemoryBound(to: Int32.self).pointee += 1
 }
@@ -2342,8 +2342,8 @@ public func bk_nominal_retain(_ box: UnsafeMutableRawPointer?) {
 /// 名义箱的引用计数递减：返回 1 表示归零（调用方负责释放字段并 `free`），0 表示还有其他持有者。
 /// 归零后的动作不在这里：字段要按静态类型递归释放，那是发射层逐类型合成 `__release_*` 的事，
 /// 运行时只碰头格、保持类型无关。 注意  `null` 入参返回 0，故胶水可对「可能为空的字段」直接递归。
-@_cdecl("bk_nominal_release")
-public func bk_nominal_release(_ box: UnsafeMutableRawPointer?) -> Int32 {
+@_cdecl("pini_nominal_release")
+public func pini_nominal_release(_ box: UnsafeMutableRawPointer?) -> Int32 {
     guard let box else { return 0 }
     let rc = box.assumingMemoryBound(to: Int32.self)
     rc.pointee -= 1
@@ -2360,13 +2360,13 @@ public func bk_nominal_release(_ box: UnsafeMutableRawPointer?) -> Int32 {
 
 /// 契约 `字符模型 = Grapheme Cluster`，而 C 字符串只能按字节碰；字素簇边界是 Unicode 分段算法
 /// （组合序列、ZWJ 表情、区域旗标…），字节循环复现不了——切点会落进多字节序列内部。
-/// ⇒ 这一族一律下沉到运行时段，用 `String` / `Character`，与解释器同一模型。分配同 `bk_substring`。
+/// ⇒ 这一族一律下沉到运行时段，用 `String` / `Character`，与解释器同一模型。分配同 `pini_substring`。
 
 /// `len(s)`：数的是字素簇。读头的 `graphemes`；为 `-1` 时算一次并回填。
 /// 权威 = `RuntimeOps.containerLength` 的 `.string` 分支（`text.count`）。纯 ASCII 串 `graphemes == len`。
 ///  注意  值域里的每条串都带头且存储可写（字面量放可写全局），故回填不设条件。
-@_cdecl("bk_string_count")
-public func bk_string_count(_ s: UnsafePointer<CChar>?) -> Int32 {
+@_cdecl("pini_string_count")
+public func pini_string_count(_ s: UnsafePointer<CChar>?) -> Int32 {
     guard let s else { return 0 }
     let cached = _bkStrGraphemes(s).pointee
     if cached >= 0 { return cached }
@@ -2375,19 +2375,19 @@ public func bk_string_count(_ s: UnsafePointer<CChar>?) -> Int32 {
     return count
 }
 
-/// `s[i]` 读一个字符：负值尾计数，越界走安全断言通道 ⇒ `bk_panic`（与数组下标同规）。
+/// `s[i]` 读一个字符：负值尾计数，越界走安全断言通道 ⇒ `pini_panic`（与数组下标同规）。
 /// 纯 ASCII 串按字节直取 O(1)；非 ASCII 走稀疏索引表，只物化目标所在的那一块（≤64 字素）。
 ///  注意  七字节以内的字素装在整字里、不进分配器；更长的复制成自持块，故返回值不欠源串任何东西。
-@_cdecl("bk_string_char_at")
-public func bk_string_char_at(
+@_cdecl("pini_string_char_at")
+public func pini_string_char_at(
     _ s: UnsafePointer<CChar>?, _ index: Int32
 ) -> Int64 {
     guard let s else { return 0 }
-    let count = Int(bk_string_count(s))
+    let count = Int(pini_string_count(s))
     var idx = Int(index)
     if idx < 0 { idx += count }
     guard idx >= 0, idx < count else {
-        bk_panic("Pini runtime error: string index out of range")
+        pini_panic("Pini runtime error: string index out of range")
     }
     if Int(_bkStrLen(s).pointee) == count {
         return _bkCharPack(s + idx, 1)
@@ -2412,8 +2412,8 @@ public func bk_string_char_at(
 /// 字符串切片：开界取默认（`hasStart == 0` ⇒ 0，`hasEnd == 0` ⇒ 字数）、负值尾计数、两端夹到
 /// `[0, count]`、`hi <= lo` 得空串——逐条镜像 `IRExecutor.sliceValue` 的 `.string` 分支（权威）。
 ///  注意  两个 `has*` 是开界标志而非 `Int32` 哨兵（哨兵会与真实下标撞车）；实现走到边界即停，阶不变。
-@_cdecl("bk_string_slice")
-public func bk_string_slice(
+@_cdecl("pini_string_slice")
+public func pini_string_slice(
     _ s: UnsafePointer<CChar>?, _ hasStart: Int32, _ start: Int32,
     _ hasEnd: Int32, _ end: Int32
 ) -> UnsafeMutablePointer<CChar>? {
@@ -2444,14 +2444,14 @@ public func bk_string_slice(
 /// `s.upper()` / `s.lower()`：Unicode 感知，接收者不变。权威 = `IRExecutor` 的 `.stringCase` 分支
 /// （`String.uppercased()` / `.lowercased()`）。
 ///  注意  长度以头为准（`String(cString:)` 会在载荷内 NUL 处截断）；逐字节 `toupper` 又是 ASCII-only。
-@_cdecl("bk_string_upper")
-public func bk_string_upper(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {
+@_cdecl("pini_string_upper")
+public func pini_string_upper(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {
     guard let s else { return _bkStrDup("") }
     return _bkStrDup(_bkStrSwiftString(s).uppercased())
 }
 
-@_cdecl("bk_string_lower")
-public func bk_string_lower(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {
+@_cdecl("pini_string_lower")
+public func pini_string_lower(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {
     guard let s else { return _bkStrDup("") }
     return _bkStrDup(_bkStrSwiftString(s).lowercased())
 }
@@ -2459,8 +2459,8 @@ public func bk_string_lower(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<
 /// `s.contains(needle)`：按**字节**子串查找。判据是「比较一律按码点序列，不做规范等价」，
 /// 故 NFD 的 `é`（`65 CC 81`）不含预组合的 `é`（`C3 A9`）。空 needle 为真，返回 `i32`。
 ///  注意  两侧只读头取长度，命中交给 `memmem` —— 不再逐字素建数组，也没有 O(n·m) 的双层循环。
-@_cdecl("bk_string_contains")
-public func bk_string_contains(
+@_cdecl("pini_string_contains")
+public func pini_string_contains(
     _ haystack: UnsafePointer<CChar>?, _ needle: UnsafePointer<CChar>?
 ) -> Int32 {
     guard let haystack, let needle else { return 0 }
@@ -2474,8 +2474,8 @@ public func bk_string_contains(
 /// `s.trimLeft()`：剥离前导空格。权威 = `IRExecutor` 的 `.stringTrimLeft` 分支：只剥 ASCII 空格 U+0020
 /// （ 行不通  不含 tab 及其他空白，与树渲染约定一致）；空串 / 全空格 ⇒ 空串。
 /// 被剥的是单字节空格 ⇒ 字节走查即字素走查。分配契约 = 调用方持有 +1。
-@_cdecl("bk_string_trim_left")
-public func bk_string_trim_left(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {
+@_cdecl("pini_string_trim_left")
+public func pini_string_trim_left(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {
     guard let s else { return _bkStrDup("") }
     let length = Int(_bkStrLen(s).pointee)
     var start = 0
@@ -2483,10 +2483,10 @@ public func bk_string_trim_left(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePoin
     return _bkStrFromBytes(s + start, length - start)
 }
 
-/// `s.trimRight()` —— 剥离**尾随**空格。口径同 `bk_string_trim_left`（只剥 U+0020）；
+/// `s.trimRight()` —— 剥离**尾随**空格。口径同 `pini_string_trim_left`（只剥 U+0020）；
 /// 从尾部回走连续空格，前缀原样拷一份。
-@_cdecl("bk_string_trim_right")
-public func bk_string_trim_right(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {
+@_cdecl("pini_string_trim_right")
+public func pini_string_trim_right(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>? {
     guard let s else { return _bkStrDup("") }
     let length = Int(_bkStrLen(s).pointee)
     var end = length
@@ -2497,8 +2497,8 @@ public func bk_string_trim_right(_ s: UnsafePointer<CChar>?) -> UnsafeMutablePoi
 /// `s.indexOf(needle)`：`needle` 首现的**字素位置**；空 needle ⇒ 0；未找到 ⇒ −1。
 /// 单位必须与 `s[i]` 一致（字素），否则结果不能直接喂给下标。
 ///  注意  查找按字节做，命中后只数**一次**前缀字素 —— 整体仍是 O(n)，不随长度平方增长。
-@_cdecl("bk_string_index_of")
-public func bk_string_index_of(
+@_cdecl("pini_string_index_of")
+public func pini_string_index_of(
     _ haystack: UnsafePointer<CChar>?, _ needle: UnsafePointer<CChar>?
 ) -> Int32 {
     guard let haystack, let needle else { return -1 }
@@ -2520,8 +2520,8 @@ public func bk_string_index_of(
 /// `s.split(sep)`：空定界符 ⇒ 逐字素（自举 `textAtoms` 靠它建原子数组）；非空按**字节序列**匹配
 /// （ 行不通  不是字符集）；省略空子序列（`"".split(",")` ⇒ 0 个元素）。元素形态 = 8 字节 `.str` 槽。
 ///  注意  非空分支只切字节，每个元素一次分配，中间不造 Swift `String` 也不再逐字符累加。
-@_cdecl("bk_string_split")
-public func bk_string_split(
+@_cdecl("pini_string_split")
+public func pini_string_split(
     _ s: UnsafePointer<CChar>?, _ delim: UnsafePointer<CChar>?
 ) -> UnsafeMutableRawPointer {
     guard let s else { return _bkStringArray([]) }
@@ -2546,11 +2546,11 @@ public func bk_string_split(
         }
         if start < length { parts.append(_bkStrFromBytes(s + start, length - start)) }
     }
-    var handle = bk_array_create(Int32(parts.count))
+    var handle = pini_array_create(Int32(parts.count))
     for (index, part) in parts.enumerated() {
-        // 每个元素是刚造的新串（计数 1），`bk_array_set` 消费那一份，故这里不再 retain。
+        // 每个元素是刚造的新串（计数 1），`pini_array_set` 消费那一份，故这里不再 retain。
         var box: UnsafeMutableRawPointer? = UnsafeMutableRawPointer(part)
-        handle = bk_array_set_unsafe(handle, Int32(index), &box, 8, 3) ?? handle
+        handle = pini_array_set_unsafe(handle, Int32(index), &box, 8, 3) ?? handle
     }
     return handle
 }
@@ -2560,7 +2560,7 @@ public func bk_string_split(
 // override、`checkCancellation`）。`status`：0 = `out` 已写；1 = 未取得 `Result`（取消/超时）；空句柄/越界一律 panic。
 
 /// 任务盒 —— 解释器后端 `FutureValue` 在 C ABI 面的对应物。
-/// 继承 `_BkBox` 是刻意复用：`_bkRegister` / `_bkReleaseShare` / `bk_runtime_cleanup` 那套「活动句柄登记 +
+/// 继承 `_BkBox` 是刻意复用：`_bkRegister` / `_bkReleaseShare` / `pini_runtime_cleanup` 那套「活动句柄登记 +
 /// 退出兜底回收」对任务句柄同样成立，故不新造第二套生命周期。 注意  不参与 COW，谁也不该对它发 ensure_unique。
 private final class _BkTaskBox: _BkBox {
     /// 阻塞 join 的等待 / 唤醒。
@@ -2578,14 +2578,14 @@ private final class _BkTaskBox: _BkBox {
     var errPayload: Int64 = 0
 
     /// 协作式取消标志。 行不通  取消**不强杀** —— 与解释器后端一致：worker 在下一个检查点
-    /// （`bk_task_is_cancelled`）自行提前结束，故取消是**最终一致**的。
+    /// （`pini_task_is_cancelled`）自行提前结束，故取消是**最终一致**的。
     var cancelled = false
 
     /// 取消树的边（照 `FutureValue`：**父强持有子、子弱引用父**，避免保留环）。
     weak var parent: _BkTaskBox?
     var children: [_BkTaskBox] = []
 
-    // MARK: 任务体（`bk_task_spawn` 记入）
+    // MARK: 任务体（`pini_task_spawn` 记入）
 
     /// 体的 wrapper / code / env（任务体实参，原样存下）。
     var wrapper: UnsafeMutableRawPointer?
@@ -2611,12 +2611,12 @@ private final class _BkTaskBox: _BkBox {
     /// 的是**句柄**（`_bkTaskRunBody` 的实参）⇒ 没有它就得反查登记表。
     var selfHandle: UnsafeMutableRawPointer?
 
-    /// 帧里局部槽的块表 —— `bk_task_slot` 每次取槽追加一块，体真跑完（或让出态被取消）时一次性交还。
+    /// 帧里局部槽的块表 —— `pini_task_slot` 每次取槽追加一块，体真跑完（或让出态被取消）时一次性交还。
     ///  行不通  不一次性算好整块：发射层没有「类型 → 字节数」的通用能力，在 Swift 侧另算一套布局就会两处各算
     /// 一次，一旦不一致就是静默错位的帧。⇒ 尺寸由 IR 侧常量表达式算，本层只管搬运。
     var frameChunks: [UnsafeMutableRawPointer] = []
 
-    /// `bk_task_slot` 的重放游标：每次进入体都归零（见 `_bkTaskRunBody`）。
+    /// `pini_task_slot` 的重放游标：每次进入体都归零（见 `_bkTaskRunBody`）。
     /// 这不是优化，是续跑正确性的前提：让出时体从栈返回、槽指针全部丢失，续跑靠重新执行同一段取槽代码
     /// 拿回来 ⇒ 只有「第 n 次进入的第 k 次取槽必得同一地址」，续跑才拿得到上次那些槽。
     var frameCursor = 0
@@ -2638,7 +2638,7 @@ private final class _BkTaskBox: _BkBox {
 
     /// 我此刻在就绪队列里等着被挑。
     ///  行不通  与 `suspended` 不是同一件事：后者说「体交出了控制流」，本位置说「已交给策略层、尚未被挑」
-    /// —— 一个待挑的任务两者同时成立。它正是 `bk_task_state` 里「可跑」的落点；由入队写、出队清。
+    /// —— 一个待挑的任务两者同时成立。它正是 `pini_task_state` 里「可跑」的落点；由入队写、出队清。
     var queued = false
 
     /// 帧是否已交还。幂等守卫 —— 「跑完」与「让出态被取消」两条路径都会来收，而**只能收一次**。
@@ -2646,8 +2646,8 @@ private final class _BkTaskBox: _BkBox {
 }
 
 /// 句柄 → 任务盒。
-/// 与 `bk_array_get` / `bk_dict_get` 同一条路：句柄是 `Unmanaged` 的裸指针，这里按具体子类取回
-/// （`bk_dict_ensure_unique_at` 等处已是同一先例）。
+/// 与 `pini_array_get` / `pini_dict_get` 同一条路：句柄是 `Unmanaged` 的裸指针，这里按具体子类取回
+/// （`pini_dict_ensure_unique_at` 等处已是同一先例）。
 private func _bkTaskBox(_ h: UnsafeMutableRawPointer?) -> _BkTaskBox? {
     guard let h else { return nil }
     return Unmanaged<_BkTaskBox>.fromOpaque(h).takeUnretainedValue()
@@ -2671,7 +2671,7 @@ private func _bkWord(_ p: UnsafeMutableRawPointer) -> Int64 {
 
 /// err 槽里那个字的所指：一个错误对象 = 消息 + 是不是取消。槽本身是 64 位字（载荷类型擦除为一个
 /// 机器字），字里放的是本对象的句柄位型。 行不通  不要把它当指针解引用、也不要当计数：读它只有
-/// `bk_error_is_cancel` 与 `bk_error_message` 两个入口。生命周期 = 进程；消息创建时复制自持，读侧零分配。
+/// `pini_error_is_cancel` 与 `pini_error_message` 两个入口。生命周期 = 进程；消息创建时复制自持，读侧零分配。
 private final class _BkErrorBox {
     let message: UnsafeMutablePointer<CChar>
     let isCancel: Bool
@@ -2693,7 +2693,7 @@ private func _bkMakeError(_ text: String, isCancel: Bool, code: Int32) -> Int64 
     return _bkWord(Unmanaged.passRetained(box).toOpaque())
 }
 
-/// 超时归约的消息文案；`nil` 的时限（`bk_task_join` 不设限）不会走到这里。
+/// 超时归约的消息文案；`nil` 的时限（`pini_task_join` 不设限）不会走到这里。
 private func _bkTimeoutText(_ timeoutMs: Int32?) -> String {
     "任务超时: \(timeoutMs ?? 0)ms"
 }
@@ -2708,23 +2708,23 @@ private func _bkErrorBox(_ word: Int64) -> _BkErrorBox? {
 }
 
 /// `Error("msg")` —— 业务错误。入参可以是常量串：本函数复制一份自持。
-@_cdecl("bk_error_create")
-public func bk_error_create(_ message: UnsafePointer<CChar>?) -> Int64 {
+@_cdecl("pini_error_create")
+public func pini_error_create(_ message: UnsafePointer<CChar>?) -> Int64 {
     _bkMakeError(message.map { String(cString: $0) } ?? "", isCancel: false, code: 1)
 }
 
-/// `CancelError("msg")` —— 取消错误。与 `bk_error_create` 只差那个标志位；
-///  行不通  两者的消息面完全同形，区分只经 `bk_error_is_cancel`，不靠消息约定。
-@_cdecl("bk_cancel_error_create")
-public func bk_cancel_error_create(_ message: UnsafePointer<CChar>?) -> Int64 {
+/// `CancelError("msg")` —— 取消错误。与 `pini_error_create` 只差那个标志位；
+///  行不通  两者的消息面完全同形，区分只经 `pini_error_is_cancel`，不靠消息约定。
+@_cdecl("pini_cancel_error_create")
+public func pini_cancel_error_create(_ message: UnsafePointer<CChar>?) -> Int64 {
     _bkMakeError(message.map { String(cString: $0) } ?? "", isCancel: true, code: 2)
 }
 
 /// `err(枚举值)` —— 载荷是枚举：码 = 类型基址或上用例 tag，消息用类型名。枚举布局
 /// `{ i32, i32, i32, ptr, i32 }`：tag 在偏移 24，布局调整时这里与 `IREmitter` 一起改。
 /// `codes` 非 nil 时按 tag 查它（稳定码类型）：表由编译器按用例声明序生成，长度即用例数。
-@_cdecl("bk_error_from_enum")
-public func bk_error_from_enum(
+@_cdecl("pini_error_from_enum")
+public func pini_error_from_enum(
     _ payload: Int64, _ base: Int32, _ name: UnsafePointer<CChar>?,
     _ codes: UnsafePointer<Int32>?
 ) -> Int64 {
@@ -2739,14 +2739,14 @@ public func bk_error_from_enum(
 }
 
 /// `err(非枚举错误值)` —— 载体没有 tag 槽，码就是编译器给的基址。消息留空：类型名不进 ABI。
-@_cdecl("bk_error_with_code")
-public func bk_error_with_code(_ code: Int32) -> Int64 {
+@_cdecl("pini_error_with_code")
+public func pini_error_with_code(_ code: Int32) -> Int64 {
     _bkMakeError("", isCancel: false, code: code)
 }
 
 /// 错误对象上的码：导出桩据它回填状态码。无载荷答 `0`。
-@_cdecl("bk_error_code")
-public func bk_error_code(_ word: Int64) -> Int32 {
+@_cdecl("pini_error_code")
+public func pini_error_code(_ word: Int64) -> Int32 {
     guard let box = _bkErrorBox(word) else { return 0 }
     return box.code
 }
@@ -2764,8 +2764,8 @@ nonisolated(unsafe) private let _bkFixedErrorNames: (success: UnsafePointer<CCha
 
 /// 导出面的 `calc_strerror`：码 → 名字。固定码 `0`/`1`/`2` 先答，其余按表线性查（错误集通常几十条，
 /// 线性扫比维护「表必须有序」这条隐式不变量便宜）。查不到答 NULL，是否兜底由 C 侧决定。
-@_cdecl("bk_error_lookup")
-public func bk_error_lookup(
+@_cdecl("pini_error_lookup")
+public func pini_error_lookup(
     _ code: Int32, _ codes: UnsafePointer<Int32>?, _ names: UnsafePointer<UnsafePointer<CChar>?>?,
     _ count: Int32
 ) -> UnsafePointer<CChar>? {
@@ -2785,8 +2785,8 @@ public func bk_error_lookup(
 }
 
 /// `isCancel(e)` —— err 字是不是取消类。无载荷（字为 0）答 `0`。
-@_cdecl("bk_error_is_cancel")
-public func bk_error_is_cancel(_ word: Int64) -> Int32 {
+@_cdecl("pini_error_is_cancel")
+public func pini_error_is_cancel(_ word: Int64) -> Int32 {
     guard let box = _bkErrorBox(word) else { return 0 }
     return box.isCancel ? 1 : 0
 }
@@ -2794,8 +2794,8 @@ public func bk_error_is_cancel(_ word: Int64) -> Int32 {
 /// `e.message` / `print(e)` —— err 字的消息。
 /// 返回的是错误对象内部的 C 串， 行不通  调用方不得释放；指针在对象存活期（= 进程期）内稳定。
 /// 无载荷（字为 0）答空串。
-@_cdecl("bk_error_message")
-public func bk_error_message(_ word: Int64) -> UnsafeMutablePointer<CChar>? {
+@_cdecl("pini_error_message")
+public func pini_error_message(_ word: Int64) -> UnsafeMutablePointer<CChar>? {
     guard let box = _bkErrorBox(word) else { return _bkEmptyCString }
     return box.message
 }
@@ -2837,7 +2837,7 @@ private func _bkTaskCancelBox(_ box: _BkTaskBox) {
     // 「续跑」路上的线程会带着已释放的帧进入体，而那是**静默内存错**，不是崩溃。
     if wasSuspended { _bkTaskReleaseFrame(box) }
     // 等我的那些任务：我已经被取消 ⇒ 它们的等待应当**现在**归约为 `err(CancelError)`，
-    // 而不是等我（永不）决出。它们醒来后走的是 `bk_task_await` 的「已决 ⇒ 直线取值」那条路。
+    // 而不是等我（永不）决出。它们醒来后走的是 `pini_task_await` 的「已决 ⇒ 直线取值」那条路。
     _bkTaskResumeAwaiters(box)
     for k in kids { _bkTaskCancelBox(k) }
 }
@@ -2869,7 +2869,7 @@ private func _bkTaskDetachFromParent(_ box: _BkTaskBox) {
     p.cond.unlock()
 }
 
-/// 单任务 join（`bk_task_join` 与 `bk_task_join_within` 的唯一实现体），归一化照 `RuntimeOps.joinFuture`：
+/// 单任务 join（`pini_task_join` 与 `pini_task_join_within` 的唯一实现体），归一化照 `RuntimeOps.joinFuture`：
 /// 已决 → 直通三槽；超时 → 取消该任务并归约为 `err(CancelError)`；被取消 → 同样归约为 `err(CancelError)`
 /// （取消优先于结果）。 注意  无论成败都剪枝：生命周期已被显式消费，父返回时不该再取消它。
 private func _bkTaskJoinOne(
@@ -2896,7 +2896,7 @@ private func _bkTaskJoinOne(
         return 1
     }
     guard resolved else {
-        bk_panic("Pini runtime error: task join returned with neither an outcome nor a cancelling")
+        pini_panic("Pini runtime error: task join returned with neither an outcome nor a cancelling")
     }
     _bkWriteResult(out, tag: tag, ok: ok, err: err)
     return 0
@@ -2906,7 +2906,7 @@ private func _bkTaskJoinOne(
 
 /// 后端能力位图：启动时解析一次、此后固化（文件级 `let` 天然满足「不逐调用点判」与「进程内不变」）。
 /// 位 0 = L0 调度 `1` · 位 1 = L1 让出 `2` · 位 2 = L2 抢占 `4`； 行不通  L2 一律不许宣称（登记不实现）。
-/// 本后端宣称 L0 + L1（`bk_task_yield` 能真让出）；本 target 不依赖 `PiniCore`，故位值在此重述并由判据钉住一致。
+/// 本后端宣称 L0 + L1（`pini_task_yield` 能真让出）；本 target 不依赖 `PiniCore`，故位值在此重述并由判据钉住一致。
 private enum ConcurrencyTierBits {
     static let dispatch: UInt32 = 1  // L0 调度
     static let yield: UInt32 = 2     // L1 让出
@@ -2916,15 +2916,15 @@ private let _bkCapabilities: UInt32 =
     ConcurrencyTierBits.dispatch | ConcurrencyTierBits.yield  // L0 + L1（L2 永不给）
 
 /// 后端能力位图。
-@_cdecl("bk_capabilities")
-public func bk_capabilities() -> UInt32 { _bkCapabilities }
+@_cdecl("pini_capabilities")
+public func pini_capabilities() -> UInt32 { _bkCapabilities }
 
 // MARK: 协作式取消
 
 /// 取消任务：**协作式**，不强杀，于下一检查点生效。
 /// 取消沿取消树向下传播，并唤醒正阻塞在该任务上的 join。
-@_cdecl("bk_task_cancel")
-public func bk_task_cancel(_ h: UnsafeMutableRawPointer?) {
+@_cdecl("pini_task_cancel")
+public func pini_task_cancel(_ h: UnsafeMutableRawPointer?) {
     guard let box = _bkTaskBox(h) else { return }
     _bkTaskCancelBox(box)
 }
@@ -2932,8 +2932,8 @@ public func bk_task_cancel(_ h: UnsafeMutableRawPointer?) {
 /// 取消检查点：回答当前任务是否已被取消。
 /// 无参形态对应 `RuntimeOps.checkCancellation`；在岗的检查点是异步体入口与 `joinAll` 聚合，`sleep` 的
 /// 检查点按片真查取消位。 行不通  无当前任务时回 `0` —— 与 `checkCancellation(nil)`「不做事」同义。
-@_cdecl("bk_task_is_cancelled")
-public func bk_task_is_cancelled() -> Int32 {
+@_cdecl("pini_task_is_cancelled")
+public func pini_task_is_cancelled() -> Int32 {
     guard let box = _bkTaskCurrent else { return 0 }
     box.cond.lock()
     let c = box.cancelled
@@ -2942,8 +2942,8 @@ public func bk_task_is_cancelled() -> Int32 {
 }
 
 /// 从父 scope 剪枝、不再由父任务收回 —— fire-and-forget 的唯一合法出口。
-@_cdecl("bk_task_detach")
-public func bk_task_detach(_ h: UnsafeMutableRawPointer?) {
+@_cdecl("pini_task_detach")
+public func pini_task_detach(_ h: UnsafeMutableRawPointer?) {
     guard let box = _bkTaskBox(h) else { return }
     _bkTaskDetachFromParent(box)
 }
@@ -2963,13 +2963,13 @@ private let _bkResultSlotsBytes = 24
 /// 派发任务体：调用即派发，实参就是该次异步调用的实参，故它自己没有待定的形状。
 /// 三件事按序做完再返回，调用方立刻拿到句柄（急切派发）：建盒 · 认父（父已取消 ⇒ 新子立即取消）· 起线程跑体。
 ///  注意  线程归原语层；策略层（队列/优先级/归约阈值/选下一个）不住在这里，本函数只回答「体在哪条线程上开始跑」。
-@_cdecl("bk_task_spawn")
-public func bk_task_spawn(
+@_cdecl("pini_task_spawn")
+public func pini_task_spawn(
     _ wrapper: UnsafeMutableRawPointer?, _ code: UnsafeMutableRawPointer?,
     _ env: UnsafeMutableRawPointer?, _ elemBytes: Int32, _ elemTag: Int32
 ) -> UnsafeMutableRawPointer {
     guard let wrapper else {
-        bk_panic("Pini runtime error: task spawn got a null body wrapper")
+        pini_panic("Pini runtime error: task spawn got a null body wrapper")
     }
     // 并发的首个真实入口 —— 进程退出钩子在此登记（见 `_bkEnsureProcessExitHook`：惰性全局，
     // 没有读者就等于没登记）。
@@ -3068,16 +3068,16 @@ private func _bkTaskRunBody(_ h: UnsafeMutableRawPointer) {
 /// 问后端能否让出（查询语义）：它不执行让出 —— 让出是异步体的 `return`，由驱动器接住。
 /// 返回 `1` = 能真让出；`0` = 合规降级，本次等待按占用处理（ 行不通  不是错误）。
 /// 答案取自 L1 位，与解释器后端同源（`capabilities.supports(.yield)`），各后端由同一条规则决定。
-@_cdecl("bk_task_yield")
-public func bk_task_yield() -> Int32 {
+@_cdecl("pini_task_yield")
+public func pini_task_yield() -> Int32 {
     (_bkCapabilities & ConcurrencyTierBits.yield) != 0 ? 1 : 0
 }
 
 /// 帧的取用：一个概念、两种用途，区别只在 `bytes`。
 /// `bytes > 0` 派发点用：新建一块属于运行时的帧（已清零，首字是续跑点、`0` = 首次进入，故不必再 store）；
 /// `bytes == 0` 体内用：取当前任务的帧，无论第几次进入都是同一块。份额在运行时，否则取消路径上无人释放。
-@_cdecl("bk_task_frame")
-public func bk_task_frame(_ bytes: Int64) -> UnsafeMutableRawPointer? {
+@_cdecl("pini_task_frame")
+public func pini_task_frame(_ bytes: Int64) -> UnsafeMutableRawPointer? {
     guard bytes > 0 else {
         return _bkTaskCurrent?.env
     }
@@ -3090,11 +3090,11 @@ public func bk_task_frame(_ bytes: Int64) -> UnsafeMutableRawPointer? {
 /// 帧内取一个局部槽：可重放是全部要点。
 /// 让出时槽指针全丢，续跑靠重执行同一段取槽代码 ⇒ 必须保证「同一体第 n 次进入的第 k 次调用得到同一
 /// 地址」（游标每次进入体时归零，命中已发的块原样返回）。尺寸由发射层给；对齐按 8 字节，超 8 无通道。
-@_cdecl("bk_task_slot")
-public func bk_task_slot(_ bytes: Int64) -> UnsafeMutableRawPointer {
+@_cdecl("pini_task_slot")
+public func pini_task_slot(_ bytes: Int64) -> UnsafeMutableRawPointer {
     let size = max(1, Int(bytes))
     guard let box = _bkTaskCurrent else {
-        bk_panic("Pini runtime error: bk_task_slot called outside a task body")
+        pini_panic("Pini runtime error: pini_task_slot called outside a task body")
     }
     box.cond.lock()
     let index = box.frameCursor
@@ -3111,15 +3111,15 @@ public func bk_task_slot(_ bytes: Int64) -> UnsafeMutableRawPointer {
     return fresh
 }
 
-/// 可让出的等待：与 `bk_task_join` 的区别是它可以拒绝阻塞。`0` / `1` 的归一化与 join 同一套；
+/// 可让出的等待：与 `pini_task_join` 的区别是它可以拒绝阻塞。`0` / `1` 的归一化与 join 同一套；
 /// `2` = 本次会让出：`out` 一个字节都不许写，控制流交还驱动器，调用方据此返回非 `0` 且不得交还帧。
 ///  行不通  「这次会让出」是编译期事实（运行时刻判不出调用方是不是异步体）；登记在 `target.awaiters`，与已决判定同锁。
-@_cdecl("bk_task_await")
-public func bk_task_await(
+@_cdecl("pini_task_await")
+public func pini_task_await(
     _ handle: UnsafeMutableRawPointer?, _ out: UnsafeMutableRawPointer?
 ) -> Int32 {
     guard let target = _bkTaskBox(handle) else {
-        bk_panic("Pini runtime error: task await got a null handle")
+        pini_panic("Pini runtime error: task await got a null handle")
     }
     //  行不通  两处**合规降级**（都不是错误）：不在任何任务里 ⇒ 没有「当前任务」可让出；
     // L1 位缺席 ⇒ 后端不能真让出（降级，不失败）。
@@ -3144,8 +3144,8 @@ public func bk_task_await(
 /// `sleep(ms)` 的原语层落点：按片睡，每片醒来查一次取消位。
 ///  行不通  不做成直通的 libc 睡眠：解释器后端把长睡拆片，取消在「一片之内」生效；直通会让各后端在取消时机
 /// 上分岔。 注意  C ABI 面没有异常通道 ⇒ 发现取消只能提前结束睡眠，体仍会跑完；等待侧归约是同一套。
-@_cdecl("bk_sleep")
-public func bk_sleep(_ ms: Int32) {
+@_cdecl("pini_sleep")
+public func pini_sleep(_ ms: Int32) {
     guard ms > 0 else { return }
     var remaining = Double(ms) / 1000.0
     let slice = 0.02
@@ -3161,24 +3161,24 @@ public func bk_sleep(_ ms: Int32) {
 
 /// 阻塞 join（现行唯一形态）。`out` 收 `Result`（三槽，见 `_bkWriteResult`）。
 /// - Returns: 见段首 `status` 取值表。
-@_cdecl("bk_task_join")
-public func bk_task_join(
+@_cdecl("pini_task_join")
+public func pini_task_join(
     _ h: UnsafeMutableRawPointer?, _ out: UnsafeMutableRawPointer?
 ) -> Int32 {
     guard let box = _bkTaskBox(h) else {
-        bk_panic("Pini runtime error: task join got a null task handle")
+        pini_panic("Pini runtime error: task join got a null task handle")
     }
     return _bkTaskJoinOne(box, timeoutMs: nil, out: out)
 }
 
 /// 带超时的阻塞 join。超时**归约为取消**（与解释器后端 `joinFuture(timeoutMs:)`
 /// 同构：取消该任务 + `err(CancelError)`）⇒ 超时时返回 `status = 1`。
-@_cdecl("bk_task_join_within")
-public func bk_task_join_within(
+@_cdecl("pini_task_join_within")
+public func pini_task_join_within(
     _ h: UnsafeMutableRawPointer?, _ ms: Int32, _ out: UnsafeMutableRawPointer?
 ) -> Int32 {
     guard let box = _bkTaskBox(h) else {
-        bk_panic("Pini runtime error: task joinWithin got a null task handle")
+        pini_panic("Pini runtime error: task joinWithin got a null task handle")
     }
     return _bkTaskJoinOne(box, timeoutMs: ms, out: out)
 }
@@ -3192,7 +3192,7 @@ private func _bkJoinAll(
     let n = handles.count
     guard n > 0 else {
         // 空集合的聚合是**空数组**，不是错误：`joinAll([])` 在解释器后端返回 ok([])。
-        let arr = bk_array_create(0)
+        let arr = pini_array_create(0)
         _bkWriteResult(out, tag: 0, ok: _bkWord(arr), err: 0)
         return 0
     }
@@ -3202,7 +3202,7 @@ private func _bkJoinAll(
     boxes.reserveCapacity(n)
     for i in 0..<n {
         guard let b = _bkTaskBox(handles[i]) else {
-            bk_panic("Pini runtime error: task joinAll got a null member handle at \(i)")
+            pini_panic("Pini runtime error: task joinAll got a null member handle at \(i)")
         }
         boxes.append(b)
     }
@@ -3224,24 +3224,24 @@ private func _bkJoinAll(
         okWords.append(out?.load(fromByteOffset: 8, as: Int64.self) ?? 0)
     }
 
-    let arr = bk_array_create(Int32(okWords.count))
+    let arr = pini_array_create(Int32(okWords.count))
     for (i, w) in okWords.enumerated() {
         var word = w
-        _ = withUnsafePointer(to: &word) { bk_array_set_unsafe(arr, Int32(i), $0, 8, _BkTag.i64.rawValue) }
+        _ = withUnsafePointer(to: &word) { pini_array_set_unsafe(arr, Int32(i), $0, 8, _BkTag.i64.rawValue) }
     }
     _bkWriteResult(out, tag: 0, ok: _bkWord(arr), err: 0)
     return 0
 }
 
 /// 字面量形态的入口：codegen 已把各成员的句柄排进一块连续区，这里只管解地址。
-@_cdecl("bk_task_join_all")
-public func bk_task_join_all(
+@_cdecl("pini_task_join_all")
+public func pini_task_join_all(
     _ handles: UnsafeMutableRawPointer?, _ count: Int32, _ out: UnsafeMutableRawPointer?
 ) -> Int32 {
     let n = Int(count)
     guard n > 0 else { return _bkJoinAll([], out) }
     guard let handles else {
-        bk_panic("Pini runtime error: task joinAll got null handles")
+        pini_panic("Pini runtime error: task joinAll got null handles")
     }
     let base = handles.assumingMemoryBound(to: UnsafeMutableRawPointer?.self)
     return _bkJoinAll(Array(UnsafeBufferPointer(start: base, count: n)), out)
@@ -3249,8 +3249,8 @@ public func bk_task_join_all(
 
 /// 变量数组的入口：句柄还在数组盒里，逐槽取出再走同一段聚合。
 ///  注意  元素槽存的是「装着句柄字的 box」，故先解一层 box 再读那一个字。
-@_cdecl("bk_task_join_all_box")
-public func bk_task_join_all_box(
+@_cdecl("pini_task_join_all_box")
+public func pini_task_join_all_box(
     _ array: UnsafeMutableRawPointer?, _ out: UnsafeMutableRawPointer?
 ) -> Int32 {
     guard let array else { return _bkJoinAll([], out) }
@@ -3259,7 +3259,7 @@ public func bk_task_join_all_box(
     handles.reserveCapacity(box.count)
     for index in 0..<box.count {
         guard let cell = box.storage.elements[index] else {
-            bk_panic("Pini runtime error: task joinAll got an uninitialized member at \(index)")
+            pini_panic("Pini runtime error: task joinAll got an uninitialized member at \(index)")
         }
         handles.append(cell.load(as: UnsafeMutableRawPointer?.self))
     }
@@ -3271,12 +3271,12 @@ public func bk_task_join_all_box(
 /// 关闭范围：收集 leaked 失败并上浮 —— `ok(v)` 翻 `err(aggregate)`，契约里的唯一有界 override。
 ///  注意  `out` 是 in-out（调用方先写自己的 `Result`）；「有界」两处：未完成的子任务被取消、不计 leaked；
 /// 已有 `err` 的 `out` 不被覆盖（否则丢掉哪次失败）。聚合载荷是一条带失败条数的人读消息。
-@_cdecl("bk_scope_close")
-public func bk_scope_close(
+@_cdecl("pini_scope_close")
+public func pini_scope_close(
     _ scope: UnsafeMutableRawPointer?, _ out: UnsafeMutableRawPointer?
 ) -> Int32 {
     guard let box = _bkTaskBox(scope) else {
-        bk_panic("Pini runtime error: scope close got a null scope handle")
+        pini_panic("Pini runtime error: scope close got a null scope handle")
     }
     box.cond.lock()
     let kids = box.children
@@ -3304,10 +3304,10 @@ public func bk_scope_close(
 }
 
 // MARK: - 并发面的非导出入口
-// 这些函数没有 `@_cdecl` ⇒ 不是 `bk_*` 导出符号，不计入 IR 契约清单。它们存在是为让「造盒 / 决出 /
-// 认父 / 登记当前任务」各只有一个实现点，故判据与 `bk_task_spawn` 不会各造一套语义。
+// 这些函数没有 `@_cdecl` ⇒ 不是 `pini_*` 导出符号，不计入 IR 契约清单。它们存在是为让「造盒 / 决出 /
+// 认父 / 登记当前任务」各只有一个实现点，故判据与 `pini_task_spawn` 不会各造一套语义。
 
-/// 当前线程正在跑的任务的线程本地存放位（`bk_task_is_cancelled` 的无参形态读它）。
+/// 当前线程正在跑的任务的线程本地存放位（`pini_task_is_cancelled` 的无参形态读它）。
 ///  注意  只存弱引用、不 retain：当前任务一定同时被别处持有，本存放位只是「谁在跑」的读数面、不参与计数；
 /// 若在此 retain 就多出一条与注册表并行的持有边，还要再定义释放时机。线程退出由 POSIX 销毁器清位。
 private let _bkCurrentTaskKey: pthread_key_t = {
@@ -3334,7 +3334,7 @@ private var _bkTaskCurrent: _BkTaskBox? {
     }
 }
 
-/// 造一个**未决**任务盒并返回句柄。归还责任 = 调用方（用完经 `bk_handle_release` 归还）。
+/// 造一个**未决**任务盒并返回句柄。归还责任 = 调用方（用完经 `pini_handle_release` 归还）。
 func _bkTaskMake() -> UnsafeMutableRawPointer {
     let box = _BkTaskBox()
     let h = _bkRegister(box)
@@ -3376,7 +3376,7 @@ func _bkTaskResolveErr(_ h: UnsafeMutableRawPointer?, _ payload: Int64) {
 
 // MARK: 可恢复帧与续跑
 
-/// 运行时自有帧的地址集 —— 由 `bk_task_frame(bytes > 0)` 登记，交还时摘除。
+/// 运行时自有帧的地址集 —— 由 `pini_task_frame(bytes > 0)` 登记，交还时摘除。
 /// 这张表的理由是归属：帧必须由运行时释放，而 `env` 也可能是调用方直接给的（单测把 Swift 对象指针当
 /// 观测箱传进来）。 行不通  无条件释放后者会立即崩溃 ⇒ 只有本表登记过的才释放。
 nonisolated(unsafe) private var _bkAllocatedFrames: Set<UInt> = []
@@ -3388,7 +3388,7 @@ private func _bkAdoptFrame(_ p: UnsafeMutableRawPointer) {
     _bkAllocatedFramesLock.unlock()
 }
 
-/// 交还一个任务的全部帧内存（`env` 那一块 + `bk_task_slot` 发出的各块），幂等。
+/// 交还一个任务的全部帧内存（`env` 那一块 + `pini_task_slot` 发出的各块），幂等。
 ///  重要  两条路径都来这里：真跑完（`status == 0` 分支）与让出态被取消（`_bkTaskCancelBox`）。
 private func _bkTaskReleaseFrame(_ box: _BkTaskBox) {
     box.cond.lock()
@@ -3503,8 +3503,8 @@ private func _bkReadBinding(_ p: UnsafeMutableRawPointer?) -> _BkSchedBinding? {
 /// 把调度器绑定交给运行时：`handle` 只作校验用（绑定存在运行时那一份上，不逐任务存——今天只有一个
 /// 调度实例，逐任务存会得到没有读者的字段）；`binding` 传空即解绑（替身策略释放后绑定还在，后续入队
 /// 会调到悬垂的函数指针）。返回 `0` = 已接受或已解绑，今天不定义别的取值。
-@_cdecl("bk_task_bind_sched")
-public func bk_task_bind_sched(
+@_cdecl("pini_task_bind_sched")
+public func pini_task_bind_sched(
     _ handle: UnsafeMutableRawPointer?, _ binding: UnsafeMutableRawPointer?
 ) -> Int32 {
     guard _bkTaskBox(handle) != nil else { return 1 }
@@ -3522,8 +3522,8 @@ public func bk_task_bind_sched(
 /// 任务的可观测态：四态、互斥（与「能力位查询」那种可叠加的位图不同族）。
 /// `3` 已决 = 有结果或其取消已归约 · `1` 可跑 = 在就绪队列里 · `2` 等待中 = 体已交出控制流、等某个未来
 /// 决出 · `0` 未起 = 体从未进入。 注意  一经采纳即成可观测承诺 ⇒ 改它须走破坏性流程。
-@_cdecl("bk_task_state")
-public func bk_task_state(_ h: UnsafeMutableRawPointer?) -> Int32 {
+@_cdecl("pini_task_state")
+public func pini_task_state(_ h: UnsafeMutableRawPointer?) -> Int32 {
     guard let box = _bkTaskBox(h) else { return 0 }
     box.cond.lock()
     let resolved = box.resolved
@@ -3697,7 +3697,7 @@ private func _bkReportYields() {
 }
 
 /// 认父（照 `FutureValue.addChild`）：父已取消 ⇒ 新子**立即**被取消（不漏网）。
-/// `bk_task_spawn` 在此登记新任务。
+/// `pini_task_spawn` 在此登记新任务。
 func _bkTaskAdopt(_ parent: UnsafeMutableRawPointer?, _ child: UnsafeMutableRawPointer?) {
     guard let p = _bkTaskBox(parent), let c = _bkTaskBox(child) else { return }
     p.cond.lock()
@@ -3710,7 +3710,7 @@ func _bkTaskAdopt(_ parent: UnsafeMutableRawPointer?, _ child: UnsafeMutableRawP
     if parentAlreadyCancelled { _bkTaskCancelBox(c) }
 }
 
-/// 登记「当前任务」（`bk_task_is_cancelled` 读它；`bk_task_spawn` 亦在此登记）。
+/// 登记「当前任务」（`pini_task_is_cancelled` 读它；`pini_task_spawn` 亦在此登记）。
 /// - Returns: **恢复闭包** —— 调用方在体跑完后调它还原上一层（照 `RuntimeOps.enterTask`）。
 func _bkTaskEnter(_ h: UnsafeMutableRawPointer?) -> () -> Void {
     let previous = _bkTaskCurrent
@@ -3720,7 +3720,7 @@ func _bkTaskEnter(_ h: UnsafeMutableRawPointer?) -> () -> Void {
 
 // MARK: - 进程族（LLVM 腿的外部工具调用）
 
-/// 子进程句柄。归 `_BkBox` 族是为了共用 share count 与登记表：`bk_process_release` 与容器句柄
+/// 子进程句柄。归 `_BkBox` 族是为了共用 share count 与登记表：`pini_process_release` 与容器句柄
 /// 走同一条归还路径，不必为它单设一张活动表。不可分裂 —— 进程已经跑起来，复制句柄没有语义。
 private final class _BkProcessBox: _BkBox {
     let process: Process
@@ -3756,18 +3756,18 @@ private func _bkProcessTempPath(_ tag: String) -> String {
 /// `processSpawn(argvText, capture) -> Proc` —— 起子进程：`argvText` 每行一个参数、首行可执行，
 /// 含 `/` 按路径直起，否则经 `/usr/bin/env` 走 PATH；文本承载串表是权宜（集合过不了外部 ABI）。
 /// `capture` 非零收两路输出，零则直通；起不来即陷阱。
-@_cdecl("bk_process_spawn")
-public func bk_process_spawn(
+@_cdecl("pini_process_spawn")
+public func pini_process_spawn(
     _ argvText: UnsafePointer<CChar>?, _ capture: Int32
 ) -> UnsafeMutableRawPointer {
-    guard let argvText else { bk_panic("Pini runtime error: processSpawn: 参数为空") }
+    guard let argvText else { pini_panic("Pini runtime error: processSpawn: 参数为空") }
     var items = String(cString: argvText)
         .split(separator: "\n", omittingEmptySubsequences: false)
         .map(String.init)
     // 尾部换行会切出一个空项；参数表不以空项结尾，去掉它。中间的空项是合法参数，保留。
     if items.last == "" { items.removeLast() }
     guard let first = items.first, !first.isEmpty else {
-        bk_panic("Pini runtime error: processSpawn: 参数为空")
+        pini_panic("Pini runtime error: processSpawn: 参数为空")
     }
     let process = Process()
     if first.contains("/") {
@@ -3786,7 +3786,7 @@ public func bk_process_spawn(
             let outHandle = FileHandle(forWritingAtPath: outPath),
             let errHandle = FileHandle(forWritingAtPath: errPath)
         else {
-            bk_panic("Pini runtime error: processSpawn: 无法创建输出临时文件")
+            pini_panic("Pini runtime error: processSpawn: 无法创建输出临时文件")
         }
         process.standardOutput = outHandle
         process.standardError = errHandle
@@ -3798,7 +3798,7 @@ public func bk_process_spawn(
     do {
         try process.run()
     } catch {
-        bk_panic("Pini runtime error: processSpawn: 无法启动 \(first): \(error.localizedDescription)")
+        pini_panic("Pini runtime error: processSpawn: 无法启动 \(first): \(error.localizedDescription)")
     }
     return _bkRegister(box)
 }
@@ -3813,8 +3813,8 @@ private func _bkProcessReadText(_ path: String?) -> UnsafeMutablePointer<CChar>?
 /// `processWait(proc) -> i32` —— 等子进程结束并交退出码，按 shell 惯例归一：
 /// 被信号杀死答 `128 + 信号`（`abort()` ⇒ 134），与宿主 `childExitStatus` 同规。
 /// 同一个句柄可重复问，第二次起答同一次结算的结果。
-@_cdecl("bk_process_wait")
-public func bk_process_wait(_ handle: UnsafeMutableRawPointer?) -> Int32 {
+@_cdecl("pini_process_wait")
+public func pini_process_wait(_ handle: UnsafeMutableRawPointer?) -> Int32 {
     guard let handle else { return -1 }
     let box = Unmanaged<_BkProcessBox>.fromOpaque(handle).takeUnretainedValue()
     if box.settled { return box.status }
@@ -3834,23 +3834,23 @@ public func bk_process_wait(_ handle: UnsafeMutableRawPointer?) -> Int32 {
 
 /// `processStdout(proc) -> *u8` —— 收下的标准输出，NUL 结尾。视图归句柄所有，
 /// 句柄释放后失效；调用方要留住就自己复制。
-@_cdecl("bk_process_stdout")
-public func bk_process_stdout(_ handle: UnsafeMutableRawPointer?) -> UnsafeMutablePointer<CChar>? {
+@_cdecl("pini_process_stdout")
+public func pini_process_stdout(_ handle: UnsafeMutableRawPointer?) -> UnsafeMutablePointer<CChar>? {
     guard let handle else { return nil }
     let box = Unmanaged<_BkProcessBox>.fromOpaque(handle).takeUnretainedValue()
     return box.outText
 }
 
-/// `processStderr(proc) -> *u8` —— 收下的标准错误，契约与 `bk_process_stdout` 同。
-@_cdecl("bk_process_stderr")
-public func bk_process_stderr(_ handle: UnsafeMutableRawPointer?) -> UnsafeMutablePointer<CChar>? {
+/// `processStderr(proc) -> *u8` —— 收下的标准错误，契约与 `pini_process_stdout` 同。
+@_cdecl("pini_process_stderr")
+public func pini_process_stderr(_ handle: UnsafeMutableRawPointer?) -> UnsafeMutablePointer<CChar>? {
     guard let handle else { return nil }
     let box = Unmanaged<_BkProcessBox>.fromOpaque(handle).takeUnretainedValue()
     return box.errText
 }
 
 /// `processRelease(proc)` —— 归还句柄；最后一个份额归零时关文件、删临时文件、释放输出。
-@_cdecl("bk_process_release")
-public func bk_process_release(_ handle: UnsafeMutableRawPointer?) {
+@_cdecl("pini_process_release")
+public func pini_process_release(_ handle: UnsafeMutableRawPointer?) {
     _bkReleaseShare(handle)
 }

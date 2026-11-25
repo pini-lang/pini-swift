@@ -3,15 +3,15 @@
 ; 注意 `pini run` 在调用点报 E5-019（变参）与 E5-020（句柄），声明处另有 E7-006 / E7-007 提醒。
 [libc|foreign]
 printf|varargs: (String,) -> (I32,) ; 冒号前的 |varargs 放开 arity：固定部分之后可多传
-bk_str_handle_new: (String,) -> (StringHandle,) ; 形参位的 String 借出，运行时段复制一份
-bk_str_handle_len: (StringHandle,) -> (I64,)
-bk_str_handle_release: (StringHandle,) -> ()
+pini_str_handle_new: (String,) -> (StringHandle,) ; 形参位的 String 借出，运行时段复制一份
+pini_str_handle_len: (StringHandle,) -> (I64,)
+pini_str_handle_release: (StringHandle,) -> ()
 
 main|func() -> ():
     var 名 = "句柄"
-    var h = unsafe bk_str_handle_new(名)
+    var h = unsafe pini_str_handle_new(名)
     ; 变参：固定部分是格式串，尾部实参按 C 默认实参提升传；%s 收的是借出的 String
-    unsafe printf("%s 的字节数 = %lld\n", 名, unsafe bk_str_handle_len(h))
+    unsafe printf("%s 的字节数 = %lld\n", 名, unsafe pini_str_handle_len(h))
     ; 句柄：Pini 侧不参与计数，创建时那一份 +1 由 C 侧收账
-    unsafe bk_str_handle_release(h)
+    unsafe pini_str_handle_release(h)
     return

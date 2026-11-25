@@ -76,7 +76,7 @@ driverText|func(sink: LineSink, bundle: EmitPass, value: String, temp: I32,) -> 
 ; 跑器：写函数体，返回要追加的模块级常量行（报告格式）。
 emitTestDriver|func(sink: LineSink, module: IrModule, plan: EmitTestPlan, bundle: EmitPass,) -> (Array<String>,):
     useExtern(use = bundle.externs, name = "printf")
-    useExtern(use = bundle.externs, name = "bk_set_program_base")
+    useExtern(use = bundle.externs, name = "pini_set_program_base")
     appendLine(sink = sink, text = "define i32 @__pini_test_main() {")
     appendLine(sink = sink, text = "entry:")
     appendLine(sink = sink, text = "  %d.fails = alloca i32")
@@ -121,7 +121,7 @@ emitTestDriver|func(sink: LineSink, module: IrModule, plan: EmitTestPlan, bundle
         let group = plan.groups[g]
         if group.count > 0:
             if basePtrs[g] != "null":
-                appendLine(sink = sink, text = "  call void @bk_set_program_base(ptr " + basePtrs[g] + ")")
+                appendLine(sink = sink, text = "  call void @pini_set_program_base(ptr " + basePtrs[g] + ")")
             var j = group.firstTest
             while j < group.firstTest + group.count:
                 let fn = module.functions[findIrFunctionIndex(module = module, name = plan.selection[j])]

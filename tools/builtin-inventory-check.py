@@ -12,9 +12,9 @@ source because the call site spells the name once, as a string.
 emit". This script joins it with the other two sides:
 
     contract   the family table in runtime-abi.md section 2 (parsed by runtime-abi-check.py)
-    runtime    `@_cdecl("bk_...")` in PiniRuntime.swift
+    runtime    `@_cdecl("pini_...")` in PiniRuntime.swift
     inventory  `BuiltinSpec` entries in BuiltinInventory.swift
-    lowering   `bk_*` tokens in CodeGen sources other than the inventory itself
+    lowering   `pini_*` tokens in CodeGen sources other than the inventory itself
 
 Checks:
     inventory-without-contract   the compiler can emit a symbol the contract never listed
@@ -75,16 +75,20 @@ FAMILY = {
 PSEUDO_SITES = {"cleanup", "retain", "entry", "print", "panic", "closure", "frame", "yield"}
 
 ENTRY = re.compile(r"BuiltinSpec\(\n(.*?)\n        \),", re.S)
-SYMBOL = re.compile(r'symbol: "(bk_[a-z0-9_]+)"')
+SYMBOL = re.compile(r'symbol: "(pini_[a-z0-9_]+)"')
 FAMILY_FIELD = re.compile(r"family: \.([A-Za-z]+)")
 LOWERINGS = re.compile(r"lowerings: \[(.*?)\]", re.S)
 QUOTED = re.compile(r'"([^"]+)"')
 TICKED = re.compile(r"`([^`]+)`")
-EXPORT = re.compile(r'@_cdecl\("(bk_[A-Za-z0-9_]+)"\)')
-TOKEN = re.compile(r"\b(bk_[a-z0-9_]+[a-z0-9])\b")
+EXPORT = re.compile(r'@_cdecl\("(pini_[A-Za-z0-9_]+)"\)')
+TOKEN = re.compile(r"\b(pini_[a-z0-9_]+[a-z0-9])\b")
 
-# `%bk_array` and friends are the opaque handle type names, not callable symbols.
-TYPE_NAMES = {"bk_array", "bk_dict", "bk_set", "bk_lazyref", "bk_weakref", "bk_nominal", "bk_handle", "bk_str", "bk_task"}
+# The pini_ prefix also catches two non-call names: `%pini_array` and friends are opaque handle
+# type names, and `@.pini_program_base` is a string-constant global. Neither is a callable entry.
+TYPE_NAMES = {
+    "pini_array", "pini_dict", "pini_set", "pini_lazyref", "pini_weakref", "pini_nominal",
+    "pini_handle", "pini_str", "pini_task", "pini_program_base",
+}
 
 
 def read(path):
@@ -223,19 +227,19 @@ def check(contract_names, exports, entries, mentions, cases, zero_sites):
 
 def self_test():
     """The joins must fire on a planted gap and stay silent on a clean pair."""
-    contract = {"bk_a": "数组", "bk_b": "数组"}
-    exports = {"bk_a", "bk_b"}
+    contract = {"pini_a": "数组", "pini_b": "数组"}
+    exports = {"pini_a", "pini_b"}
     cases = {"call"}
     ok = True
 
-    clean = [("bk_a", "array", ["call"]), ("bk_b", "array", ["<cleanup>"])]
-    failures = check(contract, exports, clean, {"bk_a", "bk_b"}, cases, set())
+    clean = [("pini_a", "array", ["call"]), ("pini_b", "array", ["<cleanup>"])]
+    failures = check(contract, exports, clean, {"pini_a", "pini_b"}, cases, set())
     if failures:
         print("self-test FAIL: clean inventory reported %s" % failures[0])
         ok = False
 
-    planted = [("bk_a", "array", ["call"]), ("bk_c", "array", ["call"])]
-    failures = check(contract, exports, planted, {"bk_a", "bk_c"}, cases, set())
+    planted = [("pini_a", "array", ["call"]), ("pini_c", "array", ["call"])]
+    failures = check(contract, exports, planted, {"pini_a", "pini_c"}, cases, set())
     if not any(f.startswith("inventory-without-contract") for f in failures):
         print("self-test FAIL: an invented symbol was not caught")
         ok = False
@@ -243,14 +247,14 @@ def self_test():
         print("self-test FAIL: an unregistered contract symbol was not caught")
         ok = False
 
-    parked = {"bk_a": "数组", "bk_b": "指针"}
-    failures = check(parked, {"bk_a", "bk_b"}, [("bk_a", "array", ["call"])],
-                     {"bk_a"}, cases, set())
+    parked = {"pini_a": "数组", "pini_b": "指针"}
+    failures = check(parked, {"pini_a", "pini_b"}, [("pini_a", "array", ["call"])],
+                     {"pini_a"}, cases, set())
     if not any(f.startswith("family-empty") for f in failures):
         print("self-test FAIL: an emptied family was not caught")
         ok = False
-    failures = check(parked, {"bk_a", "bk_b"}, [("bk_a", "array", ["call"])],
-                     {"bk_a"}, cases, {"bk_b"})
+    failures = check(parked, {"pini_a", "pini_b"}, [("pini_a", "array", ["call"])],
+                     {"pini_a"}, cases, {"pini_b"})
     if any(f.startswith("family-empty") for f in failures):
         print("self-test FAIL: a family parked on zero-site was reported empty")
         ok = False

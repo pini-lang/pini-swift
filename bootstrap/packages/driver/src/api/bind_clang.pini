@@ -8,7 +8,7 @@ _hostproc = "../../../hostproc"
 
 ; 浮点字面量：宏展开后的十进制写法交给运行时 strtod 口径解析。
 [float|foreign]
-bk_parse_double: (String,) -> (F64,)
+pini_parse_double: (String,) -> (F64,)
 
 ; 扫描态：当前文件按 dump 顺序更新；typedef 表与声明序都在这里累计。
 {BindScan}
@@ -716,7 +716,7 @@ bindEvalPrimary|func(_eval: BindEval,) -> (BindNumber,):
         var out = BindNumber()
         out.ok = true
         out.isFloat = true
-        out.floatValue = unsafe bk_parse_double(tok.text)
+        out.floatValue = unsafe pini_parse_double(tok.text)
         return out
     if tok.kind == 3:
         let value = bindEvalOr(_eval)

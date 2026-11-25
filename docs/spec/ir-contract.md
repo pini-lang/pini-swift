@@ -15,7 +15,7 @@
 
 ### 0.2 表述纪律
 
-- **语义列只写后端无关的行为约定**。不得出现 `bk_*`、`alloca`、`fgets`、GEP、
+- **语义列只写后端无关的行为约定**。不得出现 `pini_*`、`alloca`、`fgets`、GEP、
   引用计数布局、fat pointer 形状这类实现细节。
 - 实现细节只出现在「注记」列，其地位是**一种实现**，不是语义。
 - 禁止以某个运行时段的行为定义语义 —— 那等于把一条通道的实现选择升格为全体后端的义务。
@@ -51,14 +51,14 @@
 | `char` | **一个字素簇**（用户感知的「一个字符」），不是码点、不是字节；表示与 `string` 同构，「恰含一个字素」由类型系统承担 | 与 `string` 同拼写，零新 ABI |
 | `result(ok:)` | `Result<ok, E>`；**错误槽类型擦除** | 三槽 `{ tag, ok, err }`，槽序是布局约定 |
 | `future(ok:)` | `Future<ok, E>`：运行中的任务句柄。与 `result` 不可互换 —— 后者是已结算的值，本条是未结算的句柄。**一次等待、结果恰一次**是语义 | 不透明句柄 |
-| `array(element:)` | 有序、可重复、值语义集合 | 不透明句柄（`bk_array_*` 族） |
+| `array(element:)` | 有序、可重复、值语义集合 | 不透明句柄（`pini_array_*` 族） |
 | `optional(wrapped:)` | 有 / 无二态容器 | 带 tag 的按值聚合；tag 0 = some、1 = none 是布局约定 |
 | `nominal(name:isObject:)` | 用户具名类型。`isObject=true` 为引用语义；`false` 为值语义，四个存储点即时深拷贝（见 1.1） | 头四格之后是字段；值类型与对象同形 |
 | `enumeration(name:)` | 用户枚举（带关联值的 tagged union），引用语义 | 头四格之后是用例标签，载荷按最大元数定型 |
-| `dict(key:value:)` | 键到值的映射，键唯一 | 不透明句柄（`bk_dict_*` 族） |
-| `set(element:)` | 唯一元素集合 | 不透明句柄（`bk_set_*` 族） |
-| `lazyRef(element:)` | 一次求值、引用拷贝语义的惰性引用 | 不透明句柄（`bk_lazyref_*` 族） |
-| `weakRef(element:)` | 不增加强计数的弱引用；`element` 是目标对象类型。读取得 `Optional<element>`，目标销毁后为 `none` | 不透明句柄（`bk_weak_*` 族）；句柄自身按计数族归还 |
+| `dict(key:value:)` | 键到值的映射，键唯一 | 不透明句柄（`pini_dict_*` 族） |
+| `set(element:)` | 唯一元素集合 | 不透明句柄（`pini_set_*` 族） |
+| `lazyRef(element:)` | 一次求值、引用拷贝语义的惰性引用 | 不透明句柄（`pini_lazyref_*` 族） |
+| `weakRef(element:)` | 不增加强计数的弱引用；`element` 是目标对象类型。读取得 `Optional<element>`，目标销毁后为 `none` | 不透明句柄（`pini_weak_*` 族）；句柄自身按计数族归还 |
 | `unownedRef(element:)` | 不计数、不跟踪存活的无主引用；`element` 是目标对象类型。解引用、调用与字段访问限定在 unsafe 上下文 | 表示就是对象指针（`ptr`）；不进旁表，也没有销毁动作 |
 | `tuple(labels:fieldTypes:)` | 带位置与可选标签的异质定长组 | 按值聚合；标签序即字段序 |
 | `function(params:returnType:usingIndices:)` | 函数是一等值；取用下标集合标出哪些参数位由给定块填。类型标注写不出它，它也不参与类型等价 —— 但随函数值保留，标注不得把它抹掉 | fat pointer `{code, env}`；首参恒为 env 是调用协议；取用位不进运行时表示 |
@@ -274,7 +274,7 @@
 | `readLine` 的 256 字节上限 | 已裁保留 | 语言级尺寸语义，`IOLimits` 为单一源 |
 | 警告通道的跨通道一致性 | 缺口 | 诊断面 |
 | 闭包环境与捕获槽不释放 | 未修 | 缺口：逃逸闭包持有捕获，但闭包值无销毁路径，捕获值的 `deinit` 不触发 |
-| `LazyRef` 句柄不释放 | 已修 | 保留走通用句柄入口，释放走 `bk_lazyref_destroy`；别名点与退出两侧成对 |
+| `LazyRef` 句柄不释放 | 已修 | 保留走通用句柄入口，释放走 `pini_lazyref_destroy`；别名点与退出两侧成对 |
 | 异步析构与同步清理的相对次序 | 未裁 | 半语义：参考 7.7 只定调度点，未定它与清理栈的先后 |
 
 ## 5. 后端义务

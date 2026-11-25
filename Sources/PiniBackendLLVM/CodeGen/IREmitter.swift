@@ -111,7 +111,7 @@ public final class IREmitter {
     private var usesStrCmp = false
     /// 是否发过「先比长度再 `memcmp`」的等值比较：`==` / `!=` 走这条路，声明随之条件出现。
     private var usesMemCmp = false
-    /// 是否发过 `bk_str_concat` / `bk_str_append_cstr`：拼接与插值都走这两个入口，声明随之条件出现。
+    /// 是否发过 `pini_str_concat` / `pini_str_append_cstr`：拼接与插值都走这两个入口，声明随之条件出现。
     private var usesStringBuilders = false
 
     // MARK: - 闭包与高阶值状态
@@ -136,10 +136,10 @@ public final class IREmitter {
     /// 后者不能省：文本 IR 的调用按实参表推函数类型，推出来的 `i64 (i64, i32)` 不是声明的
     /// `i64 (i64, ...)`，后端会据此按非变参摆放实参，C 侧 `va_arg` 读到的是栈上的旧值。
     private var variadicForeignFunctions: [String: (fixedCount: Int, callType: String)] = [:]
-    /// 是否用到 `%bk_lazyref` 句柄类型与 `bk_lazyref_*` 这组 C ABI：头声明按需追加，
+    /// 是否用到 `%pini_lazyref` 句柄类型与 `pini_lazyref_*` 这组 C ABI：头声明按需追加，
     /// 从不触碰 LazyRef 的模块其 IR 保持逐字节不变。
     private var usesLazyRef = false
-    /// 是否用到 `%bk_weakref` 句柄与 `bk_weak_*` 这组 C ABI；按需追加，未触碰的模块文本不变。
+    /// 是否用到 `%pini_weakref` 句柄与 `pini_weak_*` 这组 C ABI；按需追加，未触碰的模块文本不变。
     private var usesWeakRef = false
     /// `writeFile` / `readFile` 会拉进 stdio 的 declare 与模式串常量；
     /// 与其他可选头一样按需追加，不碰它们的模块 IR 逐字节不变。
@@ -147,7 +147,7 @@ public final class IREmitter {
     /// `appendFile` 会拉进追加 shim 的 declare。与 `usesFileWrite` 分开：
     /// 从不追加的模块不得多出一行 declare，金样 IR 保持不变。
     private var usesFileAppend = false
-    /// 是否用到 `readFile`：整文件读取走运行时 `bk_read_file` 而非发射的 stdio——
+    /// 是否用到 `readFile`：整文件读取走运行时 `pini_read_file` 而非发射的 stdio——
     /// 固定栈缓冲装不下整文件，且 LLI 的 JIT 下读取前无法得知大小。头声明同样按需追加。
     private var usesFileRead = false
     /// 可接住的 IO：`tryReadFile` / `tryWriteFile` / `tryAppendFile` 各拉一条 declare。
@@ -164,7 +164,7 @@ public final class IREmitter {
     private var lazyrefWrappers: [String] = []
     private var lazyrefWrapperNames: Set<String> = []
 
-    /// 本模块是否发射过并发面（派发 / 等待 / 剪枝）。三个 `bk_task_*` 的 declare 随之
+    /// 本模块是否发射过并发面（派发 / 等待 / 剪枝）。三个 `pini_task_*` 的 declare 随之
     /// 条件出现 —— 与 LazyRef / 文件 IO / readLine 同一条契约：**不碰并发面的程序 IR 不变**。
     private var usesTaskRuntime = false
     /// 是否发射过容器形参的**份额**保留 —— 只有真要还回时才声明对应的运行时符号。
@@ -173,31 +173,31 @@ public final class IREmitter {
     /// 而不是 libc 的睡眠，声明也随之条件出现。
     private var usesSleepShim = false
     /// 是否调用过字符内建（`chars` / `chr` / `ord` / `is_letter` / `is_number`）——
-    /// 它们的运行时段在 `PiniRuntime`（`bk_<名字>`），declare 随之条件出现。
+    /// 它们的运行时段在 `PiniRuntime`（`pini_<名字>`），declare 随之条件出现。
     private var usesCharacterShims = false
-    /// 是否调用过宿主环境查询内建（`argv` / `listDir`）—— 同上，落点是 `bk_argv` / `bk_list_dir`。
+    /// 是否调用过宿主环境查询内建（`argv` / `listDir`）—— 同上，落点是 `pini_argv` / `pini_list_dir`。
     private var usesProcessShims = false
-    /// 是否调用过 `moduleRoot` —— 落点是 `bk_module_root`。
+    /// 是否调用过 `moduleRoot` —— 落点是 `pini_module_root`。
     ///  行不通  不并入 `usesProcessShims`：那一族的声明是整批固定输出的，共用的代价是只调 `argv`
     /// 或 `listDir` 的程序凭空多出本符号的声明，而它们的产物必须逐字节不变。
     private var usesModuleRootShim = false
-    /// 是否在进程入口注入了程序基准（`bk_set_program_base`）—— declare 随之条件出现。
+    /// 是否在进程入口注入了程序基准（`pini_set_program_base`）—— declare 随之条件出现。
     ///  行不通  它**不**复用 `usesProcessShims`：注入发生在入口，而入口可能早于任何 IO 调用点发射。
     private var usesProgramBase = false
-    /// 是否发射过错误载荷族调用（`bk_error_create` / `bk_cancel_error_create` /
-    /// `bk_error_is_cancel` / `bk_error_message`）。四者同开关：构造与读取成对出现，
+    /// 是否发射过错误载荷族调用（`pini_error_create` / `pini_cancel_error_create` /
+    /// `pini_error_is_cancel` / `pini_error_message`）。四者同开关：构造与读取成对出现，
     /// 拆成四个布尔只会同时翻转；未被调用的声明不改变产物语义。
     private var usesErrorShims = false
-    /// 是否发射过字符串字素簇族调用（`bk_substring` / `bk_string_count` / `bk_string_char_at` /
-    /// `bk_string_slice` / `bk_string_upper` / `bk_string_lower` / `bk_string_contains`）。
+    /// 是否发射过字符串字素簇族调用（`pini_substring` / `pini_string_count` / `pini_string_char_at` /
+    /// `pini_string_slice` / `pini_string_upper` / `pini_string_lower` / `pini_string_contains`）。
     /// 字素簇边界是 Unicode 分段算法，发射器发不出，故整族落在运行时段，与解释器同一模型。
     private var usesStringShims = false
 
-    /// 是否发射过名义箱分配（`bk_nominal_alloc`）：结构体/对象/枚举的箱走运行时堆分配，
+    /// 是否发射过名义箱分配（`pini_nominal_alloc`）：结构体/对象/枚举的箱走运行时堆分配，
     /// 三族统一带引用计数头。只有真正构造名义值的模块才带这条 declare。
     private var usesNominalBoxes = false
 
-    /// 是否发射过字符串引用计数调用（`bk_str_retain` / `bk_str_release`）。累积形态
+    /// 是否发射过字符串引用计数调用（`pini_str_retain` / `pini_str_release`）。累积形态
     /// `self.buf = self.buf + line` 每次丢弃旧串，没人回收的话峰值等于各次结果长度之和；
     /// 本条即为此而开。不涉计数字符串的模块 IR 逐字节不变。
     private var usesStringRefcount = false
@@ -211,7 +211,7 @@ public final class IREmitter {
     private var heldStringsStack: [Set<String>] = []
 
     /// 本层新分配、尚无持有者的名义箱 / 容器句柄：SSA 名 → 类型。与 `heldStrings` 同一本账的另一半
-    /// （字符串族固定走 `bk_str_release`，故那边只记名字）。入账：构造点；出账：被持有位置接管，或就地还。
+    /// （字符串族固定走 `pini_str_release`，故那边只记名字）。入账：构造点；出账：被持有位置接管，或就地还。
     /// 未出账的条目最多是泄漏（现状）， 行不通  不会被二次释放 —— 键是双端唯一的 SSA 名。
     private var heldBoxes: [String: IRType] = [:]
 
@@ -236,14 +236,14 @@ public final class IREmitter {
     /// 就知道会被带走，而 `allocVar` 总在闭包字面量之前，事后补不了。
     private var capturedNamesInFunction: Set<String> = []
 
-    /// 是否发射过**捕获槽的堆分配**（`bk_slot_alloc`）—— 条件 declare。
+    /// 是否发射过**捕获槽的堆分配**（`pini_slot_alloc`）—— 条件 declare。
     private var usesCapturedSlots = false
 
     /// 逐类型合成的**释放胶水**（`__release_*`）缓冲与去重名集 —— 照 `givenInitializerDefs` 那套。
     private var releaseFunctionDefs: [String] = []
     private var releaseFunctionNames: Set<String> = []
 
-    /// 聚合元素的成员钩子（`__bk_agg_<n>_retain` / `_release`）：数组按字节内联存聚合，
+    /// 聚合元素的成员钩子（`__pini_agg_<n>_retain` / `_release`）：数组按字节内联存聚合，
     /// 深拷与销毁时的成员动作只有发射层知道布局 ⇒ 合成一对函数交给运行时登记。
     private var aggregateHookDefs: [String] = []
     private var aggregateHooks: [String: (retain: String, release: String)] = [:]
@@ -267,14 +267,14 @@ public final class IREmitter {
     /// 其块依赖外层先算出的条件或被匹配主题，而那条路径续跑时被跳过 ⇒ 不支配续跑块。
     private var blockDepth = 0
 
-    /// 本函数帧里要取的槽，**按声明顺序**。顺序即重放顺序 —— `bk_task_slot` 的游标按同一顺序
+    /// 本函数帧里要取的槽，**按声明顺序**。顺序即重放顺序 —— `pini_task_slot` 的游标按同一顺序
     /// 命中上次发过的那一块（见 `declareLocalSlot`）。
     private var frameSlotDecls: [(name: String, spelling: String)] = []
 
     /// 已发射的让出点个数（`de6b.resume.<k>` 的 `k` 从 1 数起；入口的 `switch` 按它生成）。
     private var yieldPointCount = 0
 
-    /// 是否发射过帧的取用 —— `bk_task_frame` / `bk_task_slot` 的 declare 随之条件出现。
+    /// 是否发射过帧的取用 —— `pini_task_frame` / `pini_task_slot` 的 declare 随之条件出现。
     private var usesTaskFrame = false
 
     /// 是否发射过 `cancel` —— 落点是运行时的取消入口，声明与派发族分开：不取消的模块不多一行。
@@ -289,13 +289,13 @@ public final class IREmitter {
     /// 是否发射过变量数组形态的 `joinAll` —— 它让运行时逐槽取句柄，符号与上一条不同。
     private var usesTaskJoinAllBox = false
 
-    /// 是否调用过 `toCString` —— 外部 C 串转换走 `bk_cstr`，声明随它条件出现。
+    /// 是否调用过 `toCString` —— 外部 C 串转换走 `pini_cstr`，声明随它条件出现。
     private var usesCStrShim = false
 
-    /// 是否调用过 `fromCString` —— 取回走 `bk_str_from_cstr`，声明随它条件出现。
+    /// 是否调用过 `fromCString` —— 取回走 `pini_str_from_cstr`，声明随它条件出现。
     private var usesCStrRetrieval = false
 
-    /// 是否在句柄形参位包过 Pini 串 —— 创建走 `bk_str_handle_new`，声明随它条件出现。
+    /// 是否在句柄形参位包过 Pini 串 —— 创建走 `pini_str_handle_new`，声明随它条件出现。
     private var usesStringHandleNew = false
 
     /// 导出回调的适配 thunk：按 C 签名缓存名字，定义攒到转发层之后一次写出。
@@ -318,7 +318,7 @@ public final class IREmitter {
     private var givenInitializerDefs: [String] = []
     private var givenInitializerNames: Set<String> = []
 
-    /// 入口交给运行时的程序基准：发射出的入口调一次 `bk_set_program_base`，
+    /// 入口交给运行时的程序基准：发射出的入口调一次 `pini_set_program_base`，
     /// 每条 IO 路径都在那里解析，故这里不烘焙任何路径。
     /// nil（默认）不发 setter、相对路径留给 CWD —— 这是发射器旋钮，不是 IR 数据。
     public var programBase: String?
@@ -336,7 +336,7 @@ public final class IREmitter {
     private var testMode: Bool { testReportHeader != nil }
 
     /// 失败标志与断言消息的模块级插槽名。
-    /// 刻意不用 `bk_*` 运行时段符号：驱动器与断言同在本模块，故运行时段不必改动，
+    /// 刻意不用 `pini_*` 运行时段符号：驱动器与断言同在本模块，故运行时段不必改动，
     /// 也不新增跨 ABI 面（运行时段符号的增删另有纪律）。
     static let testFailedGlobal = "__pini_test_failed"
     static let testMsgGlobal = "__pini_test_msg"
@@ -349,13 +349,13 @@ public final class IREmitter {
     public func emit(module: IRModule) throws -> String {
         refusals.removeAll()
         // 已由 `[..|foreign]` 声明过的符号：同一模块里再 `declare` 一次，LLVM 判成重定义。
-        // 条件化的运行时段声明据此让位 —— 用户显式声明运行时段入口是合法写法（如 `bk_str_handle_new`）。
+        // 条件化的运行时段声明据此让位 —— 用户显式声明运行时段入口是合法写法（如 `pini_str_handle_new`）。
         let foreignDeclaredSymbols = Set(module.foreigns.flatMap { $0.funcs.map(\.name) })
         var header = "; Pini LLVM IR\n"
         header += "declare i32 @printf(ptr, ...)\n"
-        header += Builtins.declaration(for: "bk_print_lock")
-        header += Builtins.declaration(for: "bk_print_unlock")
-        header += Builtins.declaration(for: "bk_double_to_string")
+        header += Builtins.declaration(for: "pini_print_lock")
+        header += Builtins.declaration(for: "pini_print_unlock")
+        header += Builtins.declaration(for: "pini_double_to_string")
         header += "declare void @free(ptr)\n"
         header += "declare double @sqrt(double)\n"
         header += "@fmt_int = private constant [3 x i8] c\"%d\\00\"\n"
@@ -365,41 +365,41 @@ public final class IREmitter {
         header += "@fmt_newline = private constant [2 x i8] c\"\\0A\\00\"\n"
         // 数组族：不透明句柄类型 + 运行时 C ABI 声明。LLVM IR 模块允许前向引用，
         // 故 declare 一律无条件发射，未用到时只是无害的前向声明。
-        header += "%bk_array = type { ptr }\n"
-        header += Builtins.declaration(for: "bk_array_create")
-        header += Builtins.declaration(for: "bk_array_len")
-        header += Builtins.declaration(for: "bk_array_get")
-        header += Builtins.declaration(for: "bk_array_set")
-        header += Builtins.declaration(for: "bk_array_append")
-        header += Builtins.declaration(for: "bk_array_set_element_hooks")
-        header += Builtins.declaration(for: "bk_handle_retain")
-        header += Builtins.declaration(for: "bk_handle_ensure_unique")
-        header += Builtins.declaration(for: "bk_array_ensure_unique_at")
-        header += Builtins.declaration(for: "bk_panic")
+        header += "%pini_array = type { ptr }\n"
+        header += Builtins.declaration(for: "pini_array_create")
+        header += Builtins.declaration(for: "pini_array_len")
+        header += Builtins.declaration(for: "pini_array_get")
+        header += Builtins.declaration(for: "pini_array_set")
+        header += Builtins.declaration(for: "pini_array_append")
+        header += Builtins.declaration(for: "pini_array_set_element_hooks")
+        header += Builtins.declaration(for: "pini_handle_retain")
+        header += Builtins.declaration(for: "pini_handle_ensure_unique")
+        header += Builtins.declaration(for: "pini_array_ensure_unique_at")
+        header += Builtins.declaration(for: "pini_panic")
         // 默认实例取用（`slot` = 存放位地址，`init_fn` = 合成初始化函数，`bytes` = 聚合体大小）。
-        // 与 `bk_array_*` 同规：无条件声明，未用到时是无害的前向声明。
-        header += Builtins.declaration(for: "bk_given_get")
+        // 与 `pini_array_*` 同规：无条件声明，未用到时是无害的前向声明。
+        header += Builtins.declaration(for: "pini_given_get")
         // 字典 / 集合族：不透明句柄 + 运行时 C ABI 声明。
-        header += "%bk_dict = type { ptr }\n"
-        header += "%bk_set = type { ptr }\n"
-        header += Builtins.declaration(for: "bk_dict_create")
-        header += Builtins.declaration(for: "bk_dict_len")
-        header += Builtins.declaration(for: "bk_dict_get")
-        // 字典的宽容读靠它先问存在性：`bk_dict_get` 对缺失键 panic，不能靠「读回空再看」。
-        header += Builtins.declaration(for: "bk_dict_contains")
-        header += Builtins.declaration(for: "bk_dict_set")
-        header += Builtins.declaration(for: "bk_dict_ensure_unique_at")
-        header += Builtins.declaration(for: "bk_dict_key_at")
-        header += Builtins.declaration(for: "bk_dict_val_at")
-        header += Builtins.declaration(for: "bk_set_create")
-        header += Builtins.declaration(for: "bk_set_len")
-        header += Builtins.declaration(for: "bk_set_add")
-        header += Builtins.declaration(for: "bk_set_at")
+        header += "%pini_dict = type { ptr }\n"
+        header += "%pini_set = type { ptr }\n"
+        header += Builtins.declaration(for: "pini_dict_create")
+        header += Builtins.declaration(for: "pini_dict_len")
+        header += Builtins.declaration(for: "pini_dict_get")
+        // 字典的宽容读靠它先问存在性：`pini_dict_get` 对缺失键 panic，不能靠「读回空再看」。
+        header += Builtins.declaration(for: "pini_dict_contains")
+        header += Builtins.declaration(for: "pini_dict_set")
+        header += Builtins.declaration(for: "pini_dict_ensure_unique_at")
+        header += Builtins.declaration(for: "pini_dict_key_at")
+        header += Builtins.declaration(for: "pini_dict_val_at")
+        header += Builtins.declaration(for: "pini_set_create")
+        header += Builtins.declaration(for: "pini_set_len")
+        header += Builtins.declaration(for: "pini_set_add")
+        header += Builtins.declaration(for: "pini_set_at")
         // 容器释放：份额计数归运行时所有，销毁一个仍被别处共享的句柄
         // 只丢掉本持有者那一份。
-        header += Builtins.declaration(for: "bk_array_destroy")
-        header += Builtins.declaration(for: "bk_dict_destroy")
-        header += Builtins.declaration(for: "bk_set_destroy")
+        header += Builtins.declaration(for: "pini_array_destroy")
+        header += Builtins.declaration(for: "pini_dict_destroy")
+        header += Builtins.declaration(for: "pini_set_destroy")
         // libc 与 LLVM intrinsic：串操作所需的 `strlen`/`strcat` 与数学函数。
         header += "declare i64 @strlen(ptr)\n"
         header += "declare ptr @strcat(ptr, ptr)\n"
@@ -597,7 +597,7 @@ public final class IREmitter {
 
         var tail = ""
         // 进程入口的收尾钩子：`main` 的每条返回前都要调，故与函数数量无关，一律声明。
-        tail += Builtins.declaration(for: "bk_runtime_cleanup")
+        tail += Builtins.declaration(for: "pini_runtime_cleanup")
         // 测试模式的两个模块级插槽（ 行不通  不是运行时段符号，见 `testFailedGlobal` 那条注释）。
         // `internal` 而非 `private`：驱动器与各测试函数都在本模块内，两者都要读写它们。
         if testMode {
@@ -619,39 +619,39 @@ public final class IREmitter {
         }
         // LazyRef 句柄类型 + C ABI 声明：只在模块真的创建 / 读取惰性引用时才追加。
         if usesLazyRef {
-            tail += "%bk_lazyref = type { ptr }\n"
-            tail += Builtins.declaration(for: "bk_lazyref_create")
-            tail += Builtins.declaration(for: "bk_lazyref_value")
-            tail += Builtins.declaration(for: "bk_lazyref_destroy")
+            tail += "%pini_lazyref = type { ptr }\n"
+            tail += Builtins.declaration(for: "pini_lazyref_create")
+            tail += Builtins.declaration(for: "pini_lazyref_value")
+            tail += Builtins.declaration(for: "pini_lazyref_destroy")
         }
         if usesWeakRef {
-            tail += "%bk_weakref = type { ptr }\n"
-            tail += Builtins.declaration(for: "bk_weak_create")
-            tail += Builtins.declaration(for: "bk_weak_value")
-            tail += Builtins.declaration(for: "bk_weak_destroy")
+            tail += "%pini_weakref = type { ptr }\n"
+            tail += Builtins.declaration(for: "pini_weak_create")
+            tail += Builtins.declaration(for: "pini_weak_value")
+            tail += Builtins.declaration(for: "pini_weak_destroy")
         }
         // `writeFile` 的 declare，只在实际写入的模块里出现。
         // 落点是运行时 shim 的一次调用 —— 路径解析与写语义都在那一侧，此处不发 libc 写调用。
         if usesFileWrite {
-            tail += Builtins.declaration(for: "bk_write_file")
+            tail += Builtins.declaration(for: "pini_write_file")
         }
         if usesFileAppend {
-            tail += Builtins.declaration(for: "bk_append_file")
+            tail += Builtins.declaration(for: "pini_append_file")
         }
         if usesFileRead {
-            tail += Builtins.declaration(for: "bk_read_file")
+            tail += Builtins.declaration(for: "pini_read_file")
         }
         // 可接住的 IO：读的成功值走返回值、错误走 out 参数；写与追加没有成功值，
         // 错误直接是返回值（`0` = 成功）。三者都**不引线程局部隐状态** —— 那个形状
         // 在嵌套调用下会互相覆盖，而正确性不该靠发射顺序维持。
         if usesFileTryRead {
-            tail += Builtins.declaration(for: "bk_try_read_file")
+            tail += Builtins.declaration(for: "pini_try_read_file")
         }
         if usesFileTryWrite {
-            tail += Builtins.declaration(for: "bk_try_write_file")
+            tail += Builtins.declaration(for: "pini_try_write_file")
         }
         if usesFileTryAppend {
-            tail += Builtins.declaration(for: "bk_try_append_file")
+            tail += Builtins.declaration(for: "pini_try_append_file")
         }
         // `readLine` 会拉进 libc 行读取器与 stdin 流全局（macOS 上拼作 `__stdinp`）。
         if usesReadLine {
@@ -661,126 +661,126 @@ public final class IREmitter {
         // 任务族的 C ABI。只有真发过派发 / 等待 / 剪枝的模块才带它们。本段接派发、阻塞等待、
         // 剪枝三个符号；`join_all` / `capabilities` 的调用点尚未接线，故这里也不声明它们。
         if usesTaskRuntime {
-            tail += Builtins.declaration(for: "bk_task_spawn")
-            tail += Builtins.declaration(for: "bk_task_join")
-            tail += Builtins.declaration(for: "bk_task_detach")
+            tail += Builtins.declaration(for: "pini_task_spawn")
+            tail += Builtins.declaration(for: "pini_task_join")
+            tail += Builtins.declaration(for: "pini_task_detach")
             if usesTaskArgRelease {
-                tail += Builtins.declaration(for: "bk_handle_release")
+                tail += Builtins.declaration(for: "pini_handle_release")
             }
         }
         if usesTaskJoinWithin {
-            tail += Builtins.declaration(for: "bk_task_join_within")
+            tail += Builtins.declaration(for: "pini_task_join_within")
         }
         if usesTaskJoinAll {
-            tail += Builtins.declaration(for: "bk_task_join_all")
+            tail += Builtins.declaration(for: "pini_task_join_all")
         }
         if usesTaskJoinAllBox {
-            tail += Builtins.declaration(for: "bk_task_join_all_box")
+            tail += Builtins.declaration(for: "pini_task_join_all_box")
         }
         // 让出族：帧的取用、帧内取槽、可让出的等待。与上面同规 —— 只有真发过的模块才带。
         if usesTaskCancel {
-            tail += Builtins.declaration(for: "bk_task_cancel")
+            tail += Builtins.declaration(for: "pini_task_cancel")
         }
         if usesTaskFrame {
-            tail += Builtins.declaration(for: "bk_task_frame")
-            tail += Builtins.declaration(for: "bk_task_slot")
-            tail += Builtins.declaration(for: "bk_task_await")
+            tail += Builtins.declaration(for: "pini_task_frame")
+            tail += Builtins.declaration(for: "pini_task_slot")
+            tail += Builtins.declaration(for: "pini_task_await")
         }
         if usesSleepShim {
-            tail += Builtins.declaration(for: "bk_sleep")
+            tail += Builtins.declaration(for: "pini_sleep")
         }
         // 字符内建与宿主环境查询的**运行时段落地**。
         //  注意  与上面同规：只有真调用过才带这几个 declare ⇒ 不碰它们的程序 IR 逐字节不变。
         //  行不通  谓词与 `ord` 一律 `i32` 返回（收敛到 i1 由调用点做，见 `.call` 那条注释）。
         if usesCharacterShims {
-            tail += Builtins.declaration(for: "bk_chars")
-            tail += Builtins.declaration(for: "bk_temp_utf8_bytes")
-            tail += Builtins.declaration(for: "bk_temp_byte_to_int")
-            tail += Builtins.declaration(for: "bk_temp_int_to_byte")
-            tail += Builtins.declaration(for: "bk_chr")
-            tail += Builtins.declaration(for: "bk_ord")
-            tail += Builtins.declaration(for: "bk_is_letter")
-            tail += Builtins.declaration(for: "bk_is_number")
-            tail += Builtins.declaration(for: "bk_char_to_heap_string")
-            tail += Builtins.declaration(for: "bk_char_retain")
-            tail += Builtins.declaration(for: "bk_char_release")
-            tail += Builtins.declaration(for: "bk_char_equal")
-            tail += Builtins.declaration(for: "bk_char_equal_string")
+            tail += Builtins.declaration(for: "pini_chars")
+            tail += Builtins.declaration(for: "pini_temp_utf8_bytes")
+            tail += Builtins.declaration(for: "pini_temp_byte_to_int")
+            tail += Builtins.declaration(for: "pini_temp_int_to_byte")
+            tail += Builtins.declaration(for: "pini_chr")
+            tail += Builtins.declaration(for: "pini_ord")
+            tail += Builtins.declaration(for: "pini_is_letter")
+            tail += Builtins.declaration(for: "pini_is_number")
+            tail += Builtins.declaration(for: "pini_char_to_heap_string")
+            tail += Builtins.declaration(for: "pini_char_retain")
+            tail += Builtins.declaration(for: "pini_char_release")
+            tail += Builtins.declaration(for: "pini_char_equal")
+            tail += Builtins.declaration(for: "pini_char_equal_string")
         }
         if usesProcessShims {
-            tail += Builtins.declaration(for: "bk_argv")
-            tail += Builtins.declaration(for: "bk_list_dir")
+            tail += Builtins.declaration(for: "pini_argv")
+            tail += Builtins.declaration(for: "pini_list_dir")
             // 探测类：`i32` 返回（0/1），收敛到 `i1` 由调用点做 —— 同谓词那条。
-            tail += Builtins.declaration(for: "bk_exists")
-            tail += Builtins.declaration(for: "bk_is_dir")
-            tail += Builtins.declaration(for: "bk_ensure_dir")
+            tail += Builtins.declaration(for: "pini_exists")
+            tail += Builtins.declaration(for: "pini_is_dir")
+            tail += Builtins.declaration(for: "pini_ensure_dir")
         }
         if usesModuleRootShim {
-            tail += Builtins.declaration(for: "bk_module_root")
+            tail += Builtins.declaration(for: "pini_module_root")
         }
         if usesErrorShims {
             // err 槽的字：构造侧两个（业务错误 / 取消错误，只差标志位），读侧两个
             // （判定取消 / 取消息）。 注意  三个 `i64` 参数都是**句柄位型**， 行不通  不是指针。
-            tail += Builtins.declaration(for: "bk_error_create")
-            tail += Builtins.declaration(for: "bk_cancel_error_create")
-            tail += Builtins.declaration(for: "bk_error_is_cancel")
-            tail += Builtins.declaration(for: "bk_error_message")
+            tail += Builtins.declaration(for: "pini_error_create")
+            tail += Builtins.declaration(for: "pini_cancel_error_create")
+            tail += Builtins.declaration(for: "pini_error_is_cancel")
+            tail += Builtins.declaration(for: "pini_error_message")
             // 枚举错误：把载荷的用例 tag 或上类型基址，得到一个带码的错误对象。
-            tail += Builtins.declaration(for: "bk_error_from_enum")
-            tail += Builtins.declaration(for: "bk_error_with_code")
-            tail += Builtins.declaration(for: "bk_error_code")
+            tail += Builtins.declaration(for: "pini_error_from_enum")
+            tail += Builtins.declaration(for: "pini_error_with_code")
+            tail += Builtins.declaration(for: "pini_error_code")
             // `calc_strerror` 的查表入口：码表与名字表由发射层按导出面生成，运行时只负责扫。
-            tail += Builtins.declaration(for: "bk_error_lookup")
+            tail += Builtins.declaration(for: "pini_error_lookup")
         }
         if usesProgramBase {
-            tail += Builtins.declaration(for: "bk_set_program_base")
+            tail += Builtins.declaration(for: "pini_set_program_base")
         }
         if usesCStrShim {
-            tail += Builtins.declaration(for: "bk_cstr")
+            tail += Builtins.declaration(for: "pini_cstr")
         }
         if usesCStrRetrieval {
-            tail += Builtins.declaration(for: "bk_str_from_cstr")
+            tail += Builtins.declaration(for: "pini_str_from_cstr")
         }
-        if usesStringHandleNew, !foreignDeclaredSymbols.contains("bk_str_handle_new") {
-            tail += Builtins.declaration(for: "bk_str_handle_new")
+        if usesStringHandleNew, !foreignDeclaredSymbols.contains("pini_str_handle_new") {
+            tail += Builtins.declaration(for: "pini_str_handle_new")
         }
         if usesCapturedSlots {
-            tail += Builtins.declaration(for: "bk_slot_alloc")
+            tail += Builtins.declaration(for: "pini_slot_alloc")
         }
         if usesNominalBoxes {
-            tail += Builtins.declaration(for: "bk_nominal_alloc")
-            tail += Builtins.declaration(for: "bk_nominal_retain")
-            tail += Builtins.declaration(for: "bk_nominal_release")
+            tail += Builtins.declaration(for: "pini_nominal_alloc")
+            tail += Builtins.declaration(for: "pini_nominal_retain")
+            tail += Builtins.declaration(for: "pini_nominal_release")
         }
         // 字符串的引用计数。与上一条同规 —— 只有真发过 retain / release 的模块才带，
         // 故「不碰计数字符串」的程序 IR 逐字节不变。
         if usesStringRefcount {
-            tail += Builtins.declaration(for: "bk_str_dup")
-            tail += Builtins.declaration(for: "bk_str_retain")
-            tail += Builtins.declaration(for: "bk_str_release")
+            tail += Builtins.declaration(for: "pini_str_dup")
+            tail += Builtins.declaration(for: "pini_str_retain")
+            tail += Builtins.declaration(for: "pini_str_release")
         }
         if usesStringBuilders {
-            tail += Builtins.declaration(for: "bk_str_concat")
-            tail += Builtins.declaration(for: "bk_str_append_cstr")
+            tail += Builtins.declaration(for: "pini_str_concat")
+            tail += Builtins.declaration(for: "pini_str_append_cstr")
         }
         if usesStringShims {
-            tail += Builtins.declaration(for: "bk_substring")
-            tail += Builtins.declaration(for: "bk_string_count")
-            tail += Builtins.declaration(for: "bk_string_char_at")
-            tail += Builtins.declaration(for: "bk_string_slice")
-            tail += Builtins.declaration(for: "bk_string_upper")
-            tail += Builtins.declaration(for: "bk_string_lower")
-            tail += Builtins.declaration(for: "bk_string_contains")
-            tail += Builtins.declaration(for: "bk_string_split")
-            tail += Builtins.declaration(for: "bk_string_trim_left")
-            tail += Builtins.declaration(for: "bk_string_trim_right")
-            tail += Builtins.declaration(for: "bk_string_index_of")
+            tail += Builtins.declaration(for: "pini_substring")
+            tail += Builtins.declaration(for: "pini_string_count")
+            tail += Builtins.declaration(for: "pini_string_char_at")
+            tail += Builtins.declaration(for: "pini_string_slice")
+            tail += Builtins.declaration(for: "pini_string_upper")
+            tail += Builtins.declaration(for: "pini_string_lower")
+            tail += Builtins.declaration(for: "pini_string_contains")
+            tail += Builtins.declaration(for: "pini_string_split")
+            tail += Builtins.declaration(for: "pini_string_trim_left")
+            tail += Builtins.declaration(for: "pini_string_trim_right")
+            tail += Builtins.declaration(for: "pini_string_index_of")
         }
         // 调度驱动面：派发点把调度器绑定交给运行时。与上面同规 ——
-        // 只有真发过派发的模块才带。 注意  观测符号 `bk_task_state` **不在这里** ——
+        // 只有真发过派发的模块才带。 注意  观测符号 `pini_task_state` **不在这里** ——
         // 它没有调用点（发射层从不发射它），它是给宿主与判据用的 C ABI 观测面。
         if usesSchedBinding {
-            tail += Builtins.declaration(for: "bk_task_bind_sched")
+            tail += Builtins.declaration(for: "pini_task_bind_sched")
         }
         // 默认实例的存放位：模块级全局、初值 null ⇒ 首调由运行时建盒。
         for def in givenSlotDefs {
@@ -928,7 +928,7 @@ public final class IREmitter {
             if currentIsMain {
                 // 收尾必须在进程还在入口函数里时做：JIT 在 `main` 返回后即销毁，
                 // 那时再清会去调已失效的发射层钩子。两次调用幂等，先到的那次生效。
-                bodyIR += " call void @bk_runtime_cleanup()\n"
+                bodyIR += " call void @pini_runtime_cleanup()\n"
                 bodyIR += " ret i32 0\n"
             } else if let returnType = function.returnType {
                 bodyIR += " ret \(returnType.llvmSpelling) undef\n"
@@ -982,7 +982,7 @@ public final class IREmitter {
         guard let base = programBase else { return "" }
         usesProgramBase = true
         let entry = registerStringConstant(base, named: "@.pini_program_base")
-        return " call void @bk_set_program_base(ptr \(Self.stringPayloadExpression(entry)))\n"
+        return " call void @pini_set_program_base(ptr \(Self.stringPayloadExpression(entry)))\n"
     }
 
     /// 合成测试驱动器与进程入口。
@@ -1163,7 +1163,7 @@ public final class IREmitter {
         d += " \(nonZero) = icmp ne i32 \(driverResult), 0\n"
         d += " \(code) = select i1 \(nonZero), i32 1, i32 0\n"
         // 测试模式的入口同样是进程收尾点：先清运行时，再把退出码交回 C。
-        d += " call void @bk_runtime_cleanup()\n"
+        d += " call void @pini_runtime_cleanup()\n"
         d += " ret i32 \(code)\n"
         d += "}\n\n"
         return d
@@ -1217,7 +1217,7 @@ public final class IREmitter {
         let sizeTemp = builder.freshTemp()
         bodyIR += " \(sizeTemp) = ptrtoint ptr \(sizeEnd) to i64\n"
         let raw = builder.freshTemp()
-        bodyIR += " \(raw) = call ptr @bk_slot_alloc(i64 \(sizeTemp))\n"
+        bodyIR += " \(raw) = call ptr @pini_slot_alloc(i64 \(sizeTemp))\n"
         let typed = builder.freshTemp()
         bodyIR += " \(typed) = bitcast ptr \(raw) to \(spelling)*\n"
         return typed
@@ -1229,7 +1229,7 @@ public final class IREmitter {
         usesTaskFrame = true
         var ir = ""
         let frame = "%de6b.frame"
-        ir += " \(frame) = call ptr @bk_task_frame(i64 0)\n"
+        ir += " \(frame) = call ptr @pini_task_frame(i64 0)\n"
         // 没有当前任务就没有帧可依，而没帧的体连一块局部变量都放不下 ⇒ 响亮拒绝，不静默降级。
         // `.result` 异步体只该经派发进入（`emitTaskSpawn`），走到这里说明有人绕过了派发；
         // `=> ()` 的直呼不在帧式之内（见 `frameMode` 的赋值处），其既有行为不受影响。
@@ -1245,7 +1245,7 @@ public final class IREmitter {
             + builder.fmtGEP(
                 name: "%de6b.panic.msg", aggregate: "[\(message.length) x i8]", base: message.name,
                 indices: [0, Self.stringHeaderBytes]) + "\n"
-        ir += " call void @bk_panic(ptr %de6b.panic.msg)\n"
+        ir += " call void @pini_panic(ptr %de6b.panic.msg)\n"
         ir += " unreachable\n"
         ir += "de6b.alloc:\n"
         let resumePoint = "%de6b.resume.point"
@@ -1254,7 +1254,7 @@ public final class IREmitter {
         // wrapper 正是靠「跑完之后这个字是不是 0」区分两态 —— 不必再加一个标志字。
         ir += builder.fmtStore(value: "0", type: "i64", ptr: frame) + "\n"
         for decl in frameSlotDecls {
-            ir += " \(decl.name) = call ptr @bk_task_slot(i64 \(slotSizeExpression(decl.spelling)))\n"
+            ir += " \(decl.name) = call ptr @pini_task_slot(i64 \(slotSizeExpression(decl.spelling)))\n"
         }
         let resumed = "%de6b.resumed"
         ir += " \(resumed) = icmp ne i64 \(resumePoint), 0\n"
@@ -1437,11 +1437,11 @@ public final class IREmitter {
     ///  注意  `LazyRef` 归在计数族，但其销毁符号尚未登记 —— 契约第 4 节记的缺口，不是它不用释放。
     private static func collectionDestroySymbol(for type: IRType) -> String? {
         switch type.shareClass {
-        case .retained(.array): return "bk_array_destroy"
-        case .retained(.dict): return "bk_dict_destroy"
-        case .retained(.set): return "bk_set_destroy"
-        case .retained(.lazyRef): return "bk_lazyref_destroy"
-        case .retained(.weakRef): return "bk_weak_destroy"
+        case .retained(.array): return "pini_array_destroy"
+        case .retained(.dict): return "pini_dict_destroy"
+        case .retained(.set): return "pini_set_destroy"
+        case .retained(.lazyRef): return "pini_lazyref_destroy"
+        case .retained(.weakRef): return "pini_weak_destroy"
         case .retained(.string), .retained(.char), .retained(.object), .retained(.enumeration),
             .valueBox, .aggregate, .inert:
             return nil
@@ -1449,17 +1449,17 @@ public final class IREmitter {
     }
 
     /// 一个持有者槽在退出 / 被覆盖时要调的释放符号；nil = 该类型不在计数族里。
-    /// 容器句柄用 `bk_*_destroy`，名义箱用合成胶水 `__release_*`，两族共用同一条登记通道。
+    /// 容器句柄用 `pini_*_destroy`，名义箱用合成胶水 `__release_*`，两族共用同一条登记通道。
     /// 下游只认符号名，故释放点只问「这个类型要不要释放」，改族别不会漏掉释放点。
     private func releaseSymbol(for type: IRType) -> String? {
         if nominalKindSpelling(type) != nil { return ensureReleaseFunction(for: type) }
         if isRefcountedString(type) {
             usesStringRefcount = true
-            return "bk_str_release"
+            return "pini_str_release"
         }
         if case .retained(.char) = type.shareClass {
             usesCharacterShims = true
-            return "bk_char_release"
+            return "pini_char_release"
         }
         return Self.collectionDestroySymbol(for: type)
     }
@@ -1585,7 +1585,7 @@ public final class IREmitter {
                 bodyIR += " ret \(returnedValue.llvmType) \(returnedValue.ssaName)\n"
             } else if currentIsMain {
                 // 同 `exit_block` 那条：入口内的显式 `return` 也要在 JIT 仍有效时收尾。
-                bodyIR += " call void @bk_runtime_cleanup()\n"
+                bodyIR += " call void @pini_runtime_cleanup()\n"
                 bodyIR += " ret i32 0\n"
             } else {
                 bodyIR += " ret void\n"
@@ -1623,7 +1623,7 @@ public final class IREmitter {
 
         case .panicStmt(let message):
             let rendered = emitStringConstant(message)
-            bodyIR += " call void @bk_panic(ptr \(rendered.ssaName))\n"
+            bodyIR += " call void @pini_panic(ptr \(rendered.ssaName))\n"
             bodyIR += " unreachable\n"
             terminated = true
 
@@ -1662,7 +1662,7 @@ public final class IREmitter {
             guard handle.llvmType == "ptr" else {
                 fatalError("IREmitter: detach operand is not a task handle (IRLowerer gates the operand)")
             }
-            bodyIR += " call void @bk_task_detach(ptr \(handle.ssaName))\n"
+            bodyIR += " call void @pini_task_detach(ptr \(handle.ssaName))\n"
         }
     }
 
@@ -1680,7 +1680,7 @@ public final class IREmitter {
             bodyIR += builder.fmtBr(labelName: frame.exit) + "\n"
         } else {
             let message = emitStringConstant("Pini runtime error: break outside loop")
-            bodyIR += " call void @bk_panic(ptr \(message.ssaName))\n"
+            bodyIR += " call void @pini_panic(ptr \(message.ssaName))\n"
             bodyIR += " unreachable\n"
         }
         terminated = true
@@ -1699,7 +1699,7 @@ public final class IREmitter {
             bodyIR += builder.fmtBr(labelName: target) + "\n"
         } else {
             let message = emitStringConstant("Pini runtime error: continue outside loop")
-            bodyIR += " call void @bk_panic(ptr \(message.ssaName))\n"
+            bodyIR += " call void @pini_panic(ptr \(message.ssaName))\n"
             bodyIR += " unreachable\n"
         }
         terminated = true
@@ -1999,7 +1999,7 @@ public final class IREmitter {
         }
         bodyIR += "\(panicLabel):\n"
         let message = emitStringConstant("Pini runtime error: match value matched no case")
-        bodyIR += " call void @bk_panic(ptr \(message.ssaName))\n"
+        bodyIR += " call void @pini_panic(ptr \(message.ssaName))\n"
         bodyIR += " unreachable\n"
         bodyIR += "\(endLabel):\n"
         terminated = false
@@ -2027,7 +2027,7 @@ public final class IREmitter {
         return (emitExpr(container), nil)
     }
 
-    /// `bk_*_set` 之后把**新句柄写回字段**（`obj.field[i] = v` 那条链的收尾）。
+    /// `pini_*_set` 之后把**新句柄写回字段**（`obj.field[i] = v` 那条链的收尾）。
     ///  行不通  它是那半条链的判据所在：不写回 ⇒ COW 分裂出的新句柄没人接住 ⇒ 那次写静默丢失。
     private func emitSubscriptFieldWriteBack(_ wb: (ptr: String, spelling: String)?, newRaw: String) {
         guard let wb = wb else { return }
@@ -2037,7 +2037,7 @@ public final class IREmitter {
     }
 
     /// 下标写入 `container[index] = value`（COW 契约）：先自上而下拆开嵌套容器
-    /// （父独占在前、子在后）；`.load` 值在搬箱前 retain 一份；`bk_*_set` 回的分裂句柄
+    /// （父独占在前、子在后）；`.load` 值在搬箱前 retain 一份；`pini_*_set` 回的分裂句柄
     /// 必须写回，否则这次写入会静默丢失。
     private func emitSubscriptStore(
         container: IRExpr, index: IRExpr, value: IRExpr, elementType: IRType, adopt: IRAdopt
@@ -2055,21 +2055,21 @@ public final class IREmitter {
             let (valueSpelling, valueWidth, valueTag) = arrayElementABI(valueType)
             let keyBox = boxValue(indexValue, spelling: keySpelling)
             let valueBox = boxValue(storedValue, spelling: valueSpelling)
-            // 键与值同规：别名在这里 retain、临时值在这里销账；`bk_dict_set` 只搬字节。
+            // 键与值同规：别名在这里 retain、临时值在这里销账；`pini_dict_set` 只搬字节。
             adoptElement(index, indexValue, type: keyType)
             let raw = builder.freshTemp()
-            bodyIR += " \(raw) = bitcast %bk_dict* \(containerValue.ssaName) to ptr\n"
+            bodyIR += " \(raw) = bitcast %pini_dict* \(containerValue.ssaName) to ptr\n"
             let newRaw = builder.freshTemp()
-            bodyIR += " \(newRaw) = call ptr @bk_dict_set(ptr \(raw), ptr \(keyBox), i32 \(keyWidth), i32 \(keyTag), ptr \(valueBox), i32 \(valueWidth), i32 \(valueTag))\n"
-            if case .load(let name, let slotType) = container, slotType.llvmSpelling == "%bk_dict*" {
+            bodyIR += " \(newRaw) = call ptr @pini_dict_set(ptr \(raw), ptr \(keyBox), i32 \(keyWidth), i32 \(keyTag), ptr \(valueBox), i32 \(valueWidth), i32 \(valueTag))\n"
+            if case .load(let name, let slotType) = container, slotType.llvmSpelling == "%pini_dict*" {
                 guard let slot = lookupSlot(name) else {
                     fatalError("IREmitter: dict store to undeclared container '\(name)' (IRLowerer guarantees)")
                 }
                 let typed = builder.freshTemp()
-                bodyIR += " \(typed) = bitcast ptr \(newRaw) to %bk_dict*\n"
-                bodyIR += builder.fmtStore(value: typed, type: "%bk_dict*", ptr: slot) + "\n"
+                bodyIR += " \(typed) = bitcast ptr \(newRaw) to %pini_dict*\n"
+                bodyIR += builder.fmtStore(value: typed, type: "%pini_dict*", ptr: slot) + "\n"
             }
-            //  重要  字段容器的回写（`obj.d["k"] = v`）：同一字段指针，时序在 `bk_dict_set` 之后。
+            //  重要  字段容器的回写（`obj.d["k"] = v`）：同一字段指针，时序在 `pini_dict_set` 之后。
             emitSubscriptFieldWriteBack(fieldWriteBack, newRaw: newRaw)
             return
         }
@@ -2083,24 +2083,24 @@ public final class IREmitter {
         bodyIR += builder.fmtAlloca(name: boxPtr, type: elemSpelling) + "\n"
         bodyIR += builder.fmtStore(value: storedValue.ssaName, type: elemSpelling, ptr: boxPtr) + "\n"
         let raw = builder.freshTemp()
-        bodyIR += " \(raw) = bitcast %bk_array* \(containerValue.ssaName) to ptr\n"
+        bodyIR += " \(raw) = bitcast %pini_array* \(containerValue.ssaName) to ptr\n"
         let newRaw = builder.freshTemp()
-        bodyIR += " \(newRaw) = call ptr @bk_array_set(ptr \(raw), i32 \(indexValue.ssaName), ptr \(boxPtr), i32 \(width), i32 \(elemTag))\n"
-        if case .load(let name, let slotType) = container, slotType.llvmSpelling == "%bk_array*" {
+        bodyIR += " \(newRaw) = call ptr @pini_array_set(ptr \(raw), i32 \(indexValue.ssaName), ptr \(boxPtr), i32 \(width), i32 \(elemTag))\n"
+        if case .load(let name, let slotType) = container, slotType.llvmSpelling == "%pini_array*" {
             guard let slot = lookupSlot(name) else {
                 fatalError("IREmitter: subscript store to undeclared container '\(name)' (IRLowerer guarantees declarations)")
             }
             let typed = builder.freshTemp()
-            bodyIR += " \(typed) = bitcast ptr \(newRaw) to %bk_array*\n"
-            bodyIR += builder.fmtStore(value: typed, type: "%bk_array*", ptr: slot) + "\n"
+            bodyIR += " \(typed) = bitcast ptr \(newRaw) to %pini_array*\n"
+            bodyIR += builder.fmtStore(value: typed, type: "%pini_array*", ptr: slot) + "\n"
         }
-        //  重要  字段容器的回写（`obj.field[i] = v`）：**同一个**字段指针，时序在 `bk_array_set` 之后。
+        //  重要  字段容器的回写（`obj.field[i] = v`）：**同一个**字段指针，时序在 `pini_array_set` 之后。
         //     行不通  不回写 ⇒ 分裂出的新句柄没人接住 ⇒ 那次写静默丢失（与上面变量槽那条同理）。
         emitSubscriptFieldWriteBack(fieldWriteBack, newRaw: newRaw)
     }
 
     /// 嵌套容器写入（`m[0][1] = v`）的自顶向下 COW 分裂，返回独占的最内层句柄：
-    /// 根的分裂结果写回其槽，内层由 `bk_*_ensure_unique_at` 就地改写，
+    /// 根的分裂结果写回其槽，内层由 `pini_*_ensure_unique_at` 就地改写，
     /// 每层按族定型（字典分裂还要给键装箱）。
     private func emitUniqueContainerHandle(_ container: IRExpr) -> IRValue {
         switch container {
@@ -2110,7 +2110,7 @@ public final class IREmitter {
             let raw = builder.freshTemp()
             bodyIR += " \(raw) = bitcast \(handleSpelling) \(value.ssaName) to ptr\n"
             let newRaw = builder.freshTemp()
-            bodyIR += " \(newRaw) = call ptr @bk_handle_ensure_unique(ptr \(raw))\n"
+            bodyIR += " \(newRaw) = call ptr @pini_handle_ensure_unique(ptr \(raw))\n"
             let typed = builder.freshTemp()
             bodyIR += " \(typed) = bitcast ptr \(newRaw) to \(handleSpelling)\n"
             if let slot = lookupSlot(name) {
@@ -2123,14 +2123,14 @@ public final class IREmitter {
             bodyIR += " \(parentRaw) = bitcast \(parent.llvmType) \(parent.ssaName) to ptr\n"
             let childRaw = builder.freshTemp()
             switch parent.llvmType {
-            case "%bk_dict*":
+            case "%pini_dict*":
                 let keyValue = emitExpr(index)
                 let (keySpelling, keyWidth, keyTag) = arrayElementABI(irType(of: index))
                 let keyBox = boxValue(keyValue, spelling: keySpelling)
-                bodyIR += " \(childRaw) = call ptr @bk_dict_ensure_unique_at(ptr \(parentRaw), ptr \(keyBox), i32 \(keyWidth), i32 \(keyTag))\n"
+                bodyIR += " \(childRaw) = call ptr @pini_dict_ensure_unique_at(ptr \(parentRaw), ptr \(keyBox), i32 \(keyWidth), i32 \(keyTag))\n"
             default:
                 let indexValue = emitExpr(index)
-                bodyIR += " \(childRaw) = call ptr @bk_array_ensure_unique_at(ptr \(parentRaw), i32 \(indexValue.ssaName))\n"
+                bodyIR += " \(childRaw) = call ptr @pini_array_ensure_unique_at(ptr \(parentRaw), i32 \(indexValue.ssaName))\n"
             }
             let childSpelling = resultType.llvmSpelling
             let typed = builder.freshTemp()
@@ -2361,9 +2361,9 @@ public final class IREmitter {
         bodyIR += " \(raw) = bitcast \(iterableValue.llvmType) \(iterableValue.ssaName) to ptr\n"
         let lenFn: String
         switch kind {
-        case .array: lenFn = "bk_array_len"
-        case .set: lenFn = "bk_set_len"
-        case .dict: lenFn = "bk_dict_len"
+        case .array: lenFn = "pini_array_len"
+        case .set: lenFn = "pini_set_len"
+        case .dict: lenFn = "pini_dict_len"
         }
         let len = builder.freshTemp()
         bodyIR += " \(len) = call i32 @\(lenFn)(ptr \(raw))\n"
@@ -2397,9 +2397,9 @@ public final class IREmitter {
             let elementType = elementTypes[position]
             let accessor: String
             switch kind {
-            case .array: accessor = "bk_array_get"
-            case .set: accessor = "bk_set_at"
-            case .dict: accessor = position == 0 ? "bk_dict_key_at" : "bk_dict_val_at"
+            case .array: accessor = "pini_array_get"
+            case .set: accessor = "pini_set_at"
+            case .dict: accessor = position == 0 ? "pini_dict_key_at" : "pini_dict_val_at"
             }
             let box = builder.freshTemp()
             bodyIR += " \(box) = call ptr @\(accessor)(ptr \(raw), i32 \(indexForBind))\n"
@@ -2585,7 +2585,7 @@ public final class IREmitter {
             }
 
             // `append` 以具名调用到达发射器而非专门节点，解释器则由运行时段应答。
-            // 这里接到数组族的符号上，元素 ABI 表与 `bk_array_set` 共用。
+            // 这里接到数组族的符号上，元素 ABI 表与 `pini_array_set` 共用。
             if function == "Array.append" {
                 guard args.count == 2, case .array(let elementType)? = returnType else {
                     fatalError(
@@ -2598,7 +2598,7 @@ public final class IREmitter {
             }
 
             // `last` / `pop` 同走这条命名调用通道：返回值是接收者里的元素，而运行时只有
-            // `bk_array_get` 能读它 —— 空数组的终止就落在那条负下标判定上。
+            // `pini_array_get` 能读它 —— 空数组的终止就落在那条负下标判定上。
             // 接收者只借一次：临时数组在读完元素后当场还，元素自己那一份已由发射层留住。
             if function == "Array.last", args.count == 1, let elementType = returnType {
                 defer { releaseOperand(arguments[0], args[0]) }
@@ -2635,25 +2635,25 @@ public final class IREmitter {
             } else {
                 argList = args.map { "\($0.llvmType) \($0.ssaName)" }.joined(separator: ", ")
             }
-            // 字符内建由解释器侧的 `RuntimeOps.characterBuiltins` 按名回答，这里接到 `bk_<名字>` 运行时段上；
+            // 字符内建由解释器侧的 `RuntimeOps.characterBuiltins` 按名回答，这里接到 `pini_<名字>` 运行时段上；
             // 表即白名单，与降载侧同一条规矩 ⇒ 不存在「降下来了却没人答」的名字。
             //  行不通  谓词不用 C 的 `_Bool`（零扩展的 i8）而回 `i32`：本层 Bool 是 i1，收敛在这里显式做掉。
             if BuiltinSurface.character.contains(function) {
                 usesCharacterShims = true
-                // 临时入口的 C 符号保持下划线命名；其余字符内建由语言名直出 `bk_<名字>`。
+                // 临时入口的 C 符号保持下划线命名；其余字符内建由语言名直出 `pini_<名字>`。
                 let symbol: String
                 switch function {
-                case "tempUtf8Bytes": symbol = "bk_temp_utf8_bytes"
-                case "tempByteToInt": symbol = "bk_temp_byte_to_int"
-                case "tempIntToByte": symbol = "bk_temp_int_to_byte"
-                default: symbol = "bk_\(function)"
+                case "tempUtf8Bytes": symbol = "pini_temp_utf8_bytes"
+                case "tempByteToInt": symbol = "pini_temp_byte_to_int"
+                case "tempIntToByte": symbol = "pini_temp_int_to_byte"
+                default: symbol = "pini_\(function)"
                 }
                 let result: IRValue
                 switch function {
                 case "chars", "tempUtf8Bytes":
                     let temp = builder.freshTemp()
                     bodyIR += " \(temp) = call ptr @\(symbol)(\(argList))\n"
-                    result = IRValue(llvmType: "%bk_array*", ssaName: temp)
+                    result = IRValue(llvmType: "%pini_array*", ssaName: temp)
                 case "tempByteToInt":
                     let temp = builder.freshTemp()
                     bodyIR += " \(temp) = call i32 @\(symbol)(\(argList))\n"
@@ -2683,7 +2683,7 @@ public final class IREmitter {
             // 探测类内建：符号返 `i32`（0/1），此处收敛到 `i1` —— 与谓词同规。
             if function == "exists" || function == "isDir" {
                 usesProcessShims = true
-                let symbol = function == "exists" ? "bk_exists" : "bk_is_dir"
+                let symbol = function == "exists" ? "pini_exists" : "pini_is_dir"
                 let raw = builder.freshTemp()
                 bodyIR += " \(raw) = call i32 @\(symbol)(\(argList))\n"
                 let flag = builder.freshTemp()
@@ -2695,17 +2695,17 @@ public final class IREmitter {
             // 返回值给空拼写，调用点若把它当值用会由语义层先拒。
             if function == "ensureDir" {
                 usesProcessShims = true
-                bodyIR += " call void @bk_ensure_dir(\(argList))\n"
+                bodyIR += " call void @pini_ensure_dir(\(argList))\n"
                 releaseCallArguments(args)
                 return IRValue(llvmType: "void", ssaName: "")
             }
-            // 运行时段命名的外呼符号按其 `bk_` 名字调用，declare 由声明段按同一开关发。
+            // 运行时段命名的外呼符号按其 `pini_` 名字调用，declare 由声明段按同一开关发。
             // `isCancel` 同规：运行时段回 `i32`（0/1），到 `i1` 在这里显式转 —— `call i1`
             // 对 `declare i32` 在 arm64 上只是碰巧能跑，不是 ABI。
             if function == "isCancel" {
                 usesErrorShims = true
                 let raw = builder.freshTemp()
-                bodyIR += " \(raw) = call i32 @bk_error_is_cancel(\(argList))\n"
+                bodyIR += " \(raw) = call i32 @pini_error_is_cancel(\(argList))\n"
                 let flag = builder.freshTemp()
                 bodyIR += " \(flag) = icmp ne i32 \(raw), 0\n"
                 releaseCallArguments(args)
@@ -2715,56 +2715,56 @@ public final class IREmitter {
             let symbolName: String
             if function == "toCString" {
                 usesCStrShim = true
-                symbolName = "bk_cstr"
+                symbolName = "pini_cstr"
             } else if function == "fromCString" {
                 usesCStrRetrieval = true
-                symbolName = "bk_str_from_cstr"
+                symbolName = "pini_str_from_cstr"
             } else if function == IRLowerer.stringHandleMakeName {
                 // 句柄位上的 Pini 串：运行时段复制一份并记 +1，指针交给 C。
                 // 名字带点 ⇒ 降载层产出，不可能是用户函数。
                 usesStringHandleNew = true
-                symbolName = "bk_str_handle_new"
+                symbolName = "pini_str_handle_new"
             } else if function == "sleep" {
                 // `sleep` 是并发内建里**唯一**被降载成一条普通调用、却又必须由后端实现的：
                 // 它按片睡、每片查一次取消 ⇒ 落点是原语层的运行时符号，不是 libc 的睡眠
-                // （理由见 `PiniRuntime` 里 `bk_sleep` 的注释）。
+                // （理由见 `PiniRuntime` 里 `pini_sleep` 的注释）。
                 usesSleepShim = true
-                symbolName = "bk_sleep"
+                symbolName = "pini_sleep"
             } else if function == "argv" {
                 // 宿主环境查询内建：降载侧按名降成既有 `call` 节点，解释器侧由执行器按名回答，
-                // LLVM 侧只差符号本身。接 `bk_argv`（无参、回字符串数组 = `%bk_array*`）。
+                // LLVM 侧只差符号本身。接 `pini_argv`（无参、回字符串数组 = `%pini_array*`）。
                 usesProcessShims = true
-                symbolName = "bk_argv"
+                symbolName = "pini_argv"
             } else if function == "moduleRoot" {
                 // 程序基准查询：解释器的答案是 `programBase ?? 进程 CWD`，LLVM 侧由入口注入
-                // 同一个值（`bk_set_program_base`），这里取回它，故两通道同一串。
+                // 同一个值（`pini_set_program_base`），这里取回它，故两通道同一串。
                 usesProcessShims = true
                 usesModuleRootShim = true
-                symbolName = "bk_module_root"
+                symbolName = "pini_module_root"
             } else if function == "listDir" {
-                // 目录枚举，同上：降载侧在册，LLVM 侧接 `bk_list_dir`
+                // 目录枚举，同上：降载侧在册，LLVM 侧接 `pini_list_dir`
                 // （一参 String、回**条目名字**数组，排序与错误语义镜像解释器）。
                 usesProcessShims = true
-                symbolName = "bk_list_dir"
+                symbolName = "pini_list_dir"
             } else if function == "Error" {
                 // 错误对象构造。err 槽装的是**运行时段对象句柄**（一个 i64 字），
                 //  行不通  不是名义类型指针：`%struct.Error*` 没有类型定义，落成它就是
                 // `use of undefined type`。
                 usesErrorShims = true
-                symbolName = "bk_error_create"
+                symbolName = "pini_error_create"
             } else if function == "CancelError" {
                 // 与 `Error` 只差那个「是取消」标志； 行不通  ABI 上不多传一个参数，而是各一个符号。
                 usesErrorShims = true
-                symbolName = "bk_cancel_error_create"
+                symbolName = "pini_cancel_error_create"
             } else if function == "cancel" {
                 // `Future.cancel()` 降载成一条普通调用；落点是运行时的取消入口，不是同名外部符号。
                 usesTaskCancel = true
-                symbolName = "bk_task_cancel"
+                symbolName = "pini_task_cancel"
             } else if function == "pini.err.message" {
                 // 只由降载层产出（`print(e)` 与 `e.message`）， 行不通  不是语言内建。
                 // 名字带点 ⇒ 不可能是合法的 Pini 标识符，与用户函数无从重名。
                 usesErrorShims = true
-                symbolName = "bk_error_message"
+                symbolName = "pini_error_message"
             } else {
                 symbolName = Self.mangle(function)
             }
@@ -2822,7 +2822,7 @@ public final class IREmitter {
                 bodyIR += " \(filled) = insertvalue \(aggregate) \(withTag), \(p.llvmType) \(p.ssaName), 1\n"
             } else {
                 var word = widenToWord(p)
-                // 枚举载荷（含散列档）走 bk_error_from_enum：默认码 = 基址或 tag，散列档查码表。
+                // 枚举载荷（含散列档）走 pini_error_from_enum：默认码 = 基址或 tag，散列档查码表。
                 // 非枚举载体没有 tag 槽，码就是基址；固定码 1/2 的载荷已造好盒子，原样入槽。
                 if errorCodes != nil || errorTagged {
                     if errorBaseCode >= 0x0100 {
@@ -2830,7 +2830,7 @@ public final class IREmitter {
                         let boxed = builder.freshTemp()
                         let table = errorCodes.map { errorCodeTablePointer($0) } ?? "null"
                         bodyIR +=
-                            " \(boxed) = call i64 @bk_error_from_enum(i64 \(word.ssaName),"
+                            " \(boxed) = call i64 @pini_error_from_enum(i64 \(word.ssaName),"
                             + " i32 \(errorBaseCode), ptr null, ptr \(table))\n"
                         word = IRValue(llvmType: "i64", ssaName: boxed)
                     }
@@ -2838,7 +2838,7 @@ public final class IREmitter {
                     usesErrorShims = true
                     let boxed = builder.freshTemp()
                     bodyIR +=
-                        " \(boxed) = call i64 @bk_error_with_code(i32 \(errorBaseCode))\n"
+                        " \(boxed) = call i64 @pini_error_with_code(i32 \(errorBaseCode))\n"
                     word = IRValue(llvmType: "i64", ssaName: boxed)
                 }
                 bodyIR += " \(filled) = insertvalue \(aggregate) \(withTag), i64 \(word.ssaName), 2\n"
@@ -3019,7 +3019,7 @@ public final class IREmitter {
             usesStringShims = true
             let hit = builder.freshTemp()
             bodyIR +=
-                " \(hit) = call i32 @bk_string_contains(ptr \(receiverValue.ssaName), "
+                " \(hit) = call i32 @pini_string_contains(ptr \(receiverValue.ssaName), "
                 + "ptr \(needleValue.ssaName))\n"
             releaseOperand(receiver, receiverValue)
             releaseOperand(needle, needleValue)
@@ -3037,7 +3037,7 @@ public final class IREmitter {
             usesStringShims = true
             let substringResult = builder.freshTemp()
             bodyIR +=
-                " \(substringResult) = call ptr @bk_substring(ptr \(receiverValue.ssaName), "
+                " \(substringResult) = call ptr @pini_substring(ptr \(receiverValue.ssaName), "
                 + "i32 \(startValue.ssaName), i32 \(endValue.ssaName))\n"
             releaseOperand(receiver, receiverValue)
             return IRValue(llvmType: "i8*", ssaName: substringResult)
@@ -3046,7 +3046,7 @@ public final class IREmitter {
             let receiverValue = emitExpr(receiver)
             let delimValue = emitExpr(delim)
             //  注意  本条**必须**置位：委派到运行时段之后，declare 靠这个标志出现。漏了它 ⇒
-            // 产物里只有 `call`，没有 `declare` ⇒ clang 报 `use of undefined value '@bk_string_split'`。
+            // 产物里只有 `call`，没有 `declare` ⇒ clang 报 `use of undefined value '@pini_string_split'`。
             usesStringShims = true
             let parts = emitStringSplit(
                 source: receiverValue.ssaName, delim: delimValue.ssaName, type: type)
@@ -3061,7 +3061,7 @@ public final class IREmitter {
             usesStringShims = true
             let trimLeftResult = builder.freshTemp()
             bodyIR +=
-                " \(trimLeftResult) = call ptr @bk_string_trim_left(ptr \(receiverValue.ssaName))\n"
+                " \(trimLeftResult) = call ptr @pini_string_trim_left(ptr \(receiverValue.ssaName))\n"
             releaseOperand(receiver, receiverValue)
             return IRValue(llvmType: "i8*", ssaName: trimLeftResult)
 
@@ -3071,7 +3071,7 @@ public final class IREmitter {
             usesStringShims = true
             let trimRightResult = builder.freshTemp()
             bodyIR +=
-                " \(trimRightResult) = call ptr @bk_string_trim_right(ptr \(receiverValue.ssaName))\n"
+                " \(trimRightResult) = call ptr @pini_string_trim_right(ptr \(receiverValue.ssaName))\n"
             releaseOperand(receiver, receiverValue)
             return IRValue(llvmType: "i8*", ssaName: trimRightResult)
 
@@ -3083,7 +3083,7 @@ public final class IREmitter {
             usesStringShims = true
             let indexResult = builder.freshTemp()
             bodyIR +=
-                " \(indexResult) = call i32 @bk_string_index_of(ptr \(receiverValue.ssaName), "
+                " \(indexResult) = call i32 @pini_string_index_of(ptr \(receiverValue.ssaName), "
                 + "ptr \(needleValue.ssaName))\n"
             releaseOperand(receiver, receiverValue)
             releaseOperand(needle, needleValue)
@@ -3109,7 +3109,7 @@ public final class IREmitter {
             // 它据此就地追加 —— 链式拼接只付最后一次拷贝，中间串不再走「分配 + 整串复制」。
             let lhsRaw = emitExpr(lhs)
             let rhsRaw = emitExpr(rhs)
-            // `Char` 参与拼接时先落成 C 串：它是八字节内联值，不能当指针传给 `bk_str_concat`。
+            // `Char` 参与拼接时先落成 C 串：它是八字节内联值，不能当指针传给 `pini_str_concat`。
             let lhsValue = irType(of: lhs) == .char ? charToCString(lhsRaw) : lhsRaw
             let rhsValue = irType(of: rhs) == .char ? charToCString(rhsRaw) : rhsRaw
             // 落成串之后，`Char` 自己那份份额就用完了：临时值当场归还，变量 / 字段的借用不动。
@@ -3130,7 +3130,7 @@ public final class IREmitter {
             //  行不通  退回 `strlen` + 精确分配：每级临时串都要重扫全长，且没有增容余量留给下次追加。
             usesStringBuilders = true
             bodyIR +=
-                " \(joined) = call ptr @bk_str_concat(ptr \(lhsValue.ssaName), "
+                " \(joined) = call ptr @pini_str_concat(ptr \(lhsValue.ssaName), "
                 + "ptr \(rhsValue.ssaName), i32 \(takesLhs ? 1 : 0))\n"
             // 两个操作数到此用完：左操作数是临时串时份额已随调用交出，否则就地还掉。
             if takesLhs {
@@ -3227,7 +3227,7 @@ public final class IREmitter {
         bodyIR += builder.fmtCondBr(cond: failed, thenLabelName: failLabel, elseLabelName: openLabel) + "\n"
         bodyIR += "\(failLabel):\n"
         let text = emitStringConstant(message)
-        bodyIR += " call void @bk_panic(ptr \(text.ssaName))\n"
+        bodyIR += " call void @pini_panic(ptr \(text.ssaName))\n"
         bodyIR += " unreachable\n"
         bodyIR += "\(openLabel):\n"
     }
@@ -3238,7 +3238,7 @@ public final class IREmitter {
         usesFileWrite = true
         let pathValue = emitExpr(path)
         let contentValue = emitExpr(content)
-        bodyIR += " call void @bk_write_file(ptr \(pathValue.ssaName), ptr \(contentValue.ssaName))\n"
+        bodyIR += " call void @pini_write_file(ptr \(pathValue.ssaName), ptr \(contentValue.ssaName))\n"
         releaseOperand(path, pathValue)
         releaseOperand(content, contentValue)
         return IRValue(llvmType: "void", ssaName: "")
@@ -3251,7 +3251,7 @@ public final class IREmitter {
         let pathValue = emitExpr(path)
         defer { releaseOperand(path, pathValue) }
         let contentValue = emitExpr(content)
-        bodyIR += " call void @bk_append_file(ptr \(pathValue.ssaName), ptr \(contentValue.ssaName))\n"
+        bodyIR += " call void @pini_append_file(ptr \(pathValue.ssaName), ptr \(contentValue.ssaName))\n"
         releaseOperand(content, contentValue)
         return IRValue(llvmType: "void", ssaName: "")
     }
@@ -3264,7 +3264,7 @@ public final class IREmitter {
         let pathValue = emitExpr(path)
         defer { releaseOperand(path, pathValue) }
         let content = builder.freshTemp()
-        bodyIR += " \(content) = call ptr @bk_read_file(ptr \(pathValue.ssaName))\n"
+        bodyIR += " \(content) = call ptr @pini_read_file(ptr \(pathValue.ssaName))\n"
         emitNullGuard(handle: content, message: "Pini runtime error: readFile could not read the file")
         // 用 `i8*`（而非 `ptr`）：`emitScalarPrint` 把这种拼写当 C 串；
         // 裸 `ptr` 会落进 %d 默认支，打印出地址。
@@ -3281,7 +3281,7 @@ public final class IREmitter {
         bodyIR += builder.fmtAlloca(name: errSlot, type: "i64") + "\n"
         let content = builder.freshTemp()
         bodyIR +=
-            " \(content) = call ptr @bk_try_read_file(ptr \(pathValue.ssaName), ptr \(errSlot))\n"
+            " \(content) = call ptr @pini_try_read_file(ptr \(pathValue.ssaName), ptr \(errSlot))\n"
         let errorWord = builder.freshTemp()
         bodyIR += builder.fmtLoad(name: errorWord, type: "i64", ptr: errSlot) + "\n"
         let spelling = IRType.result(ok: .string).llvmSpelling
@@ -3310,7 +3310,7 @@ public final class IREmitter {
         let contentValue = emitExpr(content)
         let errorWord = builder.freshTemp()
         bodyIR +=
-            " \(errorWord) = call i64 @bk_try_write_file(ptr \(pathValue.ssaName), ptr \(contentValue.ssaName))\n"
+            " \(errorWord) = call i64 @pini_try_write_file(ptr \(pathValue.ssaName), ptr \(contentValue.ssaName))\n"
         return emitUnitTryIOResult(errorWord: errorWord)
     }
 
@@ -3321,7 +3321,7 @@ public final class IREmitter {
         let contentValue = emitExpr(content)
         let errorWord = builder.freshTemp()
         bodyIR +=
-            " \(errorWord) = call i64 @bk_try_append_file(ptr \(pathValue.ssaName), ptr \(contentValue.ssaName))\n"
+            " \(errorWord) = call i64 @pini_try_append_file(ptr \(pathValue.ssaName), ptr \(contentValue.ssaName))\n"
         return emitUnitTryIOResult(errorWord: errorWord)
     }
 
@@ -3410,8 +3410,8 @@ public final class IREmitter {
             bodyIR += builder.fmtBr(labelName: exitLabel) + "\n"
         } else {
             // 陷阱去向与 `panicStmt` 同规：消息进 stderr、退出码 1、stdout 一个字节不动。
-            // 先 `printf` 再 `bk_panic(null)` 会把断言消息塞进程序输出流，并给 stderr 留一个空行。
-            bodyIR += " call void @bk_panic(ptr \(rendered.ssaName))\n"
+            // 先 `printf` 再 `pini_panic(null)` 会把断言消息塞进程序输出流，并给 stderr 留一个空行。
+            bodyIR += " call void @pini_panic(ptr \(rendered.ssaName))\n"
             bodyIR += builder.fmtBr(labelName: endLabel) + "\n"
         }
         bodyIR += "\(passLabel):\n"
@@ -3483,7 +3483,7 @@ public final class IREmitter {
             let message = emitStringConstant(
                 "Pini runtime error: printing an aggregate value is a later grid (value formatting)"
             )
-            bodyIR += " call void @bk_panic(ptr \(message.ssaName))\n"
+            bodyIR += " call void @pini_panic(ptr \(message.ssaName))\n"
             bodyIR += " unreachable\n"
             // 另起一块继续，保住语句流的块结构。控制流不会到这里：
             // panic 不返回。
@@ -3496,7 +3496,7 @@ public final class IREmitter {
         for argument in arguments {
             rendered.append((emitExpr(argument), irType(of: argument)))
         }
-        bodyIR += " call void @bk_print_lock()\n"
+        bodyIR += " call void @pini_print_lock()\n"
         for (index, item) in rendered.enumerated() {
             if index > 0 {
                 let space = emitStringConstant(" ")
@@ -3507,7 +3507,7 @@ public final class IREmitter {
             releaseHeldTemporary(item.value)
         }
         bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_newline)\n"
-        bodyIR += " call void @bk_print_unlock()\n"
+        bodyIR += " call void @pini_print_unlock()\n"
         return IRValue(llvmType: "void", ssaName: "")
     }
 
@@ -3528,8 +3528,8 @@ public final class IREmitter {
     // MARK: - 惰性引用（LazyRef）
 
     /// `LazyRef<T>(closure)`：取出初始化闭包的胖指针 { code, env }，确保类型特化的
-    /// 装箱 wrapper 已就位，再调 `bk_lazyref_create(wrapper, code, env, bytes, tag)`。
-    /// 句柄保持为不透明 `%bk_lazyref*`。
+    /// 装箱 wrapper 已就位，再调 `pini_lazyref_create(wrapper, code, env, bytes, tag)`。
+    /// 句柄保持为不透明 `%pini_lazyref*`。
     private func emitLazyRefConstruct(closure: IRExpr, type: IRType) -> IRValue {
         guard case .lazyRef(let element) = type else {
             fatalError("IREmitter: lazyRefConstruct type is not a lazyRef (IRLowerer guarantees)")
@@ -3546,13 +3546,13 @@ public final class IREmitter {
         bodyIR += " \(env) = extractvalue { ptr, ptr } \(closureValue.ssaName), 1\n"
         let wrapperName = ensureLazyRefWrapper(element: element, elemSpelling: elemSpelling)
         let handle = builder.freshTemp()
-        bodyIR += " \(handle) = call ptr @bk_lazyref_create(ptr @\(wrapperName), ptr \(code), ptr \(env), i32 \(bytes), i32 \(tag))\n"
+        bodyIR += " \(handle) = call ptr @pini_lazyref_create(ptr @\(wrapperName), ptr \(code), ptr \(env), i32 \(bytes), i32 \(tag))\n"
         let typed = builder.freshTemp()
-        bodyIR += " \(typed) = bitcast ptr \(handle) to %bk_lazyref*\n"
-        return IRValue(llvmType: "%bk_lazyref*", ssaName: typed)
+        bodyIR += " \(typed) = bitcast ptr \(handle) to %pini_lazyref*\n"
+        return IRValue(llvmType: "%pini_lazyref*", ssaName: typed)
     }
 
-    /// `handle.value`：`bk_lazyref_value(handle)` 交出缓存的元素箱，
+    /// `handle.value`：`pini_lazyref_value(handle)` 交出缓存的元素箱，
     /// 再从箱里把元素读出来。
     private func emitLazyRefValue(handle: IRExpr, element: IRType) -> IRValue {
         usesLazyRef = true
@@ -3560,7 +3560,7 @@ public final class IREmitter {
         let raw = builder.freshTemp()
         bodyIR += " \(raw) = bitcast \(handleValue.llvmType) \(handleValue.ssaName) to ptr\n"
         let box = builder.freshTemp()
-        bodyIR += " \(box) = call ptr @bk_lazyref_value(ptr \(raw))\n"
+        bodyIR += " \(box) = call ptr @pini_lazyref_value(ptr \(raw))\n"
         let spelling = element.llvmSpelling
         let value = builder.freshTemp()
         bodyIR += " \(value) = load \(spelling), ptr \(box)\n"
@@ -3575,10 +3575,10 @@ public final class IREmitter {
         usesWeakRef = true
         let targetValue = emitExpr(target)
         let handle = builder.freshTemp()
-        bodyIR += " \(handle) = call ptr @bk_weak_create(ptr \(targetValue.ssaName))\n"
+        bodyIR += " \(handle) = call ptr @pini_weak_create(ptr \(targetValue.ssaName))\n"
         let typed = builder.freshTemp()
-        bodyIR += " \(typed) = bitcast ptr \(handle) to %bk_weakref*\n"
-        return IRValue(llvmType: "%bk_weakref*", ssaName: typed)
+        bodyIR += " \(typed) = bitcast ptr \(handle) to %pini_weakref*\n"
+        return IRValue(llvmType: "%pini_weakref*", ssaName: typed)
     }
 
     /// `handle.value`：目标存活时留一份计数并包成 `some`，否则包成 `none`。
@@ -3592,7 +3592,7 @@ public final class IREmitter {
         let raw = builder.freshTemp()
         bodyIR += " \(raw) = bitcast \(handleValue.llvmType) \(handleValue.ssaName) to ptr\n"
         let object = builder.freshTemp()
-        bodyIR += " \(object) = call ptr @bk_weak_value(ptr \(raw))\n"
+        bodyIR += " \(object) = call ptr @pini_weak_value(ptr \(raw))\n"
         _ = retainCounted(IRValue(llvmType: "ptr", ssaName: object), type: element)
         let spelling = type.llvmSpelling
         let missing = builder.freshTemp()
@@ -3660,7 +3660,7 @@ public final class IREmitter {
         return (aggregate, layout.fieldSlot(of: slot))
     }
 
-    /// 默认实例的取用点：`bk_given_get(槽位, 初始化函数, 字节数)` → 盒指针，再 `memcpy` 一份到本地。
+    /// 默认实例的取用点：`pini_given_get(槽位, 初始化函数, 字节数)` → 盒指针，再 `memcpy` 一份到本地。
     /// `using` 取的是实参的副本，与传参一致：盒是程序级唯一的，交给调用点的却是值，写实例自身字段
     /// 等于改参数，只有经引用字段往下写才对所有取用点可见。字节数用过尾指针的整数形式，发两条真指令。
     private func emitGivenInstance(type: IRType) -> IRValue {
@@ -3677,9 +3677,9 @@ public final class IREmitter {
         let sizeTemp = builder.freshTemp()
         bodyIR += " \(sizeTemp) = ptrtoint ptr \(sizeEnd) to i64\n"
         let boxed = builder.freshTemp()
-        bodyIR += " \(boxed) = call ptr @bk_given_get(ptr @\(slot), ptr @\(initializer), i64 \(sizeTemp))\n"
+        bodyIR += " \(boxed) = call ptr @pini_given_get(ptr @\(slot), ptr @\(initializer), i64 \(sizeTemp))\n"
         // 副本也住堆：它是取用方自己的一份（`using` 的副本语义），但会随帧外逃，不能再落栈。
-        // 只搬载荷 —— 源盒的头是未初始化内存（`bk_given_get` 不写头），连头搬会把垃圾带进
+        // 只搬载荷 —— 源盒的头是未初始化内存（`pini_given_get` 不写头），连头搬会把垃圾带进
         // 新副本的弱计数与旁表指针；头由分配器按本类型写好。
         let local = emitNominalAllocation(aggregate: aggregate, typeID: nominalTypeID(for: type))
         let dstPayload = builder.freshTemp()
@@ -3722,7 +3722,7 @@ public final class IREmitter {
         let sizeTemp = builder.freshTemp()
         bodyIR += " \(sizeTemp) = ptrtoint ptr \(sizeEnd) to i64\n"
         let boxed = builder.freshTemp()
-        bodyIR += " \(boxed) = call ptr @bk_given_get(ptr @\(slot), ptr @\(initializer), i64 \(sizeTemp))\n"
+        bodyIR += " \(boxed) = call ptr @pini_given_get(ptr @\(slot), ptr @\(initializer), i64 \(sizeTemp))\n"
         return IRValue(llvmType: "ptr", ssaName: boxed)
     }
 
@@ -3750,7 +3750,7 @@ public final class IREmitter {
             bodyIR += builder.fmtStore(value: value, type: "ptr", ptr: field) + "\n"
         }
         let ignored = builder.freshTemp()
-        bodyIR += " \(ignored) = call i32 @bk_task_bind_sched(ptr \(handle), ptr \(binding))\n"
+        bodyIR += " \(ignored) = call i32 @pini_task_bind_sched(ptr \(handle), ptr \(binding))\n"
     }
 
     // MARK: - export 块的 C 面
@@ -3831,7 +3831,7 @@ public final class IREmitter {
                 if case .string = param.type {
                     usesStringRefcount = true
                     let copy = builder.freshTemp()
-                    bodyIR += " \(copy) = call i8* @bk_str_dup(i8* %a\(valueIndex))\n"
+                    bodyIR += " \(copy) = call i8* @pini_str_dup(i8* %a\(valueIndex))\n"
                     borrowed.append(copy)
                     args.append("i8* \(copy)")
                 } else if case .function = param.type {
@@ -3876,7 +3876,7 @@ public final class IREmitter {
             let errWord = builder.freshTemp()
             bodyIR += " \(errWord) = extractvalue \(resultType) \(result), 2\n"
             let errCode = builder.freshTemp()
-            bodyIR += " \(errCode) = call i32 @bk_error_code(i64 \(errWord))\n"
+            bodyIR += " \(errCode) = call i32 @pini_error_code(i64 \(errWord))\n"
             bodyIR += " br label %\(doneLabel)\n"
             bodyIR += "\(doneLabel):\n"
             let code = builder.freshTemp()
@@ -3899,10 +3899,10 @@ public final class IREmitter {
     /// 转发层复制品的归还点：调用一返回就放，早于任何分支 —— 三条出口都要走到；
     /// 被调方若把串存进字段，那份 +1 是它自己 retain 的。
     private func releaseBorrowedStrings(_ copies: [String]) {
-        for copy in copies { bodyIR += " call void @bk_str_release(i8* \(copy))\n" }
+        for copy in copies { bodyIR += " call void @pini_str_release(i8* \(copy))\n" }
     }
 
-    /// 给定块的取址函数：物化由 `bk_given_get` 负责，返回的是盒的字段区首地址。
+    /// 给定块的取址函数：物化由 `pini_given_get` 负责，返回的是盒的字段区首地址。
     /// C 看到的结构体只镜像字段，箱头在指针之前，调用方不需要知道它多宽。
     private func emitExportGetter(_ storage: IRExportStorage) {
         let type = IRType.nominal(name: storage.typeName, isObject: false)
@@ -3960,7 +3960,7 @@ public final class IREmitter {
         usesErrorShims = true
         let result = builder.freshTemp()
         bodyIR +=
-            " \(result) = call ptr @bk_error_lookup(i32 %code, ptr \(codePointer),"
+            " \(result) = call ptr @pini_error_lookup(i32 %code, ptr \(codePointer),"
             + " ptr \(namePointer), i32 \(entries.count))\n"
         bodyIR += " ret ptr \(result)\n}\n\n"
         bodyIR = savedBody + bodyIR
@@ -4023,7 +4023,7 @@ public final class IREmitter {
         heldAggregates = [:]
 
         // 引用计数头（第 0 格）：`%out` 是运行时给的**程序级单例盒**，头格写 1；
-        //  注意  它**不参与计数释放**（`bk_given_get` 持有到进程结束），写 1 只是形态一致。
+        //  注意  它**不参与计数释放**（`pini_given_get` 持有到进程结束），写 1 只是形态一致。
         let rcPtr = builder.freshTemp()
         bodyIR += builder.fmtGEP(name: rcPtr, aggregate: aggregate, base: "%out", indices: [0, 0]) + "\n"
         bodyIR += builder.fmtStore(value: "1", type: "i32", ptr: rcPtr) + "\n"
@@ -4061,9 +4061,9 @@ public final class IREmitter {
         return symbol
     }
 
-    /// 名义箱的分配：`bk_nominal_alloc` 写头四格（强计数 1、弱计数 0、类型标识、旁表 null）。
+    /// 名义箱的分配：`pini_nominal_alloc` 写头四格（强计数 1、弱计数 0、类型标识、旁表 null）。
     ///  行不通  不用栈 `alloca`：栈上的箱活不过创建帧，而名义值会随返回值 / 字段 / 闭包捕获跨帧。
-    /// 大小用过尾指针的整数形式，只依赖聚合体定义；与 `bk_given_get` 的单例盒不是同一条通道。
+    /// 大小用过尾指针的整数形式，只依赖聚合体定义；与 `pini_given_get` 的单例盒不是同一条通道。
     private func emitNominalAllocation(aggregate: String, typeID: Int32) -> String {
         usesNominalBoxes = true
         let sizeEnd = builder.freshTemp()
@@ -4071,7 +4071,7 @@ public final class IREmitter {
         let sizeTemp = builder.freshTemp()
         bodyIR += " \(sizeTemp) = ptrtoint ptr \(sizeEnd) to i64\n"
         let ptr = builder.freshTemp()
-        bodyIR += " \(ptr) = call ptr @bk_nominal_alloc(i64 \(sizeTemp), i32 \(typeID))\n"
+        bodyIR += " \(ptr) = call ptr @pini_nominal_alloc(i64 \(sizeTemp), i32 \(typeID))\n"
         return ptr
     }
 
@@ -4122,8 +4122,8 @@ public final class IREmitter {
     }
 
     /// 释放胶水对某个字段类型要做的动作。
-    /// 名义字段递归调它自己的胶水且不判空（`bk_nominal_release(null)` 返回 0）；容器字段用
-    /// `bk_*_destroy` 且必须判空（运行时的 destroy 对 null 是 `bk_panic`）；其余无动作。
+    /// 名义字段递归调它自己的胶水且不判空（`pini_nominal_release(null)` 返回 0）；容器字段用
+    /// `pini_*_destroy` 且必须判空（运行时的 destroy 对 null 是 `pini_panic`）；其余无动作。
     private func releaseCallee(for type: IRType) -> (symbol: String, needsNullGuard: Bool)? {
         if nominalKindSpelling(type) != nil {
             return (ensureReleaseFunction(for: type), false)
@@ -4132,7 +4132,7 @@ public final class IREmitter {
         // `needsNullGuard = true`：结构体的字符串字段可能还没写过，是 null。
         if isRefcountedString(type) {
             usesStringRefcount = true
-            return ("bk_str_release", true)
+            return ("pini_str_release", true)
         }
         if let destroy = Self.collectionDestroySymbol(for: type) {
             return (destroy, true)
@@ -4199,7 +4199,7 @@ public final class IREmitter {
         bodyIR += " \(sizeTemp) = ptrtoint ptr \(sizeEnd) to i64\n"
         let dst = builder.freshTemp()
         let copyTypeID = nominalTypeID(for: type)
-        bodyIR += " \(dst) = call ptr @bk_nominal_alloc(i64 \(sizeTemp), i32 \(copyTypeID))\n"
+        bodyIR += " \(dst) = call ptr @pini_nominal_alloc(i64 \(sizeTemp), i32 \(copyTypeID))\n"
         for (index, field) in decl.fields.enumerated() {
             let srcPtr = builder.freshTemp()
             bodyIR +=
@@ -4212,7 +4212,7 @@ public final class IREmitter {
                 // 容器：共享 + 留一份份额（COW 的分裂逻辑在运行时那一层）
                 let raw = builder.freshTemp()
                 bodyIR += " \(raw) = bitcast \(field.type.llvmSpelling) \(value) to ptr\n"
-                bodyIR += " call void @bk_handle_retain(ptr \(raw))\n"
+                bodyIR += " call void @pini_handle_retain(ptr \(raw))\n"
                 stored = value
             case .nominal:
                 if case .nominal(_, false) = field.type, let sub = ensureCopyFunction(for: field.type) {
@@ -4226,14 +4226,14 @@ public final class IREmitter {
                     // 对象 / 枚举字段：引用语义 ⇒ 共享 + retain
                     let raw = builder.freshTemp()
                     bodyIR += " \(raw) = bitcast \(field.type.llvmSpelling) \(value) to ptr\n"
-                    bodyIR += " call void @bk_nominal_retain(ptr \(raw))\n"
+                    bodyIR += " call void @pini_nominal_retain(ptr \(raw))\n"
                     stored = value
                 }
             case .string:
                 // **字符串字段**在结构体拷贝里也要留一份 —— 源箱与新箱是两个持有者。
-                //  注意  与另两族同规：`bk_str_retain` 对非本时段分配的串（全局常量）是无操作。
+                //  注意  与另两族同规：`pini_str_retain` 对非本时段分配的串（全局常量）是无操作。
                 usesStringRefcount = true
-                bodyIR += " call void @bk_str_retain(ptr \(value))\n"
+                bodyIR += " call void @pini_str_retain(ptr \(value))\n"
                 stored = value
             case nil:
                 stored = value  // 标量 / 外呼指针：直接复制
@@ -4287,7 +4287,7 @@ public final class IREmitter {
         if case .retained(.char) = type.shareClass {
             usesCharacterShims = true
             let kept = builder.freshTemp()
-            bodyIR += " \(kept) = call i64 @bk_char_retain(i64 \(value.ssaName))\n"
+            bodyIR += " \(kept) = call i64 @pini_char_retain(i64 \(value.ssaName))\n"
             return IRValue(llvmType: "i64", ssaName: kept)
         }
         guard let family = boxFamily(of: type) else { return value }
@@ -4295,13 +4295,13 @@ public final class IREmitter {
         bodyIR += " \(raw) = bitcast \(value.llvmType) \(value.ssaName) to ptr\n"
         switch family {
         case .container:
-            bodyIR += " call void @bk_handle_retain(ptr \(raw))\n"
+            bodyIR += " call void @pini_handle_retain(ptr \(raw))\n"
         case .nominal:
             usesNominalBoxes = true
-            bodyIR += " call void @bk_nominal_retain(ptr \(raw))\n"
+            bodyIR += " call void @pini_nominal_retain(ptr \(raw))\n"
         case .string:
             usesStringRefcount = true
-            bodyIR += " call void @bk_str_retain(ptr \(raw))\n"
+            bodyIR += " call void @pini_str_retain(ptr \(raw))\n"
         }
         return value
     }
@@ -4313,7 +4313,7 @@ public final class IREmitter {
         return moduleFunctions[symbol] == nil ? nil : symbol
     }
 
-    /// 逐类型合成的释放胶水 `define void @__release_<kind>_<mangled>(ptr %box)`：先 `bk_nominal_release`
+    /// 逐类型合成的释放胶水 `define void @__release_<kind>_<mangled>(ptr %box)`：先 `pini_nominal_release`
     /// 减头格，返回 1 表示归零，只有归零才进 sweep 逐字段释放并 `free`。
     /// 自引用类型靠「名字先占位」防合成期无限递归；枚举按 tag 分派，未选中 case 的载荷槽不碰。
     private func ensureReleaseFunction(for type: IRType) -> String {
@@ -4328,10 +4328,10 @@ public final class IREmitter {
         let savedUsesNominalBoxes = usesNominalBoxes
         builder = IRBuilder()
         bodyIR = ""
-        usesNominalBoxes = true  // 胶水体自己要用 bk_nominal_release
+        usesNominalBoxes = true  // 胶水体自己要用 pini_nominal_release
 
         let dead = builder.freshTemp()
-        bodyIR += " \(dead) = call i32 @bk_nominal_release(ptr %box)\n"
+        bodyIR += " \(dead) = call i32 @pini_nominal_release(ptr %box)\n"
         let isZero = builder.freshTemp()
         bodyIR += " \(isZero) = icmp ne i32 \(dead), 0\n"
         bodyIR += builder.fmtCondBr(cond: isZero, thenLabelName: "sweep", elseLabelName: "done") + "\n"
@@ -4432,12 +4432,12 @@ public final class IREmitter {
         return symbol
     }
 
-    /// 聚合元素的成员钩子：`__bk_agg_<n>_retain` / `__bk_agg_<n>_release`，入参是元素字节的地址。
+    /// 聚合元素的成员钩子：`__pini_agg_<n>_retain` / `__pini_agg_<n>_release`，入参是元素字节的地址。
     ///  注意  数组里存的是**内联结构体**，运行时不知道布局 ⇒ 深拷与销毁都调这两个函数；
     /// 名字按 `llvmSpelling` 去重，同一形状只合成一对。
     private func ensureAggregateHooks(for type: IRType) -> (retain: String, release: String) {
         if let existing = aggregateHooks[type.llvmSpelling] { return existing }
-        let stem = "__bk_agg_\(aggregateHooks.count)"
+        let stem = "__pini_agg_\(aggregateHooks.count)"
         let pair = (retain: "\(stem)_retain", release: "\(stem)_release")
         aggregateHooks[type.llvmSpelling] = pair
 
@@ -4454,7 +4454,7 @@ public final class IREmitter {
                 let loaded = builder.freshTemp()
                 bodyIR += builder.fmtLoad(name: loaded, type: type.llvmSpelling, ptr: "%slot") + "\n"
                 if isRetain {
-                    bodyIR += " call void @bk_nominal_retain(ptr \(loaded))\n"
+                    bodyIR += " call void @pini_nominal_retain(ptr \(loaded))\n"
                 } else {
                     bodyIR += " call void @\(releaseSymbol)(ptr \(loaded))\n"
                 }
@@ -4539,9 +4539,9 @@ public final class IREmitter {
         switch type {
         case .array(let elementType):
             let raw = builder.freshTemp()
-            bodyIR += " \(raw) = bitcast %bk_array* \(containerValue.ssaName) to ptr\n"
+            bodyIR += " \(raw) = bitcast %pini_array* \(containerValue.ssaName) to ptr\n"
             let count = builder.freshTemp()
-            bodyIR += " \(count) = call i32 @bk_array_len(ptr \(raw))\n"
+            bodyIR += " \(count) = call i32 @pini_array_len(ptr \(raw))\n"
             let lo = resolveSliceBound(start, count: count, defaultValue: "0")
             let hi = resolveSliceBound(end, count: count, defaultValue: count)
             return emitArraySliceBody(raw: raw, elementType: elementType, lo: lo, hi: hi)
@@ -4557,7 +4557,7 @@ public final class IREmitter {
             usesStringShims = true
             let sliced = builder.freshTemp()
             bodyIR +=
-                " \(sliced) = call ptr @bk_string_slice(ptr \(containerValue.ssaName), "
+                " \(sliced) = call ptr @pini_string_slice(ptr \(containerValue.ssaName), "
                 + "i32 \(startOpen ? "0" : "1"), i32 \(startOperand), "
                 + "i32 \(endOpen ? "0" : "1"), i32 \(endOperand))\n"
             return IRValue(llvmType: "i8*", ssaName: sliced)
@@ -4577,13 +4577,13 @@ public final class IREmitter {
         bodyIR += " \(length) = sub i32 \(hi), \(lo)\n"
 
         let create = builder.freshTemp()
-        bodyIR += " \(create) = call ptr @bk_array_create(i32 \(length))\n"
+        bodyIR += " \(create) = call ptr @pini_array_create(i32 \(length))\n"
         emitAggregateElementHooks(create, elementType: elementType)
         let handleSlot = builder.freshTemp()
-        bodyIR += builder.fmtAlloca(name: handleSlot, type: "%bk_array*") + "\n"
+        bodyIR += builder.fmtAlloca(name: handleSlot, type: "%pini_array*") + "\n"
         let createHandle = builder.freshTemp()
-        bodyIR += " \(createHandle) = bitcast ptr \(create) to %bk_array*\n"
-        bodyIR += builder.fmtStore(value: createHandle, type: "%bk_array*", ptr: handleSlot) + "\n"
+        bodyIR += " \(createHandle) = bitcast ptr \(create) to %pini_array*\n"
+        bodyIR += builder.fmtStore(value: createHandle, type: "%pini_array*", ptr: handleSlot) + "\n"
 
         let kSlot = builder.freshTemp()
         bodyIR += builder.fmtAlloca(name: kSlot, type: "i32") + "\n"
@@ -4603,13 +4603,13 @@ public final class IREmitter {
 
         bodyIR += "\(bodyLabel):\n"
         let current = builder.freshTemp()
-        bodyIR += builder.fmtLoad(name: current, type: "%bk_array*", ptr: handleSlot) + "\n"
+        bodyIR += builder.fmtLoad(name: current, type: "%pini_array*", ptr: handleSlot) + "\n"
         let currentRaw = builder.freshTemp()
-        bodyIR += " \(currentRaw) = bitcast %bk_array* \(current) to ptr\n"
+        bodyIR += " \(currentRaw) = bitcast %pini_array* \(current) to ptr\n"
         let srcIndex = builder.freshTemp()
         bodyIR += " \(srcIndex) = add i32 \(lo), \(k)\n"
         let boxPtr = builder.freshTemp()
-        bodyIR += " \(boxPtr) = call ptr @bk_array_get(ptr \(raw), i32 \(srcIndex))\n"
+        bodyIR += " \(boxPtr) = call ptr @pini_array_get(ptr \(raw), i32 \(srcIndex))\n"
         if let family = boxFamily(of: elementType) {
             // 元素按箱共享：源数组仍握着那一份，新数组必须自带一份，否则两个持有者只付一次。
             emitElementRetain(boxPtr: boxPtr, elementType: elementType, family: family)
@@ -4619,10 +4619,10 @@ public final class IREmitter {
             bodyIR += " call void @\(hooks.retain)(ptr \(boxPtr))\n"
         }
         let newRaw = builder.freshTemp()
-        bodyIR += " \(newRaw) = call ptr @bk_array_set(ptr \(currentRaw), i32 \(k), ptr \(boxPtr), i32 \(width), i32 \(elemTag))\n"
+        bodyIR += " \(newRaw) = call ptr @pini_array_set(ptr \(currentRaw), i32 \(k), ptr \(boxPtr), i32 \(width), i32 \(elemTag))\n"
         let newHandle = builder.freshTemp()
-        bodyIR += " \(newHandle) = bitcast ptr \(newRaw) to %bk_array*\n"
-        bodyIR += builder.fmtStore(value: newHandle, type: "%bk_array*", ptr: handleSlot) + "\n"
+        bodyIR += " \(newHandle) = bitcast ptr \(newRaw) to %pini_array*\n"
+        bodyIR += builder.fmtStore(value: newHandle, type: "%pini_array*", ptr: handleSlot) + "\n"
         bodyIR += builder.fmtBr(labelName: incLabel) + "\n"
 
         bodyIR += "\(incLabel):\n"
@@ -4635,11 +4635,11 @@ public final class IREmitter {
 
         bodyIR += "\(endLabel):\n"
         let result = builder.freshTemp()
-        bodyIR += builder.fmtLoad(name: result, type: "%bk_array*", ptr: handleSlot) + "\n"
-        return IRValue(llvmType: "%bk_array*", ssaName: result)
+        bodyIR += builder.fmtLoad(name: result, type: "%pini_array*", ptr: handleSlot) + "\n"
+        return IRValue(llvmType: "%pini_array*", ssaName: result)
     }
 
-    /// 从 `bk_array_get` 交出的元素箱里读出计数族值并留一份（箱仍归源数组，这里只加计数）。
+    /// 从 `pini_array_get` 交出的元素箱里读出计数族值并留一份（箱仍归源数组，这里只加计数）。
     private func emitElementRetain(boxPtr: String, elementType: IRType, family: BoxFamily) {
         let value = builder.freshTemp()
         bodyIR += builder.fmtLoad(name: value, type: elementType.llvmSpelling, ptr: boxPtr) + "\n"
@@ -4647,13 +4647,13 @@ public final class IREmitter {
         bodyIR += " \(raw) = bitcast \(elementType.llvmSpelling) \(value) to ptr\n"
         switch family {
         case .container:
-            bodyIR += " call void @bk_handle_retain(ptr \(raw))\n"
+            bodyIR += " call void @pini_handle_retain(ptr \(raw))\n"
         case .nominal:
             usesNominalBoxes = true
-            bodyIR += " call void @bk_nominal_retain(ptr \(raw))\n"
+            bodyIR += " call void @pini_nominal_retain(ptr \(raw))\n"
         case .string:
             usesStringRefcount = true
-            bodyIR += " call void @bk_str_retain(ptr \(raw))\n"
+            bodyIR += " call void @pini_str_retain(ptr \(raw))\n"
         }
     }
 
@@ -4669,22 +4669,22 @@ public final class IREmitter {
         bodyIR += builder.fmtAlloca(name: boxPtr, type: elemSpelling) + "\n"
         bodyIR += builder.fmtStore(value: elementValue.ssaName, type: elemSpelling, ptr: boxPtr) + "\n"
         let raw = builder.freshTemp()
-        bodyIR += " \(raw) = bitcast %bk_array* \(receiver.ssaName) to ptr\n"
+        bodyIR += " \(raw) = bitcast %pini_array* \(receiver.ssaName) to ptr\n"
         let appended = builder.freshTemp()
-        bodyIR += " \(appended) = call ptr @bk_array_append(ptr \(raw), ptr \(boxPtr), i32 \(width), i32 \(elemTag))\n"
+        bodyIR += " \(appended) = call ptr @pini_array_append(ptr \(raw), ptr \(boxPtr), i32 \(width), i32 \(elemTag))\n"
         let typed = builder.freshTemp()
-        bodyIR += " \(typed) = bitcast ptr \(appended) to %bk_array*\n"
-        return IRValue(llvmType: "%bk_array*", ssaName: typed)
+        bodyIR += " \(typed) = bitcast ptr \(appended) to %pini_array*\n"
+        return IRValue(llvmType: "%pini_array*", ssaName: typed)
     }
 
-    /// `xs.last()`：末元素。空数组由 `bk_array_get` 的负下标判定终止，与 `xs[len(xs) - 1]`
+    /// `xs.last()`：末元素。空数组由 `pini_array_get` 的负下标判定终止，与 `xs[len(xs) - 1]`
     /// 同一条断言通道。 注意  调用节点的返回值按新份额记账，计数元素得在这里留一份再交出。
     private func emitArrayLast(receiver: IRValue, elementType: IRType) -> IRValue {
         let raw = builder.freshTemp()
-        bodyIR += " \(raw) = bitcast %bk_array* \(receiver.ssaName) to ptr\n"
+        bodyIR += " \(raw) = bitcast %pini_array* \(receiver.ssaName) to ptr\n"
         let lastIndex = emitLastIndex(raw: raw)
         let boxPtr = builder.freshTemp()
-        bodyIR += " \(boxPtr) = call ptr @bk_array_get(ptr \(raw), i32 \(lastIndex))\n"
+        bodyIR += " \(boxPtr) = call ptr @pini_array_get(ptr \(raw), i32 \(lastIndex))\n"
         let value = builder.freshTemp()
         bodyIR += builder.fmtLoad(name: value, type: elementType.llvmSpelling, ptr: boxPtr) + "\n"
         return retainCounted(
@@ -4697,10 +4697,10 @@ public final class IREmitter {
         receiver: IRValue, elementType: IRType, resultType: IRType
     ) -> IRValue {
         let raw = builder.freshTemp()
-        bodyIR += " \(raw) = bitcast %bk_array* \(receiver.ssaName) to ptr\n"
+        bodyIR += " \(raw) = bitcast %pini_array* \(receiver.ssaName) to ptr\n"
         let lastIndex = emitLastIndex(raw: raw)
         let boxPtr = builder.freshTemp()
-        bodyIR += " \(boxPtr) = call ptr @bk_array_get(ptr \(raw), i32 \(lastIndex))\n"
+        bodyIR += " \(boxPtr) = call ptr @pini_array_get(ptr \(raw), i32 \(lastIndex))\n"
         let value = builder.freshTemp()
         bodyIR += builder.fmtLoad(name: value, type: elementType.llvmSpelling, ptr: boxPtr) + "\n"
         let keptLast = retainCounted(
@@ -4709,7 +4709,7 @@ public final class IREmitter {
             raw: raw, elementType: elementType, lo: "0", hi: lastIndex)
         let aggregate = resultType.llvmSpelling
         let head = builder.freshTemp()
-        bodyIR += " \(head) = insertvalue \(aggregate) undef, %bk_array* \(withoutLast.ssaName), 0\n"
+        bodyIR += " \(head) = insertvalue \(aggregate) undef, %pini_array* \(withoutLast.ssaName), 0\n"
         let pair = builder.freshTemp()
         bodyIR +=
             " \(pair) = insertvalue \(aggregate) \(head), "
@@ -4717,10 +4717,10 @@ public final class IREmitter {
         return IRValue(llvmType: aggregate, ssaName: pair)
     }
 
-    /// 末元素下标 `count - 1`：`count == 0` 时是 `-1`，由 `bk_array_get` 的边界判定终止。
+    /// 末元素下标 `count - 1`：`count == 0` 时是 `-1`，由 `pini_array_get` 的边界判定终止。
     private func emitLastIndex(raw: String) -> String {
         let count = builder.freshTemp()
-        bodyIR += " \(count) = call i32 @bk_array_len(ptr \(raw))\n"
+        bodyIR += " \(count) = call i32 @pini_array_len(ptr \(raw))\n"
         let index = builder.freshTemp()
         bodyIR += " \(index) = sub i32 \(count), 1\n"
         return index
@@ -4736,7 +4736,7 @@ public final class IREmitter {
 
     /// 单个 Array 切片边界：`none` 取默认值（start → "0"，end → 运行时计数）；整型为负时
     /// 按尾部计数，再夹进 [0, count] —— 全程用 select 链，不分支。
-    ///  注意  String 切片不走这里：其边界与夹取都在运行时（`bk_string_slice`）。
+    ///  注意  String 切片不走这里：其边界与夹取都在运行时（`pini_string_slice`）。
     private func resolveSliceBound(_ bound: IRExpr, count: String, defaultValue: String) -> String {
         if case .optionalConstruct(let isSome, _, _) = bound, !isSome {
             return defaultValue
@@ -4771,7 +4771,7 @@ public final class IREmitter {
         let containerValue = emitExpr(container)
         let indexValue = emitExpr(index)
 
-        // 字典的宽容读：先问存在性再取值。`bk_dict_get` 对缺失键 panic，
+        // 字典的宽容读：先问存在性再取值。`pini_dict_get` 对缺失键 panic，
         // 故「读回空再看」在这里不成立 —— 缺失键会直接终止进程。
         if case .dict(let keyType, _) = irType(of: container) {
             return emitDictOptionalGet(
@@ -4786,13 +4786,13 @@ public final class IREmitter {
             // 契约 §2.9 第 22 条：String 的「字符」= **字素簇**（与 `len` 同一定义）。
             usesStringShims = true
             count = builder.freshTemp()
-            bodyIR += " \(count) = call i32 @bk_string_count(ptr \(containerValue.ssaName))\n"
+            bodyIR += " \(count) = call i32 @pini_string_count(ptr \(containerValue.ssaName))\n"
         } else {
             let raw = builder.freshTemp()
-            bodyIR += " \(raw) = bitcast %bk_array* \(containerValue.ssaName) to ptr\n"
+            bodyIR += " \(raw) = bitcast %pini_array* \(containerValue.ssaName) to ptr\n"
             arrayRaw = raw
             count = builder.freshTemp()
-            bodyIR += " \(count) = call i32 @bk_array_len(ptr \(raw))\n"
+            bodyIR += " \(count) = call i32 @pini_array_len(ptr \(raw))\n"
         }
         let effective = tailCountIndex(index: indexValue.ssaName, count: count)
 
@@ -4816,12 +4816,12 @@ public final class IREmitter {
             // 到此 `effective` 必在 `[0, count)` ⇒ 运行时段不会 panic（容错通道）。
             let charAt = builder.freshTemp()
             bodyIR +=
-                " \(charAt) = call i64 @bk_string_char_at(ptr \(containerValue.ssaName), "
+                " \(charAt) = call i64 @pini_string_char_at(ptr \(containerValue.ssaName), "
                 + "i32 \(effective))\n"
             value = charAt
         } else {
             let boxPtr = builder.freshTemp()
-            bodyIR += " \(boxPtr) = call ptr @bk_array_get(ptr \(arrayRaw!), i32 \(effective))\n"
+            bodyIR += " \(boxPtr) = call ptr @pini_array_get(ptr \(arrayRaw!), i32 \(effective))\n"
             let loaded = builder.freshTemp()
             bodyIR += builder.fmtLoad(name: loaded, type: wrapped.llvmSpelling, ptr: boxPtr) + "\n"
             value = loaded
@@ -4854,10 +4854,10 @@ public final class IREmitter {
         let (keySpelling, keyWidth, keyTag) = arrayElementABI(keyType)
         let keyBox = boxValue(key, spelling: keySpelling)
         let raw = builder.freshTemp()
-        bodyIR += " \(raw) = bitcast %bk_dict* \(dict.ssaName) to ptr\n"
+        bodyIR += " \(raw) = bitcast %pini_dict* \(dict.ssaName) to ptr\n"
         let present = builder.freshTemp()
         bodyIR +=
-            " \(present) = call i32 @bk_dict_contains(ptr \(raw), ptr \(keyBox), "
+            " \(present) = call i32 @pini_dict_contains(ptr \(raw), ptr \(keyBox), "
             + "i32 \(keyWidth), i32 \(keyTag))\n"
         let slot = builder.freshTemp()
         bodyIR += builder.fmtAlloca(name: slot, type: aggregate) + "\n"
@@ -4872,7 +4872,7 @@ public final class IREmitter {
         bodyIR += "\(someLabel):\n"
         let valueBox = builder.freshTemp()
         bodyIR +=
-            " \(valueBox) = call ptr @bk_dict_get(ptr \(raw), ptr \(keyBox), "
+            " \(valueBox) = call ptr @pini_dict_get(ptr \(raw), ptr \(keyBox), "
             + "i32 \(keyWidth), i32 \(keyTag))\n"
         let value = builder.freshTemp()
         bodyIR += builder.fmtLoad(name: value, type: wrapped.llvmSpelling, ptr: valueBox) + "\n"
@@ -4926,9 +4926,9 @@ public final class IREmitter {
         case .string: return ("i8*", "8", 3)
         // `Char` 按值装箱（tag 7）：指针形态持一份带头串，容器销毁时按它归还。
         case .char: return ("i64", "8", 7)
-        case .array: return ("%bk_array*", "8", 4)
-        case .dict: return ("%bk_dict*", "8", 4)
-        case .set: return ("%bk_set*", "8", 4)
+        case .array: return ("%pini_array*", "8", 4)
+        case .dict: return ("%pini_dict*", "8", 4)
+        case .set: return ("%pini_set*", "8", 4)
         // 聚合按字节内联（tag 8）：宽度是这个结构体的 ABI 尺寸，成员动作交给合成钩子。
         //  注意  尺寸只能写成 LLVM 常量表达式 —— 发射层没有 DataLayout，算不了布局。
         //  行不通  字典 / 集合还不带成员钩子，聚合键值会只搬字节不还成员 ⇒ 那两族仍拒绝（`allowAggregate`）。
@@ -5002,7 +5002,7 @@ public final class IREmitter {
     private func releaseHeldString(_ value: IRValue) -> Bool {
         guard value.llvmType == "i8*" else { return false }
         guard heldStrings.remove(value.ssaName) != nil else { return false }
-        bodyIR += " call void @bk_str_release(ptr \(value.ssaName))\n"
+        bodyIR += " call void @pini_str_release(ptr \(value.ssaName))\n"
         return true
     }
 
@@ -5079,10 +5079,10 @@ public final class IREmitter {
             break
         case .retained(.string):
             usesStringRefcount = true
-            bodyIR += " call void @bk_str_release(ptr \(value.ssaName))\n"
+            bodyIR += " call void @pini_str_release(ptr \(value.ssaName))\n"
         case .retained(.char):
             usesCharacterShims = true
-            bodyIR += " call void @bk_char_release(i64 \(value.ssaName))\n"
+            bodyIR += " call void @pini_char_release(i64 \(value.ssaName))\n"
         case .retained, .valueBox:
             guard let symbol = releaseSymbol(for: type) else { return }
             let raw = builder.freshTemp()
@@ -5167,8 +5167,8 @@ public final class IREmitter {
         }
     }
 
-    /// 值在发射层的计数族：容器句柄、名义箱、计数串各走一套 C ABI（`bk_handle_*` / `bk_nominal_*` /
-    /// `bk_str_*`），归还规则同一套（别名点 retain · 作用域退出 release · 写前 release 旧值）。
+    /// 值在发射层的计数族：容器句柄、名义箱、计数串各走一套 C ABI（`pini_handle_*` / `pini_nominal_*` /
+    /// `pini_str_*`），归还规则同一套（别名点 retain · 作用域退出 release · 写前 release 旧值）。
     /// 返回 nil = 该类型不在计数族（标量 · 外部指针 · 聚合 · `LazyRef` 缺口 …）。
     private enum BoxFamily { case container, nominal, string }
 
@@ -5200,7 +5200,7 @@ public final class IREmitter {
         guard needsHooks else { return }
         let hooks = ensureAggregateHooks(for: elementType)
         bodyIR +=
-            " call void @bk_array_set_element_hooks(ptr \(handle), ptr @\(hooks.retain),"
+            " call void @pini_array_set_element_hooks(ptr \(handle), ptr @\(hooks.retain),"
             + " ptr @\(hooks.release))\n"
     }
 
@@ -5210,7 +5210,7 @@ public final class IREmitter {
         }
         let (elemSpelling, width, elemTag) = arrayElementABI(elementType, allowAggregate: true)
         let createTemp = builder.freshTemp()
-        bodyIR += " \(createTemp) = call ptr @bk_array_create(i32 \(elements.count))\n"
+        bodyIR += " \(createTemp) = call ptr @pini_array_create(i32 \(elements.count))\n"
         emitAggregateElementHooks(createTemp, elementType: elementType)
         // 构造句柄本就唯一（create 起始 shares==1），但 set 调用仍按同一形状串联，
         // 好让构造路径与写回路径共用一套代码。
@@ -5222,28 +5222,28 @@ public final class IREmitter {
             bodyIR += builder.fmtStore(value: value.ssaName, type: elemSpelling, ptr: boxPtr) + "\n"
             adoptElement(element, value, type: elementType)
             let nextRaw = builder.freshTemp()
-            bodyIR += " \(nextRaw) = call ptr @bk_array_set(ptr \(curRaw), i32 \(index), ptr \(boxPtr), i32 \(width), i32 \(elemTag))\n"
+            bodyIR += " \(nextRaw) = call ptr @pini_array_set(ptr \(curRaw), i32 \(index), ptr \(boxPtr), i32 \(width), i32 \(elemTag))\n"
             curRaw = nextRaw
         }
         let handle = builder.freshTemp()
-        bodyIR += " \(handle) = bitcast ptr \(curRaw) to %bk_array*\n"
+        bodyIR += " \(handle) = bitcast ptr \(curRaw) to %pini_array*\n"
         // 新句柄起始 shares == 1；入账由求值出口按效果表统一做。
-        return IRValue(llvmType: "%bk_array*", ssaName: handle)
+        return IRValue(llvmType: "%pini_array*", ssaName: handle)
     }
 
     private func emitSubscriptGet(container: IRExpr, index: IRExpr, type: IRType) -> IRValue {
         let containerValue = emitExpr(container)
         let indexValue = emitExpr(index)
 
-        // 字典读取：键按自身类型装箱；键缺失时由 `bk_dict_get` 内部 panic，
+        // 字典读取：键按自身类型装箱；键缺失时由 `pini_dict_get` 内部 panic，
         // 不能靠「读回空再看」来判存在性。
         if case .dict(let keyType, let valueType) = irType(of: container) {
             let (keySpelling, keyWidth, keyTag) = arrayElementABI(keyType)
             let keyBox = boxValue(indexValue, spelling: keySpelling)
             let raw = builder.freshTemp()
-            bodyIR += " \(raw) = bitcast %bk_dict* \(containerValue.ssaName) to ptr\n"
+            bodyIR += " \(raw) = bitcast %pini_dict* \(containerValue.ssaName) to ptr\n"
             let valueBox = builder.freshTemp()
-            bodyIR += " \(valueBox) = call ptr @bk_dict_get(ptr \(raw), ptr \(keyBox), i32 \(keyWidth), i32 \(keyTag))\n"
+            bodyIR += " \(valueBox) = call ptr @pini_dict_get(ptr \(raw), ptr \(keyBox), i32 \(keyWidth), i32 \(keyTag))\n"
             let value = builder.freshTemp()
             bodyIR += builder.fmtLoad(name: value, type: valueType.llvmSpelling, ptr: valueBox) + "\n"
             return IRValue(llvmType: valueType.llvmSpelling, ssaName: value)
@@ -5256,20 +5256,20 @@ public final class IREmitter {
             usesStringShims = true
             let charAt = builder.freshTemp()
             bodyIR +=
-                " \(charAt) = call i64 @bk_string_char_at(ptr \(containerValue.ssaName), "
+                " \(charAt) = call i64 @pini_string_char_at(ptr \(containerValue.ssaName), "
                 + "i32 \(indexValue.ssaName))\n"
             return IRValue(llvmType: "i64", ssaName: charAt)
         }
 
         let raw = builder.freshTemp()
-        bodyIR += " \(raw) = bitcast %bk_array* \(containerValue.ssaName) to ptr\n"
+        bodyIR += " \(raw) = bitcast %pini_array* \(containerValue.ssaName) to ptr\n"
         let count = builder.freshTemp()
-        bodyIR += " \(count) = call i32 @bk_array_len(ptr \(raw))\n"
-        // 负下标按尾部计数；越界仍由 `bk_array_get` 内部 panic ——
+        bodyIR += " \(count) = call i32 @pini_array_len(ptr \(raw))\n"
+        // 负下标按尾部计数；越界仍由 `pini_array_get` 内部 panic ——
         // 走安全断言通道，错误码 E5-005。
         let effective = tailCountIndex(index: indexValue.ssaName, count: count)
         let boxPtr = builder.freshTemp()
-        bodyIR += " \(boxPtr) = call ptr @bk_array_get(ptr \(raw), i32 \(effective))\n"
+        bodyIR += " \(boxPtr) = call ptr @pini_array_get(ptr \(raw), i32 \(effective))\n"
         let value = builder.freshTemp()
         bodyIR += builder.fmtLoad(name: value, type: type.llvmSpelling, ptr: boxPtr) + "\n"
         return IRValue(llvmType: type.llvmSpelling, ssaName: value)
@@ -5281,15 +5281,15 @@ public final class IREmitter {
         switch irType(of: argument) {
         case .dict:
             let raw = builder.freshTemp()
-            bodyIR += " \(raw) = bitcast %bk_dict* \(value.ssaName) to ptr\n"
+            bodyIR += " \(raw) = bitcast %pini_dict* \(value.ssaName) to ptr\n"
             let count = builder.freshTemp()
-            bodyIR += " \(count) = call i32 @bk_dict_len(ptr \(raw))\n"
+            bodyIR += " \(count) = call i32 @pini_dict_len(ptr \(raw))\n"
             return IRValue(llvmType: "i32", ssaName: count)
         case .set:
             let raw = builder.freshTemp()
-            bodyIR += " \(raw) = bitcast %bk_set* \(value.ssaName) to ptr\n"
+            bodyIR += " \(raw) = bitcast %pini_set* \(value.ssaName) to ptr\n"
             let count = builder.freshTemp()
-            bodyIR += " \(count) = call i32 @bk_set_len(ptr \(raw))\n"
+            bodyIR += " \(count) = call i32 @pini_set_len(ptr \(raw))\n"
             return IRValue(llvmType: "i32", ssaName: count)
         case .string:
             // 契约 §2.9 第 22 条：**字素簇**计数，与解释器的 `text.count` 同一定义。
@@ -5297,13 +5297,13 @@ public final class IREmitter {
             // 只在组合序列上分歧 —— 但正是它与下标的字节寻址**叠在一起**，把自举切错。
             usesStringShims = true
             let charCount = builder.freshTemp()
-            bodyIR += " \(charCount) = call i32 @bk_string_count(ptr \(value.ssaName))\n"
+            bodyIR += " \(charCount) = call i32 @pini_string_count(ptr \(value.ssaName))\n"
             return IRValue(llvmType: "i32", ssaName: charCount)
         default:
             let raw = builder.freshTemp()
-            bodyIR += " \(raw) = bitcast %bk_array* \(value.ssaName) to ptr\n"
+            bodyIR += " \(raw) = bitcast %pini_array* \(value.ssaName) to ptr\n"
             let count = builder.freshTemp()
-            bodyIR += " \(count) = call i32 @bk_array_len(ptr \(raw))\n"
+            bodyIR += " \(count) = call i32 @pini_array_len(ptr \(raw))\n"
             return IRValue(llvmType: "i32", ssaName: count)
         }
     }
@@ -5324,7 +5324,7 @@ public final class IREmitter {
         let (keySpelling, keyWidth, keyTag) = arrayElementABI(keyType)
         let (valueSpelling, valueWidth, valueTag) = arrayElementABI(valueType)
         let create = builder.freshTemp()
-        bodyIR += " \(create) = call ptr @bk_dict_create()\n"
+        bodyIR += " \(create) = call ptr @pini_dict_create()\n"
         var curRaw = create
         for entry in entries {
             let keyNode = entry.key
@@ -5332,20 +5332,20 @@ public final class IREmitter {
             let keyValue = emitExpr(keyNode)
             let keyBox = boxValue(keyValue, spelling: keySpelling)
             adoptElement(keyNode, keyValue, type: keyType)
-            let dictValue = IRValue(llvmType: "%bk_dict*", ssaName: curRaw)
+            let dictValue = IRValue(llvmType: "%pini_dict*", ssaName: curRaw)
             let raw = builder.freshTemp()
-            bodyIR += " \(raw) = bitcast %bk_dict* \(dictValue.ssaName) to ptr\n"
+            bodyIR += " \(raw) = bitcast %pini_dict* \(dictValue.ssaName) to ptr\n"
             let value = emitExpr(valueNode)
             let valueBox = boxValue(value, spelling: valueSpelling)
             adoptElement(valueNode, value, type: valueType)
             let nextRaw = builder.freshTemp()
-            bodyIR += " \(nextRaw) = call ptr @bk_dict_set(ptr \(raw), ptr \(keyBox), i32 \(keyWidth), i32 \(keyTag), ptr \(valueBox), i32 \(valueWidth), i32 \(valueTag))\n"
+            bodyIR += " \(nextRaw) = call ptr @pini_dict_set(ptr \(raw), ptr \(keyBox), i32 \(keyWidth), i32 \(keyTag), ptr \(valueBox), i32 \(valueWidth), i32 \(valueTag))\n"
             curRaw = nextRaw
         }
         let handle = builder.freshTemp()
-        bodyIR += " \(handle) = bitcast ptr \(curRaw) to %bk_dict*\n"
+        bodyIR += " \(handle) = bitcast ptr \(curRaw) to %pini_dict*\n"
         // 新句柄起始 shares == 1；入账由求值出口按效果表统一做。
-        return IRValue(llvmType: "%bk_dict*", ssaName: handle)
+        return IRValue(llvmType: "%pini_dict*", ssaName: handle)
     }
 
     private func emitSetLiteral(elements: [IRExpr], type: IRType) -> IRValue {
@@ -5354,20 +5354,20 @@ public final class IREmitter {
         }
         let (elemSpelling, width, elemTag) = arrayElementABI(elementType)
         let create = builder.freshTemp()
-        bodyIR += " \(create) = call ptr @bk_set_create()\n"
+        bodyIR += " \(create) = call ptr @pini_set_create()\n"
         var curRaw = create
         for element in elements {
             let value = emitExpr(element)
             let box = boxValue(value, spelling: elemSpelling)
             adoptElement(element, value, type: elementType)
             let nextRaw = builder.freshTemp()
-            bodyIR += " \(nextRaw) = call ptr @bk_set_add(ptr \(curRaw), ptr \(box), i32 \(width), i32 \(elemTag))\n"
+            bodyIR += " \(nextRaw) = call ptr @pini_set_add(ptr \(curRaw), ptr \(box), i32 \(width), i32 \(elemTag))\n"
             curRaw = nextRaw
         }
         let handle = builder.freshTemp()
-        bodyIR += " \(handle) = bitcast ptr \(curRaw) to %bk_set*\n"
+        bodyIR += " \(handle) = bitcast ptr \(curRaw) to %pini_set*\n"
         // 新句柄起始 shares == 1；入账由求值出口按效果表统一做。
-        return IRValue(llvmType: "%bk_set*", ssaName: handle)
+        return IRValue(llvmType: "%pini_set*", ssaName: handle)
     }
 
     /// 把任意标量载荷拓宽成类型擦除的错误字（i64）：
@@ -5401,7 +5401,7 @@ public final class IREmitter {
             bodyIR += " \(t) = ptrtoint ptr \(value.ssaName) to i64\n"
             return IRValue(llvmType: "i64", ssaName: t)
         default:
-            // 具名指针（`%bk_array*` / `%struct.X*` / `%enum.X*` …）：与 `ptr` 同一条路。
+            // 具名指针（`%pini_array*` / `%struct.X*` / `%enum.X*` …）：与 `ptr` 同一条路。
             if value.llvmType.hasSuffix("*") {
                 let t = builder.freshTemp()
                 bodyIR += " \(t) = ptrtoint \(value.llvmType) \(value.ssaName) to i64\n"
@@ -5519,13 +5519,13 @@ public final class IREmitter {
             let raw = builder.freshTemp()
             if lhsType == .char, rhsType == .char {
                 bodyIR +=
-                    " \(raw) = call i32 @bk_char_equal(i64 \(lhsValue.ssaName), i64 \(rhsValue.ssaName))\n"
+                    " \(raw) = call i32 @pini_char_equal(i64 \(lhsValue.ssaName), i64 \(rhsValue.ssaName))\n"
             } else if lhsType == .char {
                 bodyIR +=
-                    " \(raw) = call i32 @bk_char_equal_string(i64 \(lhsValue.ssaName), ptr \(rhsValue.ssaName))\n"
+                    " \(raw) = call i32 @pini_char_equal_string(i64 \(lhsValue.ssaName), ptr \(rhsValue.ssaName))\n"
             } else {
                 bodyIR +=
-                    " \(raw) = call i32 @bk_char_equal_string(i64 \(rhsValue.ssaName), ptr \(lhsValue.ssaName))\n"
+                    " \(raw) = call i32 @pini_char_equal_string(i64 \(rhsValue.ssaName), ptr \(lhsValue.ssaName))\n"
             }
             let flag = builder.freshTemp()
             bodyIR += " \(flag) = icmp \(op == .notEqual ? "eq" : "ne") i32 \(raw), 0\n"
@@ -5638,18 +5638,18 @@ public final class IREmitter {
     }
 
     /// 内建打印：值 + 换行。聚合按解释器的渲染递归展开（`[e1, e2]`、
-    /// `some(载荷)` / `none`）。F64 经 `bk_double_to_string`（最短往返），
+    /// `some(载荷)` / `none`）。F64 经 `pini_double_to_string`（最短往返），
     /// 该 C 串在 printf 用完后立即释放。
     private func emitPrint(_ argument: IRExpr) -> IRValue {
         let type = irType(of: argument)
         let value = emitExpr(argument)
-        // 一行是一条记录：拼装期的多段 `printf` 由 `bk_print_lock` 连成一段，并发下不与他行交错。
-        bodyIR += " call void @bk_print_lock()\n"
+        // 一行是一条记录：拼装期的多段 `printf` 由 `pini_print_lock` 连成一段，并发下不与他行交错。
+        bodyIR += " call void @pini_print_lock()\n"
         emitValuePrint(value: value, type: type)
         // 打印是消费点：临时值印完即还，变量 / 字段的份额不在账上 ⇒ 那一条不动作。
         releaseHeldTemporary(value)
         bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_newline)\n"
-        bodyIR += " call void @bk_print_unlock()\n"
+        bodyIR += " call void @pini_print_unlock()\n"
         return IRValue(llvmType: "void", ssaName: "")
     }
 
@@ -5681,13 +5681,13 @@ public final class IREmitter {
             bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_int, i32 \(narrow))\n"
         case "double":
             let rendered = builder.freshTemp()
-            bodyIR += " \(rendered) = call ptr @bk_double_to_string(double \(value.ssaName))\n"
+            bodyIR += " \(rendered) = call ptr @pini_double_to_string(double \(value.ssaName))\n"
             bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_string, ptr \(rendered))\n"
-            // 这处临时串由本运行时段分配（`bk_double_to_string` 走带头的分配器）
+            // 这处临时串由本运行时段分配（`pini_double_to_string` 走带头的分配器）
             // ⇒ 释放入口跟着换族。 注意  它是**当场消费掉**的临时值，故直接还，
             //  行不通  不进账本（账本记的是待决定归属的那些）。
             usesStringRefcount = true
-            bodyIR += " call void @bk_str_release(ptr \(rendered))\n"
+            bodyIR += " call void @pini_str_release(ptr \(rendered))\n"
         case "i8*":
             bodyIR += " call i32 (ptr, ...) @printf(ptr @fmt_string, ptr \(value.ssaName))\n"
         default:
@@ -5704,9 +5704,9 @@ public final class IREmitter {
             let open = emitStringConstant("[")
             bodyIR += " call i32 (ptr, ...) @printf(ptr \(open.ssaName))\n"
             let raw = builder.freshTemp()
-            bodyIR += " \(raw) = bitcast %bk_array* \(value.ssaName) to ptr\n"
+            bodyIR += " \(raw) = bitcast %pini_array* \(value.ssaName) to ptr\n"
             let count = builder.freshTemp()
-            bodyIR += " \(count) = call i32 @bk_array_len(ptr \(raw))\n"
+            bodyIR += " \(count) = call i32 @pini_array_len(ptr \(raw))\n"
             let kSlot = builder.freshTemp()
             bodyIR += builder.fmtAlloca(name: kSlot, type: "i32") + "\n"
             bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: kSlot) + "\n"
@@ -5737,7 +5737,7 @@ public final class IREmitter {
 
             bodyIR += "\(elemLabel):\n"
             let boxPtr = builder.freshTemp()
-            bodyIR += " \(boxPtr) = call ptr @bk_array_get(ptr \(raw), i32 \(k))\n"
+            bodyIR += " \(boxPtr) = call ptr @pini_array_get(ptr \(raw), i32 \(k))\n"
             let element = builder.freshTemp()
             bodyIR += builder.fmtLoad(name: element, type: elementType.llvmSpelling, ptr: boxPtr) + "\n"
             emitValuePrint(
@@ -5921,7 +5921,7 @@ public final class IREmitter {
             }
             bodyIR += "fmt.enum.fail.\(id):\n"
             let failText = emitStringConstant("Pini runtime error: enum value has unknown tag")
-            bodyIR += " call void @bk_panic(ptr \(failText.ssaName))\n"
+            bodyIR += " call void @pini_panic(ptr \(failText.ssaName))\n"
             bodyIR += " unreachable\n"
             bodyIR += "\(endLabel):\n"
             terminated = false
@@ -5932,9 +5932,9 @@ public final class IREmitter {
             let open = emitStringConstant("{")
             bodyIR += " call i32 (ptr, ...) @printf(ptr \(open.ssaName))\n"
             let raw = builder.freshTemp()
-            bodyIR += " \(raw) = bitcast %bk_dict* \(value.ssaName) to ptr\n"
+            bodyIR += " \(raw) = bitcast %pini_dict* \(value.ssaName) to ptr\n"
             let count = builder.freshTemp()
-            bodyIR += " \(count) = call i32 @bk_dict_len(ptr \(raw))\n"
+            bodyIR += " \(count) = call i32 @pini_dict_len(ptr \(raw))\n"
             let kSlot = builder.freshTemp()
             bodyIR += builder.fmtAlloca(name: kSlot, type: "i32") + "\n"
             bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: kSlot) + "\n"
@@ -5965,7 +5965,7 @@ public final class IREmitter {
 
             bodyIR += "\(elemLabel):\n"
             let keyBox = builder.freshTemp()
-            bodyIR += " \(keyBox) = call ptr @bk_dict_key_at(ptr \(raw), i32 \(k))\n"
+            bodyIR += " \(keyBox) = call ptr @pini_dict_key_at(ptr \(raw), i32 \(k))\n"
             let keyValue = builder.freshTemp()
             bodyIR += builder.fmtLoad(name: keyValue, type: keyType.llvmSpelling, ptr: keyBox) + "\n"
             emitValuePrint(
@@ -5975,7 +5975,7 @@ public final class IREmitter {
             let colon = emitStringConstant(": ")
             bodyIR += " call i32 (ptr, ...) @printf(ptr \(colon.ssaName))\n"
             let valueBox = builder.freshTemp()
-            bodyIR += " \(valueBox) = call ptr @bk_dict_val_at(ptr \(raw), i32 \(k))\n"
+            bodyIR += " \(valueBox) = call ptr @pini_dict_val_at(ptr \(raw), i32 \(k))\n"
             let dictValue = builder.freshTemp()
             bodyIR += builder.fmtLoad(name: dictValue, type: valueType.llvmSpelling, ptr: valueBox) + "\n"
             emitValuePrint(
@@ -5997,13 +5997,13 @@ public final class IREmitter {
             bodyIR += " call i32 (ptr, ...) @printf(ptr \(close.ssaName))\n"
 
         case .set(let elementType):
-            // 集合渲染：`{e1, e2, ...}`，用 `bk_set_at` 按序取元素。
+            // 集合渲染：`{e1, e2, ...}`，用 `pini_set_at` 按序取元素。
             let open = emitStringConstant("{")
             bodyIR += " call i32 (ptr, ...) @printf(ptr \(open.ssaName))\n"
             let raw = builder.freshTemp()
-            bodyIR += " \(raw) = bitcast %bk_set* \(value.ssaName) to ptr\n"
+            bodyIR += " \(raw) = bitcast %pini_set* \(value.ssaName) to ptr\n"
             let count = builder.freshTemp()
-            bodyIR += " \(count) = call i32 @bk_set_len(ptr \(raw))\n"
+            bodyIR += " \(count) = call i32 @pini_set_len(ptr \(raw))\n"
             let kSlot = builder.freshTemp()
             bodyIR += builder.fmtAlloca(name: kSlot, type: "i32") + "\n"
             bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: kSlot) + "\n"
@@ -6034,7 +6034,7 @@ public final class IREmitter {
 
             bodyIR += "\(elemLabel):\n"
             let boxPtr = builder.freshTemp()
-            bodyIR += " \(boxPtr) = call ptr @bk_set_at(ptr \(raw), i32 \(k))\n"
+            bodyIR += " \(boxPtr) = call ptr @pini_set_at(ptr \(raw), i32 \(k))\n"
             let element = builder.freshTemp()
             bodyIR += builder.fmtLoad(name: element, type: elementType.llvmSpelling, ptr: boxPtr) + "\n"
             emitValuePrint(
@@ -6103,11 +6103,11 @@ public final class IREmitter {
     }
 
     /// 字符串头长度（字节）：`rc` / `len` / `cap` / `graphemes` 四个 i32。
-    ///  注意  运行时段的 `bk_str_header_bytes()` 是同一事实源，`StringHeaderLayoutTests` 断言两边相等。
+    ///  注意  运行时段的 `pini_str_header_bytes()` 是同一事实源，`StringHeaderLayoutTests` 断言两边相等。
     static let stringHeaderBytes = 16
 
     /// 带索引表槽的最小容量：更短的串连一个 64 字素块都填不满，建表不划算。
-    ///  注意  运行时段的 `bk_str_table_min_cap()` 是同一事实源，测试断言两边相等。
+    ///  注意  运行时段的 `pini_str_table_min_cap()` 是同一事实源，测试断言两边相等。
     static let stringTableMinCap = 128
 
     /// 载荷之后为索引表槽预留的字节数：槽地址向下对齐后占 8 字节，最多用到 `cap + 15`。
@@ -6400,7 +6400,7 @@ public final class IREmitter {
         }
         yieldPointCount += 1
         let index = yieldPointCount
-        // 句柄槽也走 `declareLocalSlot`：**同一个**声明序列 ⇒ 帧序里那串 `bk_task_slot` 的顺序与
+        // 句柄槽也走 `declareLocalSlot`：**同一个**声明序列 ⇒ 帧序里那串 `pini_task_slot` 的顺序与
         // 体走出来的顺序逐项一致，重放才命中同一批块。（名字给的是裸名，`%de6b.` 前缀由该函数加。）
         let handleSlot = declareLocalSlot(named: "%pending_handle_\(index)", spelling: "ptr")
         bodyIR += builder.fmtStore(value: handle.ssaName, type: "ptr", ptr: handleSlot) + "\n"
@@ -6408,7 +6408,7 @@ public final class IREmitter {
         let preOut = builder.freshTemp()
         bodyIR += " \(preOut) = alloca { i64, i64, i64 }, align 8\n"
         let status = builder.freshTemp()
-        bodyIR += " \(status) = call i32 @bk_task_await(ptr \(handle.ssaName), ptr \(preOut))\n"
+        bodyIR += " \(status) = call i32 @pini_task_await(ptr \(handle.ssaName), ptr \(preOut))\n"
         let yields = builder.freshTemp()
         bodyIR += " \(yields) = icmp eq i32 \(status), 2\n"
         bodyIR += builder.fmtCondBr(cond: yields, thenLabelName: "de6b.yield.\(index)", elseLabelName: "de6b.resume.\(index)") + "\n"
@@ -6425,12 +6425,12 @@ public final class IREmitter {
         let out = builder.freshTemp()
         bodyIR += " \(out) = alloca { i64, i64, i64 }, align 8\n"
         // 返回值**刻意丢弃**：与 `emitJoin` 同一条口径 —— 三槽已由运行时归一化，状态位不必再判。
-        bodyIR += " call i32 @bk_task_await(ptr \(handleReloaded), ptr \(out))\n"
+        bodyIR += " call i32 @pini_task_await(ptr \(handleReloaded), ptr \(out))\n"
         //  重要  产出档位在这里分岔 —— 这是本段唯一的形态差异，其余发射**逐字共用**。
         switch produce {
         case .discard:
             // 结果丢弃那一档（`await f()` 独占一行）：结果按语言语义丢弃 ⇒ 续跑块到此为止。
-            //  注意  仍保留上面那次 `bk_task_await`：丢弃的是结果，不是等待；省掉它会让「丢弃结果」顺带丢掉等待。
+            //  注意  仍保留上面那次 `pini_task_await`：丢弃的是结果，不是等待；省掉它会让「丢弃结果」顺带丢掉等待。
             break
         case .frameSlot(let slot):
             let filled = collectResult(from: out, type: type, okType: okType)
@@ -6472,7 +6472,7 @@ public final class IREmitter {
         emitTaskBodyWrapper(callee: callee, mangled: mangled)
         let envRaw = builder.freshTemp()
         usesTaskFrame = true
-        bodyIR += " \(envRaw) = call ptr @bk_task_frame(i64 \(8 + args.count * 8))\n"
+        bodyIR += " \(envRaw) = call ptr @pini_task_frame(i64 \(8 + args.count * 8))\n"
         for (index, arg) in args.enumerated() {
             let slot = builder.freshTemp()
             bodyIR += builder.fmtGEPByteOffset(name: slot, base: envRaw, offset: "\(8 + index * 8)") + "\n"
@@ -6487,7 +6487,7 @@ public final class IREmitter {
         //  行不通  此处**刻意留 0**：本段接线的两个符号都不读它们（消费者是聚合 join）。
         let handle = builder.freshTemp()
         bodyIR +=
-            " \(handle) = call ptr @bk_task_spawn(ptr @__task_body_\(mangled), ptr null, ptr \(envRaw), i32 0, i32 0)\n"
+            " \(handle) = call ptr @pini_task_spawn(ptr @__task_body_\(mangled), ptr null, ptr \(envRaw), i32 0, i32 0)\n"
         // 把调度器绑定交给运行时。 重要  派发点是「这个任务属于哪个调度器」的
         // **唯一知情处** —— 设计里「派发点把调度器写进盒子」那句话的落点就在这一行。
         emitSchedulerBinding(handle: handle)
@@ -6540,7 +6540,7 @@ public final class IREmitter {
         for container in containerArgs {
             let raw = builder.freshTemp()
             body += " \(raw) = bitcast \(container.spelling) \(container.name) to ptr\n"
-            body += " call void @bk_handle_release(ptr \(raw))\n"
+            body += " call void @pini_handle_release(ptr \(raw))\n"
         }
         // 三槽：槽 0 = tag · 槽 1 = ok 载荷 · 槽 2 = err 载荷，一律**擦除为 i64 宽度**；
         // 这与 `_bkTaskRunBody` 读回三槽的方式是同一条约定。
@@ -6563,7 +6563,7 @@ public final class IREmitter {
         taskBodyDefs.append("define i32 @\(name)(ptr %code, ptr %env, ptr %out) {\n" + body + "}\n\n")
     }
 
-    /// `await` / `wait` 的落点（`bk_task_join`）。可恢复体顶层的 `await` 走让出路径，不经过本函数；
+    /// `await` / `wait` 的落点（`pini_task_join`）。可恢复体顶层的 `await` 走让出路径，不经过本函数；
     /// 到达这里的只剩拿不到帧的体 —— 无声明返回类型的异步体与闭包体 —— 本段对它们响亮拒绝：
     /// 静默按阻塞处理就是把「让出」的承诺打折而不出声。`wait` 一类的承诺本就是阻塞，不受影响。
     private func emitJoin(future: IRExpr, type: IRType, form: JoinForm) -> IRValue {
@@ -6589,12 +6589,12 @@ public final class IREmitter {
         usesTaskRuntime = true
         let out = builder.freshTemp()
         bodyIR += " \(out) = alloca { i64, i64, i64 }, align 8\n"
-        bodyIR += " call i32 @bk_task_join(ptr \(handle.ssaName), ptr \(out))\n"
+        bodyIR += " call i32 @pini_task_join(ptr \(handle.ssaName), ptr \(out))\n"
         // 三槽 → `Result` 的装配与让出路径**共用一份**实现：这条约定只该有一处解释。
         return collectResult(from: out, type: type, okType: okType)
     }
 
-    /// `joinWithin(future, ms)`：与 `bk_task_join` 共用三槽装配与 `Result` 收尾，
+    /// `joinWithin(future, ms)`：与 `pini_task_join` 共用三槽装配与 `Result` 收尾，
     /// 只多传一个时限；超时归约为取消由运行时保证。
     private func emitJoinWithin(
         handle: IRValue, timeout: IRValue, type: IRType, okType: IRType
@@ -6609,7 +6609,7 @@ public final class IREmitter {
         }
         let out = builder.freshTemp()
         bodyIR += " \(out) = alloca { i64, i64, i64 }, align 8\n"
-        bodyIR += " call i32 @bk_task_join_within(ptr \(handle.ssaName), i32 \(timeout.ssaName), ptr \(out))\n"
+        bodyIR += " call i32 @pini_task_join_within(ptr \(handle.ssaName), i32 \(timeout.ssaName), ptr \(out))\n"
         return collectResult(from: out, type: type, okType: okType)
     }
 
@@ -6637,11 +6637,11 @@ public final class IREmitter {
                 bodyIR += " \(slot) = getelementptr inbounds [\(elements.count) x ptr], ptr \(handles), i64 0, i64 \(index)\n"
                 bodyIR += " store ptr \(value.ssaName), ptr \(slot)\n"
             }
-            bodyIR += " call i32 @bk_task_join_all(ptr \(handles), i32 \(elements.count), ptr \(out))\n"
+            bodyIR += " call i32 @pini_task_join_all(ptr \(handles), i32 \(elements.count), ptr \(out))\n"
         } else {
             usesTaskJoinAllBox = true
             let box = emitExpr(arguments[0])
-            bodyIR += " call i32 @bk_task_join_all_box(ptr \(box.ssaName), ptr \(out))\n"
+            bodyIR += " call i32 @pini_task_join_all_box(ptr \(box.ssaName), ptr \(out))\n"
         }
         return collectResult(from: out, type: type, okType: okType)
     }
@@ -6666,7 +6666,7 @@ public final class IREmitter {
         case .borrowed, .inert:
             let raw = builder.freshTemp()
             bodyIR += " \(raw) = bitcast \(value.llvmType) \(value.ssaName) to ptr\n"
-            bodyIR += " call void @bk_handle_retain(ptr \(raw))\n"
+            bodyIR += " call void @pini_handle_retain(ptr \(raw))\n"
         }
     }
 
@@ -6695,7 +6695,7 @@ public final class IREmitter {
         case "double":
             return (" \(name) = bitcast i64 \(word) to double\n", name)
         default:
-            // 指针一族（`ptr` / `i8*` / `%bk_array*` / 具名聚合指针）按不透明指针还原。
+            // 指针一族（`ptr` / `i8*` / `%pini_array*` / 具名聚合指针）按不透明指针还原。
             return (" \(name) = inttoptr i64 \(word) to \(spelling)\n", name)
         }
     }
@@ -6850,7 +6850,7 @@ public final class IREmitter {
     /// 调用点的变长 alloca 上，与 substring 同一个栈炸弹形状 ⇒ 语义与分配一起交给运行时段。
     private func emitStringCase(isUpper: Bool, source: String) -> IRValue {
         usesStringShims = true
-        let symbol = isUpper ? "bk_string_upper" : "bk_string_lower"
+        let symbol = isUpper ? "pini_string_upper" : "pini_string_lower"
         let converted = builder.freshTemp()
         bodyIR += " \(converted) = call ptr @\(symbol)(ptr \(source))\n"
         return IRValue(llvmType: "i8*", ssaName: converted)
@@ -6861,22 +6861,22 @@ public final class IREmitter {
     /// 省略空子序列。`strtok` 两条规则都表达不了。
     private func emitStringSplit(source: String, delim: String, type: IRType) -> IRValue {
         let raw = builder.freshTemp()
-        bodyIR += " \(raw) = call ptr @bk_string_split(ptr \(source), ptr \(delim))\n"
+        bodyIR += " \(raw) = call ptr @pini_string_split(ptr \(source), ptr \(delim))\n"
         let handle = builder.freshTemp()
-        bodyIR += " \(handle) = bitcast ptr \(raw) to %bk_array*\n"
-        return IRValue(llvmType: "%bk_array*", ssaName: handle)
+        bodyIR += " \(handle) = bitcast ptr \(raw) to %pini_array*\n"
+        return IRValue(llvmType: "%pini_array*", ssaName: handle)
     }
 
     /// `arr.join(sep)`：字符串数组的元素用 sep 逐个追加进一条运行时串（元素是裸 C 指针）。
-    /// 追加走 `bk_str_append_cstr` 的容量倍增，结果长度不再有 4096 字节上限，总代价 O(总长)。
+    /// 追加走 `pini_str_append_cstr` 的容量倍增，结果长度不再有 4096 字节上限，总代价 O(总长)。
     private func emitArrayJoin(array: IRValue, sep: String, elementType: IRType) -> IRValue {
         let bufSlot = builder.freshTemp()
         bodyIR += builder.fmtAlloca(name: bufSlot, type: "i8*") + "\n"
         bodyIR += builder.fmtStore(value: "null", type: "i8*", ptr: bufSlot) + "\n"
         let raw = builder.freshTemp()
-        bodyIR += " \(raw) = bitcast %bk_array* \(array.ssaName) to ptr\n"
+        bodyIR += " \(raw) = bitcast %pini_array* \(array.ssaName) to ptr\n"
         let count = builder.freshTemp()
-        bodyIR += " \(count) = call i32 @bk_array_len(ptr \(raw))\n"
+        bodyIR += " \(count) = call i32 @pini_array_len(ptr \(raw))\n"
         let idxSlot = builder.freshTemp()
         bodyIR += builder.fmtAlloca(name: idxSlot, type: "i32") + "\n"
         bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: idxSlot) + "\n"
@@ -6903,7 +6903,7 @@ public final class IREmitter {
         bodyIR += builder.fmtBr(labelName: elemLabel) + "\n"
         bodyIR += "\(elemLabel):\n"
         let box = builder.freshTemp()
-        bodyIR += " \(box) = call ptr @bk_array_get(ptr \(raw), i32 \(idx))\n"
+        bodyIR += " \(box) = call ptr @pini_array_get(ptr \(raw), i32 \(idx))\n"
         let element = builder.freshTemp()
         bodyIR += builder.fmtLoad(name: element, type: elementType.llvmSpelling, ptr: box) + "\n"
         // 元素先按自身类型渲染成 C 串：整型走 `snprintf`、F64 走运行时、布尔取常量。
@@ -6939,15 +6939,15 @@ public final class IREmitter {
         let current = builder.freshTemp()
         bodyIR += builder.fmtLoad(name: current, type: "i8*", ptr: bufferSlot) + "\n"
         let next = builder.freshTemp()
-        bodyIR += " \(next) = call ptr @bk_str_append_cstr(ptr \(current), ptr \(value), i32 1)\n"
+        bodyIR += " \(next) = call ptr @pini_str_append_cstr(ptr \(current), ptr \(value), i32 1)\n"
         bodyIR += builder.fmtStore(value: next, type: "i8*", ptr: bufferSlot) + "\n"
     }
 
     /// 把栈上拼出来的串交出去之前复制到堆（返回堆指针）：还剩的调用点只有「必须先在本帧栈上成形」的那几处。
-    /// 复制走 `bk_str_dup`（带计数头）。入账不在本函数：求值出口按效果表统一记。
+    /// 复制走 `pini_str_dup`（带计数头）。入账不在本函数：求值出口按效果表统一记。
     private func heapCopyOfStackString(_ buf: String) -> IRValue {
         let dup = builder.freshTemp()
-        bodyIR += " \(dup) = call ptr @bk_str_dup(ptr \(buf))\n"
+        bodyIR += " \(dup) = call ptr @pini_str_dup(ptr \(buf))\n"
         return IRValue(llvmType: "i8*", ssaName: dup)
     }
 
@@ -6970,12 +6970,12 @@ public final class IREmitter {
     }
 
     /// `Char` 落成带头串（计数 1）：消费点按串的规矩归还，故这里入账。
-    ///  注意  不能给栈缓冲 —— `bk_str_concat` 与 `bk_str_release` 都读载荷前的头。
+    ///  注意  不能给栈缓冲 —— `pini_str_concat` 与 `pini_str_release` 都读载荷前的头。
     private func charToCString(_ value: IRValue) -> IRValue {
         usesCharacterShims = true
         let rendered = builder.freshTemp()
         bodyIR +=
-            " \(rendered) = call ptr @bk_char_to_heap_string(i64 \(value.ssaName))\n"
+            " \(rendered) = call ptr @pini_char_to_heap_string(i64 \(value.ssaName))\n"
         holdString(rendered)
         return IRValue(llvmType: "i8*", ssaName: rendered)
     }
@@ -7010,7 +7010,7 @@ public final class IREmitter {
             return IRValue(llvmType: "i8*", ssaName: buf)
         case .f64:
             let rendered = builder.freshTemp()
-            bodyIR += " \(rendered) = call ptr @bk_double_to_string(double \(value.ssaName))\n"
+            bodyIR += " \(rendered) = call ptr @pini_double_to_string(double \(value.ssaName))\n"
             // 堆串：入账后由调用方（插值 / 数组渲染）用完归还。
             holdString(rendered)
             return IRValue(llvmType: "i8*", ssaName: rendered)
@@ -7029,9 +7029,9 @@ public final class IREmitter {
             let open = emitStringConstant("[")
             appendToBuffer(open.ssaName, bufferSlot: bufSlot)
             let raw = builder.freshTemp()
-            bodyIR += " \(raw) = bitcast %bk_array* \(value.ssaName) to ptr\n"
+            bodyIR += " \(raw) = bitcast %pini_array* \(value.ssaName) to ptr\n"
             let count = builder.freshTemp()
-            bodyIR += " \(count) = call i32 @bk_array_len(ptr \(raw))\n"
+            bodyIR += " \(count) = call i32 @pini_array_len(ptr \(raw))\n"
             let idxSlot = builder.freshTemp()
             bodyIR += builder.fmtAlloca(name: idxSlot, type: "i32") + "\n"
             bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: idxSlot) + "\n"
@@ -7059,7 +7059,7 @@ public final class IREmitter {
             bodyIR += builder.fmtBr(labelName: elemLabel) + "\n"
             bodyIR += "\(elemLabel):\n"
             let box = builder.freshTemp()
-            bodyIR += " \(box) = call ptr @bk_array_get(ptr \(raw), i32 \(idx))\n"
+            bodyIR += " \(box) = call ptr @pini_array_get(ptr \(raw), i32 \(idx))\n"
             let element = builder.freshTemp()
             bodyIR += builder.fmtLoad(name: element, type: elementType.llvmSpelling, ptr: box) + "\n"
             let piece = stringifyValue(

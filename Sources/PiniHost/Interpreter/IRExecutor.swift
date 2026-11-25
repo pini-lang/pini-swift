@@ -516,7 +516,7 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
                     )
                 }
             }
-            // 取回：`*U8 → String`。与 LLVM 的 `bk_str_from_cstr` 同一条语义，实现留在 `RuntimeOps`。
+            // 取回：`*U8 → String`。与 LLVM 的 `pini_str_from_cstr` 同一条语义，实现留在 `RuntimeOps`。
             if name == "fromCString" {
                 let args = try arguments.map { try evaluate($0) }
                 guard args.count == 1 else {
@@ -569,7 +569,7 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
                 return .bool(RuntimeOps.isCancelErrorValue(args[0]))
             }
             // err 槽的另一个读口：字 → 消息。名字带点 ⇒ 不是语言内建、也不可能是用户函数
-            // 名；它与 LLVM 侧的 `bk_error_message` 是同一条语义的两个落点。
+            // 名；它与 LLVM 侧的 `pini_error_message` 是同一条语义的两个落点。
             if name == "pini.err.message" {
                 let args = try arguments.map { try evaluate($0) }
                 guard args.count == 1 else {
@@ -735,7 +735,7 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
                 }
                 return .bool(present && isDirectory.boolValue)
             }
-            // 建目录：幂等、中间层一并创建；失败即抛 —— 与运行时段 `bk_ensure_dir` 的陷阱姿态同源，
+            // 建目录：幂等、中间层一并创建；失败即抛 —— 与运行时段 `pini_ensure_dir` 的陷阱姿态同源，
             // 两条通道因此对同一输入要么都成功、要么都报错。无值，返回空元组。
             if name == "ensureDir" {
                 guard arguments.count == 1 else {

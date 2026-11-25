@@ -288,7 +288,7 @@ public enum RuntimeOps {
 
     static let builtinResultEnumName = "Result"
 
-    /// 取回：C 串复制成 Pini 串。空指针按空串处理，与运行时段 `bk_str_dup` 同一约定。
+    /// 取回：C 串复制成 Pini 串。空指针按空串处理，与运行时段 `pini_str_dup` 同一约定。
     /// 非法 UTF-8 在解释器侧换成 U+FFFD（Swift 串只能持合法 Unicode），LLVM 侧原样搬字节。
     static func stringFromCString(_ value: Value) throws -> Value {
         if case .null = value { return .string("") }
@@ -517,21 +517,21 @@ public enum RuntimeOps {
                 return .null
             }
 
-            // bk_parse_double(text: String) -> F64：编译期浮点字面量取值，与宿主 `Double(text)` 同舍入。
-            shims["bk_parse_double"] = LibcShim(shape: [.string]) { args in
+            // pini_parse_double(text: String) -> F64：编译期浮点字面量取值，与宿主 `Double(text)` 同舍入。
+            shims["pini_parse_double"] = LibcShim(shape: [.string]) { args in
                 guard case .string(let text) = args[0] else {
-                    throw RuntimeError.invalidOperation(reason: "bk_parse_double 的参数须为字符串", location: loc)
+                    throw RuntimeError.invalidOperation(reason: "pini_parse_double 的参数须为字符串", location: loc)
                 }
                 guard let value = Double(text) else {
-                    throw RuntimeError.invalidOperation(reason: "bk_parse_double 无法解析 `\(text)`", location: loc)
+                    throw RuntimeError.invalidOperation(reason: "pini_parse_double 无法解析 `\(text)`", location: loc)
                 }
                 return .float(value)
             }
 
-            // bk_double_bits(value: F64) -> I64：位模式，发射侧据此写十六进制常量。
-            shims["bk_double_bits"] = LibcShim(shape: [.floating]) { args in
+            // pini_double_bits(value: F64) -> I64：位模式，发射侧据此写十六进制常量。
+            shims["pini_double_bits"] = LibcShim(shape: [.floating]) { args in
                 guard case .float(let value) = args[0] else {
-                    throw RuntimeError.invalidOperation(reason: "bk_double_bits 的参数须为浮点", location: loc)
+                    throw RuntimeError.invalidOperation(reason: "pini_double_bits 的参数须为浮点", location: loc)
                 }
                 return .int(Int(bitPattern: UInt(value.bitPattern)))
             }
@@ -1063,7 +1063,7 @@ public enum RuntimeOps {
         return si.typeName == builtinCancelErrorTypeName
     }
 
-    /// err 槽的**消息** —— 两引擎共用的读口（LLVM 侧对应 `bk_error_message`）。
+    /// err 槽的**消息** —— 两引擎共用的读口（LLVM 侧对应 `pini_error_message`）。
     /// 解释器侧的错误值是 `StructInstance`（字段 `message`），IR 里 err 槽是类型擦除的字 ⇒ 表示不同，读出的是同一件事。
     /// 非错误值 ⇒ 空串，与 LLVM 侧对「无载荷字」的处置同义：读一个不是错误的槽不该让进程炸掉。
     static func errorMessage(_ value: Value) -> String {

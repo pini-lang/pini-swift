@@ -30,195 +30,195 @@ externSignature|func(name: String,) -> (String,):
         return "declare double @llvm.cos.f64(double)"
     if name == "printf":
         return "declare i32 @printf(ptr, ...)"
-    if name == "bk_print_lock":
-        return "declare void @bk_print_lock()"
-    if name == "bk_print_unlock":
-        return "declare void @bk_print_unlock()"
-    if name == "bk_panic":
-        return "declare void @bk_panic(ptr) noreturn"
-    if name == "bk_double_to_string":
-        return "declare ptr @bk_double_to_string(double)"
-    if name == "bk_str_release":
-        return "declare void @bk_str_release(ptr)"
+    if name == "pini_print_lock":
+        return "declare void @pini_print_lock()"
+    if name == "pini_print_unlock":
+        return "declare void @pini_print_unlock()"
+    if name == "pini_panic":
+        return "declare void @pini_panic(ptr) noreturn"
+    if name == "pini_double_to_string":
+        return "declare ptr @pini_double_to_string(double)"
+    if name == "pini_str_release":
+        return "declare void @pini_str_release(ptr)"
     ; 计数族：接收点留一份、语句收尾还一份；名义箱的归还答计数，调用点不回读。
-    if name == "bk_str_retain":
-        return "declare void @bk_str_retain(ptr)"
-    if name == "bk_handle_retain":
-        return "declare void @bk_handle_retain(ptr)"
-    if name == "bk_handle_release":
-        return "declare void @bk_handle_release(ptr)"
-    if name == "bk_nominal_retain":
-        return "declare void @bk_nominal_retain(ptr)"
-    if name == "bk_nominal_release":
-        return "declare i32 @bk_nominal_release(ptr)"
+    if name == "pini_str_retain":
+        return "declare void @pini_str_retain(ptr)"
+    if name == "pini_handle_retain":
+        return "declare void @pini_handle_retain(ptr)"
+    if name == "pini_handle_release":
+        return "declare void @pini_handle_release(ptr)"
+    if name == "pini_nominal_retain":
+        return "declare void @pini_nominal_retain(ptr)"
+    if name == "pini_nominal_release":
+        return "declare i32 @pini_nominal_release(ptr)"
     ; 数组元素钩子：聚合元素的留份与归还由发射层合成，运行时段在分裂与销毁时回调。
-    if name == "bk_array_set_element_hooks":
-        return "declare void @bk_array_set_element_hooks(ptr, ptr, ptr)"
+    if name == "pini_array_set_element_hooks":
+        return "declare void @pini_array_set_element_hooks(ptr, ptr, ptr)"
     if name == "free":
         return "declare void @free(ptr)"
-    if name == "bk_array_create":
-        return "declare ptr @bk_array_create(i32)"
-    if name == "bk_array_len":
-        return "declare i32 @bk_array_len(ptr)"
-    if name == "bk_array_append":
-        return "declare ptr @bk_array_append(ptr, ptr, i32, i32)"
-    if name == "bk_dict_len":
-        return "declare i32 @bk_dict_len(ptr)"
-    if name == "bk_dict_create":
-        return "declare ptr @bk_dict_create()"
-    if name == "bk_dict_key_at":
-        return "declare ptr @bk_dict_key_at(ptr, i32)"
-    if name == "bk_dict_val_at":
-        return "declare ptr @bk_dict_val_at(ptr, i32)"
-    if name == "bk_set_create":
-        return "declare ptr @bk_set_create()"
-    if name == "bk_set_add":
-        return "declare ptr @bk_set_add(ptr, ptr, i32, i32)"
-    if name == "bk_set_at":
-        return "declare ptr @bk_set_at(ptr, i32)"
-    if name == "bk_set_len":
-        return "declare i32 @bk_set_len(ptr)"
-    if name == "bk_string_count":
-        return "declare i32 @bk_string_count(ptr)"
+    if name == "pini_array_create":
+        return "declare ptr @pini_array_create(i32)"
+    if name == "pini_array_len":
+        return "declare i32 @pini_array_len(ptr)"
+    if name == "pini_array_append":
+        return "declare ptr @pini_array_append(ptr, ptr, i32, i32)"
+    if name == "pini_dict_len":
+        return "declare i32 @pini_dict_len(ptr)"
+    if name == "pini_dict_create":
+        return "declare ptr @pini_dict_create()"
+    if name == "pini_dict_key_at":
+        return "declare ptr @pini_dict_key_at(ptr, i32)"
+    if name == "pini_dict_val_at":
+        return "declare ptr @pini_dict_val_at(ptr, i32)"
+    if name == "pini_set_create":
+        return "declare ptr @pini_set_create()"
+    if name == "pini_set_add":
+        return "declare ptr @pini_set_add(ptr, ptr, i32, i32)"
+    if name == "pini_set_at":
+        return "declare ptr @pini_set_at(ptr, i32)"
+    if name == "pini_set_len":
+        return "declare i32 @pini_set_len(ptr)"
+    if name == "pini_string_count":
+        return "declare i32 @pini_string_count(ptr)"
     ; 字符族：字符值以 i64 装箱，串入参按借出。
-    if name == "bk_chr":
-        return "declare i64 @bk_chr(i32)"
-    if name == "bk_ord":
-        return "declare i32 @bk_ord(i64)"
-    if name == "bk_chars":
-        return "declare ptr @bk_chars(ptr)"
-    if name == "bk_temp_utf8_bytes":
-        return "declare ptr @bk_temp_utf8_bytes(ptr)"
-    if name == "bk_temp_byte_to_int":
-        return "declare i32 @bk_temp_byte_to_int(i8)"
-    if name == "bk_temp_int_to_byte":
-        return "declare i8 @bk_temp_int_to_byte(i32)"
-    if name == "bk_char_to_heap_string":
-        return "declare ptr @bk_char_to_heap_string(i64)"
+    if name == "pini_chr":
+        return "declare i64 @pini_chr(i32)"
+    if name == "pini_ord":
+        return "declare i32 @pini_ord(i64)"
+    if name == "pini_chars":
+        return "declare ptr @pini_chars(ptr)"
+    if name == "pini_temp_utf8_bytes":
+        return "declare ptr @pini_temp_utf8_bytes(ptr)"
+    if name == "pini_temp_byte_to_int":
+        return "declare i32 @pini_temp_byte_to_int(i8)"
+    if name == "pini_temp_int_to_byte":
+        return "declare i8 @pini_temp_int_to_byte(i32)"
+    if name == "pini_char_to_heap_string":
+        return "declare ptr @pini_char_to_heap_string(i64)"
     ; 字符串族：入参按 C 串借出，结果按带头串交回。
-    if name == "bk_str_concat":
-        return "declare ptr @bk_str_concat(ptr, ptr, i32)"
-    if name == "bk_char_equal_string":
-        return "declare i32 @bk_char_equal_string(i64, ptr)"
+    if name == "pini_str_concat":
+        return "declare ptr @pini_str_concat(ptr, ptr, i32)"
+    if name == "pini_char_equal_string":
+        return "declare i32 @pini_char_equal_string(i64, ptr)"
     if name == "strcmp":
         return "declare i32 @strcmp(ptr, ptr)"
     ; 惰性引用族：创建收 wrapper / code / env 与元素 ABI，取值回元素盒。
-    if name == "bk_lazyref_create":
-        return "declare ptr @bk_lazyref_create(ptr, ptr, ptr, i32, i32)"
-    if name == "bk_lazyref_value":
-        return "declare ptr @bk_lazyref_value(ptr)"
-    if name == "bk_weak_create":
-        return "declare ptr @bk_weak_create(ptr)"
-    if name == "bk_weak_value":
-        return "declare ptr @bk_weak_value(ptr)"
-    if name == "bk_weak_destroy":
-        return "declare void @bk_weak_destroy(ptr)"
+    if name == "pini_lazyref_create":
+        return "declare ptr @pini_lazyref_create(ptr, ptr, ptr, i32, i32)"
+    if name == "pini_lazyref_value":
+        return "declare ptr @pini_lazyref_value(ptr)"
+    if name == "pini_weak_create":
+        return "declare ptr @pini_weak_create(ptr)"
+    if name == "pini_weak_value":
+        return "declare ptr @pini_weak_value(ptr)"
+    if name == "pini_weak_destroy":
+        return "declare void @pini_weak_destroy(ptr)"
     if name == "malloc":
         return "declare ptr @malloc(i64)"
-    if name == "bk_string_contains":
-        return "declare i32 @bk_string_contains(ptr, ptr)"
-    if name == "bk_string_index_of":
-        return "declare i32 @bk_string_index_of(ptr, ptr)"
-    if name == "bk_substring":
-        return "declare ptr @bk_substring(ptr, i32, i32)"
-    if name == "bk_string_slice":
-        return "declare ptr @bk_string_slice(ptr, i32, i32, i32, i32)"
-    if name == "bk_string_split":
-        return "declare ptr @bk_string_split(ptr, ptr)"
-    if name == "bk_string_char_at":
-        return "declare i64 @bk_string_char_at(ptr, i32)"
-    if name == "bk_string_upper":
-        return "declare ptr @bk_string_upper(ptr)"
-    if name == "bk_string_lower":
-        return "declare ptr @bk_string_lower(ptr)"
-    if name == "bk_string_trim_left":
-        return "declare ptr @bk_string_trim_left(ptr)"
-    if name == "bk_string_trim_right":
-        return "declare ptr @bk_string_trim_right(ptr)"
-    if name == "bk_str_append_cstr":
-        return "declare ptr @bk_str_append_cstr(ptr, ptr, i32)"
+    if name == "pini_string_contains":
+        return "declare i32 @pini_string_contains(ptr, ptr)"
+    if name == "pini_string_index_of":
+        return "declare i32 @pini_string_index_of(ptr, ptr)"
+    if name == "pini_substring":
+        return "declare ptr @pini_substring(ptr, i32, i32)"
+    if name == "pini_string_slice":
+        return "declare ptr @pini_string_slice(ptr, i32, i32, i32, i32)"
+    if name == "pini_string_split":
+        return "declare ptr @pini_string_split(ptr, ptr)"
+    if name == "pini_string_char_at":
+        return "declare i64 @pini_string_char_at(ptr, i32)"
+    if name == "pini_string_upper":
+        return "declare ptr @pini_string_upper(ptr)"
+    if name == "pini_string_lower":
+        return "declare ptr @pini_string_lower(ptr)"
+    if name == "pini_string_trim_left":
+        return "declare ptr @pini_string_trim_left(ptr)"
+    if name == "pini_string_trim_right":
+        return "declare ptr @pini_string_trim_right(ptr)"
+    if name == "pini_str_append_cstr":
+        return "declare ptr @pini_str_append_cstr(ptr, ptr, i32)"
     ; 容器族：元素按地址搬运，宽度与标签由发射层给。
-    if name == "bk_array_get":
-        return "declare ptr @bk_array_get(ptr, i32)"
-    if name == "bk_array_set":
-        return "declare ptr @bk_array_set(ptr, i32, ptr, i32, i32)"
-    if name == "bk_dict_get":
-        return "declare ptr @bk_dict_get(ptr, ptr, i32, i32)"
-    if name == "bk_dict_set":
-        return "declare ptr @bk_dict_set(ptr, ptr, i32, i32, ptr, i32, i32)"
+    if name == "pini_array_get":
+        return "declare ptr @pini_array_get(ptr, i32)"
+    if name == "pini_array_set":
+        return "declare ptr @pini_array_set(ptr, i32, ptr, i32, i32)"
+    if name == "pini_dict_get":
+        return "declare ptr @pini_dict_get(ptr, ptr, i32, i32)"
+    if name == "pini_dict_set":
+        return "declare ptr @pini_dict_set(ptr, ptr, i32, i32, ptr, i32, i32)"
     ; 错误值：构造答擦除字，判定与取消息各一个入口。
-    if name == "bk_error_create":
-        return "declare i64 @bk_error_create(ptr)"
-    if name == "bk_cancel_error_create":
-        return "declare i64 @bk_cancel_error_create(ptr)"
-    if name == "bk_error_is_cancel":
-        return "declare i32 @bk_error_is_cancel(i64)"
-    if name == "bk_error_message":
-        return "declare ptr @bk_error_message(i64)"
+    if name == "pini_error_create":
+        return "declare i64 @pini_error_create(ptr)"
+    if name == "pini_cancel_error_create":
+        return "declare i64 @pini_cancel_error_create(ptr)"
+    if name == "pini_error_is_cancel":
+        return "declare i32 @pini_error_is_cancel(i64)"
+    if name == "pini_error_message":
+        return "declare ptr @pini_error_message(i64)"
     ; 聚合等待：结算值经出参槽交回，返回的是状态码。
-    if name == "bk_task_join_all_box":
-        return "declare i32 @bk_task_join_all_box(ptr, ptr)"
-    if name == "bk_task_join_within":
-        return "declare i32 @bk_task_join_within(ptr, i32, ptr)"
+    if name == "pini_task_join_all_box":
+        return "declare i32 @pini_task_join_all_box(ptr, ptr)"
+    if name == "pini_task_join_within":
+        return "declare i32 @pini_task_join_within(ptr, i32, ptr)"
     ; 任务族：帧按字节数分配，句柄由运行时段持有；等待的三槽由调用方给。
-    if name == "bk_task_frame":
-        return "declare ptr @bk_task_frame(i64)"
-    if name == "bk_task_spawn":
-        return "declare ptr @bk_task_spawn(ptr, ptr, ptr, i32, i32)"
-    if name == "bk_task_join":
-        return "declare i32 @bk_task_join(ptr, ptr)"
-    if name == "bk_task_detach":
-        return "declare i32 @bk_task_detach(ptr)"
+    if name == "pini_task_frame":
+        return "declare ptr @pini_task_frame(i64)"
+    if name == "pini_task_spawn":
+        return "declare ptr @pini_task_spawn(ptr, ptr, ptr, i32, i32)"
+    if name == "pini_task_join":
+        return "declare i32 @pini_task_join(ptr, ptr)"
+    if name == "pini_task_detach":
+        return "declare i32 @pini_task_detach(ptr)"
     ; 默认实例族：槽、初始化函数与字节数三件交给运行时段，返回程序级那一个盒。
-    if name == "bk_given_get":
-        return "declare ptr @bk_given_get(ptr, ptr, i64)"
+    if name == "pini_given_get":
+        return "declare ptr @pini_given_get(ptr, ptr, i64)"
     ; 导出面：串形参复制一份，失败码从错误字上取。
-    if name == "bk_str_dup":
-        return "declare ptr @bk_str_dup(ptr)"
-    if name == "bk_error_code":
-        return "declare i32 @bk_error_code(i64)"
+    if name == "pini_str_dup":
+        return "declare ptr @pini_str_dup(ptr)"
+    if name == "pini_error_code":
+        return "declare i32 @pini_error_code(i64)"
     if name == "memcpy":
         return "declare void @memcpy(ptr, ptr, i64)"
     ; 名义箱族：头四格由运行时段写，尺寸与类型标识由发射层给。
-    if name == "bk_nominal_alloc":
-        return "declare ptr @bk_nominal_alloc(i64, i32)"
+    if name == "pini_nominal_alloc":
+        return "declare ptr @pini_nominal_alloc(i64, i32)"
     ; IO 与宿主查询族：路径按 C 串借出，读出内容按带头串交回。
-    if name == "bk_read_file":
-        return "declare ptr @bk_read_file(ptr)"
-    if name == "bk_write_file":
-        return "declare void @bk_write_file(ptr, ptr)"
-    if name == "bk_append_file":
-        return "declare void @bk_append_file(ptr, ptr)"
-    if name == "bk_try_write_file":
-        return "declare i64 @bk_try_write_file(ptr, ptr)"
-    if name == "bk_try_append_file":
-        return "declare i64 @bk_try_append_file(ptr, ptr)"
+    if name == "pini_read_file":
+        return "declare ptr @pini_read_file(ptr)"
+    if name == "pini_write_file":
+        return "declare void @pini_write_file(ptr, ptr)"
+    if name == "pini_append_file":
+        return "declare void @pini_append_file(ptr, ptr)"
+    if name == "pini_try_write_file":
+        return "declare i64 @pini_try_write_file(ptr, ptr)"
+    if name == "pini_try_append_file":
+        return "declare i64 @pini_try_append_file(ptr, ptr)"
     if name == "fgets":
         return "declare ptr @fgets(ptr, i32, ptr)"
-    if name == "bk_list_dir":
-        return "declare ptr @bk_list_dir(ptr)"
-    if name == "bk_exists":
-        return "declare i32 @bk_exists(ptr)"
-    if name == "bk_is_dir":
-        return "declare i32 @bk_is_dir(ptr)"
-    if name == "bk_ensure_dir":
-        return "declare void @bk_ensure_dir(ptr)"
-    if name == "bk_try_read_file":
-        return "declare ptr @bk_try_read_file(ptr, ptr)"
-    if name == "bk_argv":
-        return "declare ptr @bk_argv()"
-    if name == "bk_module_root":
-        return "declare ptr @bk_module_root()"
-    if name == "bk_sleep":
-        return "declare void @bk_sleep(i32)"
-    if name == "bk_task_cancel":
-        return "declare void @bk_task_cancel(ptr)"
-    if name == "bk_str_from_cstr":
-        return "declare ptr @bk_str_from_cstr(ptr)"
-    if name == "bk_cstr":
-        return "declare ptr @bk_cstr(ptr)"
-    if name == "bk_set_program_base":
-        return "declare void @bk_set_program_base(ptr)"
+    if name == "pini_list_dir":
+        return "declare ptr @pini_list_dir(ptr)"
+    if name == "pini_exists":
+        return "declare i32 @pini_exists(ptr)"
+    if name == "pini_is_dir":
+        return "declare i32 @pini_is_dir(ptr)"
+    if name == "pini_ensure_dir":
+        return "declare void @pini_ensure_dir(ptr)"
+    if name == "pini_try_read_file":
+        return "declare ptr @pini_try_read_file(ptr, ptr)"
+    if name == "pini_argv":
+        return "declare ptr @pini_argv()"
+    if name == "pini_module_root":
+        return "declare ptr @pini_module_root()"
+    if name == "pini_sleep":
+        return "declare void @pini_sleep(i32)"
+    if name == "pini_task_cancel":
+        return "declare void @pini_task_cancel(ptr)"
+    if name == "pini_str_from_cstr":
+        return "declare ptr @pini_str_from_cstr(ptr)"
+    if name == "pini_cstr":
+        return "declare ptr @pini_cstr(ptr)"
+    if name == "pini_set_program_base":
+        return "declare void @pini_set_program_base(ptr)"
     ; 格式化族：插值与非串元素渲染都按定长缓冲写，长度含 NUL。
     if name == "snprintf":
         return "declare i32 @snprintf(ptr, i64, ptr, ...)"

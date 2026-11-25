@@ -618,7 +618,7 @@ lowerMacroValue|func(out: LowerExpr, map: TypeMap, typeId: I32, macro: IrMacro,)
     let type = irTypeAt(pool = map.pool, id = typeId)
     if irTypeTag(type.kind) == irTypeTag(.irTypeF64):
         node = irMakeNode(kind = irExprTag(.irFloatConst), typeId = typeId)
-        node.floatValue = unsafe bk_parse_double(macro.value)
+        node.floatValue = unsafe pini_parse_double(macro.value)
     elif irTypeTag(type.kind) == irTypeTag(.irTypeBoolean):
         node = irMakeNode(kind = irExprTag(.irBoolConst), typeId = typeId)
         if macro.value == "1":
@@ -1294,7 +1294,7 @@ lowerPlainCall|func(out: LowerExpr, unit: CompilationUnit, bytes: Array<U8>, map
         if unit.ast.isLabeledArgument(sourceId):
             sourceId = unit.ast.childOf(id = sourceId, index = 0)
         if isErrorValueArg(world = done.frame.world, frame = done.frame, types = types, unit = unit, unitIndex = unitIndex, bytes = bytes, id = sourceId) && map.stringId >= 0:
-            let placed = internText(texts = done.texts, value = "bk_error_message")
+            let placed = internText(texts = done.texts, value = "pini_error_message")
             var call = irMakeNode(kind = irExprTag(.irCall), typeId = map.stringId)
             call.text = placed.id
             call.kids = [valueId]
@@ -2473,7 +2473,7 @@ lowerExpr|func(pool: IrNodePool, texts: IrTextPool, map: TypeMap, types: ExprTyp
             return missType(out = out, unit = unit, id = id, bytes = bytes)
         let expr = unit.ast.exprAt(id)
         let spelling = decodeSpelling(bytes = bytes, start = expr.start, end = expr.end)
-        let value = unsafe bk_parse_double(spelling)
+        let value = unsafe pini_parse_double(spelling)
         var node = irMakeNode(kind = irExprTag(.irIntConst), typeId = typeId)
         if irTypeTag(irTypeAt(pool = map.pool, id = typeId).kind) == irTypeTag(.irTypeF64):
             node = irMakeNode(kind = irExprTag(.irFloatConst), typeId = typeId)

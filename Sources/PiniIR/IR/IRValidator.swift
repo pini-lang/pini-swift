@@ -249,7 +249,7 @@ private struct Walker {
     }
 
     /// 下标位的容器：数组按元素类型算，字典的值类型就是「这一层拆出来的子容器」。
-    /// 字典那一路由 `bk_dict_*` 自己拷键、定值，元素类型那一栏不参与，故不比对。
+    /// 字典那一路由 `pini_dict_*` 自己拷键、定值，元素类型那一栏不参与，故不比对。
     mutating func checkSubscriptContainer(
         _ container: IRExpr, elementType: IRType, writing: Bool, at location: SourceLocation?
     ) {

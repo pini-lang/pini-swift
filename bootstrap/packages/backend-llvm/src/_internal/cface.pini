@@ -101,8 +101,8 @@ exportFunctionText|func(module: IrModule, item: IrExportFunction, use: ExternUse
     var body = head + item.cName + "(" + joinText(cParams) + ") {\n"
     var b = 0
     while b < len(borrows):
-        useExtern(use = use, name = "bk_str_dup")
-        body = body + " %s" + countText(borrows[b]) + " = call ptr @bk_str_dup(ptr %a" + countText(borrows[b]) + ")\n"
+        useExtern(use = use, name = "pini_str_dup")
+        body = body + " %s" + countText(borrows[b]) + " = call ptr @pini_str_dup(ptr %a" + countText(borrows[b]) + ")\n"
         b = b + 1
     let args = joinText(callArgList(module = module, item = item))
     let callee = "@" + mangleName(name = item.pinName) + "(" + args + ")"
@@ -110,10 +110,10 @@ exportFunctionText|func(module: IrModule, item: IrExportFunction, use: ExternUse
         body = body + " %r = call " + retSpelling + " " + callee + "\n"
         b = 0
         while b < len(borrows):
-            useExtern(use = use, name = "bk_str_release")
-            body = body + " call void @bk_str_release(ptr %s" + countText(borrows[b]) + ")\n"
+            useExtern(use = use, name = "pini_str_release")
+            body = body + " call void @pini_str_release(ptr %s" + countText(borrows[b]) + ")\n"
             b = b + 1
-        useExtern(use = use, name = "bk_error_code")
+        useExtern(use = use, name = "pini_error_code")
         body = body + " %tag = extractvalue " + retSpelling + " %r, 0\n"
         body = body + " %ok = icmp eq i64 %tag, 0\n"
         body = body + " br i1 %ok, label %export.ok, label %export.err\n"
@@ -124,7 +124,7 @@ exportFunctionText|func(module: IrModule, item: IrExportFunction, use: ExternUse
         body = body + " br label %export.done\n"
         body = body + "export.err:\n"
         body = body + " %errWord = extractvalue " + retSpelling + " %r, 2\n"
-        body = body + " %errCode = call i32 @bk_error_code(i64 %errWord)\n"
+        body = body + " %errCode = call i32 @pini_error_code(i64 %errWord)\n"
         body = body + " br label %export.done\n"
         body = body + "export.done:\n"
         body = body + " %code = phi i32 [ 0, %export.ok ], [ %errCode, %export.err ]\n"
@@ -133,16 +133,16 @@ exportFunctionText|func(module: IrModule, item: IrExportFunction, use: ExternUse
         body = body + " %r = call " + retSpelling + " " + callee + "\n"
         b = 0
         while b < len(borrows):
-            useExtern(use = use, name = "bk_str_release")
-            body = body + " call void @bk_str_release(ptr %s" + countText(borrows[b]) + ")\n"
+            useExtern(use = use, name = "pini_str_release")
+            body = body + " call void @pini_str_release(ptr %s" + countText(borrows[b]) + ")\n"
             b = b + 1
         body = body + " ret " + retSpelling + " %r\n"
     else:
         body = body + " call void " + callee + "\n"
         b = 0
         while b < len(borrows):
-            useExtern(use = use, name = "bk_str_release")
-            body = body + " call void @bk_str_release(ptr %s" + countText(borrows[b]) + ")\n"
+            useExtern(use = use, name = "pini_str_release")
+            body = body + " call void @pini_str_release(ptr %s" + countText(borrows[b]) + ")\n"
             b = b + 1
         body = body + " ret void\n"
     return body + "}\n\n"
@@ -180,7 +180,7 @@ exportGetterText|func(module: IrModule, storage: IrExportStorage,) -> (String,):
     var body = "define ptr @" + storage.getterName + "() {\n"
     body = body + " %sizeEnd = getelementptr " + agg + ", ptr null, i32 1\n"
     body = body + " %size = ptrtoint ptr %sizeEnd to i64\n"
-    body = body + " %box = call ptr @bk_given_get(ptr @" + givenSlotName(typeName = storage.typeName) + ", ptr @" + givenInitName(typeName = storage.typeName) + ", i64 %size)\n"
+    body = body + " %box = call ptr @pini_given_get(ptr @" + givenSlotName(typeName = storage.typeName) + ", ptr @" + givenInitName(typeName = storage.typeName) + ", i64 %size)\n"
     body = body + " %payload = getelementptr " + agg + ", ptr %box, i32 0, i32 " + countText(module.slots.headSlots) + "\n"
     body = body + " ret ptr %payload\n}\n\n"
     return body
@@ -195,7 +195,7 @@ exportLifecycleText|func(module: IrModule, block: IrExportBlock,) -> (String,):
             let agg = llvmAggregateName(pool = module.types, typeId = typeId)
             body = body + " %initSizeEnd" + countText(i) + " = getelementptr " + agg + ", ptr null, i32 1\n"
             body = body + " %initSize" + countText(i) + " = ptrtoint ptr %initSizeEnd" + countText(i) + " to i64\n"
-            body = body + " %initBox" + countText(i) + " = call ptr @bk_given_get(ptr @" + givenSlotName(typeName = block.storages[i].typeName) + ", ptr @" + givenInitName(typeName = block.storages[i].typeName) + ", i64 %initSize" + countText(i) + ")\n"
+            body = body + " %initBox" + countText(i) + " = call ptr @pini_given_get(ptr @" + givenSlotName(typeName = block.storages[i].typeName) + ", ptr @" + givenInitName(typeName = block.storages[i].typeName) + ", i64 %initSize" + countText(i) + ")\n"
         i = i + 1
     body = body + " ret void\n}\n\n"
     body = body + "define void @" + block.shutdownName + "() {\n ret void\n}\n\n"
@@ -221,7 +221,7 @@ emitExportStubs|func(sink: LineSink, module: IrModule, bundle: EmitPass,) -> ():
         i = i + 1
     i = 0
     while i < len(module.cSurface.storages):
-        useExtern(use = bundle.externs, name = "bk_given_get")
+        useExtern(use = bundle.externs, name = "pini_given_get")
         appendLine(sink = sink, text = exportGetterText(module = module, storage = module.cSurface.storages[i]))
         i = i + 1
     appendLine(sink = sink, text = exportLifecycleText(module = module, block = module.cSurface))

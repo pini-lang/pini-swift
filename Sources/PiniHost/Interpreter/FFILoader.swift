@@ -36,7 +36,7 @@ final class FFILoader {
     }
 
 
-    /// 运行时段库：`bk_*` 全在这份动态库里，而 CLI 自身不链接它 —— 只查进程映像解析不到。
+    /// 运行时段库：`pini_*` 全在这份动态库里，而 CLI 自身不链接它 —— 只查进程映像解析不到。
     /// 找不到不报错：不用运行时段符号的程序照常跑，用户自己的库仍由 `[ffi].libs` 声明。
     private func preloadRuntimeIfPresent() {
         if preloadedLibraries.contains(FFILoader.runtimeLabel) { return }

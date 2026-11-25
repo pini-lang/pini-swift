@@ -238,12 +238,12 @@ _backend_kit = "../../backend-kit"
     let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
     if result.failed:
         assert(false, "缺口：" + result.gaps[0])
-    assert(发射含子串(text = result.text, needle = "call void @bk_print_lock()"), "整行应先取锁")
+    assert(发射含子串(text = result.text, needle = "call void @pini_print_lock()"), "整行应先取锁")
     assert(发射含子串(text = result.text, needle = "call i32 (ptr, ...) @printf(ptr @fmt_string, ptr %t0)"), "字符串应走 %s")
     assert(发射含子串(text = result.text, needle = "call i32 (ptr, ...) @printf(ptr @fmt_newline)"), "行末应补终止符")
-    assert(发射含子串(text = result.text, needle = "call void @bk_print_unlock()"), "整行应还锁")
+    assert(发射含子串(text = result.text, needle = "call void @pini_print_unlock()"), "整行应还锁")
     assert(发射含子串(text = result.text, needle = "declare i32 @printf(ptr, ...)"), "被调外部符号应出声明")
-    assert(发射含子串(text = result.text, needle = "call void @bk_panic(ptr"), "断言为假应跳陷阱")
+    assert(发射含子串(text = result.text, needle = "call void @pini_panic(ptr"), "断言为假应跳陷阱")
     assert(发射含子串(text = result.text, needle = "assert.fail."), "断言应有失败块")
     return
 
@@ -328,12 +328,12 @@ _backend_kit = "../../backend-kit"
     let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
     if result.failed:
         assert(false, "缺口：" + result.gaps[0])
-    assert(发射含子串(text = result.text, needle = "%t0 = call ptr @bk_array_create(i32 0)"), "空字面量应建零长句柄")
+    assert(发射含子串(text = result.text, needle = "%t0 = call ptr @pini_array_create(i32 0)"), "空字面量应建零长句柄")
     assert(发射含子串(text = result.text, needle = "store i32 7, ptr %ebox, align 4"), "元素应先落装箱台")
-    assert(发射含子串(text = result.text, needle = "call ptr @bk_array_append(ptr %t2, ptr %ebox, i32 4, i32 0)"), "追加应带宽度与标签")
-    assert(发射含子串(text = result.text, needle = "call i32 @bk_array_len(ptr %t4)"), "数组长度应走数组族符号")
-    assert(发射含子串(text = result.text, needle = "declare ptr @bk_array_append(ptr, ptr, i32, i32)"), "追加符号应出声明")
-    assert(发射含子串(text = result.text, needle = "declare i32 @bk_array_len(ptr)"), "长度符号应出声明")
+    assert(发射含子串(text = result.text, needle = "call ptr @pini_array_append(ptr %t2, ptr %ebox, i32 4, i32 0)"), "追加应带宽度与标签")
+    assert(发射含子串(text = result.text, needle = "call i32 @pini_array_len(ptr %t4)"), "数组长度应走数组族符号")
+    assert(发射含子串(text = result.text, needle = "declare ptr @pini_array_append(ptr, ptr, i32, i32)"), "追加符号应出声明")
+    assert(发射含子串(text = result.text, needle = "declare i32 @pini_array_len(ptr)"), "长度符号应出声明")
     assert(发射含子串(text = result.text, needle = "%ebox = alloca [8 x i8], align 8"), "装箱台应在函数入口分配")
     return
 
@@ -424,14 +424,14 @@ _backend_kit = "../../backend-kit"
     let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
     if result.failed:
         assert(false, "缺口：" + result.gaps[0])
-    assert(发射含子串(text = result.text, needle = "call i64 @bk_chr(i32 65)"), "chr 应 i32 进、i64 出")
-    assert(发射含子串(text = result.text, needle = "call i32 @bk_ord(i64"), "ord 应 i64 进、i32 出")
-    assert(发射含子串(text = result.text, needle = "call ptr @bk_chars(ptr"), "chars 应串进、句柄出")
-    assert(发射含子串(text = result.text, needle = "call ptr @bk_temp_utf8_bytes(ptr"), "字节桥应串进、句柄出")
-    assert(发射含子串(text = result.text, needle = "declare i64 @bk_chr(i32)"), "chr 声明应与调用同形")
-    assert(发射含子串(text = result.text, needle = "declare i32 @bk_ord(i64)"), "ord 声明应与调用同形")
-    assert(发射含子串(text = result.text, needle = "declare ptr @bk_chars(ptr)"), "chars 声明应与调用同形")
-    assert(发射含子串(text = result.text, needle = "declare ptr @bk_temp_utf8_bytes(ptr)"), "字节桥声明应与调用同形")
+    assert(发射含子串(text = result.text, needle = "call i64 @pini_chr(i32 65)"), "chr 应 i32 进、i64 出")
+    assert(发射含子串(text = result.text, needle = "call i32 @pini_ord(i64"), "ord 应 i64 进、i32 出")
+    assert(发射含子串(text = result.text, needle = "call ptr @pini_chars(ptr"), "chars 应串进、句柄出")
+    assert(发射含子串(text = result.text, needle = "call ptr @pini_temp_utf8_bytes(ptr"), "字节桥应串进、句柄出")
+    assert(发射含子串(text = result.text, needle = "declare i64 @pini_chr(i32)"), "chr 声明应与调用同形")
+    assert(发射含子串(text = result.text, needle = "declare i32 @pini_ord(i64)"), "ord 声明应与调用同形")
+    assert(发射含子串(text = result.text, needle = "declare ptr @pini_chars(ptr)"), "chars 声明应与调用同形")
+    assert(发射含子串(text = result.text, needle = "declare ptr @pini_temp_utf8_bytes(ptr)"), "字节桥声明应与调用同形")
     return
 
 ; 睡眠模块：main 里一条睡眠调用、一条返回；调用节点无类型即空返回。
@@ -470,8 +470,8 @@ _backend_kit = "../../backend-kit"
     let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
     if result.failed:
         assert(false, "缺口：" + result.gaps[0])
-    assert(发射含子串(text = result.text, needle = "call void @bk_sleep(i32 5)"), "睡眠应按空返回直呼")
-    assert(发射含子串(text = result.text, needle = "declare void @bk_sleep(i32)"), "睡眠声明应与调用同形")
+    assert(发射含子串(text = result.text, needle = "call void @pini_sleep(i32 5)"), "睡眠应按空返回直呼")
+    assert(发射含子串(text = result.text, needle = "declare void @pini_sleep(i32)"), "睡眠声明应与调用同形")
     return
 
 ; 建目录直呼：无返回的单参内建与睡眠同形，声明与调用都按 `void` 出。
@@ -480,8 +480,8 @@ _backend_kit = "../../backend-kit"
     let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
     if result.failed:
         assert(false, "缺口：" + result.gaps[0])
-    assert(发射含子串(text = result.text, needle = "call void @bk_ensure_dir(ptr"), "建目录应按空返回直呼")
-    assert(发射含子串(text = result.text, needle = "declare void @bk_ensure_dir(ptr)"), "建目录声明应与调用同形")
+    assert(发射含子串(text = result.text, needle = "call void @pini_ensure_dir(ptr"), "建目录应按空返回直呼")
+    assert(发射含子串(text = result.text, needle = "declare void @pini_ensure_dir(ptr)"), "建目录声明应与调用同形")
     return
 
 ; 建目录模块：main 里一条建目录调用、一条返回；实参是串常量，调用节点无类型即空返回。
@@ -600,14 +600,14 @@ _backend_kit = "../../backend-kit"
     if result.failed:
         assert(false, "缺口：" + result.gaps[0])
     assert(发射含子串(text = result.text, needle = "%struct.Point = type { i32, i32, i32, ptr, i32 }"), "聚合应按头加字段出声明")
-    assert(发射含子串(text = result.text, needle = "call ptr @bk_nominal_alloc(i64"), "构造应分配名义箱")
+    assert(发射含子串(text = result.text, needle = "call ptr @pini_nominal_alloc(i64"), "构造应分配名义箱")
     assert(发射含子串(text = result.text, needle = "getelementptr %struct.Point, ptr null, i32 1"), "箱尺寸应取过尾指针")
     assert(发射含子串(text = result.text, needle = "getelementptr %struct.Point, ptr %t2, i32 0, i32 4"), "字段应先清零")
     assert(发射含子串(text = result.text, needle = "store i32 0, ptr %t3"), "清零应写零值")
     assert(发射含子串(text = result.text, needle = "getelementptr %struct.Point, ptr %t5, i32 0, i32 4"), "字段写应落在第 4 槽")
     assert(发射含子串(text = result.text, needle = "store i32 7, ptr %t6"), "字段写应存值")
     assert(发射含子串(text = result.text, needle = "load i32, ptr %t8"), "字段读应按字段类型读")
-    assert(发射含子串(text = result.text, needle = "declare ptr @bk_nominal_alloc(i64, i32)"), "分配符号应出声明")
+    assert(发射含子串(text = result.text, needle = "declare ptr @pini_nominal_alloc(i64, i32)"), "分配符号应出声明")
     return
 
 ; 枚举模块：i32 与枚举 Color（一个带 I32 载荷的用例），标签与载荷各读一次。
@@ -845,14 +845,14 @@ _backend_kit = "../../backend-kit"
     let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
     if result.failed:
         assert(false, "缺口：" + result.gaps[0])
-    assert(发射含子串(text = result.text, needle = "call ptr @bk_string_upper(ptr "), "upper 应一元进、串出")
-    assert(发射含子串(text = result.text, needle = "call ptr @bk_string_lower(ptr "), "lower 应一元进、串出")
-    assert(发射含子串(text = result.text, needle = "call ptr @bk_string_trim_left(ptr "), "trimLeft 应一元进、串出")
-    assert(发射含子串(text = result.text, needle = "call ptr @bk_string_trim_right(ptr "), "trimRight 应一元进、串出")
-    assert(发射含子串(text = result.text, needle = "declare ptr @bk_string_upper(ptr)"), "upper 应出声明")
-    assert(发射含子串(text = result.text, needle = "declare ptr @bk_string_lower(ptr)"), "lower 应出声明")
-    assert(发射含子串(text = result.text, needle = "declare ptr @bk_string_trim_left(ptr)"), "trimLeft 应出声明")
-    assert(发射含子串(text = result.text, needle = "declare ptr @bk_string_trim_right(ptr)"), "trimRight 应出声明")
+    assert(发射含子串(text = result.text, needle = "call ptr @pini_string_upper(ptr "), "upper 应一元进、串出")
+    assert(发射含子串(text = result.text, needle = "call ptr @pini_string_lower(ptr "), "lower 应一元进、串出")
+    assert(发射含子串(text = result.text, needle = "call ptr @pini_string_trim_left(ptr "), "trimLeft 应一元进、串出")
+    assert(发射含子串(text = result.text, needle = "call ptr @pini_string_trim_right(ptr "), "trimRight 应一元进、串出")
+    assert(发射含子串(text = result.text, needle = "declare ptr @pini_string_upper(ptr)"), "upper 应出声明")
+    assert(发射含子串(text = result.text, needle = "declare ptr @pini_string_lower(ptr)"), "lower 应出声明")
+    assert(发射含子串(text = result.text, needle = "declare ptr @pini_string_trim_left(ptr)"), "trimLeft 应出声明")
+    assert(发射含子串(text = result.text, needle = "declare ptr @pini_string_trim_right(ptr)"), "trimRight 应出声明")
     return
 
 ; 字符串与宿主面：双参串调用收成 i1 或 i32，无参内建按零参直呼，谓词把 i32 收成 i1。
@@ -861,12 +861,12 @@ _backend_kit = "../../backend-kit"
     let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
     if result.failed:
         assert(false, "缺口：" + result.gaps[0])
-    assert(发射含子串(text = result.text, needle = "call i32 @bk_string_contains(ptr %t0, ptr %t1)"), "contains 应两串进、i32 出")
+    assert(发射含子串(text = result.text, needle = "call i32 @pini_string_contains(ptr %t0, ptr %t1)"), "contains 应两串进、i32 出")
     assert(发射含子串(text = result.text, needle = "icmp ne i32 %t2, 0"), "contains 应收成 i1")
-    assert(发射含子串(text = result.text, needle = "call i32 @bk_string_index_of(ptr"), "indexOf 应两串进、i32 出")
-    assert(发射含子串(text = result.text, needle = "call ptr @bk_module_root()"), "零参内建应按零参直呼")
-    assert(发射含子串(text = result.text, needle = "call i32 @bk_exists(ptr"), "谓词内建应按 i32 出")
-    assert(发射含子串(text = result.text, needle = "declare ptr @bk_module_root()"), "零参声明应无形参")
+    assert(发射含子串(text = result.text, needle = "call i32 @pini_string_index_of(ptr"), "indexOf 应两串进、i32 出")
+    assert(发射含子串(text = result.text, needle = "call ptr @pini_module_root()"), "零参内建应按零参直呼")
+    assert(发射含子串(text = result.text, needle = "call i32 @pini_exists(ptr"), "谓词内建应按 i32 出")
+    assert(发射含子串(text = result.text, needle = "declare ptr @pini_module_root()"), "零参声明应无形参")
     return
 
 ; 容器模块：数组字面量、负下标读、切片各一次。
@@ -942,11 +942,11 @@ _backend_kit = "../../backend-kit"
     let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
     if result.failed:
         assert(false, "缺口：" + result.gaps[0])
-    assert(发射含子串(text = result.text, needle = "call i32 @bk_array_len(ptr %t2)"), "负下标应先取长度")
+    assert(发射含子串(text = result.text, needle = "call i32 @pini_array_len(ptr %t2)"), "负下标应先取长度")
     assert(发射含子串(text = result.text, needle = "select i1 %t4, i32 %t5, i32 -1"), "负下标应按尾计数换算")
-    assert(发射含子串(text = result.text, needle = "call ptr @bk_array_get(ptr %t2, i32 %t6)"), "下标读应取元素地址")
-    assert(发射含子串(text = result.text, needle = "call ptr @bk_array_create(i32 %t"), "切片应先建新句柄")
-    assert(发射含子串(text = result.text, needle = "call ptr @bk_array_set(ptr"), "切片应逐元素写新句柄")
+    assert(发射含子串(text = result.text, needle = "call ptr @pini_array_get(ptr %t2, i32 %t6)"), "下标读应取元素地址")
+    assert(发射含子串(text = result.text, needle = "call ptr @pini_array_create(i32 %t"), "切片应先建新句柄")
+    assert(发射含子串(text = result.text, needle = "call ptr @pini_array_set(ptr"), "切片应逐元素写新句柄")
     assert(发射含子串(text = result.text, needle = "br label %slice.cond.0"), "切片应进循环")
     return
 
@@ -983,10 +983,10 @@ _backend_kit = "../../backend-kit"
     assert(发射含子串(text = result.text, needle = "@__pini_test_failed = internal global i32 0"), "应有失败位")
     assert(发射含子串(text = result.text, needle = "store i32 1, ptr @__pini_test_failed"), "断言失败应置位")
     assert(发射含子串(text = result.text, needle = "call void @probeTest()"), "跑器应调用选中测试")
-    assert(发射含子串(text = result.text, needle = "call void @bk_set_program_base(ptr"), "组首应切基准")
-    assert(!发射含子串(text = result.text, needle = "call void @bk_panic"), "测试态不应走陷阱")
+    assert(发射含子串(text = result.text, needle = "call void @pini_set_program_base(ptr"), "组首应切基准")
+    assert(!发射含子串(text = result.text, needle = "call void @pini_panic"), "测试态不应走陷阱")
     let normal = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
-    assert(发射含子串(text = normal.text, needle = "call void @bk_panic"), "普通态仍走陷阱")
+    assert(发射含子串(text = normal.text, needle = "call void @pini_panic"), "普通态仍走陷阱")
     return
 
 ; 断言位置：测试态把失败断言的位置存进报告槽，跑器按它打印失败行；缺位置时退回用例文件。
@@ -1128,8 +1128,8 @@ _backend_kit = "../../backend-kit"
     assert(supportsFamily(entry = 发射造记录(outputCode = 1), family = 8), "整份读写族应已声明")
     let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
     assert(!result.failed, "文件模块应发得出来")
-    assert(发射含子串(text = result.text, needle = "call void @bk_write_file(ptr "), "写应走整份写入口")
-    assert(发射含子串(text = result.text, needle = "call ptr @bk_read_file(ptr "), "读应走整份读入口")
+    assert(发射含子串(text = result.text, needle = "call void @pini_write_file(ptr "), "写应走整份写入口")
+    assert(发射含子串(text = result.text, needle = "call ptr @pini_read_file(ptr "), "读应走整份读入口")
     return
 
 ; 可接住写：错误字即返回值，聚合标签按是否有错置位。
@@ -1166,7 +1166,7 @@ _backend_kit = "../../backend-kit"
     assert(supportsFamily(entry = 发射造记录(outputCode = 1), family = 9), "可接住读写族应已声明")
     let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
     assert(!result.failed, "可接住写应发得出来")
-    assert(发射含子串(text = result.text, needle = "call i64 @bk_try_write_file(ptr "), "应走可接住写入口")
+    assert(发射含子串(text = result.text, needle = "call i64 @pini_try_write_file(ptr "), "应走可接住写入口")
     assert(发射含子串(text = result.text, needle = "insertvalue { i64, {}, i64 }"), "结果按三槽聚合拼回")
     return
 
@@ -1340,8 +1340,8 @@ _backend_kit = "../../backend-kit"
     let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
     assert(!result.failed, "惰性引用模块应发得出来")
     assert(发射含子串(text = result.text, needle = "define ptr @__lazyref_wrapper_i32"), "应出 i32 装箱包装")
-    assert(发射含子串(text = result.text, needle = "call ptr @bk_lazyref_create(ptr @__lazyref_wrapper_i32, ptr "), "构造应走运行时入口")
-    assert(发射含子串(text = result.text, needle = "call ptr @bk_lazyref_value(ptr "), "取值应走运行时入口")
+    assert(发射含子串(text = result.text, needle = "call ptr @pini_lazyref_create(ptr @__lazyref_wrapper_i32, ptr "), "构造应走运行时入口")
+    assert(发射含子串(text = result.text, needle = "call ptr @pini_lazyref_value(ptr "), "取值应走运行时入口")
     return
 
 ; 等待：句柄读出来交给运行时段，三槽归一化后按 Result 拼回。
@@ -1380,7 +1380,7 @@ _backend_kit = "../../backend-kit"
     module.functions = module.functions.append(fn)
     let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
     assert(!result.failed, "等待模块应发得出来")
-    assert(发射含子串(text = result.text, needle = "call i32 @bk_task_join(ptr "), "等待应走运行时段入口")
+    assert(发射含子串(text = result.text, needle = "call i32 @pini_task_join(ptr "), "等待应走运行时段入口")
     assert(发射含子串(text = result.text, needle = "insertvalue { i64, i32, i64 }"), "结算值按三槽拼回")
     return
 
@@ -1721,8 +1721,8 @@ _backend_kit = "../../backend-kit"
     if result.failed:
         assert(false, "缺口：" + result.gaps[0])
     assert(发射含子串(text = result.text, needle = "call i32 (ptr, ...) @printf(ptr @fmt_lbrace)"), "集合应以左花括号开头")
-    assert(发射含子串(text = result.text, needle = "declare ptr @bk_set_at(ptr, i32)"), "取元素符号应出声明")
-    assert(发射含子串(text = result.text, needle = "call ptr @bk_set_at(ptr"), "元素应按序取回")
+    assert(发射含子串(text = result.text, needle = "declare ptr @pini_set_at(ptr, i32)"), "取元素符号应出声明")
+    assert(发射含子串(text = result.text, needle = "call ptr @pini_set_at(ptr"), "元素应按序取回")
     assert(发射含子串(text = result.text, needle = "call i32 (ptr, ...) @printf(ptr @fmt_rbrace)"), "集合应以右花括号收尾")
     return
 

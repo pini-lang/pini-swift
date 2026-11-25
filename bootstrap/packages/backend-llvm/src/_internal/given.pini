@@ -109,19 +109,19 @@ emitGivenInstance|func(out: ExprOut, module: IrModule, node: IrNode,) -> (ExprOu
         done.ctx = addGap(ctx = done.ctx, gap = "默认实例的类型不是名义类型")
         return done
     done.ctx.givenDefs = ensureGivenDefs(defs = done.ctx.givenDefs, module = module, typeId = node.typeId, use = done.ctx.externs)
-    useExtern(use = done.ctx.externs, name = "bk_given_get")
-    useExtern(use = done.ctx.externs, name = "bk_nominal_alloc")
+    useExtern(use = done.ctx.externs, name = "pini_given_get")
+    useExtern(use = done.ctx.externs, name = "pini_nominal_alloc")
     let sized = aggregateSizeName(ctx = done.ctx, agg = agg)
     done.ctx = sized.ctx
     let size = sized.text
     let boxedId = done.ctx.temp
     done.ctx.temp = boxedId + 1
     let boxed = tempName(index = boxedId)
-    appendLine(sink = done.ctx.lines, text = "  " + boxed + " = call ptr @bk_given_get(ptr @" + givenSlotName(typeName = entry.name) + ", ptr @" + givenInitName(typeName = entry.name) + ", i64 " + size + ")")
+    appendLine(sink = done.ctx.lines, text = "  " + boxed + " = call ptr @pini_given_get(ptr @" + givenSlotName(typeName = entry.name) + ", ptr @" + givenInitName(typeName = entry.name) + ", i64 " + size + ")")
     let localId = done.ctx.temp
     done.ctx.temp = localId + 1
     let local = tempName(index = localId)
-    appendLine(sink = done.ctx.lines, text = "  " + local + " = call ptr @bk_nominal_alloc(i64 " + size + ", i32 " + countText(node.typeId) + ")")
+    appendLine(sink = done.ctx.lines, text = "  " + local + " = call ptr @pini_nominal_alloc(i64 " + size + ", i32 " + countText(node.typeId) + ")")
     done.ctx = copyGivenPayload(ctx = done.ctx, agg = agg, dst = local, src = boxed, size = size, headerCount = module.slots.headSlots)
     done.text = local
     return done
