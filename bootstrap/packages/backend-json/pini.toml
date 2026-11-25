@@ -1,0 +1,15 @@
+[package]
+name = "backend_json"
+
+[require]
+semantics = "*"
+ir = "*"
+backend_kit = "*"
+
+[lib]
+name = "backend-json"
+entry = "src/api/json.pini"
+
+[[test]]
+name = "backend-json-tests"
+entry = "tests"

@@ -238,11 +238,33 @@ def self_family_counts():
     return counts
 
 
+def self_json_families():
+    """自举 json 后端：在册即声明全族；它不按节点分派，故每族按契约节点数记接通。
+
+    与 llvm 列的读数口径不同：那条数的是源码里逐节点接通的类别码，这条数的是该族节点总数 ——
+    统一按通用字段印，没有会漏的分支。在册判据取入口函数，缺它按未接线处理。
+    """
+    path = ROOT / "bootstrap" / "packages" / "backend-json" / "src" / "api" / "json.pini"
+    if not path.is_file():
+        return None
+    if "jsonModule|func" not in path.read_text(encoding="utf-8"):
+        return None
+    reach = load_capability_reach()
+    entries = reach.contract_entries()
+    families = reach.family_names()
+    counts = {}
+    for code, name in enumerate(families):
+        counts[name] = sum(1 for _tag, _node, family in entries if family == code)
+    return counts
+
+
 def channels_table():
     channels, matrix, outputs = host_matrix()
     counts = self_family_counts()
+    json_counts = self_json_families()
     lines = ["# 通道表：通道 × 族。宿主列取 backends --tsv，自举列取能力普查；「接通」是已发射的节点数。",
              "# 自举没有的通道整列为「无」；embedded_min 按裁定留差异，不进归零判据。",
+             "# json 行的接通列记该族契约节点数：该后端按通用字段印，不按节点分派，没有会漏的分支。",
              "# 由 bootstrap/tools/parity.py 生成，勿手改；只许缩小。",
              "通道\t产出\t族\t宿主\t自举声明\t自举接通\t状态"]
     for channel in channels:
@@ -257,6 +279,9 @@ def channels_table():
                     state = "异"
                 else:
                     state = "有" if reach > 0 else "部分"
+            elif channel == "json" and json_counts is not None:
+                self_decl, self_reach = "1", str(json_counts.get(family, 0))
+                state = "有" if host_side == "yes" else "异"
             else:
                 self_decl, self_reach = "-", "-"
                 state = "无" if host_side == "yes" else "-"

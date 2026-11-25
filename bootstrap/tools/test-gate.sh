@@ -862,8 +862,23 @@ else
     fi
 fi
 
+# JSON 通道：同一示例两跑逐字节相同，正文可被 JSON 解析器读入，首三键与产出档次照契约。
+# 正文从第三行起：前两行是 emit-ok 与 emit-backend 两行回执。
+"$pini" emit "$root/examples/composition.pini" --backend json > "$work/json-once.out" 2>&1
+sed -n '3,$p' "$work/json-once.out" > "$work/json-once.txt"
+"$pini" emit "$root/examples/composition.pini" --backend json > "$work/json-twice.out" 2>&1
+sed -n '3,$p' "$work/json-twice.out" > "$work/json-twice.txt"
+if ! cmp -s "$work/json-once.txt" "$work/json-twice.txt"; then
+    echo " 行不通  [测试自检] JSON 通道两次发射不同" >&2
+    fail=1
+fi
+if ! python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert list(d)[:3] == ["backend","output","layout"]; assert d["output"] == "structuralDump"' "$work/json-once.txt" 2>/dev/null; then
+    echo " 行不通  [测试自检] JSON 通道产物不可解析或首三键不符" >&2
+    fail=1
+fi
+
 if [ "$fail" -ne 0 ]; then
     exit 1
 fi
-echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入，浮点常量走位模式，接口缓存按记录判失效，逐包产物按包发射且合并可链接，缓存按拓扑与内容判复用，分波按依赖深度，共享缓存按指纹复用，命令对照按签名锁定，导出面按符号表核对，构建执行组五条命令各有判据，模块工具组按副本验改写与抓取，内存模型两条示例与 golden 一致，源码树零改动且格式化幂等，展开产物过检查，头翻译两侧逐字节相同且跳过项带理由"
+echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入，浮点常量走位模式，接口缓存按记录判失效，逐包产物按包发射且合并可链接，缓存按拓扑与内容判复用，分波按依赖深度，共享缓存按指纹复用，命令对照按签名锁定，导出面按符号表核对，构建执行组五条命令各有判据，模块工具组按副本验改写与抓取，内存模型两条示例与 golden 一致，源码树零改动且格式化幂等，展开产物过检查，头翻译两侧逐字节相同且跳过项带理由，JSON 通道两跑一致且可解析"
 exit 0

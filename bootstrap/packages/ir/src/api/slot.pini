@@ -221,3 +221,11 @@ slotCountOf|func(table: IrSlotTable, typeId: I32,) -> (I32,):
 ; 字段槽位：头槽数加字段序，与契约第 6 节同一算式；后端不再做这个加法。
 fieldSlotIndex|func(table: IrSlotTable, fieldIndex: I32,) -> (I32,):
     return table.headSlots + fieldIndex
+
+; 结果槽数：布局契约常量，转述语义侧那一处；结构转储按它印布局事实。
+irResultSlots|func() -> (I32,):
+    return resultSlotCount()
+
+; 可选槽数：同上，标签与载荷两格。
+irOptionalSlots|func() -> (I32,):
+    return optionalSlotCount()

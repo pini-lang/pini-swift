@@ -1,5 +1,6 @@
 # 通道表：通道 × 族。宿主列取 backends --tsv，自举列取能力普查；「接通」是已发射的节点数。
 # 自举没有的通道整列为「无」；embedded_min 按裁定留差异，不进归零判据。
+# json 行的接通列记该族契约节点数：该后端按通用字段印，不按节点分派，没有会漏的分支。
 # 由 bootstrap/tools/parity.py 生成，勿手改；只许缩小。
 通道	产出	族	宿主	自举声明	自举接通	状态
 llvm	machineCode	controlFlow	yes	1	16	有
@@ -30,20 +31,20 @@ c	structuralDump	strings	yes	-	-	无
 c	structuralDump	lazyRef	yes	-	-	无
 c	structuralDump	concurrency	yes	-	-	无
 c	structuralDump	givenInstances	yes	-	-	无
-json	structuralDump	controlFlow	yes	-	-	无
-json	structuralDump	scalars	yes	-	-	无
-json	structuralDump	variablesAndOperators	yes	-	-	无
-json	structuralDump	calls	yes	-	-	无
-json	structuralDump	resultAndOptional	yes	-	-	无
-json	structuralDump	collections	yes	-	-	无
-json	structuralDump	nominals	yes	-	-	无
-json	structuralDump	pointers	yes	-	-	无
-json	structuralDump	fileIO	yes	-	-	无
-json	structuralDump	catchableIO	yes	-	-	无
-json	structuralDump	strings	yes	-	-	无
-json	structuralDump	lazyRef	yes	-	-	无
-json	structuralDump	concurrency	yes	-	-	无
-json	structuralDump	givenInstances	yes	-	-	无
+json	structuralDump	controlFlow	yes	1	18	有
+json	structuralDump	scalars	yes	1	4	有
+json	structuralDump	variablesAndOperators	yes	1	4	有
+json	structuralDump	calls	yes	1	8	有
+json	structuralDump	resultAndOptional	yes	1	5	有
+json	structuralDump	collections	yes	1	8	有
+json	structuralDump	nominals	yes	1	3	有
+json	structuralDump	pointers	yes	1	4	有
+json	structuralDump	fileIO	yes	1	4	有
+json	structuralDump	catchableIO	yes	1	3	有
+json	structuralDump	strings	yes	1	11	有
+json	structuralDump	lazyRef	yes	1	6	有
+json	structuralDump	concurrency	yes	1	1	有
+json	structuralDump	givenInstances	yes	1	1	有
 embedded_min	bytecode	controlFlow	yes	-	-	无
 embedded_min	bytecode	scalars	yes	-	-	无
 embedded_min	bytecode	variablesAndOperators	yes	-	-	无
