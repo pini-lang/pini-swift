@@ -69,12 +69,14 @@ public struct Package: Equatable, ASTNode, Sendable {
     }
 
     /// 只在第一个单元并入标准库：标准库是模块级声明，逐单元各带一份会在整包摊平时重复。
+    /// 让位主张按整包全部单元收集：同名项写在别的文件里，也要摘掉标准库那份。
     /// 幂等——已装配过的单元原样保留。警告随单元保留：装配不改动该文件的词法结果。
     public func assemblingStdlib() -> Package {
         guard let first = fileUnits.first else { return self }
+        let claims = FrontEnd.claims(in: fileUnits.map(\.module))
         var assembled = fileUnits
         assembled[0] = FileUnit(
-            fileName: first.fileName, module: FrontEnd.assemble(module: first.module),
+            fileName: first.fileName, module: FrontEnd.assemble(module: first.module, claims: claims),
             warnings: first.warnings)
         return Package(
             name: name, fileUnits: assembled, rootPath: rootPath,

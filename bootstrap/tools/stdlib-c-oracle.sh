@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # stdlib-c-oracle.sh — 标准库独立性对照：把 18 个字符串成员换成外部 C 内核，其余装配不动。
 # 判据两段：语料报告两侧逐字节相同（必须绿）；读数按一致区与分叉区统计（只报数）。
-# 顶替片段并入入口文件；动态库按 @rpath 安装名构建，裸名会让链接通道在 dyld 处失败。
+# 顶替走独立源文件；动态库按 @rpath 安装名构建，裸名会让链接通道在 dyld 处失败。
 set -uo pipefail
 
 root="$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")"
@@ -50,8 +50,8 @@ for side in base cand; do
     cp bootstrap/fixtures/stdlib-c/probe.pini "$work/$side/src/" || fail "放入对照程序失败"
 done
 
-# 候选侧只多两样：顶替文件并入入口，清单加 [ffi]；测试文件与语料一字未动。
-cat bootstrap/fixtures/stdlib-c/cstd.pini >> "$work/cand/src/api.pini" || fail "并入顶替文件失败"
+# 候选侧只多两样：顶替文件独立成一份源文件，清单加 [ffi]；测试文件与语料一字未动。
+cp bootstrap/fixtures/stdlib-c/cstd.pini "$work/cand/src/" || fail "放入顶替文件失败"
 cat >> "$work/cand/pini.toml" <<'TOML'
 
 [ffi]
@@ -60,8 +60,9 @@ search_paths = ["../lib"]
 libs = ["pinistd"]
 TOML
 
+# 报告只比判定行：文件数与工作区路径两侧必然不同，它们不承载判据。
 normalize() {
-    sed -E 's/范围 [^）]*/范围 <工作区>/' "$1"
+    grep -E '(✓|✗|结果:)' "$1"
 }
 
 # 甲段：同一份十八成员语料，两套装配的报告必须逐字节相同。
@@ -72,11 +73,17 @@ for side in base cand; do
         || fail "LLVM 通道测试失败（${side}）：$(head -3 "$work/$side.test-llvm.err")"
 done
 
-if ! diff <(normalize "$work/base.test.out") <(normalize "$work/cand.test.out") > "$work/test.diff"; then
+normalize "$work/base.test.out" > "$work/base.test.norm"
+normalize "$work/cand.test.out" > "$work/cand.test.norm"
+normalize "$work/base.test-llvm.out" > "$work/base.test-llvm.norm"
+normalize "$work/cand.test-llvm.out" > "$work/cand.test-llvm.norm"
+[ -s "$work/base.test.norm" ] || fail "解释器通道没有判定行可比"
+[ -s "$work/base.test-llvm.norm" ] || fail "LLVM 通道没有判定行可比"
+if ! diff "$work/base.test.norm" "$work/cand.test.norm" > "$work/test.diff"; then
     sed -n '1,20p' "$work/test.diff" >&2
     fail "解释器通道的报告两侧不同（见上）"
 fi
-if ! diff <(normalize "$work/base.test-llvm.out") <(normalize "$work/cand.test-llvm.out") > "$work/test-llvm.diff"; then
+if ! diff "$work/base.test-llvm.norm" "$work/cand.test-llvm.norm" > "$work/test-llvm.diff"; then
     sed -n '1,20p' "$work/test-llvm.diff" >&2
     fail "LLVM 通道的报告两侧不同（见上）"
 fi

@@ -15,20 +15,53 @@ public enum FrontEnd {
         try UnrollExpander.expand(ConstantFolder.foldConstants(in: module))
     }
 
-    /// 装配：标准库并入模块并排在用户声明之前；用户同名的方法与函数把标准库那份摘掉，同名只留一份。
+    /// 让位主张：用户占用的顶层名与扩展方法键。装配方按整包算出，多文件包里因此跨文件同效。
+    public struct StdlibClaims: Sendable {
+        public let names: Set<String>
+        public let methods: Set<String>
+
+        public init(names: Set<String> = [], methods: Set<String> = []) {
+            self.names = names
+            self.methods = methods
+        }
+    }
+
+    /// 整包主张：逐单元扫顶层声明与扩展方法；只喂一个单元时即单文件语义。
+    public static func claims(in modules: [Module]) -> StdlibClaims {
+        var names = Set<String>()
+        var methods = Set<String>()
+        for module in modules {
+            for decl in module.declarations {
+                if let name = topLevelName(of: decl) {
+                    names.insert(name)
+                    continue
+                }
+                guard case .extensionDecl(let ext) = decl else { continue }
+                for method in ext.methods {
+                    methods.insert(methodKey(target: ext.targetType, name: method.name))
+                }
+            }
+        }
+        return StdlibClaims(names: names, methods: methods)
+    }
+
+    /// 装配：标准库并入模块并排在用户声明之前；主张里的同名项把标准库那份摘掉，同名只留一份。
     /// 摘而不只靠「后声明者覆盖」：扩展方法按 `名__类型` 出符号，两份同名会在 LLVM 通道重定义。
     /// 幂等，且不属于 `passes`：语法与后端测试拿的是给定片段，不是完整程序。
     public static func assemble(module: Module) -> Module {
+        assemble(module: module, claims: claims(in: [module]))
+    }
+
+    /// 带主张的装配：主张来自整包，标准库却只并进一个单元，故两者必须分开传。
+    public static func assemble(module: Module, claims: StdlibClaims) -> Module {
         guard let prelude = stdlibModule, !prelude.declarations.isEmpty else { return module }
         guard !containsStdlibDeclaration(module) else { return module }
-        let claimedMethods = extensionMethodKeys(in: module)
-        let claimedNames = Set(module.declarations.compactMap { topLevelName(of: $0) })
         var declarations: [TopLevelDecl] = []
         for decl in prelude.declarations {
             // 自由函数按名让位：`map` / `filter` 这类名字用户迟早要自己写一份，
             // 标准库占住它们等于永久剥夺该名字；摘掉后用户的定义照常生效。
             if let name = topLevelName(of: decl) {
-                if !claimedNames.contains(name) { declarations.append(decl) }
+                if !claims.names.contains(name) { declarations.append(decl) }
                 continue
             }
             guard case .extensionDecl(let ext) = decl else {
@@ -36,7 +69,7 @@ public enum FrontEnd {
                 continue
             }
             let kept = ext.methods.filter {
-                !claimedMethods.contains(methodKey(target: ext.targetType, name: $0.name))
+                !claims.methods.contains(methodKey(target: ext.targetType, name: $0.name))
             }
             guard !kept.isEmpty else { continue }
             declarations.append(
@@ -89,18 +122,6 @@ public enum FrontEnd {
     }()
 
     /// 装配：标准库声明排在用户声明之前，用户扩展块里已有的同名方法从标准库里摘掉。
-    /// 摘而不只靠「后声明者覆盖」——扩展方法在 IR 里按 `名__类型` 出符号，两份同名会在 LLVM 通道重定义。
-    private static func extensionMethodKeys(in module: Module) -> Set<String> {
-        var keys = Set<String>()
-        for decl in module.declarations {
-            guard case .extensionDecl(let ext) = decl else { continue }
-            for method in ext.methods {
-                keys.insert(methodKey(target: ext.targetType, name: method.name))
-            }
-        }
-        return keys
-    }
-
     private static func methodKey(target: String, name: String) -> String {
         "\(target)\u{0}\(name)"
     }
