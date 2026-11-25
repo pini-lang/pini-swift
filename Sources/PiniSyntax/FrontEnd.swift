@@ -121,7 +121,7 @@ public enum FrontEnd {
         return module
     }()
 
-    /// 装配：标准库声明排在用户声明之前，用户扩展块里已有的同名方法从标准库里摘掉。
+    /// 方法键：目标类型与名字拼一条；`\0` 不在标识符字符集里，不会与名字本身撞键。
     private static func methodKey(target: String, name: String) -> String {
         "\(target)\u{0}\(name)"
     }
