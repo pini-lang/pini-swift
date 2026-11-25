@@ -22,6 +22,71 @@ struct GenericInstanceTests: Sendable {
         return TypeChecker().checkCollecting(module: module, foreignConstantFailures: [:])
     }
 
+    /// 名字面的错误在语义分析阶段抛出；没有抛出时答 nil。
+    private func semanticError(_ source: String) throws -> SemanticError? {
+        let module = try module(source)
+        do {
+            try SemanticAnalyzer().analyze(module: module)
+        } catch let error as SemanticError {
+            return error
+        }
+        return nil
+    }
+
+    @Test("泛型构造的名字不是声明：E3-002，落在名字上")
+    func undefinedGenericNameIsRejected() throws {
+        let error = try semanticError(
+            """
+            调用|func() -> ():
+                没有这个<I32>(1)
+                return
+            """)
+        guard case .undefinedFunction(let name, let location)? = error else {
+            Issue.record("期望 undefinedFunction，实际 \(String(describing: error))")
+            return
+        }
+        #expect(name == "没有这个")
+        #expect(location.line == 2)
+        #expect(location.column == 5)
+        #expect(error?.diagnosticCode == "E3-002")
+    }
+
+    @Test("类型实参落到函数名：E3-003，落在该实参")
+    func typeArgumentMustNameAType() throws {
+        let error = try semanticError(
+            """
+            加一|func(x: I32,) -> (I32,):
+                return x + 1
+
+            映射|func<T>(x: T,) -> (T,):
+                return x
+
+            调用|func() -> ():
+                映射<加一>(1)
+                return
+            """)
+        guard case .undefinedType(let name, let location)? = error else {
+            Issue.record("期望 undefinedType，实际 \(String(describing: error))")
+            return
+        }
+        #expect(name == "加一")
+        #expect(location.line == 8)
+        #expect(location.column == 8)
+        #expect(error?.diagnosticCode == "E3-003")
+    }
+
+    @Test("内建类型构造名不算未定义：`Array<I32>()` 照常放行")
+    func builtinConstructorNameIsAccepted() throws {
+        let error = try semanticError(
+            """
+            调用|func() -> ():
+                var a = Array<I32>()
+                print(len(a))
+                return
+            """)
+        #expect(error == nil)
+    }
+
     @Test("非泛型函数带显式类型实参：E4-006，期望 0 个")
     func plainFunctionTakesNoTypeArguments() throws {
         let errors = try checked(
