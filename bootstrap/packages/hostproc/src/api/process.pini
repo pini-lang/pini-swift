@@ -1,11 +1,11 @@
 ; 进程与工具链：编译命令调外部工具的唯一点，符号面按运行时 ABI 契约的进程族。
 ; 外部块只登记「起、等、收、还」，抓取模式与直通模式由 mode 位分，不在符号面分两套。
 [process|foreign]
-bk_process_release: (*U8,) -> ()
-bk_process_spawn: (String, I32,) -> (*U8,)
-bk_process_stderr: (*U8,) -> (*U8,)
-bk_process_stdout: (*U8,) -> (*U8,)
-bk_process_wait: (*U8,) -> (I32,)
+pini_process_release: (*U8,) -> ()
+pini_process_spawn: (String, I32,) -> (*U8,)
+pini_process_stderr: (*U8,) -> (*U8,)
+pini_process_stdout: (*U8,) -> (*U8,)
+pini_process_wait: (*U8,) -> (I32,)
 
 ; 进程结局：退出码与两路输出。句柄在 runProcess 内归还，这里的串是从句柄视图复制出来的副本。
 (ProcessOutcome)
@@ -27,12 +27,12 @@ runProcess|func(argv: Array<String>, keepOutput: Bool,) -> (ProcessOutcome,):
             文本 = 文本 + "\n"
         文本 = 文本 + argv[i]
         i = i + 1
-    let handle = unsafe bk_process_spawn(文本, 模式)
-    done.code = unsafe bk_process_wait(handle)
+    let handle = unsafe pini_process_spawn(文本, 模式)
+    done.code = unsafe pini_process_wait(handle)
     if keepOutput:
-        done.stdoutText = fromCString(unsafe bk_process_stdout(handle))
-        done.stderrText = fromCString(unsafe bk_process_stderr(handle))
-    unsafe bk_process_release(handle)
+        done.stdoutText = fromCString(unsafe pini_process_stdout(handle))
+        done.stderrText = fromCString(unsafe pini_process_stderr(handle))
+    unsafe pini_process_release(handle)
     return done
 
 ; 末个分隔符位置：找不到答 -1。字符串面没有 lastIndexOf，反向扫一次。

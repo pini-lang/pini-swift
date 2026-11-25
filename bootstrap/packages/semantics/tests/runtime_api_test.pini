@@ -12,7 +12,7 @@ _module_loader = "../../module-loader"
     return -1
 
 ; 端到端：runtime-api 在工作区里装载、注册、解析类型与判型全零诊断。
-; 声明面 131 条；`bk_capabilities` 与 `bk_ptr_load_f32` 宽度不在 IR，走内建不进这里。
+; 声明面 131 条；`pini_capabilities` 与 `pini_ptr_load_f32` 宽度不在 IR，走内建不进这里。
 运行时段包零诊断|test() -> ():
     let root = moduleRoot() + "/../.."
     let plan: BuildPlan = package.planWorkspace(root)
@@ -36,9 +36,9 @@ _module_loader = "../../module-loader"
         let 首 = check.errorAt(0)
         assert(false, "判型应零错，实得 " + 首.file + " " + foreignTypeErrorName(首.kind) + " " + 首.name + " " + 首.detail)
     assert(types.bindingCount() == 131, "应留 131 条类型绑定，实得 " + "\(types.bindingCount())")
-    assert(symbols.topIndex(keyOfText("bk_str_handle_new")) >= 0, "句柄入口应声明")
-    assert(symbols.topIndex(keyOfText("bk_capabilities")) < 0, "能力位宽度不在 IR，不声明")
-    assert(symbols.topIndex(keyOfText("bk_ptr_load_f32")) < 0, "F32 读取不声明")
+    assert(symbols.topIndex(keyOfText("pini_str_handle_new")) >= 0, "句柄入口应声明")
+    assert(symbols.topIndex(keyOfText("pini_capabilities")) < 0, "能力位宽度不在 IR，不声明")
+    assert(symbols.topIndex(keyOfText("pini_ptr_load_f32")) < 0, "F32 读取不声明")
     var 映像: Array<String> = []
     var i = 0
     while i < symbols.symbolCount():

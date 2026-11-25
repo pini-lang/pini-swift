@@ -1,7 +1,7 @@
 import Foundation
 
 /// 并发能力的分层：一层套一层而非矩阵——有让出必有调度，反过来不成立（无线程则无让出，但调度仍在）。
-/// `bk_capabilities() -> u32` 的形态是位图，而位值本身是 ABI 的一部分，各后端须照此发，否则契约参照就没有共同基准；
+/// `pini_capabilities() -> u32` 的形态是位图，而位值本身是 ABI 的一部分，各后端须照此发，否则契约参照就没有共同基准；
 /// 故位值在此定案登记，后端不得自行另定一套。
 public enum ConcurrencyTier: UInt32, Sendable, CaseIterable {
     /// **L0 调度** —— 派发任务与阻塞 join。**不依赖线程**，因而是唯一无条件可用的层。
@@ -18,7 +18,7 @@ public enum ConcurrencyTier: UInt32, Sendable, CaseIterable {
 /// 能力若不是可读的值，「兑现不了让出时 `await` 该怎么办」就只存在于实现者的记忆里；
 /// 纪律要被执行路径读到才算数，故本类型是它的载体而非一句注释。
 public struct ConcurrencyCapabilities: Sendable, Equatable {
-    /// 位图。与 `bk_capabilities()` 的返回值**同形**。
+    /// 位图。与 `pini_capabilities()` 的返回值**同形**。
     public let bitmap: UInt32
 
     public init(bitmap: UInt32) { self.bitmap = bitmap }

@@ -30,8 +30,8 @@ public indirect enum IRType: Equatable {
     /// 与 `result` 不可互换：那是已结算的值，这是未结算的句柄；发射层要静态分辨两者，否则一次异步调用
     /// 与「返回 Result 的同步调用」逐字相同。仅携带 ok 载荷，错误槽与 `result` 同口径（擦除为一个机器字）。
     case future(ok: IRType)
-    /// `Array<T>`：数组本身是不透明运行时句柄（`%bk_array*`，并发后端抽象）；
-    /// 元素经 `bk_array_*` 的 C ABI 装箱。嵌套数组按元素类型递归。
+    /// `Array<T>`：数组本身是不透明运行时句柄（`%pini_array*`，并发后端抽象）；
+    /// 元素经 `pini_array_*` 的 C ABI 装箱。嵌套数组按元素类型递归。
     case array(element: IRType)
     /// `Optional<T>`：标签聚合 `{ i64, T }`，标签 0 = some、1 = none。
     /// 解释器把 Optional 建模为带 `some` / `none` 用例的枚举；`none` 就是语言层的 nil（用户裁定）。
@@ -42,9 +42,9 @@ public indirect enum IRType: Equatable {
     /// 用户枚举：标签联合 `%enum.<mangled>*`，标签落在头四格之后（第 4 格），
     /// 载荷槽按最大元数的用例定型、直接按值存放。
     case enumeration(name: String)
-    /// `Dictionary<K, V>`：不透明句柄 `%bk_dict*`，键与值经 `bk_dict_*` 的 C ABI 装箱。
+    /// `Dictionary<K, V>`：不透明句柄 `%pini_dict*`，键与值经 `pini_dict_*` 的 C ABI 装箱。
     case dict(key: IRType, value: IRType)
-    /// `LazyRef<T>`：不透明句柄 `%bk_lazyref*`，一次性求值的懒引用，复制语义为共享引用；
+    /// `LazyRef<T>`：不透明句柄 `%pini_lazyref*`，一次性求值的懒引用，复制语义为共享引用；
     /// 元素类型随行只为装箱 ABI（字节数 / 标签）与 `.value` 的读出类型。
     case lazyRef(element: IRType)
     /// `WeakRef<T>`：不增加强计数的弱引用句柄；`.value` 读取得 `Optional<T>`。
@@ -52,7 +52,7 @@ public indirect enum IRType: Equatable {
     /// `UnownedRef<T>`：不计数、不跟踪存活的无主引用，表示就是对象指针（`ptr`）。
     /// 解引用、调用与字段访问由检查面限定在 unsafe 上下文；它不进旁表，也没有销毁动作。
     case unownedRef(element: IRType)
-    /// `Set<T>`：不透明句柄 `%bk_set*`，有序去重元素。
+    /// `Set<T>`：不透明句柄 `%pini_set*`，有序去重元素。
     case set(element: IRType)
     /// 带标签元组：寄存器聚合 `{ ... }`，成员按标签序号经 extractvalue 读取。
     case tuple(labels: [String?], fieldTypes: [IRType])
@@ -153,10 +153,10 @@ public indirect enum IRType: Equatable {
         case .result(let ok):
             return "{ i64, \(ok.llvmSpelling), i64 }"
         case .future:
-            // 不透明句柄，与其余 `bk_*` 家族同规：句柄形状属后端事务，没有载荷经它传递。
+            // 不透明句柄，与其余 `pini_*` 家族同规：句柄形状属后端事务，没有载荷经它传递。
             return "ptr"
         case .array:
-            return "%bk_array*"
+            return "%pini_array*"
         case .optional(let wrapped):
             return "{ i64, \(wrapped.llvmSpelling) }"
         case .nominal(let name, let isObject):
@@ -164,13 +164,13 @@ public indirect enum IRType: Equatable {
         case .enumeration(let name):
             return "%enum.\(IRName.mangle(name))*"
         case .dict:
-            return "%bk_dict*"
+            return "%pini_dict*"
         case .set:
-            return "%bk_set*"
+            return "%pini_set*"
         case .lazyRef:
-            return "%bk_lazyref*"
+            return "%pini_lazyref*"
         case .weakRef:
-            return "%bk_weakref*"
+            return "%pini_weakref*"
         case .unownedRef:
             // 无主引用就是对象指针本身：没有箱、没有旁表，运行时段不认第三种句柄。
             return "ptr"
@@ -426,16 +426,16 @@ public indirect enum IRExpr: Equatable {
     case resultConstruct(
         isOk: Bool, payload: IRExpr, errorBaseCode: Int32, errorTagged: Bool,
         errorCodes: [Int32]?, type: IRType)
-    /// 数组字面量 `[e1, e2, ...]`。`type` 是 `.array(element:)`；发射器经 `bk_array_create`
-    /// 与逐元素 `bk_array_set` 建句柄（元素走 C ABI 装箱）。
+    /// 数组字面量 `[e1, e2, ...]`。`type` 是 `.array(element:)`；发射器经 `pini_array_create`
+    /// 与逐元素 `pini_array_set` 建句柄（元素走 C ABI 装箱）。
     case arrayLiteral(elements: [IRExpr], type: IRType)
-    /// 下标读 `container[index]`。越界在运行时段 panic（`bk_array_get`），与解释器的断言通道同规；
+    /// 下标读 `container[index]`。越界在运行时段 panic（`pini_array_get`），与解释器的断言通道同规；
     /// 容错通道（`.get` → Optional）是独立的节点。
     case subscriptGet(container: IRExpr, index: IRExpr, type: IRType)
-    /// 内建 `len(array)` —— 运行时 `bk_array_len`，i32 结果。
+    /// 内建 `len(array)` —— 运行时 `pini_array_len`，i32 结果。
     case lenCall(argument: IRExpr)
     /// 容错读通道 `container.get(index)`：越界得 `none`（语言层 nil），界内得 `some(value)`。
-    /// 发射为围绕 `bk_array_len/get` 的带界检查内联分支。
+    /// 发射为围绕 `pini_array_len/get` 的带界检查内联分支。
     case optionalGet(container: IRExpr, index: IRExpr, type: IRType)
     /// `Optional` 构造：`isSome=false` 即 `none` 字面量（切片糖的开放边界以 `Optional.none` 抵达），
     /// `isSome=true` 携带被包裹的载荷。与 `resultConstruct` 同形。
@@ -549,7 +549,7 @@ public indirect enum IRExpr: Equatable {
     /// `s.substring(start, length)` —— 从原串 memcpy 出指定段。
     case stringSubstring(receiver: IRExpr, start: IRExpr, length: IRExpr)
     /// `s.split(delim)` —— 真的 `Array<String>`（与解释器同形，不是格式化串）：
-    /// strtok 循环把切出的 token 经 strdup 喂给 bk_array_create/set。
+    /// strtok 循环把切出的 token 经 strdup 喂给 pini_array_create/set。
     case stringSplit(receiver: IRExpr, delim: IRExpr, type: IRType)
     /// `s.trimLeft()` —— 剥掉前导 ASCII 空格（只认 U+0020；制表符等其它空白不剥）。
     /// 空格是单字形簇，逐字节扫描即精确；尾部由运行时 shim 切片。返回新串，原串不动；全空格得空串。
@@ -564,15 +564,15 @@ public indirect enum IRExpr: Equatable {
     /// `s1 + s2` 字符串拼接 —— 两条 C 串经 malloc 拼合（字节语义，与已沉淀的拼接通道一致）。
     case stringConcat(lhs: IRExpr, rhs: IRExpr)
     /// 字符串插值 `"x=\(expr)"`：各部分已是降载后的表达式，类型为标量 / 字符串 / 数组；
-    /// 各自转成 C 串后 strcat 进栈缓冲。F64 经 `bk_double_to_string`（最短往返）渲染，不用 `%f`。
+    /// 各自转成 C 串后 strcat 进栈缓冲。F64 经 `pini_double_to_string`（最短往返）渲染，不用 `%f`。
     case interpString(parts: [IRExpr])
 
     // MARK: 懒引用（LazyRef）
 
-    /// `LazyRef<T>(closure)`：经 `bk_lazyref_create(wrapper, code, env, bytes, tag)` 建一次性求值的句柄。
+    /// `LazyRef<T>(closure)`：经 `pini_lazyref_create(wrapper, code, env, bytes, tag)` 建一次性求值的句柄。
     /// `closure` 是降载后的初始化胖指针；逐元素类型的 wrapper 由发射器在模块末尾补齐。
     case lazyRefConstruct(closure: IRExpr, type: IRType)
-    /// `handle.value`：`bk_lazyref_value(handle)` 返回缓存的元素箱，调用方按元素类型读出。
+    /// `handle.value`：`pini_lazyref_value(handle)` 返回缓存的元素箱，调用方按元素类型读出。
     case lazyRefValue(handle: IRExpr, type: IRType)
 
     // MARK: 弱引用
@@ -748,7 +748,7 @@ public enum IRMatchLiteral: Equatable {
 }
 
 /// for-in 的可迭代族：容器种类决定用哪个运行时访问器读第 i 个元素 ——
-/// 单字段模式用 `bk_array_get` / `bk_set_at`，两字段 `(k, v)` 用 `bk_dict_key_at` / `bk_dict_val_at`。
+/// 单字段模式用 `pini_array_get` / `pini_set_at`，两字段 `(k, v)` 用 `pini_dict_key_at` / `pini_dict_val_at`。
 public enum IRForIterableKind: Equatable {
     case array, set, dict
 }

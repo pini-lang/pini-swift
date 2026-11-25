@@ -3094,12 +3094,12 @@ C 要把串存下来时用 `StringHandle`：形参位上 Pini 串被复制一份
 
 ```
 [libc|foreign]
-bk_str_handle_new: (String,) -> (StringHandle,)
-bk_str_handle_len: (StringHandle,) -> (I64,)
-bk_str_handle_release: (StringHandle,) -> ()
+pini_str_handle_new: (String,) -> (StringHandle,)
+pini_str_handle_len: (StringHandle,) -> (I64,)
+pini_str_handle_release: (StringHandle,) -> ()
 ```
 
-C 面的五个入口是 `bk_str_handle_new` / `bytes` / `len` / `retain` / `release`；字节视图不以 NUL 为界读，长度以 `len` 为准，计数归 C。
+C 面的五个入口是 `pini_str_handle_new` / `bytes` / `len` / `retain` / `release`；字节视图不以 NUL 为界读，长度以 `len` 为准，计数归 C。
 
 注意 句柄只在 LLVM 通道与 `build --shared` 上成立：这些符号活在运行时段里，`pini` 进程不带。`run` 在调用点报 E5-020，声明处另有一条 E7-007 提醒。
 
@@ -3257,7 +3257,7 @@ calc_state|c = 计数器状态
 | `F64` / `Bool` | `double` / `bool` |
 | `*T` | `T*`；T 限 C 标量 |
 | `String` | `const char*`；仅形参，入口复制一份 |
-| `StringHandle` | `bk_str_handle*`；形参与返回，C 侧自己 `retain` / `release` |
+| `StringHandle` | `pini_str_handle*`；形参与返回，C 侧自己 `retain` / `release` |
 | `(A, B,) -> (C,)` | `C (*)(A, B)`；仅形参，转发层把裸地址包成 Pini 函数值 |
 | 给定块 | `<C名>_t` 结构体加 `<C名>_get()`，字段须全 C 兼容 |
 | `^T` | 状态码 `int32_t` 返回，`T` 走出参 |
@@ -3989,7 +3989,7 @@ Pini 的执行路径：
 
 **两项形态差异（刻意，不是偏离）**：
 
-1. **断言的失败处置按模式分叉**。生产模式下 `assert` 失败 = 运行时陷阱（`bk_panic`）；
+1. **断言的失败处置按模式分叉**。生产模式下 `assert` 失败 = 运行时陷阱（`pini_panic`）；
    测试模式下才改为「记失败标志 + 跳到本测试出口」（控制权交回驱动器）。
    分叉条件只有「本函数是不是测试函数**且**本模块在测试模式」两条同时成立，其余一律不变；
    别把它读成「断言变软了」—— 陷阱做不到「中止本测试但留下后面的测试」。
@@ -4031,7 +4031,7 @@ IR → LLVM IR → LLVM 工具链 → 目标二进制
 
 **运行时调用**：
 
-IR 经 `call @bk_*` 调用运行时 shim。
+IR 经 `call @pini_*` 调用运行时 shim。
 
 **已知限制**：
 
@@ -4059,20 +4059,20 @@ IR 经 `call @bk_*` 调用运行时 shim。
 
 | 族 | 前缀 / 符号 | 用途 |
 |---|---|---|
-| 数组 | `bk_array_*` | 数组操作 |
-| 字典 | `bk_dict_*` | 字典操作 |
-| 集合 | `bk_set_*` | 集合操作 |
-| 句柄 / COW | `bk_handle_*` | share 管理与写时复制 |
-| LazyRef | `bk_lazyref_*` | 惰性值（求值一次、结果缓存） |
-| 默认实例 | `bk_given_*` | 类型默认实例的惰性物化 |
-| 指针 | `bk_ptr_*` | 指针原语 —— LLVM FFI 的预留面，当前零调用点；语言层 `load` / `store` 不经此处 |
-| 展示 / 陷阱 | `bk_cstr` · `bk_double_to_string` · `bk_panic` | 值展示与运行时陷阱 |
-| 运行时 | `bk_runtime_cleanup` | 进程退出清扫活动句柄 |
-| 字符 | `bk_chars` · `bk_chr` · `bk_ord` · `bk_is_*` · `bk_temp_utf8_bytes` · `bk_temp_byte_to_int` · `bk_temp_int_to_byte` | 字符切分、码位、谓词与临时字节桥 |
-| 字符串面 | `bk_str_*` · `bk_string_*` · `bk_substring` | 原生字符串的分配、计数与切片 |
-| 闭包 / 结构体胶水 | `bk_nominal_*` · `bk_slot_alloc` | 具名类型与槽位分配 |
-| IO / 宿主查询 | `bk_read_file` · `bk_write_file` · `bk_list_dir` · `bk_exists` · `bk_is_dir` · `bk_module_root` · `bk_set_program_base` · `bk_argv` | 文件读写、目录枚举、路径探测、程序基准与命令行参数 |
-| 任务 / 并发 | `bk_task_*` · `bk_scope_close` · `bk_capabilities` · `bk_sleep` | 任务、作用域、能力位与让出 |
+| 数组 | `pini_array_*` | 数组操作 |
+| 字典 | `pini_dict_*` | 字典操作 |
+| 集合 | `pini_set_*` | 集合操作 |
+| 句柄 / COW | `pini_handle_*` | share 管理与写时复制 |
+| LazyRef | `pini_lazyref_*` | 惰性值（求值一次、结果缓存） |
+| 默认实例 | `pini_given_*` | 类型默认实例的惰性物化 |
+| 指针 | `pini_ptr_*` | 指针原语 —— LLVM FFI 的预留面，当前零调用点；语言层 `load` / `store` 不经此处 |
+| 展示 / 陷阱 | `pini_cstr` · `pini_double_to_string` · `pini_panic` | 值展示与运行时陷阱 |
+| 运行时 | `pini_runtime_cleanup` | 进程退出清扫活动句柄 |
+| 字符 | `pini_chars` · `pini_chr` · `pini_ord` · `pini_is_*` · `pini_temp_utf8_bytes` · `pini_temp_byte_to_int` · `pini_temp_int_to_byte` | 字符切分、码位、谓词与临时字节桥 |
+| 字符串面 | `pini_str_*` · `pini_string_*` · `pini_substring` | 原生字符串的分配、计数与切片 |
+| 闭包 / 结构体胶水 | `pini_nominal_*` · `pini_slot_alloc` | 具名类型与槽位分配 |
+| IO / 宿主查询 | `pini_read_file` · `pini_write_file` · `pini_list_dir` · `pini_exists` · `pini_is_dir` · `pini_module_root` · `pini_set_program_base` · `pini_argv` | 文件读写、目录枚举、路径探测、程序基准与命令行参数 |
+| 任务 / 并发 | `pini_task_*` · `pini_scope_close` · `pini_capabilities` · `pini_sleep` | 任务、作用域、能力位与让出 |
 
 本表只承担「有哪些族、各干什么」；**每族的完整符号名与计数在 `runtime-abi.md`**（该表自带「清单数 = 导出数」的自检等式）。不要在本表补成员名 —— 同一份名单的第二个副本必然与源码漂。
 

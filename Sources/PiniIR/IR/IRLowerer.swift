@@ -1845,7 +1845,7 @@ public enum IRLowerer {
         return nodes
     }
 
-    /// 一个实参按形参位降载。句柄位是唯一有转换的方向：Pini 串在这一位包一次 `bk_str_handle_new`，
+    /// 一个实参按形参位降载。句柄位是唯一有转换的方向：Pini 串在这一位包一次 `pini_str_handle_new`，
     /// 已经是句柄的值原样过，其余位置照旧逐位比对。转换在这里而不是发射层 ——
     /// 那里只剩 LLVM 拼写，`String` 与 `StringHandle` 都是 `ptr`，分不出该不该包。
     private static func lowerCallArgument(
@@ -1874,7 +1874,7 @@ public enum IRLowerer {
     }
 
     /// 句柄构造在 IR 里的调用名。带点 ⇒ 不可能是合法的 Pini 标识符，与用户函数无从重名；
-    /// 发射层按这个名字接 `bk_str_handle_new`（两侧共用这一份，名字不会各写一遍）。
+    /// 发射层按这个名字接 `pini_str_handle_new`（两侧共用这一份，名字不会各写一遍）。
     public static let stringHandleMakeName = "pini.str.handle"
 
     /// 变参调用的实参表：固定前缀按签名逐位降载，多出来的只收 C 标量与指针。
@@ -3321,7 +3321,7 @@ public enum IRLowerer {
             }
             /// 无主引用透传：解引用后按元素类型的成员继续；unsafe 门禁已由检查面把关。
             let base = unownedUnwrapped(loweredBase)
-            // LazyRef 的 `.value` 读：`bk_lazyref_value(handle)` 返回缓存的元素盒，由调用方装载元素。
+            // LazyRef 的 `.value` 读：`pini_lazyref_value(handle)` 返回缓存的元素盒，由调用方装载元素。
             if case .lazyRef(let element) = base.type, name == "value" {
                 return LoweredExpr(
                     node: .lazyRefValue(handle: base.node, type: element),
@@ -6380,7 +6380,7 @@ struct IRLowererSignatureInfo {
     /// C 变参：`paramTypes` 是固定前缀，调用点可以多传。放宽的是上限，不是下限。
     let isVariadic: Bool
     /// 声明成 `StringHandle` 的形参位置（0 基）。实参是 Pini 串时，调用点在这一位包一次
-    /// `bk_str_handle_new` —— 句柄的创建即复制只发生在边界上，别处没有这条路。
+    /// `pini_str_handle_new` —— 句柄的创建即复制只发生在边界上，别处没有这条路。
     let handleParamIndices: Set<Int>
 
     init(

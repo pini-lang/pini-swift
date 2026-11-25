@@ -677,10 +677,10 @@ Markdown；新增节点与契约同批改，否则自检先红。
   `external global`。
 - 整份与可接住读写：走契约节点，撤掉 `readFile` 的内建行。
 - 闭包与惰性引用：函数字面量落 `closureLiteral`，发射 `{ ptr, ptr }` 与 `@__closure_<n>`；
-  `LazyRef` 走 `bk_lazyref_create` / `bk_lazyref_value`。
+  `LazyRef` 走 `pini_lazyref_create` / `pini_lazyref_value`。
 - 并发：`=>` 调用方拿 `Future<T>`，`await` 与 `wait` 同降成 `join`，`detach` 降成剪枝语句。
 - 默认实例：`[名|given]` 与结构同权降成名义类型，模块为每个给定块出初始化函数，取用点走
-  `bk_given_get`。
+  `pini_given_get`。
 - 内建名：`len` 与 `Array.append` 不按名字直呼运行时符号，先查「内建名 + 接收者类别码 → 符号
   + 搬参形状」的表；`len` 在降载面出容器长度节点，`append` 先落装箱台再调运行时。
 - 外部声明：`[名称|foreign]` 的条目登记进模块外部函数表，发射按表出 `declare`，变参尾留省略
@@ -772,11 +772,11 @@ Markdown；新增节点与契约同批改，否则自检先红。
 ### 浮点字面量
 
 浮点此前只有语法与节点：`irFloatConst` 在契约与节点池里（`floatValue: F64`），后端已按节点类型
-切换浮点指令，打印走 `bk_double_to_string`；缺的是降载分支与常量发射。卡点是编译器自身取不到
-运行时段符号——解释器通道只认语言内建，`[名称|foreign]` 的 `bk_` 符号在 `pini` 进程里不可见——
+切换浮点指令，打印走 `pini_double_to_string`；缺的是降载分支与常量发射。卡点是编译器自身取不到
+运行时段符号——解释器通道只认语言内建，`[名称|foreign]` 的 `pini_` 符号在 `pini` 进程里不可见——
 故取值与位模式两个入口登记为零调用点，只由自举在编译期调用。
 
-交付：`runtime-abi` 增 `bk_parse_double`（strtod 口径）与 `bk_double_bits`（IEEE-754 位模式），
+交付：`runtime-abi` 增 `pini_parse_double`（strtod 口径）与 `pini_double_bits`（IEEE-754 位模式），
 解释器侧同批加两条 shim；降载把拼写解析成值填 `floatValue`，整型标注按截断折成整数常量；发射按
 宿主的 `doubleLiteral` 口径出文本——零与指数写法走位模式十六进制，其余用最短往返十进制。顺带补
 不安全前缀的降载：它此前是缺口，含 `unsafe` 的函数会被整段丢掉。
@@ -831,7 +831,7 @@ reversed、capitalized、center、truncate）可从用户模块直接调用；`u
   之后，以两代各跑同一套门禁并比报告，两代各 `plan` 同一构建脚本夹具比计划文本，另在净化 `PATH`
   下跑次代 `build`，比对构建前后的 `git status --porcelain`。生成模块夹具、`build` 落盘与三类
   定向诊断因此由次代自产执行。
-- **浮点字面量**：`runtime-abi` 增 `bk_parse_double` 与 `bk_double_bits` 两个入口，解释器同批加
+- **浮点字面量**：`runtime-abi` 增 `pini_parse_double` 与 `pini_double_bits` 两个入口，解释器同批加
   两条 shim；降载把拼写解析成值填 `floatValue`，发射按宿主的常量文本口径出文本；顺带补上不安全
   前缀的降载（此前含 `unsafe` 的函数会被整段丢掉）。夹具 `fixtures/llvm-float` 四条读数与宿主
   逐行相同。
@@ -1010,7 +1010,7 @@ COW 写时分裂的验收），都不经执行器，宿主两条通道已落地�
 五处裁定：
 
 - **进程原语进 ABI**：`compile`、`run-llvm`、`test-llvm` 在宿主侧都经 `Process()` 起 `clang` 或
-  `lli`，自举侧没有任何进程入口。补 `bk_process_*` 进运行时，符号先登记
+  `lli`，自举侧没有任何进程入口。补 `pini_process_*` 进运行时，符号先登记
   `docs/spec/runtime-abi.md` 再进实现，第 2 节合计数与 `tools/runtime-abi-check.py` 同批更新。这三条命令因此进本线，不作保留差异。
 - **`test` 走解释通道**：`test` 与 `test-llvm` 同形——收集、执行、报告，差别只在执行通道；
   `test` 走进程内的树遍历求值器，`test-llvm` 发射原生程序再跑。起进程因此只发生在 `compile`、
@@ -1147,7 +1147,7 @@ COW 写时分裂的验收），都不经执行器，宿主两条通道已落地�
 内建函数表条目；前者改名字面，后者只加数据行。合在一条判据里，会把「名字表少一类」与「函数表
 少五行」记成同一件事。
 
-交付（第三批）：`sleep` 补进后端内建表（接收者类别记 i32、符号 `bk_sleep`、单参直呼）与外部
+交付（第三批）：`sleep` 补进后端内建表（接收者类别记 i32、符号 `pini_sleep`、单参直呼）与外部
 符号表；`emitDirectCall` 认空返回，不再给 `void` 调用取临时值。判据是五例的发射缺口清零，
 其中三例（`concurrency-arrow-dual`、`concurrency-async-contagion-end`、`concurrency-await`）
 由带缺口转入真通过。
@@ -1194,7 +1194,7 @@ COW 写时分裂的验收），都不经执行器，宿主两条通道已落地�
 按闭包协议收环境位、体由发射期拼，同一函数只建一条，并入模块时按名收口。后端补适配器定义体与
 `functionValue` 的两槽发射；C 函数指针位直接交原函数符号，闭包协议在 C 侧不存在，外部声明的
 函数形参也按 `ptr` 拼。同批连带三处：数组打印按方括号与逗号逐元素展开（元素按自身类别出，
-未接类别仍记缺口）；`fromCString` 接 `bk_str_from_cstr`，`toCString` 在边界上换成 `bk_cstr`；
+未接类别仍记缺口）；`fromCString` 接 `pini_str_from_cstr`，`toCString` 在边界上换成 `pini_cstr`；
 外部声明里空返回记 void，不再按空元组拼成指针。
 
 读数（同一收紧口径）：五例转通过（`higher-order`、`lambda`、`stdlib-container`、
@@ -1219,7 +1219,7 @@ COW 写时分裂的验收），都不经执行器，宿主两条通道已落地�
 
 - 实参位的函数字面量按期望函数类型定型（参考件 §3.15「lambda 参数从上下文推断」）：推定入口把期望带进
   字面量，缺标注的形参取期望的同位分量；降载侧闭包签名先取函数类型，声明标注缺席时不再落空类型。
-- `Future` 句柄补内建成员 `cancel`：成员判定按句柄分支查内建表，降载按名字直呼，发射面落 `bk_task_cancel`。
+- `Future` 句柄补内建成员 `cancel`：成员判定按句柄分支查内建表，降载按名字直呼，发射面落 `pini_task_cancel`。
 - 结构体嵌入父类型的成员提升：建世界时一次扫出组合表，成员判定的未命中按表逐级回溯，深度上限四层挡自嵌环。
 
 注意 两例示例补了形参标注（`func (n: I32,)`）并同步改注释：参考件只写「lambda 参数从上下文推断」，
@@ -1230,7 +1230,7 @@ COW 写时分裂的验收），都不经执行器，宿主两条通道已落地�
 下移为 **降载缺口**——组合字段与方法未进 IR 布局，两例并发卡在 `joinWithin` 的返回形状。
 
 边界：本批只动判定层与闭包签名的取值来源；组合成员在 IR 的布局与派发、`joinWithin`/`joinAll` 的返回
-定型仍归 **降载补面**；不改 IR 契约、不改运行时符号面，`bk_task_cancel` 复用既有登记。
+定型仍归 **降载补面**；不改 IR 契约、不改运行时符号面，`pini_task_cancel` 复用既有登记。
 
 交付（**降载补面** 余下十六例）：两处裁定先行，随后按卡点分六批。
 
@@ -1345,8 +1345,8 @@ IR 面把标签串随类型带过去，元组成员读先认十进制序号、�
 通道（见 **推进次序与裁定**），当前「只发射」随 **解释执行** 落地收口；该段暂缓，`test` 因此维持只发射。
 只读组的三条入口、未知命令与 `build` 单文件见下一段。
 
-交付（进程族）：`bk_process_spawn` `bk_process_wait` `bk_process_stdout` `bk_process_stderr`
-`bk_process_release` 五条进运行时，登记在 `docs/spec/runtime-abi.md` 的进程族；抓取位非零时两路
+交付（进程族）：`pini_process_spawn` `pini_process_wait` `pini_process_stdout` `pini_process_stderr`
+`pini_process_release` 五条进运行时，登记在 `docs/spec/runtime-abi.md` 的进程族；抓取位非零时两路
 输出收进句柄，零则继承调用方。退出码按 shell 惯例归一，被信号杀死答 `128 + 信号`。`argv` 用
 「每行一个参数」的文本承载 —— 语言面还没有集合过外部 ABI 的写法（`Array<T>` 报 E4-028），这条
 权宜写在契约里，补串表句柄后换签名。等式随之由 128 变 133（清单 106 + 零调用点 27），两套自检守住。
@@ -1358,7 +1358,7 @@ IR 面把标签串随类型带过去，元组成员读先认十进制序号、�
 零与非零，自举侧没有逐值退出原语，非零一律落到断言的 1，`abort` 的 134 因此不可区分。
 
 交付（检查通道与报告）：解释器装载外部块时会把声明到的符号**一次解析完**，而 CLI 自身不链接
-运行时段库 ⇒ `bk_*` 在解释器通道一律解析不到，`runtime-api` 那 131 条此前形同虚设。现在
+运行时段库 ⇒ `pini_*` 在解释器通道一律解析不到，`runtime-api` 那 131 条此前形同虚设。现在
 `FFILoader` 预加载运行时段库，定位用可执行文件的绝对路径 —— `argv[0]` 在测试改了工作目录之后
 拼出来落空，这条曾把「库找不到」伪装成「符号不存在」。测试报告的失败行补上用例所在文件，两个
 引擎同形：只有一句断言文案时，几十个测试文件里定位不到。门禁里那条失败行判据随之收紧到「带文件位」。
@@ -1551,7 +1551,7 @@ graph 出树、篡改依赖后 verify 非零退出；另以本地 git 仓库造�
 `WeakRef<T>`，`.value` 读成 `Optional<T>`。宿主与自举两侧的语法、语义、解释器 / LLVM 同批打通，
 非对象操作数报 `E4-042`。
 
-运行时段增 `bk_weak_create` / `bk_weak_value` / `bk_weak_destroy` 三个入口：创建只在对象头装上旁表
+运行时段增 `pini_weak_create` / `pini_weak_value` / `pini_weak_destroy` 三个入口：创建只在对象头装上旁表
 指针，不碰强计数；对象归零时把旁表标死，此后取值答空。IR 增 `weakRef` 类型与
 `weakRefConstruct` / `weakRefValue` 两节点（码 59 / 60），匹配主语用完即弃另增 `releaseVar`
 （码 118），契约基线由七十五条升到七十八条。
@@ -1559,7 +1559,7 @@ graph 出树、篡改依赖后 verify 非零退出；另以本地 git 仓库造�
 判据：语料 `weak-ref-lifecycle` 两通道各跑一遍——存活时 `some` 带载荷，强引用换掉后 `nil`；
 `runtime-abi` 的「清单数 = 导出数」由 124 升到 127；全量 724 项、语料三十例、自洽链四项不变。
 
-边界：弱引用旁表随对象或进程存活，不在 `bk_weak_destroy` 回收；宿主解释器用 Swift 弱引用承载，
+边界：弱引用旁表随对象或进程存活，不在 `pini_weak_destroy` 回收；宿主解释器用 Swift 弱引用承载，
 两侧都不比对旁表布局。
 
 ### 无主引用

@@ -135,7 +135,7 @@ final class GCDScheduler: Scheduler, @unchecked Sendable {
 
     /// 让出发生的累计次数：「`await` 让出 / `wait` 占用」这条差异的可观测面，只由让出动作驱动。
     /// 与 `activeTaskCount` 不同性质——那个读整台机器现在的任务数，任何并行程序都会挪动它，故判定要看本计数的增量。
-    /// 契约侧对应 `bk_task_yield` 的 `1`/`0`：同一个位，一个在 C ABI 上，一个在调度器上。
+    /// 契约侧对应 `pini_task_yield` 的 `1`/`0`：同一个位，一个在 C ABI 上，一个在调度器上。
     var yieldedTaskCount: Int {
         countLock.lock()
         let c = yieldedCount

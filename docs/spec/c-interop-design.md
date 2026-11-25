@@ -122,7 +122,7 @@ foreign-flag     ::= 'readonly';
 | `I8` / `U8` / `I32` / `I64` / `U64` / `F64` / `Bool` | `int8_t` / `uint8_t` / `int32_t` / `int64_t` / `uint64_t` / `double` / `bool` | `i8` / `i8` / `i32` / `i64` / `i64` / `double` / `i1` | 形参、返回、数据 |
 | `*T`（T 为标量或指针） | `T*` | `ptr` | 同上 |
 | `String` | `const char*` | `i8*` | 仅形参：借出，只在本次调用期间有效 |
-| `StringHandle` | `bk_str_handle*` | `stringHandle` → `ptr` | 形参与返回：运行时段持有的一份拷贝，见「句柄」 |
+| `StringHandle` | `pini_str_handle*` | `stringHandle` → `ptr` | 形参与返回：运行时段持有的一份拷贝，见「句柄」 |
 | `(A, B) -> C` | `C (*)(A, B)` | `cFunction` → `ptr` | 仅形参：回调地址，见「回调」 |
 
 三类拒绝各有码：表外类型（对象、元组、集合、未知名）报 `E4-028`；语言层有而 IR 表达不了的宽度（`I16` / `U16` / `U32` / `F32`）报 `E4-029`；`String` 落在返回位报 `E4-030`。回调另有两条：实参不是顶层自由函数、或签名不逐位相同，报 `E4-031`；回调签名里出现 `Bool`，报 `E4-032`。变参另有两条：`|varargs` 写在数据条目上报 `E4-033`；变参尾的实参不是 C 标量或指针报 `E4-034`。
@@ -150,9 +150,9 @@ foreign-flag     ::= 'readonly';
 
 ### 取回
 
-内建 `fromCString(p: *U8,) -> (String,)`：从指针读到 NUL，复制成 Pini 串。两通道同一语义——解释器按 UTF-8 解码，LLVM 接运行时段 `bk_str_from_cstr`（实现落在 `bk_str_dup`，结果进计数串账）。
+内建 `fromCString(p: *U8,) -> (String,)`：从指针读到 NUL，复制成 Pini 串。两通道同一语义——解释器按 UTF-8 解码，LLVM 接运行时段 `pini_str_from_cstr`（实现落在 `pini_str_dup`，结果进计数串账）。
 
-- 空指针读成空串，与 `bk_str_dup(nil)` 同一约定：C 侧返回 `NULL` 时不必先判空。
+- 空指针读成空串，与 `pini_str_dup(nil)` 同一约定：C 侧返回 `NULL` 时不必先判空。
 - 复制品归 Pini 持有，作用域退出时归还；C 的缓冲此后可自由释放。
 - 没有额外的 `unsafe` 门禁：读内存的形参与 `load` 同规——指针怎么来的由那条路负责（foreign 调用本身已在 unsafe 位）。
 
@@ -227,25 +227,25 @@ LLVM 不做默认实参提升 —— 它看到的是 IR，不是源码，指望�
 
 ```
 [libc|foreign]
-bk_str_handle_new: (String,) -> (StringHandle,)
-bk_str_handle_len: (StringHandle,) -> (I64,)
-bk_str_handle_release: (StringHandle,) -> ()
+pini_str_handle_new: (String,) -> (StringHandle,)
+pini_str_handle_len: (StringHandle,) -> (I64,)
+pini_str_handle_release: (StringHandle,) -> ()
 
 main|func() -> (I32,):
-    var h = unsafe bk_str_handle_new("你好")
-    print(unsafe bk_str_handle_len(h))
-    unsafe bk_str_handle_release(h)
+    var h = unsafe pini_str_handle_new("你好")
+    print(unsafe pini_str_handle_len(h))
+    unsafe pini_str_handle_release(h)
     return 0
 ```
 
-形参位写 `StringHandle` 时，Pini 串在边界上被复制一份并记 +1（`bk_str_handle_new`），那一份随调用交给 C，由 C 释放；已经是句柄的实参原样传。返回位写 `StringHandle` 时，运行时段交出的指针直接成为 Pini 的一个句柄值——它在 Pini 侧只是一个 token：不参与计数、不能 `load`、不能当 `String`，唯一的去处是交给下一个收句柄的 C 函数。
+形参位写 `StringHandle` 时，Pini 串在边界上被复制一份并记 +1（`pini_str_handle_new`），那一份随调用交给 C，由 C 释放；已经是句柄的实参原样传。返回位写 `StringHandle` 时，运行时段交出的指针直接成为 Pini 的一个句柄值——它在 Pini 侧只是一个 token：不参与计数、不能 `load`、不能当 `String`，唯一的去处是交给下一个收句柄的 C 函数。
 
 C 面是五个入口：`new` / `bytes` / `len` / `retain` / `release`。字节视图不以 NUL 为界读，长度以 `len` 为准；计数归 C，`release` 归零时运行时段释放那份拷贝。`build --shared` 的头文件在这份签名用到句柄时自动带上这五个声明与不透明类型。
 
 | 通道 | 行为 |
 |---|---|
-| LLVM | 形参位包 `bk_str_handle_new`，返回位原样交出；`retain` / `release` 由 C 调 |
-| 解释器 | 调用点拒绝，报 `E5-020`：`bk_str_handle_*` 只活在运行时段，`pini` 进程没有这些符号 |
+| LLVM | 形参位包 `pini_str_handle_new`，返回位原样交出；`retain` / `release` 由 C 调 |
+| 解释器 | 调用点拒绝，报 `E5-020`：`pini_str_handle_*` 只活在运行时段，`pini` 进程没有这些符号 |
 
 声明处另有一条警告（`E7-007`），理由与变参同一条：写声明时就知道这条边界。
 
@@ -353,7 +353,7 @@ M_PI|macro: F64
 
 先前的判断是「只有函数能导出」，理由是 Pini 没有模块级存储。这条判断错了一半：给定块（`[名|given]`）确实是一块进程级存储，但 `using` 形参并不是通向它的引用。
 
-两层要分开。**默认实例的盒**由 `bk_given_get` 惰性物化、恰一次、地址稳定到进程结束（`PiniRuntime.swift:525`）；而 `using` 形参在取用点拿到的是这个盒的**副本**——发射层 `memcpy` 载荷到新分配的一份（`IREmitter.swift:3084`），解释器同样返回值（`IRExecutor.swift:1248`）。于是：
+两层要分开。**默认实例的盒**由 `pini_given_get` 惰性物化、恰一次、地址稳定到进程结束（`PiniRuntime.swift:525`）；而 `using` 形参在取用点拿到的是这个盒的**副本**——发射层 `memcpy` 载荷到新分配的一份（`IREmitter.swift:3084`），解释器同样返回值（`IRExecutor.swift:1248`）。于是：
 
 | 动作 | 结果 |
 |---|---|
@@ -370,7 +370,7 @@ C 面发布的是**盒**，不是副本。C 面的量因此在数据流上是单
 
 方法、泛型、`|test`、`main` 仍不进 C 面；泛型给定块要按实参特化，当前也拒。
 
-给定块能导出，靠的是别的 Pini 值没有的一条性质：生命周期是进程级。`bk_given_get` 把盒缓存在进程里直到结束，地址不变，所以 C 拿到字段区指针后不会遇到「对象已释放」。普通对象与集合没有这个保证，因此不进 C 面。
+给定块能导出，靠的是别的 Pini 值没有的一条性质：生命周期是进程级。`pini_given_get` 把盒缓存在进程里直到结束，地址不变，所以 C 拿到字段区指针后不会遇到「对象已释放」。普通对象与集合没有这个保证，因此不进 C 面。
 
 注意 —— 这不是给语言新增全局可变状态。给定块本来就是进程级存储，导出只是给它加一个 C 可见的名字；Pini 侧改不动它，原因见上表。
 
@@ -490,13 +490,13 @@ int32_t calc_add(int32_t n);
 | `^T` | 状态码 + 出参 | 支持，见下 |
 | `I16` / `U16` / `U32` / `F32` | — | 拒绝：IR 无对应类型 |
 | `String` | `const char*` | 仅形参：转发层入口复制一份，C 可保留原串 |
-| `StringHandle` | `bk_str_handle*` | 形参与返回：C 侧拿不透明指针，自己 `retain` / `release` |
+| `StringHandle` | `pini_str_handle*` | 形参与返回：C 侧拿不透明指针，自己 `retain` / `release` |
 | `(A, B) -> C` | `C (*)(A, B)` | 仅形参：转发层把裸地址包成 Pini 函数值 |
 | 集合 / 对象 / 元组 | — | 拒绝：非 C 布局 |
 
 拒绝项不是保守，是三通道一致性：IR 表达不了的类型放进来，解释器能跑、LLVM 跑不了，同一个程序换通道就换行为。
 
-形参 `String` 的复制落在转发层入口（`bk_str_dup`），调用返回时释放那一份：C 传栈上的临时缓冲也安全，Pini 若把串存进字段，存下的是自己持有的复制品。返回位仍拒——返回的是 Pini 的临时串，C 拿不到释放权，也说不清有效到什么时候。
+形参 `String` 的复制落在转发层入口（`pini_str_dup`），调用返回时释放那一份：C 传栈上的临时缓冲也安全，Pini 若把串存进字段，存下的是自己持有的复制品。返回位仍拒——返回的是 Pini 的临时串，C 拿不到释放权，也说不清有效到什么时候。
 
 ### Result 降级
 
@@ -531,7 +531,7 @@ int32_t calc_len(const uint8_t* s, int32_t* out);   /* 0 成功，1 失败 */
 
 散列键是 `块名 · 类型名 · 用例名` 三段以 U+0000 连接，FNV-1a 64 位后对区间长度取模。块名取导出块头（= 文件名 = 库名），改文件名会改码，这是有意的：C 面的身份就是库名。同一导出面内撞位时按名字字典序线性顺延，条目上记步数，头文件注释写「顺延 N 步」；未撞位则码只由三段名字决定，加删其它类型都不动它。
 
-散列码不是 `基址 | tag`，运行时需要按 tag 查表：`bk_error_from_enum` 多收一个 `const int32_t*`，发射层为每个稳定错误类型发一份模块级常量数组，构造点传指针；派生与自动码传 `null`，运行时保持「基址或 tag」的老路径。
+散列码不是 `基址 | tag`，运行时需要按 tag 查表：`pini_error_from_enum` 多收一个 `const int32_t*`，发射层为每个稳定错误类型发一份模块级常量数组，构造点传指针；派生与自动码传 `null`，运行时保持「基址或 tag」的老路径。
 
 **申报校验**。`码()` 的意义是「把码钉死」，所以它一旦写错就不能按未申报处理 —— 那会让作者以为钉住了，实际拿到的是自动码。四种情形报 `E4-027`：写在 `enum` 上（用例码由 tag 派生）、函数体不是单条 `return <整数字面量>`、值落在 `0`–`2`（固定码）、值超出 `i32`。
 
@@ -539,7 +539,7 @@ int32_t calc_len(const uint8_t* s, int32_t* out);   /* 0 成功，1 失败 */
 
 **区间容量**。派生区一个字节的类型序、一个字节的用例 tag：第 64 个错误类型会从 `0x4000` 起与自动区重叠，单个类型的第 257 个用例会溢到下一个类型的基址。两处都报 `E4-027`，并指向越界的那一个类型 —— 静默溢出的后果是两个不相干的错误共用一个码。
 
-**码 → 名字**。每个导出面附带 `const char* <块>_strerror(int32_t code)`：`0`/`1`/`2` 答 `success`、`unclassified error`、`cancelled`，其余按码表查，答条目上的 `类型名.用例名`（UTF-8），未登记的码答 `NULL`。表是两张模块级常量（码数组与名字指针数组），转发体只是一次 `bk_error_lookup`；不取二分是因为错误集通常几十条，维护「表必须有序」这条隐式不变量比线性扫贵。名字取 Pini 原名而不是宏名的 `_uXXXX` 形式：可读性在调试场景压倒 ASCII 洁癖。
+**码 → 名字**。每个导出面附带 `const char* <块>_strerror(int32_t code)`：`0`/`1`/`2` 答 `success`、`unclassified error`、`cancelled`，其余按码表查，答条目上的 `类型名.用例名`（UTF-8），未登记的码答 `NULL`。表是两张模块级常量（码数组与名字指针数组），转发体只是一次 `pini_error_lookup`；不取二分是因为错误集通常几十条，维护「表必须有序」这条隐式不变量比线性扫贵。名字取 Pini 原名而不是宏名的 `_uXXXX` 形式：可读性在调试场景压倒 ASCII 洁癖。
 
 ### 生命周期
 
@@ -548,7 +548,7 @@ void calc_init(void);
 void calc_shutdown(void);
 ```
 
-`calc_init` 不是空实现：它把每个导出的给定块物化一遍（走 `bk_given_get`），否则 C 可能在 Pini 代码首次取用之前就读到还没物化的槽。`calc_shutdown` 仍是空实现——盒持有到进程结束，没有可归还的东西。两个符号都要留：后补一个必需调用是破坏性 ABI 变更，今天不留，明天加就得让所有已有调用方改代码。
+`calc_init` 不是空实现：它把每个导出的给定块物化一遍（走 `pini_given_get`），否则 C 可能在 Pini 代码首次取用之前就读到还没物化的槽。`calc_shutdown` 仍是空实现——盒持有到进程结束，没有可归还的东西。两个符号都要留：后补一个必需调用是破坏性 ABI 变更，今天不留，明天加就得让所有已有调用方改代码。
 
 所有权只看分配者：`*U8` 由哪个分配器给出，就由 C 用同一个分配器归还 —— 当前没有 `pini_free`，编译器不替 C 分配跨边界的字符串。Pini 不得把 ARC 对象的地址交出去。给定块的字段区是唯一允许长期外借的地址——因为它的生命周期本来就是进程级。字符串进出边界的把手（不透明句柄 + 字节视图）由运行时段接上，见导入面的「句柄」与导出面的类型映射。
 
@@ -599,7 +599,7 @@ C 后端路线的真实成本也不是「再加一个 emitter」：C 里没有 A
 
 头文件路线自己的主要代价就是把运行时塞给调用方，缓解办法是静态链进产物，而不是换成 C 后端路线。
 
-导出在 LLVM 侧不需要新调用约定。Pini 函数已经发成朴素函数（`IREmitter.swift:731`，签名里没有隐藏环境指针，也没有显式 sret），标量签名与 C 同形；导出只需补两类转发：函数名转发 `define @calc_add(...) { call @mangle(加法) }`，以及给定块的取址转发 `define ptr @calc_state_get() { %o = call ptr @bk_given_get(@__given_slot_<T>, @__given_init_<T>, <字节数>) ; %f = GEP 跨过 4 槽头 ; ret ptr %f }`。头文件由同一张符号表生成，结构与字段的 `_Static_assert` 常数取自 `IRLayout`。
+导出在 LLVM 侧不需要新调用约定。Pini 函数已经发成朴素函数（`IREmitter.swift:731`，签名里没有隐藏环境指针，也没有显式 sret），标量签名与 C 同形；导出只需补两类转发：函数名转发 `define @calc_add(...) { call @mangle(加法) }`，以及给定块的取址转发 `define ptr @calc_state_get() { %o = call ptr @pini_given_get(@__given_slot_<T>, @__given_init_<T>, <字节数>) ; %f = GEP 跨过 4 槽头 ; ret ptr %f }`。头文件由同一张符号表生成，结构与字段的 `_Static_assert` 常数取自 `IRLayout`。
 
 ## 实施分片
 
@@ -617,11 +617,11 @@ C 后端路线的真实成本也不是「再加一个 emitter」：C 里没有 A
 | 码表校验 | 已落地 | `码()` 的四类写错、两个手写码撞值、派生区与 tag 空间溢出各一条诊断；导出面附带 `strerror` 把码还原成名字 | 每类写错各一条负例；`strerror` 端到端还原名字；全量 437 条测试绿 |
 | 链接参数 | 已落地 | `[ffi]` 的 `libs` / `search_paths` 拼成 `-L` / `-l` / rpath，`compile`、`run-llvm`、`test-llvm`、`build --shared` 四条都接上；块名与库名脱钩 | 带外部库的共享库由 C 侧调到；`compile` / `run-llvm` / `test-llvm` 各一条端到端 |
 | 类型面收口 | 已落地 | 导入面收成闭合表：`FFIType` 一份判据，语义校验 / 降载 / 解释器三处读它；对象、未知名、`U32` 与 `I16` 这类宽度、`String` 返回各一条诊断 | 九条负例逐条对码；`atoi: (String,)` 仍只在 LLVM 通道跑通（借出另立一片）；全量 446 条测试绿 |
-| 借出 | 已落地 | `String` 形参在边界编码成临时 C 串，只在本次调用期有效；shim 表从「名字命中」改成「名字 + 形状」双条件；导出面入口先 `bk_str_dup`、返回即 `bk_str_release` | `StringBorrowTests` 七条；`atoi: (String,)` 两通道同值；全量 453 条测试绿 |
-| 取回 | 已落地 | 内建 `fromCString(*U8) -> String` 接 `bk_str_from_cstr`，复制一份归 Pini；运行时段 ABI 台账 97 → 102，补平既有漏登记 | `StringRetrieveTests` 四条；空指针得空串；全量 457 条测试绿 |
+| 借出 | 已落地 | `String` 形参在边界编码成临时 C 串，只在本次调用期有效；shim 表从「名字命中」改成「名字 + 形状」双条件；导出面入口先 `pini_str_dup`、返回即 `pini_str_release` | `StringBorrowTests` 七条；`atoi: (String,)` 两通道同值；全量 453 条测试绿 |
+| 取回 | 已落地 | 内建 `fromCString(*U8) -> String` 接 `pini_str_from_cstr`，复制一份归 Pini；运行时段 ABI 台账 97 → 102，补平既有漏登记 | `StringRetrieveTests` 四条；空指针得空串；全量 457 条测试绿 |
 | 回调 | 已落地 | IR 增 `.cFunction` 类型与 `.cFunctionAddress` 节点；`CallbackBridge` 四个固定签名的桩加线程局部槽位表；导出面把裸地址包回 Pini 函数值 | `CallbackTests` 十五条；`qsort` 两通道同序；全量 472 条测试绿 |
 | 变参 | 已落地 | `\|varargs` 标志放开函数条目的标志限制；arity 判据改为「不少于」；尾实参按 C 默认实参提升；调用点写全函数类型 | `VariadicTests` 十三条；C 夹具 `va_sum` 端到端；`run` 报 E5-019、声明处 E7-006；全量 485 条测试绿 |
-| 句柄 | 已落地 | `StringHandle` 形参与返回；运行时段五个入口 `new` / `bytes` / `len` / `retain` / `release`；头文件写不透明类型；调用点在句柄形参位包一次 `bk_str_handle_new` | `StringHandleTests` 十七条；C 调用方 `bk_str_handle_new` → `calc_len` → `release` 跑通；全量 502 条测试绿 |
+| 句柄 | 已落地 | `StringHandle` 形参与返回；运行时段五个入口 `new` / `bytes` / `len` / `retain` / `release`；头文件写不透明类型；调用点在句柄形参位包一次 `pini_str_handle_new` | `StringHandleTests` 十七条；C 调用方 `pini_str_handle_new` → `calc_len` → `release` 跑通；全量 502 条测试绿 |
 | 生成面 | 已落地 | `pini bind` 跑 clang 取 C 语义（关掉内建预声明，否则头文件里的声明会被并进 clang 自带的 `__size_t` 拼写），映射段按白名单写 `[名\|foreign]` 块；宽度取 `__SIZEOF_*`，typedef 靠 AST 表递归展开；跳过项逐条出报告 | `CHeaderTranslationTests` 六条，生成文本逐字节钉死；SDK 的 `stdio.h` 出 190 条、跳过 2 条，产物可被 `check` 原样收下 |
 | 构建面 | 已落地 | `build.pini` 的 `[名\|given]` 块读成翻译步；计划落构建目录且是纯数据，生成物落构建目录、不进源码树；按输入指纹只重翻变化的步；装载面单一入口，缺计划 / 过期脚本 / 缺产物各一条指向 `pini build` 的诊断 | `BuildSurfaceTests` 十一条；两次构建的生成物与计划逐字节相同；构建后源码树无新文件；`examples/ffi_generated` 两通道同结果 |
 | 作用域与库绑定 | 已落地 | 外部符号进包级符号表、可见性固定包级；解释器改为预加载 `libs`，块名退为标签；冲突在声明处裁决 | `ForeignSymbolScopeTests` 七条与 `ForeignLibraryBindingTests` 四条：跨文件正例、合并正例、五条冲突负例；`[ffi].libs` 为空时 libc 符号仍可解析；块名只是标签与缺库、缺符号各一条 |

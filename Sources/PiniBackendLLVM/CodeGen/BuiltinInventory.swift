@@ -1,6 +1,6 @@
 import Foundation
 
-/// 编译器侧的运行时入口清单：LLVM 后端能发出的每一条 `bk_*` 调用。
+/// 编译器侧的运行时入口清单：LLVM 后端能发出的每一条 `pini_*` 调用。
 /// 每条给四件事：符号名（跨后端的键）· 签名（`declare` 唯一来源）· 族 · 降级点。
 public struct BuiltinSpec: Sendable {
     public struct Signature: Sendable {
@@ -45,228 +45,228 @@ public enum Builtins {
 
         // MARK: 数组族
         BuiltinSpec(
-            symbol: "bk_array_append",
+            symbol: "pini_array_append",
             signature: .init(result: "ptr", parameters: ["ptr", "ptr", "i32", "i32"]),
             family: .array, lowerings: ["call"]
         ),
         BuiltinSpec(
-            symbol: "bk_array_create", signature: .init(result: "ptr", parameters: ["i32"]),
+            symbol: "pini_array_create", signature: .init(result: "ptr", parameters: ["i32"]),
             family: .array, lowerings: ["arrayLiteral", "sliceCall"]
         ),
         BuiltinSpec(
-            symbol: "bk_array_destroy", signature: .init(result: "void", parameters: ["ptr"]),
+            symbol: "pini_array_destroy", signature: .init(result: "void", parameters: ["ptr"]),
             family: .array, lowerings: ["<cleanup>"]
         ),
         BuiltinSpec(
-            symbol: "bk_array_ensure_unique_at", signature: .init(result: "ptr", parameters: ["ptr", "i32"]),
+            symbol: "pini_array_ensure_unique_at", signature: .init(result: "ptr", parameters: ["ptr", "i32"]),
             family: .array, lowerings: ["subscriptGet", "subscriptStore"]
         ),
         BuiltinSpec(
-            symbol: "bk_array_get", signature: .init(result: "ptr", parameters: ["ptr", "i32"]),
+            symbol: "pini_array_get", signature: .init(result: "ptr", parameters: ["ptr", "i32"]),
             family: .array, lowerings: ["subscriptGet", "forInStmt"]
         ),
         BuiltinSpec(
-            symbol: "bk_array_len", signature: .init(result: "i32", parameters: ["ptr"]),
+            symbol: "pini_array_len", signature: .init(result: "i32", parameters: ["ptr"]),
             family: .array, lowerings: ["lenCall", "forInStmt", "subscriptGet"]
         ),
         BuiltinSpec(
-            symbol: "bk_array_set",
+            symbol: "pini_array_set",
             signature: .init(result: "ptr", parameters: ["ptr", "i32", "ptr", "i32", "i32"]),
             family: .array, lowerings: ["arrayLiteral", "subscriptStore"]
         ),
         BuiltinSpec(
-            symbol: "bk_array_set_element_hooks",
+            symbol: "pini_array_set_element_hooks",
             signature: .init(result: "void", parameters: ["ptr", "ptr", "ptr"]),
             family: .array, lowerings: ["arrayLiteral", "sliceCall"]
         ),
 
         // MARK: 字典族
         BuiltinSpec(
-            symbol: "bk_dict_create", signature: .init(result: "ptr", parameters: []),
+            symbol: "pini_dict_create", signature: .init(result: "ptr", parameters: []),
             family: .dictionary, lowerings: ["dictLiteral"]
         ),
         BuiltinSpec(
-            symbol: "bk_dict_contains",
+            symbol: "pini_dict_contains",
             signature: .init(result: "i32", parameters: ["ptr", "ptr", "i32", "i32"]),
             family: .dictionary, lowerings: ["optionalGet"]
         ),
         BuiltinSpec(
-            symbol: "bk_dict_destroy", signature: .init(result: "void", parameters: ["ptr"]),
+            symbol: "pini_dict_destroy", signature: .init(result: "void", parameters: ["ptr"]),
             family: .dictionary, lowerings: ["<cleanup>"]
         ),
         BuiltinSpec(
-            symbol: "bk_dict_ensure_unique_at",
+            symbol: "pini_dict_ensure_unique_at",
             signature: .init(result: "ptr", parameters: ["ptr", "ptr", "i32", "i32"]),
             family: .dictionary, lowerings: ["subscriptGet", "subscriptStore"]
         ),
         BuiltinSpec(
-            symbol: "bk_dict_get", signature: .init(result: "ptr", parameters: ["ptr", "ptr", "i32", "i32"]),
+            symbol: "pini_dict_get", signature: .init(result: "ptr", parameters: ["ptr", "ptr", "i32", "i32"]),
             family: .dictionary, lowerings: ["subscriptGet"]
         ),
         BuiltinSpec(
-            symbol: "bk_dict_key_at", signature: .init(result: "ptr", parameters: ["ptr", "i32"]),
+            symbol: "pini_dict_key_at", signature: .init(result: "ptr", parameters: ["ptr", "i32"]),
             family: .dictionary, lowerings: ["forInStmt"]
         ),
         BuiltinSpec(
-            symbol: "bk_dict_len", signature: .init(result: "i32", parameters: ["ptr"]),
+            symbol: "pini_dict_len", signature: .init(result: "i32", parameters: ["ptr"]),
             family: .dictionary, lowerings: ["lenCall", "forInStmt"]
         ),
         BuiltinSpec(
-            symbol: "bk_dict_set",
+            symbol: "pini_dict_set",
             signature: .init(result: "ptr", parameters: ["ptr", "ptr", "i32", "i32", "ptr", "i32", "i32"]),
             family: .dictionary, lowerings: ["dictLiteral", "subscriptStore"]
         ),
         BuiltinSpec(
-            symbol: "bk_dict_val_at", signature: .init(result: "ptr", parameters: ["ptr", "i32"]),
+            symbol: "pini_dict_val_at", signature: .init(result: "ptr", parameters: ["ptr", "i32"]),
             family: .dictionary, lowerings: ["forInStmt"]
         ),
 
         // MARK: 集合族
         BuiltinSpec(
-            symbol: "bk_set_add", signature: .init(result: "ptr", parameters: ["ptr", "ptr", "i32", "i32"]),
+            symbol: "pini_set_add", signature: .init(result: "ptr", parameters: ["ptr", "ptr", "i32", "i32"]),
             family: .set, lowerings: ["setLiteral"]
         ),
         BuiltinSpec(
-            symbol: "bk_set_at", signature: .init(result: "ptr", parameters: ["ptr", "i32"]),
+            symbol: "pini_set_at", signature: .init(result: "ptr", parameters: ["ptr", "i32"]),
             family: .set, lowerings: ["forInStmt"]
         ),
         BuiltinSpec(
-            symbol: "bk_set_create", signature: .init(result: "ptr", parameters: []),
+            symbol: "pini_set_create", signature: .init(result: "ptr", parameters: []),
             family: .set, lowerings: ["setLiteral"]
         ),
         BuiltinSpec(
-            symbol: "bk_set_destroy", signature: .init(result: "void", parameters: ["ptr"]),
+            symbol: "pini_set_destroy", signature: .init(result: "void", parameters: ["ptr"]),
             family: .set, lowerings: ["<cleanup>"]
         ),
         BuiltinSpec(
-            symbol: "bk_set_len", signature: .init(result: "i32", parameters: ["ptr"]),
+            symbol: "pini_set_len", signature: .init(result: "i32", parameters: ["ptr"]),
             family: .set, lowerings: ["lenCall", "forInStmt"]
         ),
 
         // MARK: 句柄
         BuiltinSpec(
-            symbol: "bk_handle_ensure_unique", signature: .init(result: "ptr", parameters: ["ptr"]),
+            symbol: "pini_handle_ensure_unique", signature: .init(result: "ptr", parameters: ["ptr"]),
             family: .handle, lowerings: ["subscriptStore", "fieldStore"]
         ),
         BuiltinSpec(
-            symbol: "bk_handle_release", signature: .init(result: "void", parameters: ["ptr"]),
+            symbol: "pini_handle_release", signature: .init(result: "void", parameters: ["ptr"]),
             family: .handle, lowerings: ["<cleanup>"]
         ),
         BuiltinSpec(
-            symbol: "bk_handle_retain", signature: .init(result: "void", parameters: ["ptr"]),
+            symbol: "pini_handle_retain", signature: .init(result: "void", parameters: ["ptr"]),
             family: .handle, lowerings: ["<retain>"]
         ),
 
         // MARK: 惰性引用
         BuiltinSpec(
-            symbol: "bk_lazyref_create",
+            symbol: "pini_lazyref_create",
             signature: .init(result: "ptr", parameters: ["ptr", "ptr", "ptr", "i32", "i32"]),
             family: .lazyRef, lowerings: ["lazyRefConstruct"]
         ),
         BuiltinSpec(
-            symbol: "bk_lazyref_destroy", signature: .init(result: "void", parameters: ["ptr"]),
+            symbol: "pini_lazyref_destroy", signature: .init(result: "void", parameters: ["ptr"]),
             family: .lazyRef, lowerings: ["<cleanup>"]
         ),
         BuiltinSpec(
-            symbol: "bk_lazyref_value", signature: .init(result: "ptr", parameters: ["ptr"]),
+            symbol: "pini_lazyref_value", signature: .init(result: "ptr", parameters: ["ptr"]),
             family: .lazyRef, lowerings: ["lazyRefValue"]
         ),
 
         // MARK: 弱引用
         BuiltinSpec(
-            symbol: "bk_weak_create", signature: .init(result: "ptr", parameters: ["ptr"]),
+            symbol: "pini_weak_create", signature: .init(result: "ptr", parameters: ["ptr"]),
             family: .weakRef, lowerings: ["weakRefConstruct"]
         ),
         BuiltinSpec(
-            symbol: "bk_weak_destroy", signature: .init(result: "void", parameters: ["ptr"]),
+            symbol: "pini_weak_destroy", signature: .init(result: "void", parameters: ["ptr"]),
             family: .weakRef, lowerings: ["<cleanup>"]
         ),
         BuiltinSpec(
-            symbol: "bk_weak_value", signature: .init(result: "ptr", parameters: ["ptr"]),
+            symbol: "pini_weak_value", signature: .init(result: "ptr", parameters: ["ptr"]),
             family: .weakRef, lowerings: ["weakRefValue"]
         ),
 
         // MARK: 给定块
         BuiltinSpec(
-            symbol: "bk_given_get", signature: .init(result: "ptr", parameters: ["ptr", "ptr", "i64"]),
+            symbol: "pini_given_get", signature: .init(result: "ptr", parameters: ["ptr", "ptr", "i64"]),
             family: .given, lowerings: ["givenInstance", "fieldGet"]
         ),
 
         // MARK: 显示
         BuiltinSpec(
-            symbol: "bk_cstr", signature: .init(result: "ptr", parameters: ["ptr"]),
+            symbol: "pini_cstr", signature: .init(result: "ptr", parameters: ["ptr"]),
             family: .display, lowerings: ["call"]
         ),
         BuiltinSpec(
-            symbol: "bk_double_to_string", signature: .init(result: "ptr", parameters: ["double"]),
+            symbol: "pini_double_to_string", signature: .init(result: "ptr", parameters: ["double"]),
             family: .display, lowerings: ["<print>"]
         ),
         BuiltinSpec(
-            symbol: "bk_panic",
+            symbol: "pini_panic",
             signature: .init(result: "void", parameters: ["ptr"], attributes: " noreturn"),
             family: .display, lowerings: ["<panic>"]
         ),
         BuiltinSpec(
-            symbol: "bk_print_lock", signature: .init(result: "void", parameters: []),
+            symbol: "pini_print_lock", signature: .init(result: "void", parameters: []),
             family: .display, lowerings: ["<print>"]
         ),
         BuiltinSpec(
-            symbol: "bk_print_unlock", signature: .init(result: "void", parameters: []),
+            symbol: "pini_print_unlock", signature: .init(result: "void", parameters: []),
             family: .display, lowerings: ["<print>"]
         ),
 
         // MARK: 字符
         BuiltinSpec(
-            symbol: "bk_char_retain", signature: .init(result: "i64", parameters: ["i64"]),
+            symbol: "pini_char_retain", signature: .init(result: "i64", parameters: ["i64"]),
             family: .character, lowerings: ["<retain>"]
         ),
         BuiltinSpec(
-            symbol: "bk_char_release", signature: .init(result: "void", parameters: ["i64"]),
+            symbol: "pini_char_release", signature: .init(result: "void", parameters: ["i64"]),
             family: .character, lowerings: ["<cleanup>"]
         ),
         BuiltinSpec(
-            symbol: "bk_char_to_heap_string", signature: .init(result: "ptr", parameters: ["i64"]),
+            symbol: "pini_char_to_heap_string", signature: .init(result: "ptr", parameters: ["i64"]),
             family: .character, lowerings: ["interpString"]
         ),
         BuiltinSpec(
-            symbol: "bk_char_equal", signature: .init(result: "i32", parameters: ["i64", "i64"]),
+            symbol: "pini_char_equal", signature: .init(result: "i32", parameters: ["i64", "i64"]),
             family: .character, lowerings: ["binary"]
         ),
         BuiltinSpec(
-            symbol: "bk_char_equal_string",
+            symbol: "pini_char_equal_string",
             signature: .init(result: "i32", parameters: ["i64", "ptr"]),
             family: .character, lowerings: ["binary"]
         ),
         BuiltinSpec(
-            symbol: "bk_chars", signature: .init(result: "ptr", parameters: ["ptr"]),
+            symbol: "pini_chars", signature: .init(result: "ptr", parameters: ["ptr"]),
             family: .character, lowerings: ["call"]
         ),
         BuiltinSpec(
-            symbol: "bk_temp_utf8_bytes", signature: .init(result: "ptr", parameters: ["ptr"]),
+            symbol: "pini_temp_utf8_bytes", signature: .init(result: "ptr", parameters: ["ptr"]),
             family: .character, lowerings: ["call"]
         ),
         BuiltinSpec(
-            symbol: "bk_temp_byte_to_int", signature: .init(result: "i32", parameters: ["i8"]),
+            symbol: "pini_temp_byte_to_int", signature: .init(result: "i32", parameters: ["i8"]),
             family: .character, lowerings: ["call"]
         ),
         BuiltinSpec(
-            symbol: "bk_temp_int_to_byte", signature: .init(result: "i8", parameters: ["i32"]),
+            symbol: "pini_temp_int_to_byte", signature: .init(result: "i8", parameters: ["i32"]),
             family: .character, lowerings: ["call"]
         ),
         BuiltinSpec(
-            symbol: "bk_chr", signature: .init(result: "i64", parameters: ["i32"]),
+            symbol: "pini_chr", signature: .init(result: "i64", parameters: ["i32"]),
             family: .character, lowerings: ["call"]
         ),
         BuiltinSpec(
-            symbol: "bk_is_letter", signature: .init(result: "i32", parameters: ["i64"]),
+            symbol: "pini_is_letter", signature: .init(result: "i32", parameters: ["i64"]),
             family: .character, lowerings: ["call"]
         ),
         BuiltinSpec(
-            symbol: "bk_is_number", signature: .init(result: "i32", parameters: ["i64"]),
+            symbol: "pini_is_number", signature: .init(result: "i32", parameters: ["i64"]),
             family: .character, lowerings: ["call"]
         ),
         BuiltinSpec(
-            symbol: "bk_ord", signature: .init(result: "i32", parameters: ["i64"]),
+            symbol: "pini_ord", signature: .init(result: "i32", parameters: ["i64"]),
             family: .character, lowerings: ["call"]
         ),
 
@@ -274,250 +274,250 @@ public enum Builtins {
         /// 拼接的两个入口：`concat` 的两边都带头，`append_cstr` 的右边是裸 C 串（栈缓冲 / 格式化产物）。
         /// `ownsLhs` 为真时左操作数那份引用被消耗 —— 「唯一持有就地长」的全部开关都在这个参数上。
         BuiltinSpec(
-            symbol: "bk_str_concat", signature: .init(result: "ptr", parameters: ["ptr", "ptr", "i32"]),
+            symbol: "pini_str_concat", signature: .init(result: "ptr", parameters: ["ptr", "ptr", "i32"]),
             family: .string, lowerings: ["stringConcat"]
         ),
         BuiltinSpec(
-            symbol: "bk_str_append_cstr",
+            symbol: "pini_str_append_cstr",
             signature: .init(result: "ptr", parameters: ["ptr", "ptr", "i32"]),
             family: .string, lowerings: ["interpString", "arrayJoin"]
         ),
         BuiltinSpec(
-            symbol: "bk_str_dup", signature: .init(result: "ptr", parameters: ["ptr"]),
+            symbol: "pini_str_dup", signature: .init(result: "ptr", parameters: ["ptr"]),
             family: .string, lowerings: ["interpString", "arrayJoin"]
         ),
         BuiltinSpec(
-            symbol: "bk_str_from_cstr", signature: .init(result: "ptr", parameters: ["ptr"]),
+            symbol: "pini_str_from_cstr", signature: .init(result: "ptr", parameters: ["ptr"]),
             family: .string, lowerings: ["call"]
         ),
         /// 句柄形参位上的 Pini 串：复制一份并记 +1，指针交给 C。降载层产出 `pini.str.handle`，
         /// 发射层把它接到这里（`call` 是它的降级点，与 `fromCString` 同形）。
         BuiltinSpec(
-            symbol: "bk_str_handle_new", signature: .init(result: "ptr", parameters: ["ptr"]),
+            symbol: "pini_str_handle_new", signature: .init(result: "ptr", parameters: ["ptr"]),
             family: .stringHandle, lowerings: ["call"]
         ),
         BuiltinSpec(
-            symbol: "bk_str_release", signature: .init(result: "void", parameters: ["ptr"]),
+            symbol: "pini_str_release", signature: .init(result: "void", parameters: ["ptr"]),
             family: .string, lowerings: ["<cleanup>", "<print>"]
         ),
         BuiltinSpec(
-            symbol: "bk_str_retain", signature: .init(result: "void", parameters: ["ptr"]),
+            symbol: "pini_str_retain", signature: .init(result: "void", parameters: ["ptr"]),
             family: .string, lowerings: ["<retain>"]
         ),
         BuiltinSpec(
-            symbol: "bk_string_char_at", signature: .init(result: "i64", parameters: ["ptr", "i32"]),
+            symbol: "pini_string_char_at", signature: .init(result: "i64", parameters: ["ptr", "i32"]),
             family: .string, lowerings: ["subscriptGet"]
         ),
         BuiltinSpec(
-            symbol: "bk_string_contains", signature: .init(result: "i32", parameters: ["ptr", "ptr"]),
+            symbol: "pini_string_contains", signature: .init(result: "i32", parameters: ["ptr", "ptr"]),
             family: .string, lowerings: ["stringContains"]
         ),
         BuiltinSpec(
-            symbol: "bk_string_count", signature: .init(result: "i32", parameters: ["ptr"]),
+            symbol: "pini_string_count", signature: .init(result: "i32", parameters: ["ptr"]),
             family: .string, lowerings: ["lenCall", "subscriptGet"]
         ),
         BuiltinSpec(
-            symbol: "bk_string_index_of", signature: .init(result: "i32", parameters: ["ptr", "ptr"]),
+            symbol: "pini_string_index_of", signature: .init(result: "i32", parameters: ["ptr", "ptr"]),
             family: .string, lowerings: ["stringIndexOf"]
         ),
         BuiltinSpec(
-            symbol: "bk_string_lower", signature: .init(result: "ptr", parameters: ["ptr"]),
+            symbol: "pini_string_lower", signature: .init(result: "ptr", parameters: ["ptr"]),
             family: .string, lowerings: ["stringCase"]
         ),
         BuiltinSpec(
-            symbol: "bk_string_slice",
+            symbol: "pini_string_slice",
             signature: .init(result: "ptr", parameters: ["ptr", "i32", "i32", "i32", "i32"]),
             family: .string, lowerings: ["sliceCall"]
         ),
         BuiltinSpec(
-            symbol: "bk_string_split", signature: .init(result: "ptr", parameters: ["ptr", "ptr"]),
+            symbol: "pini_string_split", signature: .init(result: "ptr", parameters: ["ptr", "ptr"]),
             family: .string, lowerings: ["stringSplit"]
         ),
         BuiltinSpec(
-            symbol: "bk_string_trim_left", signature: .init(result: "ptr", parameters: ["ptr"]),
+            symbol: "pini_string_trim_left", signature: .init(result: "ptr", parameters: ["ptr"]),
             family: .string, lowerings: ["stringTrimLeft"]
         ),
         BuiltinSpec(
-            symbol: "bk_string_trim_right", signature: .init(result: "ptr", parameters: ["ptr"]),
+            symbol: "pini_string_trim_right", signature: .init(result: "ptr", parameters: ["ptr"]),
             family: .string, lowerings: ["stringTrimRight"]
         ),
         BuiltinSpec(
-            symbol: "bk_string_upper", signature: .init(result: "ptr", parameters: ["ptr"]),
+            symbol: "pini_string_upper", signature: .init(result: "ptr", parameters: ["ptr"]),
             family: .string, lowerings: ["stringCase"]
         ),
         BuiltinSpec(
-            symbol: "bk_substring", signature: .init(result: "ptr", parameters: ["ptr", "i32", "i32"]),
+            symbol: "pini_substring", signature: .init(result: "ptr", parameters: ["ptr", "i32", "i32"]),
             family: .string, lowerings: ["stringSubstring"]
         ),
 
         // MARK: 名义类型
         BuiltinSpec(
-            symbol: "bk_nominal_alloc", signature: .init(result: "ptr", parameters: ["i64", "i32"]),
+            symbol: "pini_nominal_alloc", signature: .init(result: "ptr", parameters: ["i64", "i32"]),
             family: .nominal, lowerings: ["construct", "enumConstruct"]
         ),
         BuiltinSpec(
-            symbol: "bk_nominal_release", signature: .init(result: "i32", parameters: ["ptr"]),
+            symbol: "pini_nominal_release", signature: .init(result: "i32", parameters: ["ptr"]),
             family: .nominal, lowerings: ["<cleanup>"]
         ),
         BuiltinSpec(
-            symbol: "bk_nominal_retain", signature: .init(result: "void", parameters: ["ptr"]),
+            symbol: "pini_nominal_retain", signature: .init(result: "void", parameters: ["ptr"]),
             family: .nominal, lowerings: ["<retain>"]
         ),
         BuiltinSpec(
-            symbol: "bk_slot_alloc", signature: .init(result: "ptr", parameters: ["i64"]),
+            symbol: "pini_slot_alloc", signature: .init(result: "ptr", parameters: ["i64"]),
             family: .nominal, lowerings: ["<closure>"]
         ),
 
         // MARK: 文件 IO
         BuiltinSpec(
-            symbol: "bk_append_file", signature: .init(result: "void", parameters: ["ptr", "ptr"]),
+            symbol: "pini_append_file", signature: .init(result: "void", parameters: ["ptr", "ptr"]),
             family: .io, lowerings: ["fileAppend"]
         ),
         BuiltinSpec(
-            symbol: "bk_argv", signature: .init(result: "ptr", parameters: []),
+            symbol: "pini_argv", signature: .init(result: "ptr", parameters: []),
             family: .io, lowerings: ["call"]
         ),
         BuiltinSpec(
-            symbol: "bk_ensure_dir", signature: .init(result: "void", parameters: ["ptr"]),
+            symbol: "pini_ensure_dir", signature: .init(result: "void", parameters: ["ptr"]),
             family: .io, lowerings: ["call"]
         ),
         BuiltinSpec(
-            symbol: "bk_exists", signature: .init(result: "i32", parameters: ["ptr"]),
+            symbol: "pini_exists", signature: .init(result: "i32", parameters: ["ptr"]),
             family: .io, lowerings: ["call"]
         ),
         BuiltinSpec(
-            symbol: "bk_is_dir", signature: .init(result: "i32", parameters: ["ptr"]),
+            symbol: "pini_is_dir", signature: .init(result: "i32", parameters: ["ptr"]),
             family: .io, lowerings: ["call"]
         ),
         BuiltinSpec(
-            symbol: "bk_list_dir", signature: .init(result: "ptr", parameters: ["ptr"]),
+            symbol: "pini_list_dir", signature: .init(result: "ptr", parameters: ["ptr"]),
             family: .io, lowerings: ["call"]
         ),
         BuiltinSpec(
-            symbol: "bk_module_root", signature: .init(result: "ptr", parameters: []),
+            symbol: "pini_module_root", signature: .init(result: "ptr", parameters: []),
             family: .io, lowerings: ["call"]
         ),
         BuiltinSpec(
-            symbol: "bk_read_file", signature: .init(result: "ptr", parameters: ["ptr"]),
+            symbol: "pini_read_file", signature: .init(result: "ptr", parameters: ["ptr"]),
             family: .io, lowerings: ["fileRead"]
         ),
         BuiltinSpec(
-            symbol: "bk_set_program_base", signature: .init(result: "void", parameters: ["ptr"]),
+            symbol: "pini_set_program_base", signature: .init(result: "void", parameters: ["ptr"]),
             family: .io, lowerings: ["<entry>"]
         ),
         BuiltinSpec(
-            symbol: "bk_try_append_file", signature: .init(result: "i64", parameters: ["ptr", "ptr"]),
+            symbol: "pini_try_append_file", signature: .init(result: "i64", parameters: ["ptr", "ptr"]),
             family: .io, lowerings: ["fileTryAppend"]
         ),
         BuiltinSpec(
-            symbol: "bk_try_read_file", signature: .init(result: "ptr", parameters: ["ptr", "ptr"]),
+            symbol: "pini_try_read_file", signature: .init(result: "ptr", parameters: ["ptr", "ptr"]),
             family: .io, lowerings: ["fileTryRead"]
         ),
         BuiltinSpec(
-            symbol: "bk_try_write_file", signature: .init(result: "i64", parameters: ["ptr", "ptr"]),
+            symbol: "pini_try_write_file", signature: .init(result: "i64", parameters: ["ptr", "ptr"]),
             family: .io, lowerings: ["fileTryWrite"]
         ),
         BuiltinSpec(
-            symbol: "bk_write_file", signature: .init(result: "void", parameters: ["ptr", "ptr"]),
+            symbol: "pini_write_file", signature: .init(result: "void", parameters: ["ptr", "ptr"]),
             family: .io, lowerings: ["fileWrite"]
         ),
 
         // MARK: 任务
         BuiltinSpec(
-            symbol: "bk_task_cancel", signature: .init(result: "void", parameters: ["ptr"]),
+            symbol: "pini_task_cancel", signature: .init(result: "void", parameters: ["ptr"]),
             family: .task, lowerings: ["call"]
         ),
         BuiltinSpec(
-            symbol: "bk_task_detach", signature: .init(result: "void", parameters: ["ptr"]),
+            symbol: "pini_task_detach", signature: .init(result: "void", parameters: ["ptr"]),
             family: .task, lowerings: ["detachStmt"]
         ),
         BuiltinSpec(
-            symbol: "bk_task_join", signature: .init(result: "i32", parameters: ["ptr", "ptr"]),
+            symbol: "pini_task_join", signature: .init(result: "i32", parameters: ["ptr", "ptr"]),
             family: .task, lowerings: ["join"]
         ),
         BuiltinSpec(
-            symbol: "bk_task_join_within", signature: .init(result: "i32", parameters: ["ptr", "i32", "ptr"]),
+            symbol: "pini_task_join_within", signature: .init(result: "i32", parameters: ["ptr", "i32", "ptr"]),
             family: .task, lowerings: ["call"]
         ),
         BuiltinSpec(
-            symbol: "bk_task_join_all", signature: .init(result: "i32", parameters: ["ptr", "i32", "ptr"]),
+            symbol: "pini_task_join_all", signature: .init(result: "i32", parameters: ["ptr", "i32", "ptr"]),
             family: .task, lowerings: ["call"]
         ),
         BuiltinSpec(
-            symbol: "bk_task_join_all_box", signature: .init(result: "i32", parameters: ["ptr", "ptr"]),
+            symbol: "pini_task_join_all_box", signature: .init(result: "i32", parameters: ["ptr", "ptr"]),
             family: .task, lowerings: ["call"]
         ),
         BuiltinSpec(
-            symbol: "bk_task_spawn",
+            symbol: "pini_task_spawn",
             signature: .init(result: "ptr", parameters: ["ptr", "ptr", "ptr", "i32", "i32"]),
             family: .task, lowerings: ["call"]
         ),
 
         // MARK: 阻塞等待
         BuiltinSpec(
-            symbol: "bk_sleep", signature: .init(result: "void", parameters: ["i32"]),
+            symbol: "pini_sleep", signature: .init(result: "void", parameters: ["i32"]),
             family: .blocking, lowerings: ["call"]
         ),
 
         // MARK: 让出
         BuiltinSpec(
-            symbol: "bk_task_await", signature: .init(result: "i32", parameters: ["ptr", "ptr"]),
+            symbol: "pini_task_await", signature: .init(result: "i32", parameters: ["ptr", "ptr"]),
             family: .yielding, lowerings: ["<yield>"]
         ),
         BuiltinSpec(
-            symbol: "bk_task_frame", signature: .init(result: "ptr", parameters: ["i64"]),
+            symbol: "pini_task_frame", signature: .init(result: "ptr", parameters: ["i64"]),
             family: .yielding, lowerings: ["<frame>", "call"]
         ),
         BuiltinSpec(
-            symbol: "bk_task_slot", signature: .init(result: "ptr", parameters: ["i64"]),
+            symbol: "pini_task_slot", signature: .init(result: "ptr", parameters: ["i64"]),
             family: .yielding, lowerings: ["<frame>"]
         ),
 
         // MARK: 调度器
         BuiltinSpec(
-            symbol: "bk_task_bind_sched", signature: .init(result: "i32", parameters: ["ptr", "ptr"]),
+            symbol: "pini_task_bind_sched", signature: .init(result: "i32", parameters: ["ptr", "ptr"]),
             family: .scheduler, lowerings: ["<entry>"]
         ),
 
         // MARK: 运行时
         BuiltinSpec(
-            symbol: "bk_runtime_cleanup", signature: .init(result: "void", parameters: []),
+            symbol: "pini_runtime_cleanup", signature: .init(result: "void", parameters: []),
             family: .runtime, lowerings: ["<cleanup>"]
         ),
 
         // MARK: 错误
         BuiltinSpec(
-            symbol: "bk_cancel_error_create", signature: .init(result: "i64", parameters: ["ptr"]),
+            symbol: "pini_cancel_error_create", signature: .init(result: "i64", parameters: ["ptr"]),
             family: .error, lowerings: ["call"]
         ),
         BuiltinSpec(
-            symbol: "bk_error_create", signature: .init(result: "i64", parameters: ["ptr"]),
+            symbol: "pini_error_create", signature: .init(result: "i64", parameters: ["ptr"]),
             family: .error, lowerings: ["call"]
         ),
         BuiltinSpec(
-            symbol: "bk_error_is_cancel", signature: .init(result: "i32", parameters: ["i64"]),
+            symbol: "pini_error_is_cancel", signature: .init(result: "i32", parameters: ["i64"]),
             family: .error, lowerings: ["call"]
         ),
         BuiltinSpec(
-            symbol: "bk_error_message", signature: .init(result: "ptr", parameters: ["i64"]),
+            symbol: "pini_error_message", signature: .init(result: "ptr", parameters: ["i64"]),
             family: .error, lowerings: ["call"]
         ),
         BuiltinSpec(
-            symbol: "bk_error_from_enum",
+            symbol: "pini_error_from_enum",
             signature: .init(result: "i64", parameters: ["i64", "i32", "ptr", "ptr"]),
             family: .error, lowerings: ["call"]
         ),
         BuiltinSpec(
-            symbol: "bk_error_with_code",
+            symbol: "pini_error_with_code",
             signature: .init(result: "i64", parameters: ["i32"]),
             family: .error, lowerings: ["call"]
         ),
         BuiltinSpec(
-            symbol: "bk_error_code", signature: .init(result: "i32", parameters: ["i64"]),
+            symbol: "pini_error_code", signature: .init(result: "i32", parameters: ["i64"]),
             family: .error, lowerings: ["call"]
         ),
         BuiltinSpec(
-            symbol: "bk_error_lookup",
+            symbol: "pini_error_lookup",
             signature: .init(result: "ptr", parameters: ["i32", "ptr", "ptr", "i32"]),
             family: .error, lowerings: ["call"]
         ),
