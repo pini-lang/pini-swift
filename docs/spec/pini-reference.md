@@ -186,10 +186,10 @@ try return break continue
 self own defer import export
 nil capture await wait
 unsafe test foreign detach
-pass using unroll weak
+pass using unroll weak as
 ```
 
-共 35 个。
+共 36 个。
 
 **拼写来源**：关键字由词表给出，上面这张是默认词表。中文词表（`变量`、`常量`、`函数` …）是同一套类别的另一种拼写，
 只在编译器选定它时生效；未选定时中文拼写按普通标识符扫描。两套拼写不混用。
@@ -881,8 +881,7 @@ let w: U8 = x as U8      ; 截断
 **优先级**：`as` 比任何二元运算符更紧、比前缀一元更松 —— `-x as U8` 是 `(-x) as U8`，
 `a + b as I64` 是 `a + (b as I64)`。可连写，左结合。
 
-**上下文关键字**：`as` 不在关键字表内，只在「一个完整操作数之后」的位置按转换记号解释；
-其余位置它是普通标识符，可作变量名与函数名。
+**关键字身份**：`as` 在关键字表内，词法层直接产出转换记号；作名字须写反引号转义。
 
 ### 3.15 类型推断 `[Provisional]`
 
@@ -4404,10 +4403,10 @@ KEYWORD      ::= 'var' | 'let' | 'func' | 'enum' | 'object'
                | 'self' | 'own' | 'defer' | 'import' | 'export'
                | 'nil' | 'capture' | 'await' | 'wait'
                | 'unsafe' | 'test' | 'foreign' | 'detach'
-               | 'pass' | 'using' | 'unroll' | 'weak';
+               | 'pass' | 'using' | 'unroll' | 'weak' | 'as';
 ```
 
-共 35 个。
+共 36 个。
 
 #### 字面量
 
@@ -4707,7 +4706,6 @@ generic-params  ::= IDENT [':' type-annotation] {',' IDENT [':' type-annotation]
 | 3.16 | 下标 vs 切片消歧 | `[` 内首个非空白 token：`:` → 切片；否则先解析 expression，后跟 `:` → 切片 |
 | 3.17 | 切片开放边界语义 | 省略边界脱糖为 `nil`；半开区间 `[i, j)`；负索引尾部计数 |
 | 3.18 | 花括号集合 vs 字典 | 类型位条目含 `:` → 字典，否则集合；值位条目含 `=` / `:` → 字典，否则集合 |
-| 3.19 | `as` 上下文关键字 | `as` 不在关键字表内。仅当一个操作数已完整、当前位置的标识符文本为 `as` 时按转换记号解释；其余位置它是普通标识符。故 `let as = 1` 与 `f(as)` 合法 |
 
 **规则 3.13 与 3.14 的上下文区分**：
 

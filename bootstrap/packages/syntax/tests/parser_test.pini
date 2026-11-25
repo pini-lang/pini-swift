@@ -315,9 +315,9 @@ _support = "../../support"
     assert(ast.typeAt(ast.exprAt(内层).typeId).nameEnd - ast.typeAt(ast.exprAt(内层).typeId).nameStart == 3, "内层目标 I64")
     return
 
-; 上下文关键字：`as` 不在关键字表内，作变量名与右值时都是标识符。
+; 反引号逃生：`as` 是关键字，直接写被词法层定类；加反引号后仍是标识符。
 转换作名字|test() -> ():
-    let src = "f|func(a: I32,) -> (I32,):\n    as = a\n    return as\n"
+    let src = "f|func(a: I32,) -> (I32,):\n    `as` = a\n    return `as`\n"
     let 结果 = parseText(src)
     assert(len(结果.diagnostics) == 0, "不应有语法诊断")
     let ast = 结果.ast
@@ -328,6 +328,8 @@ _support = "../../support"
     assert(ast.isReturnStmt(1), "次条是返回")
     let 值 = ast.stmtChild(id = 1, index = 0)
     assert(ast.isIdentifierExpr(值), "右值标识符未被当成转换")
+    let 裸 = parseText("f|func() -> ():\n    as = 1\n    return\n")
+    assert(len(裸.diagnostics) > 0, "裸 as 作名字应报诊断")
     return
 
 ; 类型写法：方括号是数组、花括号按有无冒号分集合与字典、尖号是结果糖；组件类型各占一个 kid。

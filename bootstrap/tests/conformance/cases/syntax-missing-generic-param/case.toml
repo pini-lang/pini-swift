@@ -1,0 +1,8 @@
+[case]
+name = "泛型形参表为空"
+category = "diagnostics"
+kind = "error"
+code = "E2-021"
+line = 1
+col = 4
+spec = "语言参考 4.8 泛型函数：类型形参表不得为空，尖号之间无名报 E2-021"

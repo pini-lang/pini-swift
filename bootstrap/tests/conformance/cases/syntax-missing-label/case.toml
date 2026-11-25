@@ -1,0 +1,8 @@
+[case]
+name = "标签语句缺标签名"
+category = "diagnostics"
+kind = "error"
+code = "E2-022"
+line = 2
+col = 5
+spec = "语言参考 6.3 控制流：标签是裸标识符，`|while` 缺标签名报 E2-022"

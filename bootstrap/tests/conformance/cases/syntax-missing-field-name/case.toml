@@ -1,0 +1,8 @@
+[case]
+name = "字段行缺字段名"
+category = "diagnostics"
+kind = "error"
+code = "E2-014"
+line = 3
+col = 1
+spec = "语言参考 3.3 结构类型：类型体每行是「名: 类型」，行首冒号报 E2-014"

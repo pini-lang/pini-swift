@@ -1,0 +1,8 @@
+[case]
+name = "结构块缺结构名"
+category = "diagnostics"
+kind = "error"
+code = "E2-018"
+line = 1
+col = 2
+spec = "语言参考 4.1 模块结构：`(名称)` 结构块头缺名字报 E2-018"

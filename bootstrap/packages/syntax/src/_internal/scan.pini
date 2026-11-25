@@ -54,12 +54,13 @@ scanAll|func(language: KeywordLanguage, bytes: Array<U8>, start: I32, issues: Ar
     return out
 
 ; 片段扫描：从 start 扫到 end，只走括号内通道，供插值段子表达式使用；
-; 区间是源内绝对字节，不产布局记号，收尾补结束记号。
+; 区间是源内绝对字节，不产布局记号，收尾补结束记号；关键字表按同一语言现建，类别与主通道一致。
 scanFragment|func(language: KeywordLanguage, bytes: Array<U8>, start: I32, end: I32,) -> (LexResult,):
     var state = LexState()
     state.bytes = bytes
     state.pos = start
     state.language = language
+    state.keywords = makeKeywordTable(language)
     state.classes = identifierClassTable()
     state.indents = state.indents.append(0)
     let total = len(bytes)

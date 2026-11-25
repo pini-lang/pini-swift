@@ -1,0 +1,8 @@
+[case]
+name = "对象块缺对象名"
+category = "diagnostics"
+kind = "error"
+code = "E2-019"
+line = 1
+col = 2
+spec = "语言参考 4.1 模块结构：`{名称}` 对象块头缺名字报 E2-019"

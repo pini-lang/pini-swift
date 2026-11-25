@@ -14,6 +14,8 @@ bytes: Array<U8> = []
 ast: Ast = Ast()
 segments: Array<Segment> = []
 diagnostics: Array<Diagnostic> = []
+; 已开启未闭合的缩进块层数：块尾到文件末尾仍为正，说明有块没反缩进。
+blockDepth: I32 = 0
 
 ; 解析结果：树、语法诊断与词法问题分列；问题不参与语法判定。
 (ParseResult)
@@ -105,6 +107,16 @@ atEnd|self() -> (Bool,):
     if self.pos >= self.total:
         return true
     return self.tokens[self.pos].tag == kindTag(.eof)
+; 当前位置之后只剩换行与缩进变动：句子写到一半就断在文件末尾。
+atFileEnd|self() -> (Bool,):
+    var i = self.pos
+    while i < self.total:
+        let tag = self.tokens[i].tag
+        if tag == kindTag(.newline) || tag == kindTag(.indent) || tag == kindTag(.dedent):
+            i = i + 1
+            continue
+        return tag == kindTag(.eof)
+    return true
 at|self(_kind: TokenKind,) -> (Bool,):
     if self.pos >= self.total:
         return kindTag(.eof) == kindTag(_kind)
@@ -144,13 +156,21 @@ openIndentedBody|self() -> ():
     self.skipNewlines()
     if self.at(.indent):
         self.advance()
+        self.blockDepth = self.blockDepth + 1
         self.skipNewlines()
     return
 ; 缩进体收尾：块末的反缩进一并吃掉，外层继续按顶级声明或语句读。
+; 词法在文件末尾会补齐 DEDENT，故只有真正写断的块才会走到「缺反缩进」。
 closeIndentedBody|self() -> ():
     self.skipNewlines()
     if self.at(.dedent):
         self.advance()
+        if self.blockDepth > 0:
+            self.blockDepth = self.blockDepth - 1
+        return
+    if self.atEnd() && self.blockDepth > 0:
+        self.report(code = "E2-004", message = "缺少反缩进")
+        self.blockDepth = 0
     return
 ; 报一条语法诊断：跨度为当前记号；到达文件末尾时改用上一条记号的终点。
 report|self(code: String, message: String,) -> ():
@@ -164,11 +184,25 @@ report|self(code: String, message: String,) -> ():
     self.diagnostics = self.diagnostics.append(d)
     return
 ; 期望某类记号：命中即消费并答真，否则记 E2-001 并答假。
+; 已到文件末尾时改记 E2-023——「记号不符」与「文件写断了」是两件事。
 expect|self(kind: TokenKind, what: String,) -> (Bool,):
     if self.at(kind):
         self.advance()
         return true
+    if self.atEnd():
+        self.report(code = "E2-023", message = "意外到达文件末尾")
+        return false
     self.report(code = "E2-001", message = "期望" + what + "，实际得到" + kindName(self.current().kind))
+    return false
+; 期望某类记号，缺记号时按调用方给的码报：同一处缺记号在结构块、泛型表、块头闭合里含义不同。
+expectAs|self(kind: TokenKind, what: String, code: String,) -> (Bool,):
+    if self.at(kind):
+        self.advance()
+        return true
+    if self.atEnd():
+        self.report(code = "E2-023", message = "意外到达文件末尾")
+        return false
+    self.report(code = code, message = "缺少" + what)
     return false
 ; 错误恢复：跳到行尾或块边界，保证每次失败至少前进一条记号。
 recover|self() -> ():
@@ -239,7 +273,7 @@ parseAngleDecl|self() -> (I32,):
         let generics: Array<I32> = self.parseGenericParamItems()
         if hadGenerics && self.at(.opShr):
             self.advance()
-            self.expect(kind = .opGt, what = "`>`")
+            self.expectAs(kind = .opGt, what = "`>`", code = "E2-010")
         else:
             if hadGenerics && self.at(.opGt):
                 self.advance()
@@ -252,14 +286,14 @@ parseAngleDecl|self() -> (I32,):
     self.advance()
     let nameStart: I32 = self.current().nameStart
     let nameEnd: I32 = self.current().nameEnd
-    if !self.expect(kind = .identifier, what = "特征名"):
+    if !self.expectAs(kind = .identifier, what = "特征名", code = "E2-017"):
         self.recover()
         return -1
     let generics: Array<I32> = self.parseGenericParams()
     if self.at(.opShr):
         self.advance()
     else:
-        if !self.expect(kind = .opGt, what = "`>`"):
+        if !self.expectAs(kind = .opGt, what = "`>`", code = "E2-010"):
             self.recover()
             return -1
     let id: I32 = self.newDecl(kind = .declTrait, start = start, end = self.previousEnd())
@@ -272,8 +306,8 @@ closeTraitHeader|self() -> ():
     if self.at(.opShr):
         self.advance()
         return
-    self.expect(kind = .opGt, what = "`>`")
-    self.expect(kind = .opGt, what = "`>`")
+    self.expectAs(kind = .opGt, what = "`>`", code = "E2-010")
+    self.expectAs(kind = .opGt, what = "`>`", code = "E2-010")
     return
 ; 特征体：变量签名、抽象方法签名与带默认实现的方法三种；遇到下一个顶级声明收尾。
 parseTraitBody|self(_isExtension: Bool,) -> (Array<I32>,):
@@ -347,8 +381,13 @@ finishTraitSignature|self(start: I32, nameStart: I32, nameEnd: I32,) -> (I32,):
         else:
             self.report(code = "E2-001", message = "期望特征方法的修饰符")
     var params: Array<I32> = []
+    var hasParamList = false
     if self.at(.leftParen):
+        hasParamList = true
         params = self.parseParams()
+    ; 变量签名（`值: 类型`）没有参数表，也就不要求返回箭头。
+    if hasParamList && !self.at(.arrow):
+        self.report(code = "E2-013", message = "缺少返回类型")
     var returnType = -1
     if self.at(.arrow):
         self.advance()
@@ -370,11 +409,14 @@ finishTraitSignature|self(start: I32, nameStart: I32, nameEnd: I32,) -> (I32,):
     return id
 ; 块名：导入、导出、外部与给定块的头名取文件名，可与关键字同形（`foreign.pini` 即 `[foreign|import]`）。
 ; 只放行名字这一格，`|` 之后的修饰符仍按词判定；非标识符且非关键字照旧报错。
-acceptBlockName|self(what: String,) -> (Bool,):
+acceptBlockName|self(what: String, code: String,) -> (Bool,):
     if self.at(.identifier) || isKeywordKind(self.current().kind):
         self.advance()
         return true
-    self.report(code = "E2-001", message = "期望" + what + "，实际得到" + kindName(self.current().kind))
+    if self.atEnd():
+        self.report(code = "E2-023", message = "意外到达文件末尾")
+        return false
+    self.report(code = code, message = "缺少" + what)
     return false
 ; 方括号声明：`[名|import]`、`[名|export]`、`[名|foreign]`、`[名|given]`、`[名|object]`、
 ; `[名]` 枚举与 `[[名]]` 扩展；名字后可带类型形参表，修饰符按词区分。
@@ -389,8 +431,8 @@ parseBracketDecl|self() -> (I32,):
             self.recover()
             return -1
         let generics: Array<I32> = self.parseGenericParams()
-        self.expect(kind = .rightBracket, what = "`]]`")
-        self.expect(kind = .rightBracket, what = "`]]`")
+        self.expectAs(kind = .rightBracket, what = "`]]`", code = "E2-010")
+        self.expectAs(kind = .rightBracket, what = "`]]`", code = "E2-010")
         let id: I32 = self.newDecl(kind = .declExtension, start = start, end = self.previousEnd())
         self.setDeclName(id = id, start = nameStart, end = nameEnd)
         self.setDeclGeneric(id = id, kids = generics)
@@ -399,7 +441,7 @@ parseBracketDecl|self() -> (I32,):
     self.advance()
     let nameStart: I32 = self.current().nameStart
     let nameEnd: I32 = self.current().nameEnd
-    if !self.acceptBlockName(what = "声明名"):
+    if !self.acceptBlockName(what = "声明名", code = "E2-020"):
         self.recover()
         return -1
     let generics: Array<I32> = self.parseGenericParams()
@@ -408,15 +450,15 @@ parseBracketDecl|self() -> (I32,):
         self.advance()
         if self.at(.kwImport):
             self.advance()
-            self.expect(kind = .rightBracket, what = "`]`")
+            self.expectAs(kind = .rightBracket, what = "`]`", code = "E2-010")
             return self.parseImportBody(start = start, nameStart = nameStart, nameEnd = nameEnd)
         if self.at(.kwForeign):
             self.advance()
-            self.expect(kind = .rightBracket, what = "`]`")
+            self.expectAs(kind = .rightBracket, what = "`]`", code = "E2-010")
             return self.parseForeignBody(start = start, nameStart = nameStart, nameEnd = nameEnd)
         if self.at(.kwExport):
             self.advance()
-            self.expect(kind = .rightBracket, what = "`]`")
+            self.expectAs(kind = .rightBracket, what = "`]`", code = "E2-010")
             return self.parseExportBody(start = start, nameStart = nameStart, nameEnd = nameEnd)
         if self.isIdentifierWord("given"):
             self.advance()
@@ -431,7 +473,7 @@ parseBracketDecl|self() -> (I32,):
             self.report(code = "E2-005", message = "无效的方括号声明修饰符")
             self.recover()
             return -1
-    if !self.expect(kind = .rightBracket, what = "`]`"):
+    if !self.expectAs(kind = .rightBracket, what = "`]`", code = "E2-010"):
         self.recover()
         return -1
     if modifier == 1:
@@ -591,8 +633,8 @@ parseParenDecl|self() -> (I32,):
             self.recover()
             return -1
         let generics: Array<I32> = self.parseGenericParams()
-        self.expect(kind = .rightParen, what = "`))`")
-        self.expect(kind = .rightParen, what = "`))`")
+        self.expectAs(kind = .rightParen, what = "`))`", code = "E2-010")
+        self.expectAs(kind = .rightParen, what = "`))`", code = "E2-010")
         let id: I32 = self.newDecl(kind = .declExtension, start = start, end = self.previousEnd())
         self.setDeclName(id = id, start = nameStart, end = nameEnd)
         self.setDeclGeneric(id = id, kids = generics)
@@ -601,11 +643,11 @@ parseParenDecl|self() -> (I32,):
     self.advance()
     let nameStart: I32 = self.current().nameStart
     let nameEnd: I32 = self.current().nameEnd
-    if !self.expect(kind = .identifier, what = "结构名"):
+    if !self.expectAs(kind = .identifier, what = "结构名", code = "E2-018"):
         self.recover()
         return -1
     let generics: Array<I32> = self.parseGenericParams()
-    if !self.expect(kind = .rightParen, what = "`)`"):
+    if !self.expectAs(kind = .rightParen, what = "`)`", code = "E2-010"):
         self.recover()
         return -1
     let id: I32 = self.newDecl(kind = .declStruct, start = start, end = self.previousEnd())
@@ -625,8 +667,8 @@ parseBraceDecl|self() -> (I32,):
             self.recover()
             return -1
         let generics: Array<I32> = self.parseGenericParams()
-        self.expect(kind = .rightBrace, what = "`}}`")
-        self.expect(kind = .rightBrace, what = "`}}`")
+        self.expectAs(kind = .rightBrace, what = "`}}`", code = "E2-010")
+        self.expectAs(kind = .rightBrace, what = "`}}`", code = "E2-010")
         let id: I32 = self.newDecl(kind = .declExtension, start = start, end = self.previousEnd())
         self.setDeclName(id = id, start = nameStart, end = nameEnd)
         self.setDeclGeneric(id = id, kids = generics)
@@ -635,11 +677,11 @@ parseBraceDecl|self() -> (I32,):
     self.advance()
     let nameStart: I32 = self.current().nameStart
     let nameEnd: I32 = self.current().nameEnd
-    if !self.expect(kind = .identifier, what = "对象名"):
+    if !self.expectAs(kind = .identifier, what = "对象名", code = "E2-019"):
         self.recover()
         return -1
     let generics: Array<I32> = self.parseGenericParams()
-    if !self.expect(kind = .rightBrace, what = "`}`"):
+    if !self.expectAs(kind = .rightBrace, what = "`}`", code = "E2-010"):
         self.recover()
         return -1
     let id: I32 = self.newDecl(kind = .declObject, start = start, end = self.previousEnd())
@@ -651,6 +693,11 @@ parseBraceDecl|self() -> (I32,):
 parseFieldBlock|self() -> (Array<I32>,):
     self.openIndentedBody()
     let fields: Array<I32> = self.parseFieldLines()
+    ; 字段块里的 `名(...)`：裸函数形态，方法须移到扩展块并写 `|self`。
+    ; 特征体不走本函数，故那里的方法签名不受此判。
+    if self.at(.identifier) && self.isKindAt(offset = 1, kind = .leftParen):
+        self.report(code = "E2-024", message = "块内函数必须显式声明 self 修饰符")
+        self.recover()
     self.closeIndentedBody()
     return fields
 ; 字段块：`名字: 类型 [= 初值]` 与 `实现: 特征` 逐行读取，遇到非字段行即收尾。
@@ -679,6 +726,16 @@ parseFieldLines|self() -> (Array<I32>,):
             self.pushDeclKid(id = id, kid = init)
         fields = fields.append(id)
         self.skipNewlines()
+    ; 行首冒号：字段名空缺。
+    if self.at(.colon):
+        self.report(code = "E2-014", message = "缺少字段名")
+        self.recover()
+        return fields
+    ; 类型体里的方法行：方法须移到扩展块并写明 `|self` 或 `|own`。
+    ; `名|func`、`名|unsafe` 是顶级函数修饰符，本块到此闭合，不算块内函数。
+    if self.at(.identifier) && self.isKindAt(offset = 1, kind = .opBitOr) && (self.isKindAt(offset = 2, kind = .kwSelf) || self.isKindAt(offset = 2, kind = .kwOwn)):
+        self.report(code = "E2-024", message = "块内函数必须显式声明 self 修饰符")
+        self.recover()
     return fields
 ; 实现行：`实现: 特征`，特征名按具名类型登记，供注册面挂到所属类型上。
 parseImplementsLine|self() -> (I32,):
@@ -704,11 +761,14 @@ parseGenericParamItems|self() -> (Array<I32>,):
         return params
     self.advance()
     self.skipNewlines()
+    ; 空的形参表：尖号之间没有任何名字。
+    if self.at(.opGt) || self.at(.opShr):
+        self.report(code = "E2-021", message = "缺少泛型参数")
     while !self.at(.opGt) && !self.at(.opShr) && !self.atEnd():
         let start: I32 = self.current().start
         let nameStart: I32 = self.current().nameStart
         let nameEnd: I32 = self.current().nameEnd
-        if !self.expect(kind = .identifier, what = "类型形参名"):
+        if !self.expectAs(kind = .identifier, what = "类型形参名", code = "E2-021"):
             break
         var constraint = -1
         if self.at(.colon):
@@ -748,6 +808,10 @@ parseStructFields|self() -> (Array<I32>,):
     while i < len(rest):
         fields = fields.append(rest[i])
         i = i + 1
+    ; 结构体内的 `名(...)`：裸函数形态，方法须移到扩展块并写 `|self`。
+    if self.at(.identifier) && self.isKindAt(offset = 1, kind = .leftParen):
+        self.report(code = "E2-024", message = "块内函数必须显式声明 self 修饰符")
+        self.recover()
     return fields
 ; 枚举体：缩进开闭在此成对处理，变体规则交 parseVariantLines。
 parseVariantBlock|self() -> (Array<I32>,):
@@ -776,6 +840,16 @@ parseVariantLines|self() -> (Array<I32>,):
         self.setDeclKids(id = id, kids = fields)
         variants = variants.append(id)
         self.skipNewlines()
+    ; 行首冒号：用例名空缺。左括号不算——`(` 是下一块的块头，本块在此闭合。
+    if self.at(.colon):
+        self.report(code = "E2-015", message = "缺少 case 名")
+        self.recover()
+        return variants
+    ; 枚举体里的方法行：方法须移到扩展块并写明 `|self`。
+    ; `名|func`、`名|unsafe` 是顶级函数修饰符，本块到此闭合，不算块内函数。
+    if self.at(.identifier) && self.isKindAt(offset = 1, kind = .opBitOr) && (self.isKindAt(offset = 2, kind = .kwSelf) || self.isKindAt(offset = 2, kind = .kwOwn)):
+        self.report(code = "E2-024", message = "块内函数必须显式声明 self 修饰符")
+        self.recover()
     return variants
 ; 变体载荷：`变体(I32, 点)` 只写类型，不写参数名；每个类型登记成一个载荷参数。
 ; 载荷参数的名字留空、类型位写标注，语义层按参数形状绑定；名字面不进语言。
@@ -831,6 +905,11 @@ parseMethodLines|self() -> (Array<I32>,):
         elif id >= 0:
             methods = methods.append(id)
         self.skipNewlines()
+    ; 行首竖线：方法名空缺，`|self` / `|own` 修饰符悬空。
+    if self.at(.opBitOr):
+        self.report(code = "E2-016", message = "缺少方法名")
+        self.recover()
+        return methods
     return methods
 ; 函数声明：`名字|func|test|self|foreign(params,) -> (返回,)` 后接块体或同行语句；
 ; 返回箭头写 `=>` 即异步函数，`isAsync` 置位，其余形状不变。
@@ -882,6 +961,8 @@ parseFunctionDecl|self() -> (I32,):
         self.recover()
         return -1
     let params = self.parseParams()
+    if !self.at(.arrow) && !self.at(.fatArrow):
+        self.report(code = "E2-013", message = "缺少返回类型")
     var returnType = -1
     var returnNested = false
     var isAsync = false
@@ -1168,10 +1249,10 @@ parseExpression|self(_minPrecedence: I32,) -> (I32,):
             left = id
     return left
 ; 转换：`操作数 as 目标类型`，比二元紧、比前缀一元松，可连写左结合。
-; `as` 是上下文关键字：只在操作数已完整的位置按转换解释，其余位置是普通标识符。
+; `as` 是关键字，词法层已定类，此处只认记号。
 parseCast|self() -> (I32,):
     var left: I32 = self.parseUnary()
-    while left >= 0 && self.isIdentifierWord("as"):
+    while left >= 0 && self.at(.kwAs):
         self.advance()
         let target: I32 = self.parseType()
         let id: I32 = self.newExpr(kind = .exprCast, start = self.ast.exprAt(left).start, end = self.previousEnd())
@@ -1462,6 +1543,10 @@ parsePrimary|self() -> (I32,):
         return self.parseBraceLiteral()
     if isKind(token = token, kind = .kwFunc):
         return self.parseLambda()
+    ; 表达式位已到文件末尾：这是写断了，不是写错的表达式。
+    if self.atFileEnd():
+        self.report(code = "E2-023", message = "意外到达文件末尾")
+        return -1
     self.report(code = "E2-006", message = "无效的表达式，实际得到" + kindName(token.kind))
     return -1
 ; 插值串：整条串一个节点，`kids` 按段序只收插值段的子表达式，字面段不落节点。
@@ -1626,6 +1711,8 @@ parseLambda|self() -> (I32,):
         self.report(code = "E2-001", message = "期望参数表 `(`")
         return -1
     let params = self.parseParams()
+    if !self.at(.arrow) && !self.at(.fatArrow):
+        self.report(code = "E2-013", message = "缺少返回类型")
     var returnType = -1
     var isAsync = false
     if self.at(.fatArrow):
@@ -1695,6 +1782,10 @@ parseInlineBlock|self() -> (I32,):
 parseStatement|self() -> (I32,):
     if self.at(.kwCapture):
         return self.parseCapture()
+    ; 行首竖线后紧跟控制流关键字：标签名被漏写。
+    if self.at(.opBitOr) && (self.isKindAt(offset = 1, kind = .kwIf) || self.isKindAt(offset = 1, kind = .kwWhile) || self.isKindAt(offset = 1, kind = .kwFor)):
+        self.report(code = "E2-022", message = "缺少标签")
+        self.advance()
     if self.at(.identifier) && self.isKindAt(offset = 1, kind = .opBitOr) && self.isKindAt(offset = 2, kind = .kwIf):
         return self.parseLabelled(what = .kwIf)
     if self.at(.identifier) && self.isKindAt(offset = 1, kind = .opBitOr) && self.isKindAt(offset = 2, kind = .kwWhile):

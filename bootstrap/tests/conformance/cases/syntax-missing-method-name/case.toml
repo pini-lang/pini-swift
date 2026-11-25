@@ -1,0 +1,8 @@
+[case]
+name = "扩展块方法缺方法名"
+category = "diagnostics"
+kind = "error"
+code = "E2-016"
+line = 5
+col = 1
+spec = "语言参考 4.7 扩展块：成员是 `名|self(...)` 方法声明，行首竖线报 E2-016"
