@@ -261,7 +261,36 @@ scanIdentifier|func(_state: LexState,) -> (LexState,):
         return scanWideByte(out)
     out.pos = end
     let kind = keywordKindIn(table = out.keywords, bytes = out.bytes, start = start, end = end)
-    return emitToken(state = out, kind = kind, start = start, end = end)
+    var result = emitToken(state = out, kind = kind, start = start, end = end)
+    if kindTag(kind) == kindTag(.identifier) && mixedScriptsIn(bytes = out.bytes, start = start, end = end):
+        result.issues = result.issues.append(makeIssue(kind = .issueMixedScripts, start = start, end = end))
+    return result
+
+; 混写判定：逐标量取脚本，与已见脚本两两判冲突；命中即真。
+; 中文与拉丁不冲突，名单在 unicode 的脚本表里，本文件不另立一份。
+mixedScriptsIn|func(bytes: Array<U8>, start: I32, end: I32,) -> (Bool,):
+    var pos = start
+    var seen: Array<I32> = []
+    while pos < end:
+        let unit = decodeScalarAt(bytes = bytes, offset = pos)
+        if unit.length == 0:
+            return false
+        let script = scriptOf(unit.code)
+        var j = 0
+        while j < len(seen):
+            if scriptsConflict(first = seen[j], second = script):
+                return true
+            j = j + 1
+        var hit = false
+        var k = 0
+        while k < len(seen):
+            if seen[k] == script:
+                hit = true
+            k = k + 1
+        if !hit:
+            seen = seen.append(script)
+        pos = pos + unit.length
+    return false
 
 ; 标识符词界：起点不是标识符首字节时答原位置；否则按 ASCII 快路与标量分类推进到词尾。
 identifierEnd|func(bytes: Array<U8>, start: I32, classes: Array<U8>,) -> (I32,):

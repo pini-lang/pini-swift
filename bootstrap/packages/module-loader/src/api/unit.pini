@@ -12,6 +12,7 @@ segments: Array<Segment> = []
 ast: Ast = Ast()
 diagnostics: Array<Diagnostic> = []
 issues: Array<LexIssue> = []
+warnings: Array<LexWarning> = []
 
 ; 字节视图：装载时已填则直接取；测试等手工构造的单元现转一次，与旧口径一致。
 unitBytes|func(_unit: CompilationUnit,) -> (Array<U8>,):
@@ -72,6 +73,7 @@ loadUnit|func(path: String, text: String,) -> (UnitLoad,):
     unit.ast = expanded.ast
     unit.diagnostics = parsed.diagnostics
     unit.issues = parsed.issues
+    unit.warnings = parsed.warnings
     var faults = unrollFaultDiagnostics(errors = expanded.errors, path = path)
     var e = 0
     while e < len(faults):

@@ -4,6 +4,7 @@
 # variant 须仍可解析且仍不是规范形；文件不存在或条件不再成立即过期，门禁会红。
 examples/optional-sugar.pini	variant	语法标本：nil 与 ?T 糖，规范形归一为 Optional.none / Optional<T>
 bootstrap/tests/conformance/cases/diag-syntax/pkg/src/api.pini	unparseable	拒绝态：括号未闭合，语料的被测对象
+bootstrap/tests/conformance/cases/diag-mixed-scripts/pkg/src/api.pini	unparseable	拒绝态：标识符混用高风险脚本，语料的被测对象
 bootstrap/tests/conformance/cases/unicode-zero-width/pkg/src/api.pini	unparseable	拒绝态：标识符含零宽字符，语料的被测对象
 bootstrap/fixtures/cli-parity/inputs/unclosed.pini	unparseable	拒绝态：括号未闭合，对照夹具的被测输入
 bootstrap/fixtures/cli-parity/inputs/indent.pini	unparseable	拒绝态：缩进错乱，对照夹具的被测输入

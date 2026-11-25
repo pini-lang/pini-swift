@@ -27,6 +27,13 @@ makeCheckDiagnostic|func(file: String, category: Category, code: String, message
         out = out.addLabel(makeLabel(start = offset, end = offset, message = "", primary = true))
     return out
 
+; 警告诊断：同一形状，严重级取警告；它进报告但不进错误数，退出码因此不受影响。
+makeCheckWarning|func(file: String, category: Category, code: String, message: String, offset: I32,) -> (Diagnostic,):
+    var out = makeDiagnostic(file = file, category = category, severity = warningSeverity(), code = code, message = message)
+    if offset >= 0:
+        out = out.addLabel(makeLabel(start = offset, end = offset, message = "", primary = true))
+    return out
+
 ; 清单诊断：清单错误按输入输出类别报；成环取专用码，其余沿用物理边界码。
 planDiagnostics|func(_plan: BuildPlan,) -> (Array<Diagnostic>,):
     var out: Array<Diagnostic> = []
@@ -57,18 +64,49 @@ loadDiagnostics|func(_ws: WorkspaceUnits,) -> (Array<Diagnostic>,):
     return out
 
 ; 词法诊断：组合附标错位取专用码，其余词法问题按词法类别报。
+; 混写按名字去重：同一个标识符在声明处与每个使用处都出现，逐处报会淹没首因。
 lexicalDiagnostics|func(_units: Array<CompilationUnit>,) -> (Array<Diagnostic>,):
     var out: Array<Diagnostic> = []
     var u = 0
     while u < len(_units):
         let unit = _units[u]
+        let bytes = unitBytes(unit)
+        var reported: Array<String> = []
         var i = 0
         while i < len(unit.issues):
             let issue = unit.issues[i]
             var code = "E1-004"
             if isIssue(issue = issue, kind = .issueMisplacedCombiningMark):
                 code = "E1-005"
-            out = out.append(makeCheckDiagnostic(file = unit.path, category = lexicalCategory(), code = code, message = "词法问题：" + issueName(issue.kind), offset = issue.start))
+            if isIssue(issue = issue, kind = .issueMixedScripts):
+                code = "E1-006"
+            var repeated = false
+            if code == "E1-006":
+                let name = decodeSpelling(bytes = bytes, start = issue.start, end = issue.end)
+                if hasName(items = reported, value = name):
+                    repeated = true
+                else:
+                    reported = reported.append(name)
+            if !repeated:
+                out = out.append(makeCheckDiagnostic(file = unit.path, category = lexicalCategory(), code = code, message = "词法问题：" + issueName(issue.kind), offset = issue.start))
+            i = i + 1
+        u = u + 1
+    return out
+
+; 词法警告：双向控制字符只在注释与字符串里报，取警告级，故它出现但不阻断。
+; 与词法问题分开收集：那条是错误，这条是提示，两者在同一份报告里不同列。
+lexWarningDiagnostics|func(_units: Array<CompilationUnit>,) -> (Array<Diagnostic>,):
+    var out: Array<Diagnostic> = []
+    var u = 0
+    while u < len(_units):
+        let unit = _units[u]
+        var i = 0
+        while i < len(unit.warnings):
+            let warning = unit.warnings[i]
+            var where = "注释"
+            if isTextRole(warning = warning, role = .textString):
+                where = "字符串"
+            out = out.append(makeCheckWarning(file = unit.path, category = lexicalCategory(), code = "E7-009", message = where + "里出现" + warningName(warning.kind), offset = warning.start))
             i = i + 1
         u = u + 1
     return out
@@ -421,10 +459,20 @@ finishReport|func(root: String, packages: I32, diagnostics: Array<Diagnostic>, u
         i = i + 1
     out.text = renderAll(items = out.diagnostics, files = files, texts = texts)
     out.tsv = renderTSV(items = out.diagnostics, files = files, texts = texts)
-    out.errorCount = len(out.diagnostics)
+    out.errorCount = errorCountOf(items = out.diagnostics)
     if out.errorCount > 0:
         out.exitCode = 1
     return out
+
+; 错误计数：只数错误级，警告不进这个数；短路与退出码都看它。
+errorCountOf|func(items: Array<Diagnostic>,) -> (I32,):
+    var total = 0
+    var i = 0
+    while i < len(items):
+        if severityRank(items[i].severity) == severityRank(errorSeverity()):
+            total = total + 1
+        i = i + 1
+    return total
 
 ; 工作区根：从给定目录向上找第一份带 `[workspace]` 的清单；找不到答原目录。
 ; 层数上限八层，避免在根文件系统上无界回溯；路径分隔按斜杠，源码树与产物目录同规。
@@ -535,7 +583,12 @@ checkUnits|func(root: String, ws: WorkspaceUnits, packages: I32, plan: BuildPlan
     while i < len(syntax):
         diagnostics = diagnostics.append(syntax[i])
         i = i + 1
-    if len(diagnostics) > 0:
+    var warnings = lexWarningDiagnostics(units)
+    i = 0
+    while i < len(warnings):
+        diagnostics = diagnostics.append(warnings[i])
+        i = i + 1
+    if errorCountOf(items = diagnostics) > 0:
         return finishReport(root = root, packages = packages, diagnostics = diagnostics, units = units)
     let build = buildWorld(units = units, packages = ws.packages)
     var symbols = symbolDiagnostics(build.table)
