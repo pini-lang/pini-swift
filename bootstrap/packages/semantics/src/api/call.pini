@@ -13,12 +13,13 @@ typeId: I32 = -1
 offset: I32 = 0
 node: I32 = -1
 
-; 形参：名字、类型下标、默认值、取用位、长度约束与标签面。
+; 形参：名字、类型下标、默认值、取用位、长度约束与标签面；`given` 标类型是给定块。
 (CallParam)
 name: String = ""
 typeId: I32 = -1
 hasDefault: Bool = false
 isUsing: Bool = false
+given: Bool = false
 sized: Bool = false
 takesLabel: Bool = true
 
@@ -33,7 +34,7 @@ offset: I32 = 0
 unit: I32 = -1
 args: Array<CallArg> = []
 
-; 调用错误：个数、标签、实参类型、不可调用、回调来历与变参尾六类。
+; 调用错误：个数、标签、实参类型、不可调用、回调来历、变参尾与无默认实例七类。
 [CallErrorKind]
 callArity
 callUnknownLabel
@@ -44,6 +45,7 @@ callUnexpectedLabel
 callDuplicateLabel
 callCallback
 callVarargsTail
+callNoDefaultInstance
 
 ; 调用错误：类别、位置、被调方与期望/实得文本。
 (CallError)
@@ -88,6 +90,8 @@ callErrorName|func(_kind: CallErrorKind,) -> (String,):
             return "回调实参不合格"
         case callVarargsTail:
             return "变参尾实参不合格"
+        case callNoDefaultInstance:
+            return "无可用默认实例"
     return "调用错误"
 
 ; 同一错误类别判定：枚举相等比较不可用，按名称比。
@@ -115,6 +119,8 @@ callErrorCode|func(_kind: CallErrorKind,) -> (String,):
             return "E4-031"
         case callVarargsTail:
             return "E4-034"
+        case callNoDefaultInstance:
+            return "E6-007"
     return "E4-005"
 
 ; 造错误：位置取实参或调用点起点，期望与实得文本由调用方给。
@@ -131,6 +137,12 @@ makeCallError|func(kind: CallErrorKind, file: String, offset: I32, callee: Strin
 ; 计数字本：诊断里的个数与实得统一走这一条。
 countText|func(_value: I32,) -> (String,):
     return "\(_value)"
+
+; 形参类型文本：诊断里指认「哪个类型没有默认实例」；类型未定退回形参名。
+paramTypeText|func(out: CallResult, param: CallParam,) -> (String,):
+    if param.typeId < 0:
+        return param.name
+    return typeText(pool = out.pool, id = param.typeId)
 
 ; 被调方节点：调用节点首位固定是被调表达式；越界答 -1。
 calleeNode|func(unit: CompilationUnit, node: I32,) -> (I32,):
@@ -257,12 +269,26 @@ matchCall|func(out: CallResult, site: CallSite, params: Array<CallParam>, variad
     if !variadic:
         var m = 0
         while m < len(params):
-            if !filled[m] && !params[m].hasDefault && !params[m].isUsing:
-                return failCall(out = out, site = site, offset = site.offset, kind = .callArity, expected = "至少 " + countText(requiredCount(params)), got = countText(len(site.args)))
+            if !filled[m] && !params[m].hasDefault:
+                if !params[m].isUsing:
+                    return failCall(out = out, site = site, offset = site.offset, kind = .callArity, expected = "至少 " + countText(requiredCount(params)), got = countText(len(site.args)))
+                ; 取用位省略时靠默认实例填；形参类型不是给定块就没有，省略式调用只能拒。
+                if !params[m].given:
+                    return failCall(out = out, site = site, offset = site.offset, kind = .callNoDefaultInstance, expected = "给定块类型作取用位", got = paramTypeText(out = out, param = params[m]))
             m = m + 1
     var done = out
     done.typeId = retId
     return done
+
+; 类型标注的名字：只认裸类型名；容器、元组与函数类型答空串。
+; 取用位只在这一层判默认来源，泛型给定块的实参替换不在调用面。
+declaredTypeName|func(unit: CompilationUnit, typeId: I32,) -> (String,):
+    if typeId < 0 || typeId >= len(unit.ast.types):
+        return ""
+    let node = unit.ast.types[typeId]
+    if !isNamedTypeCode(node.kind):
+        return ""
+    return decodeRange(bytes = unitBytes(unit), start = node.nameStart, end = node.nameEnd)
 
 ; 声明形参：从函数声明的子节点读出名字、类型与默认值/取用位。
 declParams|func(world: MemberWorld, ref: DeclRef,) -> (Array<CallParam>,):
@@ -280,6 +306,7 @@ declParams|func(world: MemberWorld, ref: DeclRef,) -> (Array<CallParam>,):
             param.name = name
             param.hasDefault = len(node.kids) > 0
             param.isUsing = node.isUsing
+            param.given = isGivenTypeName(world = world, name = declaredTypeName(unit = unit, typeId = node.typeId))
             param.takesLabel = true
             if len(name) > 0 && name.indexOf("_") == 0:
                 param.takesLabel = false

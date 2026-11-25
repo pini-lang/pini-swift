@@ -360,6 +360,17 @@ lifecycleDiagnostics|func(_check: LifecycleCheck,) -> (Array<Diagnostic>,):
         i = i + 1
     return out
 
+; 给定块诊断：字段缺初值就没有完整默认实例，位置落字段本身；文案点名块与字段。
+givenDiagnostics|func(_check: GivenCheck,) -> (Array<Diagnostic>,):
+    var out: Array<Diagnostic> = []
+    var i = 0
+    while i < len(_check.errors):
+        let error = _check.errors[i]
+        var message = "给定块 `" + error.owner + "` 的字段 `" + error.field + "` 缺初值，没有完整默认实例"
+        out = out.append(makeCheckDiagnostic(file = error.file, category = typeCategory(), code = "E6-007", message = message, offset = error.offset))
+        i = i + 1
+    return out
+
 ; 体诊断：返回路径与参数重名，码取体面自己的表。
 bodyDiagnostics|func(_check: BodyCheck,) -> (Array<Diagnostic>,):
     var out: Array<Diagnostic> = []
@@ -605,6 +616,11 @@ checkUnits|func(root: String, ws: WorkspaceUnits, packages: I32, plan: BuildPlan
     i = 0
     while i < len(lifecycle):
         diagnostics = diagnostics.append(lifecycle[i])
+        i = i + 1
+    var givens = givenDiagnostics(checkGivenShapes(units = units))
+    i = 0
+    while i < len(givens):
+        diagnostics = diagnostics.append(givens[i])
         i = i + 1
     let world = build.world
     var exported = exportDiagnostics(checkExportSurface(world = world))
