@@ -3,7 +3,7 @@
 # 每个「无」「部分」「自举独有」行都必须有一行处置，缺行时 parity.py 拒绝生成命令表。
 命令	处置	说明
 backends	-	已收口，--tsv 两侧同形
-bind	待补齐	工具面：C 头翻译，未开工
+bind	-	已收口：C 头翻成 [名称|foreign] 块；AST 读 JSON，宏值经预处理探针展开；跳过项各带理由
 build	-	已收口：--print-plan 只打印不落盘，--shared 出动态库，-o 配 --shared，--diagnostics-tsv 走结构化行
 check	-	已收口
 compile	-	已收口：发射后起 clang 链成原生程序并运行；退出码只对齐零 / 非零

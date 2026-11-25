@@ -830,8 +830,40 @@ elif ! "$pini" "${stdlib_args[@]}" check "$work/expand-unroll.pini" > "$work/exp
     fail=1
 fi
 
+# 头翻译：同一份头文件两侧各生成一次，产物逐字节相同；自举再跑一次仍相同。
+# 跳过项须带理由：夹具里的结构体按值不接，报告行必须写明原因。
+bind_header="$root/bootstrap/fixtures/bind/include/calc.h"
+bind_include="$root/bootstrap/fixtures/bind/include"
+host_bin="$root/.build/release/pini"
+if [ ! -x "$host_bin" ]; then
+    echo " 行不通  [测试自检] 缺宿主产物，头翻译无法对照" >&2
+    fail=1
+else
+    if ! "$host_bin" bind "$bind_header" -I "$bind_include" -o "$work/bind-host.pini" > /dev/null 2>&1; then
+        echo " 行不通  [测试自检] 宿主头翻译失败" >&2
+        fail=1
+    fi
+    if ! "$pini" bind "$bind_header" -I "$bind_include" -o "$work/bind-self.pini" > "$work/bind-self.out" 2>&1; then
+        echo " 行不通  [测试自检] 自举头翻译失败" >&2
+        fail=1
+    fi
+    "$pini" bind "$bind_header" -I "$bind_include" -o "$work/bind-self2.pini" > /dev/null 2>&1
+    if ! cmp -s "$work/bind-host.pini" "$work/bind-self.pini"; then
+        echo " 行不通  [测试自检] 头翻译产物与宿主不同" >&2
+        fail=1
+    fi
+    if ! cmp -s "$work/bind-self.pini" "$work/bind-self2.pini"; then
+        echo " 行不通  [测试自检] 头翻译两次生成不同" >&2
+        fail=1
+    fi
+    if ! grep -q "跳过 calc_point：按值结构体不生成" "$work/bind-self.out"; then
+        echo " 行不通  [测试自检] 头翻译跳过项缺理由" >&2
+        fail=1
+    fi
+fi
+
 if [ "$fail" -ne 0 ]; then
     exit 1
 fi
-echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入，浮点常量走位模式，接口缓存按记录判失效，逐包产物按包发射且合并可链接，缓存按拓扑与内容判复用，分波按依赖深度，共享缓存按指纹复用，命令对照按签名锁定，导出面按符号表核对，构建执行组五条命令各有判据，模块工具组按副本验改写与抓取，内存模型两条示例与 golden 一致，源码树零改动且格式化幂等，展开产物过检查"
+echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入，浮点常量走位模式，接口缓存按记录判失效，逐包产物按包发射且合并可链接，缓存按拓扑与内容判复用，分波按依赖深度，共享缓存按指纹复用，命令对照按签名锁定，导出面按符号表核对，构建执行组五条命令各有判据，模块工具组按副本验改写与抓取，内存模型两条示例与 golden 一致，源码树零改动且格式化幂等，展开产物过检查，头翻译两侧逐字节相同且跳过项带理由"
 exit 0

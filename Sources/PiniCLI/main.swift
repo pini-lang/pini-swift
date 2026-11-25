@@ -19,6 +19,8 @@ func describeTypeAnnotation(_ type: TypeAnnotation, indent: String = "") -> Stri
     switch type {
     case .simple(let name, _):
         return name
+    case .qualified(let owner, let name, _):
+        return "\(owner).\(name)"
     case .tuple(let labels, let elements, _):
         let elementStrs = elements.enumerated().map { i, t in
             if labels.indices.contains(i), let l = labels[i] {

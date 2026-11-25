@@ -1218,7 +1218,7 @@ _backend_kit = "../../backend-kit"
     nodes = placedBack.pool
     module.nodes = nodes
     var fn = IrFunction()
-    fn.name = "main"
+    fn.name = "big"
     fn.returnType = 0
     fn.body = [placedBack.id]
     module.functions = module.functions.append(fn)
@@ -1724,4 +1724,40 @@ _backend_kit = "../../backend-kit"
     assert(发射含子串(text = result.text, needle = "declare ptr @bk_set_at(ptr, i32)"), "取元素符号应出声明")
     assert(发射含子串(text = result.text, needle = "call ptr @bk_set_at(ptr"), "元素应按序取回")
     assert(发射含子串(text = result.text, needle = "call i32 (ptr, ...) @printf(ptr @fmt_rbrace)"), "集合应以右花括号收尾")
+    return
+
+; 发射造整数类型池：一个 i64，供大常量判据使用。
+发射造整数类型池|func() -> (IrTypePool,):
+    var pool = IrTypePool()
+    let intType = irScalarTypeOfCode(pool = pool, code = 2, name = "i64")
+    return intType.pool
+
+; 发射造大常量模块：main 返回一个 i64 常量；文本必须按全宽打出，不得窄化成低 32 位。
+发射造大常量模块|func() -> (IrModule,):
+    let big: I64 = 9223372036854775807
+    var module = IrModule()
+    module.types = 发射造整数类型池()
+    var nodes = IrNodePool()
+    var literal = irMakeNode(kind = tagOfName(name = "intConst"), typeId = 0)
+    literal.intValue = big
+    let placedLiteral = irAppendNode(pool = nodes, node = literal)
+    nodes = placedLiteral.pool
+    var back = irMakeNode(kind = tagOfName(name = "returnStmt"), typeId = -1)
+    back.kids = [placedLiteral.id]
+    let placedBack = irAppendNode(pool = nodes, node = back)
+    nodes = placedBack.pool
+    module.nodes = nodes
+    var fn = IrFunction()
+    fn.name = "big"
+    fn.returnType = 0
+    fn.body = [placedBack.id]
+    module.functions = module.functions.append(fn)
+    return module
+
+; 整数常量按全宽发射：I64 值不得被截成低 32 位。
+整数常量全宽|test() -> ():
+    let module = 发射造大常量模块()
+    let result = emitModule(entry = 发射造记录(outputCode = 1), target = defaultTarget(), module = module)
+    assert(!result.failed, "大常量模块应发得出来")
+    assert(发射含子串(text = result.text, needle = "ret i64 9223372036854775807"), "常量按全宽打印")
     return

@@ -1,0 +1,425 @@
+; JSON 读取器：字节进、值树出。容器把子节点下标与对象键存在节点自身，池只追加节点。
+; 只服务工具面（clang 的 AST 转储与 bind），不接注释与尾逗号：那两样不在 JSON 里。
+[JsonKind]
+jsonNull
+jsonBool
+jsonNumber
+jsonString
+jsonArray
+jsonObject
+
+; 值节点：标量值留在文本里；数组用 kids 存子节点下标，对象另有与 kids 平行的 keys。
+(JsonNode)
+kind: JsonKind = .jsonNull
+text: String = ""
+kids: Array<I32> = []
+keys: Array<String> = []
+
+; 解析结果：ok 为零时 offset 指向出错字节、detail 给原因；此时值树不可用。
+(JsonDocument)
+nodes: Array<JsonNode> = []
+ok: Bool = false
+offset: I32 = 0
+detail: String = ""
+
+; 读取游标：引用语义承载，追加就地增长；解析期只经这一个对象改状态。
+{JsonReader}
+bytes: Array<U8> = []
+pos: I32 = 0
+nodes: Array<JsonNode> = []
+ok: Bool = true
+offset: I32 = 0
+detail: String = ""
+
+; UTF-8 标量：码点与字节宽；width 为零表示序列非法。
+(JsonScalar)
+code: I32 = -1
+width: I32 = 0
+
+; 入参文本按 UTF-8 字节读；根节点恒为 0，失败时根无效。
+parseJson|func(_text: String,) -> (JsonDocument,):
+    let reader = JsonReader()
+    reader.bytes = tempUtf8Bytes(_text)
+    jsonSkipSpace(reader)
+    let root = jsonParseValue(reader)
+    jsonSkipSpace(reader)
+    if reader.ok && root >= 0 && reader.pos != len(reader.bytes):
+        jsonFail(reader, reader.pos, "值之后还有多余内容")
+    var doc = JsonDocument()
+    doc.nodes = reader.nodes
+    doc.ok = reader.ok
+    doc.offset = reader.offset
+    doc.detail = reader.detail
+    return doc
+
+; 第一个失败点定案，后续失败不再覆盖：报错位置要指回最早那一处。
+jsonFail|func(_reader: JsonReader, _offset: I32, _detail: String,) -> ():
+    if _reader.ok:
+        _reader.ok = false
+        _reader.offset = _offset
+        _reader.detail = _detail
+
+jsonPeek|func(_reader: JsonReader,) -> (I32,):
+    if _reader.pos >= len(_reader.bytes):
+        return -1
+    return tempByteToInt(_reader.bytes[_reader.pos])
+
+; 空白只认 JSON 的四个：空格、制表、换行、回车。
+jsonSkipSpace|func(_reader: JsonReader,) -> ():
+    var going = true
+    while going && _reader.pos < len(_reader.bytes):
+        let b = tempByteToInt(_reader.bytes[_reader.pos])
+        if b == 32 || b == 9 || b == 10 || b == 13:
+            _reader.pos = _reader.pos + 1
+        else:
+            going = false
+    return
+
+jsonSetScalar|func(_reader: JsonReader, _index: I32, _kind: JsonKind, _text: String,) -> ():
+    var node = _reader.nodes[_index]
+    node.kind = _kind
+    node.text = _text
+    _reader.nodes[_index] = node
+    return
+
+; 值入口：先占一个占位节点，再按首字节分派；容器解析完把子表写回该节点。
+jsonParseValue|func(_reader: JsonReader,) -> (I32,):
+    if !_reader.ok:
+        return -1
+    jsonSkipSpace(_reader)
+    let index = len(_reader.nodes)
+    _reader.nodes = _reader.nodes.append(JsonNode())
+    let b = jsonPeek(_reader)
+    if b == 123:
+        jsonParseObject(_reader, index)
+        return index
+    if b == 91:
+        jsonParseArray(_reader, index)
+        return index
+    if b == 34:
+        let text = jsonParseString(_reader)
+        jsonSetScalar(_reader, index, .jsonString, text)
+        return index
+    if b == 116:
+        if jsonTakeWord(_reader, "true"):
+            jsonSetScalar(_reader, index, .jsonBool, "true")
+            return index
+        jsonFail(_reader, _reader.pos, "字面量只认 true / false / null")
+        return -1
+    if b == 102:
+        if jsonTakeWord(_reader, "false"):
+            jsonSetScalar(_reader, index, .jsonBool, "false")
+            return index
+        jsonFail(_reader, _reader.pos, "字面量只认 true / false / null")
+        return -1
+    if b == 110:
+        if jsonTakeWord(_reader, "null"):
+            jsonSetScalar(_reader, index, .jsonNull, "")
+            return index
+        jsonFail(_reader, _reader.pos, "字面量只认 true / false / null")
+        return -1
+    if b == 45 || b >= 48 && b <= 57:
+        let text = jsonParseNumber(_reader)
+        jsonSetScalar(_reader, index, .jsonNumber, text)
+        return index
+    jsonFail(_reader, _reader.pos, "值的首字节不是 JSON 允许的记号")
+    return -1
+
+; 对象：成员先收在本地数组，整段解析完再写回节点；嵌套对象的成员不会插进这一层。
+jsonParseObject|func(_reader: JsonReader, _index: I32,) -> ():
+    var keys: Array<String> = []
+    var kids: Array<I32> = []
+    _reader.pos = _reader.pos + 1
+    jsonSkipSpace(_reader)
+    var going = true
+    if jsonPeek(_reader) == 125:
+        _reader.pos = _reader.pos + 1
+        going = false
+    while going && _reader.ok:
+        jsonSkipSpace(_reader)
+        if jsonPeek(_reader) != 34:
+            jsonFail(_reader, _reader.pos, "对象成员名必须是字符串")
+            return
+        let key = jsonParseString(_reader)
+        jsonSkipSpace(_reader)
+        if jsonPeek(_reader) != 58:
+            jsonFail(_reader, _reader.pos, "成员名之后缺冒号")
+            return
+        _reader.pos = _reader.pos + 1
+        let value = jsonParseValue(_reader)
+        if !_reader.ok:
+            return
+        keys = keys.append(key)
+        kids = kids.append(value)
+        jsonSkipSpace(_reader)
+        let b = jsonPeek(_reader)
+        if b == 44:
+            _reader.pos = _reader.pos + 1
+        elif b == 125:
+            _reader.pos = _reader.pos + 1
+            going = false
+        else:
+            jsonFail(_reader, _reader.pos, "对象成员之间缺逗号或右花括号")
+            return
+    var node = _reader.nodes[_index]
+    node.kind = .jsonObject
+    node.keys = keys
+    node.kids = kids
+    _reader.nodes[_index] = node
+    return
+
+; 数组：元素下标同样先收本地，整段解析完再挂回节点。
+jsonParseArray|func(_reader: JsonReader, _index: I32,) -> ():
+    var kids: Array<I32> = []
+    _reader.pos = _reader.pos + 1
+    jsonSkipSpace(_reader)
+    var going = true
+    if jsonPeek(_reader) == 93:
+        _reader.pos = _reader.pos + 1
+        going = false
+    while going && _reader.ok:
+        let value = jsonParseValue(_reader)
+        if !_reader.ok:
+            return
+        kids = kids.append(value)
+        jsonSkipSpace(_reader)
+        let b = jsonPeek(_reader)
+        if b == 44:
+            _reader.pos = _reader.pos + 1
+        elif b == 93:
+            _reader.pos = _reader.pos + 1
+            going = false
+        else:
+            jsonFail(_reader, _reader.pos, "数组元素之间缺逗号或右方括号")
+            return
+    var node = _reader.nodes[_index]
+    node.kind = .jsonArray
+    node.kids = kids
+    _reader.nodes[_index] = node
+    return
+
+; 数字只留原文：AST 里的数字都在无关字段上，取用方按需再转。
+jsonParseNumber|func(_reader: JsonReader,) -> (String,):
+    var out = ""
+    if jsonPeek(_reader) == 45:
+        out = out + "-"
+        _reader.pos = _reader.pos + 1
+    var going = true
+    while going && _reader.pos < len(_reader.bytes):
+        let b = tempByteToInt(_reader.bytes[_reader.pos])
+        if b >= 48 && b <= 57 || b == 43 || b == 45 || b == 46 || b == 101 || b == 69:
+            out = out + "\(chr(b))"
+            _reader.pos = _reader.pos + 1
+        else:
+            going = false
+    if len(out) == 0:
+        jsonFail(_reader, _reader.pos, "数字写法为空")
+    return out
+
+; 字符串：转义与原始字节两条路都走同一份拼接；代理对合成一个码点后再取字符。
+jsonParseString|func(_reader: JsonReader,) -> (String,):
+    var out = ""
+    if jsonPeek(_reader) != 34:
+        jsonFail(_reader, _reader.pos, "字符串缺左引号")
+        return out
+    _reader.pos = _reader.pos + 1
+    while _reader.pos < len(_reader.bytes):
+        let b = tempByteToInt(_reader.bytes[_reader.pos])
+        if b == 34:
+            _reader.pos = _reader.pos + 1
+            return out
+        if b == 92:
+            _reader.pos = _reader.pos + 1
+            out = out + jsonParseEscape(_reader)
+            if !_reader.ok:
+                return out
+            continue
+        if b < 128:
+            out = out + "\(chr(b))"
+            _reader.pos = _reader.pos + 1
+            continue
+        let scalar = jsonScalarAt(_reader.bytes, _reader.pos)
+        if scalar.width == 0:
+            jsonFail(_reader, _reader.pos, "字符串里的 UTF-8 序列非法")
+            return out
+        out = out + "\(chr(scalar.code))"
+        _reader.pos = _reader.pos + scalar.width
+    jsonFail(_reader, _reader.pos, "字符串未闭合")
+    return out
+
+; 转义：单字符转义直接映射；\u 走四位数，成对代理在这里合成。
+jsonParseEscape|func(_reader: JsonReader,) -> (String,):
+    if _reader.pos >= len(_reader.bytes):
+        jsonFail(_reader, _reader.pos, "转义符之后没有字符")
+        return ""
+    let b = tempByteToInt(_reader.bytes[_reader.pos])
+    _reader.pos = _reader.pos + 1
+    if b == 34:
+        return "\""
+    if b == 92:
+        return "\\"
+    if b == 47:
+        return "/"
+    if b == 98:
+        return "\(chr(8))"
+    if b == 102:
+        return "\(chr(12))"
+    if b == 110:
+        return "\n"
+    if b == 114:
+        return "\r"
+    if b == 116:
+        return "\t"
+    if b == 117:
+        let high = jsonParseHex4(_reader)
+        if !_reader.ok:
+            return ""
+        if high >= 55296 && high <= 56319:
+            if jsonPeek(_reader) != 92:
+                jsonFail(_reader, _reader.pos, "代理对只剩高位")
+                return ""
+            _reader.pos = _reader.pos + 1
+            if jsonPeek(_reader) != 117:
+                jsonFail(_reader, _reader.pos, "代理对的第二段缺 u")
+                return ""
+            _reader.pos = _reader.pos + 1
+            let low = jsonParseHex4(_reader)
+            if !_reader.ok:
+                return ""
+            if low < 56320 || low > 57343:
+                jsonFail(_reader, _reader.pos, "代理对的低位越界")
+                return ""
+            let code = 65536 + (high - 55296) * 1024 + (low - 56320)
+            return "\(chr(code))"
+        return "\(chr(high))"
+    jsonFail(_reader, _reader.pos - 1, "不认识的转义")
+    return ""
+
+jsonParseHex4|func(_reader: JsonReader,) -> (I32,):
+    var value = 0
+    var i = 0
+    while i < 4:
+        if _reader.pos >= len(_reader.bytes):
+            jsonFail(_reader, _reader.pos, "\\u 之后的四位数不完整")
+            return 0
+        let b = tempByteToInt(_reader.bytes[_reader.pos])
+        var digit = -1
+        if b >= 48 && b <= 57:
+            digit = b - 48
+        elif b >= 97 && b <= 102:
+            digit = b - 87
+        elif b >= 65 && b <= 70:
+            digit = b - 55
+        if digit < 0:
+            jsonFail(_reader, _reader.pos, "\\u 之后不是十六进制数字")
+            return 0
+        value = value * 16 + digit
+        _reader.pos = _reader.pos + 1
+        i = i + 1
+    return value
+
+; 字面量比对：逐字节比，宽度不同直接假；命中则推进游标。
+jsonTakeWord|func(_reader: JsonReader, _word: String,) -> (Bool,):
+    let want = tempUtf8Bytes(_word)
+    if _reader.pos + len(want) > len(_reader.bytes):
+        return false
+    var i = 0
+    while i < len(want):
+        if tempByteToInt(_reader.bytes[_reader.pos + i]) != tempByteToInt(want[i]):
+            return false
+        i = i + 1
+    _reader.pos = _reader.pos + len(want)
+    return true
+
+; UTF-8 解码：只判边界与连续性，不做分类；非法序列答宽零。
+jsonScalarAt|func(_bytes: Array<U8>, _offset: I32,) -> (JsonScalar,):
+    var out = JsonScalar()
+    if _offset >= len(_bytes):
+        return out
+    let b0 = tempByteToInt(_bytes[_offset])
+    if b0 < 128:
+        out.code = b0
+        out.width = 1
+        return out
+    var width = 0
+    var code = 0
+    if b0 >= 194 && b0 <= 223:
+        width = 2
+        code = b0 - 192
+    elif b0 >= 224 && b0 <= 239:
+        width = 3
+        code = b0 - 224
+    elif b0 >= 240 && b0 <= 244:
+        width = 4
+        code = b0 - 240
+    else:
+        return out
+    if _offset + width > len(_bytes):
+        return out
+    var i = 1
+    while i < width:
+        let b = tempByteToInt(_bytes[_offset + i])
+        if b < 128 || b > 191:
+            return out
+        code = code * 64 + (b - 128)
+        i = i + 1
+    out.code = code
+    out.width = width
+    return out
+
+; 以下为读取面：调用方只经这些函数取值，不直接碰节点内部。
+jsonKindOf|func(_doc: JsonDocument, _index: I32,) -> (JsonKind,):
+    return _doc.nodes[_index].kind
+
+jsonKindTagOf|func(_doc: JsonDocument, _index: I32,) -> (I32,):
+    return jsonKindTag(_doc.nodes[_index].kind)
+
+jsonKindTag|func(_kind: JsonKind,) -> (I32,):
+    match _kind:
+        case jsonNull:
+            return 0
+        case jsonBool:
+            return 1
+        case jsonNumber:
+            return 2
+        case jsonString:
+            return 3
+        case jsonArray:
+            return 4
+        case jsonObject:
+            return 5
+    return 0
+
+jsonTextOf|func(_doc: JsonDocument, _index: I32,) -> (String,):
+    return _doc.nodes[_index].text
+
+jsonChildCount|func(_doc: JsonDocument, _index: I32,) -> (I32,):
+    return len(_doc.nodes[_index].kids)
+
+jsonChildAt|func(_doc: JsonDocument, _index: I32, _order: I32,) -> (I32,):
+    return _doc.nodes[_index].kids[_order]
+
+jsonMemberCount|func(_doc: JsonDocument, _index: I32,) -> (I32,):
+    return len(_doc.nodes[_index].keys)
+
+jsonMemberKeyAt|func(_doc: JsonDocument, _index: I32, _order: I32,) -> (String,):
+    return _doc.nodes[_index].keys[_order]
+
+jsonMemberValueAt|func(_doc: JsonDocument, _index: I32, _order: I32,) -> (I32,):
+    return _doc.nodes[_index].kids[_order]
+
+; 按键取值：找不到答 -1，调用方据此判「字段缺席」而不是当成空值。
+jsonMemberValueOf|func(_doc: JsonDocument, _index: I32, _key: String,) -> (I32,):
+    let node = _doc.nodes[_index]
+    var i = 0
+    while i < len(node.keys):
+        if node.keys[i] == _key:
+            return node.kids[i]
+        i = i + 1
+    return -1
+
+jsonBoolOf|func(_doc: JsonDocument, _index: I32,) -> (Bool,):
+    return _doc.nodes[_index].text == "true"
+
+jsonNumberTextOf|func(_doc: JsonDocument, _index: I32,) -> (String,):
+    return _doc.nodes[_index].text

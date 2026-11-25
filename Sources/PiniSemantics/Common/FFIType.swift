@@ -35,6 +35,9 @@ public enum FFIType: Equatable, Sendable {
     /// 归一一条类型标注。失败时带足够的上下文，让调用方只负责套诊断码。
     public static func resolve(_ annotation: TypeAnnotation, at position: Position) throws -> FFIType {
         switch annotation {
+        case .qualified(let owner, let name, _):
+            throw FFITypeError.notRepresentable(
+                type: "\(owner).\(name)", reason: "限定类型名不进 C 面：外部符号只写裸名")
         case .simple(let name, _):
             if let scalar = scalar(named: name) { return scalar }
             if name == "String" {
@@ -174,7 +177,7 @@ extension TypeAnnotation {
     /// 两处消费：C 面归属检查（[TypeChecker]）与声明期通道提醒（[SemanticAnalyzer]）。
     public var mentionsStringHandle: Bool {
         switch self {
-        case .simple(let name, _):
+        case .simple(let name, _), .qualified(_, let name, _):
             return name == "StringHandle"
         case .tuple(_, let elements, _):
             return elements.contains(where: \.mentionsStringHandle)

@@ -397,6 +397,8 @@ public enum SignatureSerializer {
         switch t {
         case .simple(let name, _):
             return name
+        case .qualified(let owner, let name, _):
+            return "\(owner).\(name)"
         case .generic(let name, let params, _):
             return "\(name)<\(annotationsText(params))>"
         case .pointer(let element, _):

@@ -723,7 +723,48 @@ enum MacroScanner {
         guard let first = line.firstIndex(of: "\""),
             let last = line.lastIndex(of: "\""), first < last
         else { return nil }
-        return String(line[line.index(after: first)..<last])
+        return unescape(String(line[line.index(after: first)..<last]))
+    }
+
+    /// 行标记是 C 字面量：非 ASCII 字节写成三位八进制（`\350\257\255`），反斜杠与引号各自转义。
+    /// 不还原时含非 ASCII 的路径比不中，宏的归属会整体丢失。
+    private static func unescape(_ text: String) -> String {
+        guard text.contains("\\") else { return text }
+        var bytes: [UInt8] = []
+        let scalars = Array(text.unicodeScalars)
+        var index = 0
+        while index < scalars.count {
+            let scalar = scalars[index]
+            index += 1
+            guard scalar == "\\", index < scalars.count else {
+                bytes.append(contentsOf: String(scalar).utf8)
+                continue
+            }
+            let next = scalars[index]
+            if next.value >= 48, next.value <= 55 {
+                var value = 0
+                var taken = 0
+                while taken < 3, index < scalars.count,
+                    scalars[index].value >= 48, scalars[index].value <= 55
+                {
+                    value = value * 8 + Int(scalars[index].value - 48)
+                    index += 1
+                    taken += 1
+                }
+                bytes.append(UInt8(truncatingIfNeeded: value))
+                continue
+            }
+            index += 1
+            switch next {
+            case "n": bytes.append(0x0A)
+            case "t": bytes.append(0x09)
+            case "r": bytes.append(0x0D)
+            case "\\": bytes.append(0x5C)
+            case "\"": bytes.append(0x22)
+            default: bytes.append(contentsOf: String(next).utf8)
+            }
+        }
+        return String(decoding: bytes, as: UTF8.self)
     }
 
     /// 双下划线开头、或 `_` + 大写字母开头的是实现保留名，不该出现在生成物里。

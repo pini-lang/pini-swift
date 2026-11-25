@@ -838,6 +838,8 @@ extension Printer {
         switch annotation {
         case .simple(let name, _):
             return name
+        case .qualified(let owner, let name, _):
+            return owner + "." + name
         case .pointer(let element, _):
             return "*" + type(element)
         case .generic(let name, let params, _):

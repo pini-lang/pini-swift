@@ -615,6 +615,8 @@ public final class TypeChecker {
     /// 位置是判据的一部分：`String` 只在形参位成立，`^T` 只在返回位成立。
     private func cExportRejection(_ t: TypeAnnotation, position: CExportPosition) -> String? {
         switch t {
+        case .qualified(let owner, let name, _):
+            return "`\(owner).\(name)` 不是 C 兼容标量：导出面只写裸名"
         case .simple(let name, _):
             if name == "StringHandle" {
                 // 形参与返回位都成立：两侧在 C 侧都是不透明指针，计数归 C 自己管。
@@ -863,7 +865,7 @@ public final class TypeChecker {
     /// 递归遍历类型注解，对其中的命名类型（含泛型实参、元组元素、函数签名）做可见性 enforce。
     private func enforceAnnotationVisibility(_ annotation: TypeAnnotation) throws {
         switch annotation {
-        case .simple(let name, let loc):
+        case .simple(let name, let loc), .qualified(_, let name, let loc):
             try enforceTypeVisibility(name: name, location: loc)
         case .generic(let name, let params, let loc):
             try enforceTypeVisibility(name: name, location: loc)
@@ -1919,7 +1921,7 @@ public final class TypeChecker {
         case .function(let params, let returns, _, _, _):
             for p in params { try validatePointerAnnotations(p) }
             for r in returns { try validatePointerAnnotations(r) }
-        case .simple:
+        case .simple, .qualified:
             break
         }
     }
@@ -1936,7 +1938,7 @@ public final class TypeChecker {
     /// 不顺着结构体字段递归：目标集已收成标量，「纯值结构体」不在承诺里，字段遍历只会放过它。
     private func pointerTargetFailure(in type: TypeAnnotation) -> PointerTargetFailure? {
         switch type {
-        case .simple(let name, _):
+        case .simple(let name, _), .qualified(_, let name, _):
             if CPointerTarget.scalarNames.contains(name) { return nil }
             if referenceTypeNames.contains(name) { return .arcObject(name: name) }
             return .notRepresentable(
@@ -2203,8 +2205,8 @@ public final class TypeChecker {
 
     private static func location(of annotation: TypeAnnotation) -> SourceLocation {
         switch annotation {
-        case .simple(_, let location), .tuple(_, _, let location), .generic(_, _, let location),
-            .function(_, _, _, _, let location), .pointer(_, let location):
+        case .simple(_, let location), .qualified(_, _, let location), .tuple(_, _, let location),
+            .generic(_, _, let location), .function(_, _, _, _, let location), .pointer(_, let location):
             return location
         }
     }
@@ -2674,8 +2676,8 @@ public final class TypeChecker {
 
     private func typeName(from annotation: TypeAnnotation) -> String {
         switch annotation {
-        case .simple(let name, _):
-            return name
+        case .simple, .qualified:
+            return annotation.typeName ?? ""
         case .tuple, .generic, .function:
             return ""  // 复杂类型暂不深入比较
         case .pointer:
@@ -3726,7 +3728,7 @@ public final class TypeChecker {
     /// 函数类型还下钻 captured（参数与返回不持有实例）；`visiting` 防自引用类型无限递归。
     private func escapingReferenceType(in type: TypeAnnotation, visiting: inout Set<String>) -> String? {
         switch type {
-        case .simple(let name, _):
+        case .simple(let name, _), .qualified(_, let name, _):
             if referenceTypeNames.contains(name) { return name }
             guard !visiting.contains(name) else { return nil }
             visiting.insert(name)

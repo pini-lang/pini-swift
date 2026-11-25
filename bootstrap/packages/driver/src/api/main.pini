@@ -350,6 +350,58 @@ main|func() -> ():
             return
         runLLI(path = entryPathOf(raw = runPath), stdlib = stdlib)
         return
+    if len(args) > 0 && args[0] == "bind":
+        var 选项 = BindOptions()
+        var 参数坏 = false
+        var bc = 1
+        while bc < len(args):
+            let one: String = args[bc]
+            if one == "-I" || one == "--include":
+                if bc + 1 >= len(args):
+                    参数坏 = true
+                    bc = len(args)
+                else:
+                    选项.includePaths = 选项.includePaths.append(args[bc + 1])
+                    bc = bc + 2
+            elif one == "-D" || one == "--define":
+                if bc + 1 >= len(args):
+                    参数坏 = true
+                    bc = len(args)
+                else:
+                    选项.defines = 选项.defines.append(args[bc + 1])
+                    bc = bc + 2
+            elif one == "--block":
+                if bc + 1 >= len(args):
+                    参数坏 = true
+                    bc = len(args)
+                else:
+                    选项.blockName = args[bc + 1]
+                    bc = bc + 2
+            elif one == "-o" || one == "--output":
+                if bc + 1 >= len(args):
+                    参数坏 = true
+                    bc = len(args)
+                else:
+                    选项.outputPath = args[bc + 1]
+                    bc = bc + 2
+            elif one == "-h" || one == "--help":
+                print(bindUsageLine())
+                return
+            elif bindStartsWith(one, "-"):
+                参数坏 = true
+                bc = len(args)
+            elif len(选项.header) > 0:
+                参数坏 = true
+                bc = len(args)
+            else:
+                选项.header = one
+                bc = bc + 1
+        if 参数坏 || len(选项.header) == 0:
+            print(bindUsageLine())
+            assert(false, "bind 参数不合规")
+            return
+        runBind(选项)
+        return
     if len(args) > 0 && args[0] == "mod":
         runMod(args)
         return
@@ -480,7 +532,7 @@ isKnownCommand|func(name: String,) -> (Bool,):
         return true
     if name == "tokens" || name == "backends" || name == "parse" || name == "fmt":
         return true
-    if name == "expand":
+    if name == "expand" || name == "bind":
         return true
     if name == "compile" || name == "run-llvm" || name == "test-llvm":
         return true

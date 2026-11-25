@@ -1212,6 +1212,9 @@ public enum IRLowerer {
         switch annotation {
         case .simple(let name, _):
             return substitution[name] ?? annotation
+        // 限定名不是泛型形参：前缀原样留着，末段名也不进替换表。
+        case .qualified:
+            return annotation
         case .tuple(let labels, let elements, let location):
             return .tuple(
                 labels: labels,
