@@ -583,6 +583,28 @@ emitExpr|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
     out.ctx = holdShare(ctx = out.ctx, name = out.text, typeId = heldType)
     return out
 
+; 整数常量文本：按 I64 全宽打印。窄化到 I32 会把大常量截成低 32 位，LLVM 文本因此错值。
+int64Text|func(_value: I64,) -> (String,):
+    let zero: I64 = 0
+    if _value == zero:
+        return "0"
+    let ten: I64 = 10
+    var negative = false
+    var n = _value
+    if n < zero:
+        negative = true
+    var digits = ""
+    while n != zero:
+        var digit = n % ten
+        if digit < zero:
+            digit = zero - digit
+        let offset = 48 + digit as I32
+        digits = "\(chr(offset))" + digits
+        n = n / ten
+    if negative:
+        return "-" + digits
+    return digits
+
 ; 表达式内核：先发子节点，再发本节点；值串交给上层拼指令。
 emitExprCore|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
     var out = ExprOut()
@@ -594,7 +616,7 @@ emitExprCore|func(ctx: BodyCtx, module: IrModule, nodeId: I32,) -> (ExprOut,):
     let node = irNodeAt(pool = module.nodes, id = nodeId)
     let typeName = llvmTypeName(pool = module.types, typeId = node.typeId)
     if node.kind == 1:
-        out.text = countText(node.intValue as I32)
+        out.text = int64Text(node.intValue)
         return out
     if node.kind == 2:
         out.text = floatConstantText(node.floatValue)
