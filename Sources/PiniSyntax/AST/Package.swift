@@ -72,8 +72,12 @@ public struct Package: Equatable, ASTNode, Sendable {
     /// 让位主张按整包全部单元收集：同名项写在别的文件里，也要摘掉标准库那份。
     /// 幂等——已装配过的单元原样保留。警告随单元保留：装配不改动该文件的词法结果。
     public func assemblingStdlib() -> Package {
+        assemblingStdlib(claims: FrontEnd.claims(in: fileUnits.map(\.module)))
+    }
+
+    /// 带主张的装配：主张由调用方按整个工作区算好，本包只负责把它用上。
+    public func assemblingStdlib(claims: FrontEnd.StdlibClaims) -> Package {
         guard let first = fileUnits.first else { return self }
-        let claims = FrontEnd.claims(in: fileUnits.map(\.module))
         var assembled = fileUnits
         assembled[0] = FileUnit(
             fileName: first.fileName, module: FrontEnd.assemble(module: first.module, claims: claims),

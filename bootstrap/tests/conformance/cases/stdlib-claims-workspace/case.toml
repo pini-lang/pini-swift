@@ -1,5 +1,6 @@
 [case]
-name = "标准库让位不跨包"
-category = "legal"
-kind = "pass"
-spec = "语言参考 标准库装配与用户同名让位"
+name = "标准库让位按工作区生效"
+category = "package"
+kind = "reject"
+host = "build"
+spec = "语言参考 标准库装配与用户同名让位：同名项让标准库那份退出本次编译"

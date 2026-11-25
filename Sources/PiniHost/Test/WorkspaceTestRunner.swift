@@ -135,6 +135,8 @@ public enum WorkspaceTestRunner {
 
         var executed: [WorkspaceTestSuiteResult] = []
         var collectedNames: [String] = []
+        // 让位主张按整个工作区收集：邻居包的同名声明也摘掉标准库那份，与自举同口径。
+        let claims = try WorkspaceBuilder.claims(for: plan)
         for package in plan.packages {
             for target in package.targets where target.kind == .test {
                 let suite = WorkspaceTestSuite(
@@ -145,7 +147,7 @@ public enum WorkspaceTestRunner {
                 if progress {
                     FileHandle.standardError.write(Data("· \(package.name)/\(target.name)\n".utf8))
                 }
-                let loaded = try WorkspaceBuilder.load(package: package, target: target)
+                let loaded = try WorkspaceBuilder.load(package: package, target: target, claims: claims)
                 let analyzer = SemanticAnalyzer()
                 try analyzer.analyze(package: loaded.package)
                 let checker = TypeChecker()
