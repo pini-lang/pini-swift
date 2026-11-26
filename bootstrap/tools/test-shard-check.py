@@ -12,6 +12,7 @@ WHY THIS EXISTS
 """
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -38,8 +39,11 @@ def members(path):
 
 def rows(path):
     """分片表：[(分片, 包, 说明)]，空行与 # 开头的行不算条目。"""
+    raw = path.read_bytes()
+    if raw.startswith(b"\xef\xbb\xbf"):
+        raise ValueError("分片表带 UTF-8 BOM：shell 按列切会把 BOM 算进第一列，首行成了片名")
     out = []
-    for number, line in enumerate(path.read_text(encoding="utf-8-sig").splitlines(), 1):
+    for number, line in enumerate(raw.decode("utf-8").splitlines(), 1):
         text = line.rstrip()
         if not text.strip() or text.lstrip().startswith("#"):
             continue
@@ -93,6 +97,17 @@ def self_test():
         got = 1 if problems else 0
         if got != want:
             print("self-test FAIL：%s 期望 %d，实得 %d" % (label, want, got))
+            return 1
+    # BOM 是真实踩过的坑：带 BOM 的表被 shell 读成「首行即片名」，多出一片跑完整套。
+    with tempfile.TemporaryDirectory() as tmp:
+        spoiled = Path(tmp) / "shards.tsv"
+        spoiled.write_bytes(b"\xef\xbb\xbf" + "# 注释\n".encode("utf-8"))
+        try:
+            rows(spoiled)
+        except ValueError:
+            pass
+        else:
+            print("self-test FAIL：带 BOM 的分片表没被拒")
             return 1
     print("self-test PASS")
     return 0
