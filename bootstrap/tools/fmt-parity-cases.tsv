@@ -1,0 +1,13 @@
+# 格式抽样对照：同一份源码经自举打印器与宿主打印器各打一次，产物须逐字节相同，自举产物再打一次不变。
+# 每行「路径<TAB>语法面<TAB>它压住什么」；文件缺失、清单为空或总字节超预算，门禁即红，不静默少跑。
+bootstrap/packages/backend-llvm/src/_internal/lazyref.pini	值语义点	点声明、字段初值与切片
+bootstrap/packages/support/src/api/symbols.pini	方法块	((点)) 方法与短函数体
+bootstrap/packages/diagnostics/src/_internal/text.pini	中文标识符	中文标识符与字节序比较
+bootstrap/packages/semantics/src/api/imports.pini	导入头	[x|import] 头与路径字面量
+bootstrap/packages/ir/src/api/float_value.pini	外部声明	[x|foreign] 声明块与浮点签名
+bootstrap/packages/semantics/src/api/given.pini	给定块	给定块形状与 match 分支
+bootstrap/packages/syntax/tests/printer_test.pini	打印器标本	unroll、注释锚回与转义往返
+bootstrap/packages/semantics/tests/lifecycle_test.pini	生命周期	deinit 形状与对象方法
+bootstrap/packages/semantics/tests/export_surface_test.pini	导出面	[x|export] 与 C 入口声明
+bootstrap/packages/package/src/api/build_script.pini	构建脚本	[build] 给定块与产物路径
+bootstrap/packages/runtime-api/src/api/runtime.pini	C 声明面	pini_* 外部声明的宽度与签名
