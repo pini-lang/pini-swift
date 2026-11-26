@@ -77,6 +77,8 @@ public enum WorkspaceTestError: Error, LocalizedError, Equatable {
     case noMatchingSkip(skip: String)
     case allSkipped(filter: String, skip: [String])
     case cannotEnterRoot(path: String)
+    case unknownPackage(name: String)
+    case packageWithoutTests(name: String)
 
     public var errorDescription: String? {
         switch self {
@@ -97,6 +99,10 @@ public enum WorkspaceTestError: Error, LocalizedError, Equatable {
             return "筛选与跳过之后没有测试可跑（--filter '\(filter)'，--skip \(listed)）"
         case .cannotEnterRoot(let path):
             return "无法进入工作区根目录：\(path)"
+        case .unknownPackage(let name):
+            return "工作区里没有名为 '\(name)' 的包；--package 拼错会让分片静默少跑"
+        case .packageWithoutTests(let name):
+            return "包 '\(name)' 没有声明 [[test]] target；分片清单指向了空片"
         }
     }
 }
@@ -120,12 +126,25 @@ public enum WorkspaceTestRunner {
     /// 运行期工作目录切到工作区根：测试体里的 `./` 相对路径以工作区为基准，
     /// 而不带前缀的相对路径仍按 `moduleRoot()`（包根）解析。
     public static func run(
-        plan: WorkspaceBuildPlan, filter: String? = nil, skip: [String] = []
+        plan: WorkspaceBuildPlan, filter: String? = nil, skip: [String] = [],
+        packages: [String] = []
     ) throws -> WorkspaceTestReport {
         let started = Date()
         let declaredSuites = suites(in: plan)
         guard !declaredSuites.isEmpty else {
             throw WorkspaceTestError.noTestTargets(root: plan.rootPath)
+        }
+        // 分片只收窄执行面：计划与让位主张仍按整个工作区算，片与整片同源。
+        let wanted = packages.isEmpty ? nil : Set(packages)
+        if let wanted {
+            for name in wanted.sorted() {
+                guard plan.packages.contains(where: { $0.name == name }) else {
+                    throw WorkspaceTestError.unknownPackage(name: name)
+                }
+                guard declaredSuites.contains(where: { $0.packageName == name }) else {
+                    throw WorkspaceTestError.packageWithoutTests(name: name)
+                }
+            }
         }
         let previous = FileManager.default.currentDirectoryPath
         guard FileManager.default.changeCurrentDirectoryPath(plan.rootPath) else {
@@ -137,7 +156,7 @@ public enum WorkspaceTestRunner {
         var collectedNames: [String] = []
         // 让位主张按整个工作区收集：邻居包的同名声明也摘掉标准库那份，与自举同口径。
         let claims = try WorkspaceBuilder.claims(for: plan)
-        for package in plan.packages {
+        for package in plan.packages where wanted?.contains(package.name) ?? true {
             for target in package.targets where target.kind == .test {
                 let suite = WorkspaceTestSuite(
                     packageName: package.name, targetName: target.name,

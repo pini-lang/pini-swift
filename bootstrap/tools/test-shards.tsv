@@ -1,0 +1,17 @@
+﻿# 工作区测试分片：每个带 [[test]] 的成员包恰好属一片。包名取各包 [package] 的 name，不是目录名。
+# 每行「分片<TAB>包<TAB>为什么在这一片」；漏包、重包、指向无测试的包，分片门禁都判红。
+甲	module_loader	两个用例要解析整棵源码树，独占一片
+乙	semantics	分析面最重，单跑约半分钟
+乙	driver	命令行与构建装配，用例多但单例便宜
+乙	ir	节点与文本池，中等
+乙	package	工作区与清单，中等
+丙	backend_dump	其余包合成一片：装载成本高于用例成本
+丙	backend_json	同上
+丙	backend_kit	同上
+丙	backend_llvm	同上
+丙	diagnostics	同上
+丙	hostproc	同上
+丙	support	同上
+丙	syntax	同上
+丙	testkit	同上
+丙	unicode	同上
