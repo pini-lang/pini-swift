@@ -207,7 +207,7 @@ step_end
 
 step_begin "构建（宿主只出 release）"
 # 宿主只出 release：门禁跑的就是交付口径；debug 既慢又不代表它，故不留第二份产物。
-# 运行时段随全量 release 一起出，自举产物与宿主 LLVM 通道都链接它。
+# 运行时段随全量 release 一起出，原生测试与示例都链接它。
 swift build -c release --disable-sandbox
 . "$PWD/tools/runtime-lib.sh"
 runtime="$(pini_runtime_lib "$PWD")" || exit 1
