@@ -31,6 +31,8 @@ fi
 
 pini="${PINI_BOOTSTRAP_BIN:-$root/bootstrap/.build/release/bin/pini-bootstrap}"
 clang_bin="$(command -v clang || true)"
+# 宿主产物：格式抽样对照与头翻译都拿它当第二侧，缺了这两条判据都无从比起。
+host_bin="$root/.build/release/pini"
 if [ ! -x "$pini" ] || [ -z "$clang_bin" ]; then
     echo " 行不通  [测试自检] 缺 $pini 或 clang" >&2
     exit 1
@@ -791,12 +793,81 @@ for case_name in deinit cow; do
     fi
 done
 
-# 格式化：整棵源码树在自举打印器下必须零改动，且二次打印不动；注释锚回按示例验保留。
-if ! "$pini" "${stdlib_args[@]}" fmt --check "$root/bootstrap/packages" "$root/bootstrap/stdlib" > "$work/fmt-check.out" 2>&1; then
-    echo " 行不通  [测试自检] 自举打印器把规范形源码判成待整理" >&2
+# 格式化：宿主判据（格式门禁）管全树规范形；此处只验自举打印器与宿主逐字节相同、再打一次不变。
+# 抽样清单外置：文件改名或删除、总量超预算都会红，静默少跑不算通过。
+fmt_cases="$root/bootstrap/tools/fmt-parity-cases.tsv"
+if [ ! -x "$host_bin" ]; then
+    echo " 行不通  [测试自检] 缺宿主产物 $host_bin，格式抽样对照无从比起" >&2
+    fail=1
+else
+    fmt_count=0
+    fmt_bytes=0
+    while IFS=$'\t' read -r case_path case_surface case_note; do
+        case "$case_path" in '' | '#'*) continue ;; esac
+        if [ -z "$case_surface" ] || [ -z "$case_note" ]; then
+            echo " 行不通  [测试自检] 抽样清单不是三列：$case_path" >&2
+            fail=1
+            continue
+        fi
+        if [ ! -f "$root/$case_path" ]; then
+            echo " 行不通  [测试自检] 抽样清单指向不存在的文件：$case_path" >&2
+            fail=1
+            continue
+        fi
+        fmt_count=$((fmt_count + 1))
+        fmt_bytes=$((fmt_bytes + $(wc -c < "$root/$case_path")))
+        if ! "$pini" fmt "$root/$case_path" > "$work/fmt-self.pini" 2>/dev/null; then
+            echo " 行不通  [测试自检] 自举打印器打不开 $case_path（$case_surface）" >&2
+            fail=1
+            continue
+        fi
+        if ! "$host_bin" fmt "$root/$case_path" > "$work/fmt-host.pini" 2>/dev/null; then
+            echo " 行不通  [测试自检] 宿主打印器打不开 $case_path（$case_surface）" >&2
+            fail=1
+            continue
+        fi
+        if ! cmp -s "$work/fmt-self.pini" "$work/fmt-host.pini"; then
+            echo " 行不通  [测试自检] $case_surface 两侧产物不同：$case_path" >&2
+            diff -u "$work/fmt-host.pini" "$work/fmt-self.pini" | head -20 >&2
+            fail=1
+        fi
+        # 二次打印：打印器对自产规范形必须是恒等，否则「一次就够」这个前提不成立。
+        if ! "$pini" fmt "$work/fmt-self.pini" > "$work/fmt-self2.pini" 2>/dev/null ||
+            ! cmp -s "$work/fmt-self.pini" "$work/fmt-self2.pini"; then
+            echo " 行不通  [测试自检] $case_surface 二次打印不稳定：$case_path" >&2
+            fail=1
+        fi
+    done < "$fmt_cases"
+    if [ "$fmt_count" -eq 0 ]; then
+        echo " 行不通  [测试自检] 抽样清单为空，格式化判据没生效" >&2
+        fail=1
+    fi
+    if [ "$fmt_bytes" -gt 65536 ]; then
+        echo " 行不通  [测试自检] 抽样 ${fmt_bytes} 字节超预算 65536；换小文件，别让判据自己变慢" >&2
+        fail=1
+    fi
+    # 阳性对照：首条抽样每行行尾补两个空格后，fmt --check 必须点名它 —— 零输出不等于判据活着。
+    fmt_first="$(awk 'NF && $0 !~ /^#/ {print $1; exit}' "$fmt_cases")"
+    if [ -z "$fmt_first" ] || [ ! -f "$root/$fmt_first" ]; then
+        echo " 行不通  [测试自检] 抽样清单取不出首条，阳性对照无法执行" >&2
+        fail=1
+    else
+        awk '{print $0 "  "}' "$root/$fmt_first" > "$work/fmt-dirty.pini"
+        case "$("$pini" fmt --check "$work/fmt-dirty.pini" 2>&1)" in
+        *"有文件需要整理"*) : ;;
+        *)
+            echo " 行不通  [测试自检] 阳性对照没开火：非规范形文件没被点名" >&2
+            fail=1
+            ;;
+        esac
+    fi
+fi
+# 标准库整份过一遍：两个文件、二十余 KB，与抽样集覆盖的不是同一批书写面。
+if ! "$pini" "${stdlib_args[@]}" fmt --check "$root/bootstrap/stdlib" > "$work/fmt-check.out" 2>&1; then
+    echo " 行不通  [测试自检] 自举打印器把规范形标准库判成待整理" >&2
     fail=1
 elif [ -s "$work/fmt-check.out" ]; then
-    echo " 行不通  [测试自检] fmt --check 列出了待整理文件" >&2
+    echo " 行不通  [测试自检] 标准库 fmt --check 列出了待整理文件" >&2
     cat "$work/fmt-check.out" >&2
     fail=1
 fi
@@ -834,7 +905,6 @@ fi
 # 跳过项须带理由：夹具里的结构体按值不接，报告行必须写明原因。
 bind_header="$root/bootstrap/fixtures/bind/include/calc.h"
 bind_include="$root/bootstrap/fixtures/bind/include"
-host_bin="$root/.build/release/pini"
 if [ ! -x "$host_bin" ]; then
     echo " 行不通  [测试自检] 缺宿主产物，头翻译无法对照" >&2
     fail=1
@@ -880,5 +950,5 @@ fi
 if [ "$fail" -ne 0 ]; then
     exit 1
 fi
-echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入，浮点常量走位模式，接口缓存按记录判失效，逐包产物按包发射且合并可链接，缓存按拓扑与内容判复用，分波按依赖深度，共享缓存按指纹复用，命令对照按签名锁定，导出面按符号表核对，构建执行组五条命令各有判据，模块工具组按副本验改写与抓取，内存模型两条示例与 golden 一致，源码树零改动且格式化幂等，展开产物过检查，头翻译两侧逐字节相同且跳过项带理由，JSON 通道两跑一致且可解析"
+echo "测试自检通过：失败夹具红，筛选与跳过绿，零命中非零退出，分段读数止于所指阶段，构建脚本出计划，生成模块按计划并入，浮点常量走位模式，接口缓存按记录判失效，逐包产物按包发射且合并可链接，缓存按拓扑与内容判复用，分波按依赖深度，共享缓存按指纹复用，命令对照按签名锁定，导出面按符号表核对，构建执行组五条命令各有判据，模块工具组按副本验改写与抓取，内存模型两条示例与 golden 一致，格式抽样两侧逐字节相同且幂等，展开产物过检查，头翻译两侧逐字节相同且跳过项带理由，JSON 通道两跑一致且可解析"
 exit 0
