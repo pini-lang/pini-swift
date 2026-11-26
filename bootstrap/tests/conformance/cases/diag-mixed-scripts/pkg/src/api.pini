@@ -1,4 +1,0 @@
-主|func() -> ():
-    let abcа = 1
-    print(abcа)
-    return

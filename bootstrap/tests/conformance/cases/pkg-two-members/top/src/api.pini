@@ -1,5 +1,0 @@
-[api|import]
-_mid = "../../mid"
-
-十六倍|func(x: I32,) -> (I32,):
-    return 四倍(x = 四倍(x = x))

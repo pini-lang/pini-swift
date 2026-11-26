@@ -1,4 +1,0 @@
-./bootstrap/fixtures/cli-parity/inputs/unroll-bad.pini:4:20: 语义错误 [E3-014] unroll 的表必须是写在原地的字面量集合：数组字面量，元素是标量字面量或元组字面量
-  主标签 4:20-4:21
-
-workspace-check-failed 1

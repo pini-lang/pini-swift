@@ -1,8 +1,0 @@
-[case]
-name = "块头定界符未配平"
-category = "diagnostics"
-kind = "error"
-code = "E2-010"
-line = 2
-col = 1
-spec = "语言参考 4.1 模块结构：块头单行配平，缺闭合定界符报 E2-010"

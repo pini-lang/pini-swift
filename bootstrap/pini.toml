@@ -1,3 +1,0 @@
-[workspace]
-members = ["packages/backend-dump", "packages/backend-json", "packages/backend-kit", "packages/backend-llvm", "packages/diagnostics", "packages/driver", "packages/hostproc", "packages/ir", "packages/module-loader", "packages/package", "packages/runtime-api", "packages/semantics", "packages/support", "packages/syntax", "packages/testkit", "packages/unicode"]
-profile = "release"

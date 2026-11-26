@@ -1,5 +1,0 @@
-[case]
-name = "工作区依赖成环"
-category = "package"
-kind = "reject"
-spec = "语言参考 4.2 依赖规则：依赖图无环；成环报 E3-010"

@@ -1,5 +1,0 @@
-[main_test|import]
-support = "../../support"
-
-公开调用可用|test() -> ():
-    assert(support.nonNegativeWidth(5) == 5, "驱动只能依赖公开接口")

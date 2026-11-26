@@ -1,6 +1,0 @@
-[case]
-name = "依赖成环"
-category = "package"
-kind = "reject"
-host = "build"
-spec = "语言参考 模块依赖环：import 即依赖，依赖图禁环"

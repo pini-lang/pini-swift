@@ -4,7 +4,7 @@
 # 档位走 PINI_CI_TIER：full（默认，含全部用例）与 build（只到自举奠基）。
 #
 # 同步而非直接挂载：容器里的 Linux `.build` 会盖掉宿主的 macOS 增量缓存。
-# 工作副本固定在一处，`bootstrap/.build` 因此跨轮保留，自举编译器付增量而不是每轮全量重建。
+# 工作副本固定在一处，`.build` 因此跨轮保留，宿主构建付增量而不是每轮全量重建。
 # 根 `.build` 另挂宿主缓存；Actions 每次新 runner，只有 gha 层缓存能带过 apt 那一层。
 set -euo pipefail
 
@@ -40,14 +40,13 @@ else
 fi
 
 # 增量同步：--delete 清掉源已删的项；构建产物全部排除，留给容器跨轮复用。
-#  注意  bootstrap/.build 是自举编译器产物，宿主那份是 macOS 的，不能带进 Linux 副本。
+#  注意  .build 是 Linux 侧产物，宿主那份是 macOS 的，不能带进副本。
 if ! command -v rsync >/dev/null 2>&1; then
     echo " 行不通  [容器] 缺 rsync，工作副本无法增量同步" >&2
     exit 1
 fi
 rsync -a --delete \
     --exclude '/.build' \
-    --exclude '/bootstrap/.build' \
     --exclude '/.swiftpm' \
     --exclude '.DS_Store' \
     "$repo_root"/ "$work"/

@@ -1,9 +1,0 @@
-[package]
-name = "app"
-
-[require]
-support = "*"
-
-[lib]
-name = "app"
-entry = "src/api.pini"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Linux CI 流水线：环境 → 静态门禁 → 构建 → 并流判据；PINI_CI_TIER=build 只到奠基。
+# Linux CI 流水线：环境 → 静态门禁 → 构建 → 并流判据；PINI_CI_TIER=build 只到构建。
 # 阶段之间是屏障，阶段内部互不依赖的判据并发跑：先红先停留在阶段粒度。
 # 任何一步非零即整体非零，不吞退出码。
 set -euo pipefail
@@ -28,20 +28,6 @@ pool_width="${PINI_CI_JOBS:-4}"
 jobs_dir="$(mktemp -d)"
 trap 'rm -rf "$jobs_dir"' EXIT
 
-# 测试分片：片名与包清单都来自外置表，覆盖率由 测试分片门禁 与工作区成员对账。
-#  注意  自解析 由 syntax 原生门禁执行，解释器那份是重复，只在该包所在的那一片跳过。
-shard_file="$PWD/bootstrap/tools/test-shards.tsv"
-shard_names=()
-shard_syntax=""
-while IFS=$'\t' read -r shard_name shard_pkg shard_note; do
-    case "$shard_name" in '' | '#'*) continue ;; esac
-    [ "$shard_pkg" = "syntax" ] && shard_syntax="$shard_name"
-    case " ${shard_names[*]-} " in
-    *" $shard_name "*) ;;
-    *) shard_names+=("$shard_name") ;;
-    esac
-done < "$shard_file"
-
 # 串行阶段：进入打印标题，退出打印用时。并行阶段由 run_task 自己计时。
 step_begin() {
     printf '\n=== %s ===\n' "$1"
@@ -50,18 +36,6 @@ step_begin() {
 
 step_end() {
     printf '  用时 %ss\n' "$((SECONDS - STEP_START))"
-}
-
-# 等先行阶段的完成标记：先行阶段无论成败都落标记，下游据产物自行判断。
-wait_marker() {
-    local start=$SECONDS
-    while [ ! -f "$jobs_dir/$1.done" ]; do
-        if [ $((SECONDS - start)) -ge 1800 ]; then
-            echo " 行不通  [等待] $1 未在 1800s 内完成" >&2
-            return 1
-        fi
-        sleep 0.2
-    done
 }
 
 # 阶段实现：逐条对应串行版的动作，成败由调用方记录。
@@ -83,8 +57,6 @@ run_body() {
         # 自检先证明两条判据会开火，再读真表。
         python3 tools/diagnostics-parity-check.py --self-test
         python3 tools/diagnostics-parity-check.py
-        # 自举侧码表从同一份 zh 资源生成：两边码集漂移时这里先红，运行时不读 TOML。
-        python3 bootstrap/tools/gen-diagnostics-table.py --check
         ;;
     "IR 契约门禁")
         python3 tools/ir-contract-check.py
@@ -102,10 +74,6 @@ run_body() {
         python3 tools/scalar-set-check.py --self-test
         python3 tools/scalar-set-check.py
         ;;
-    "Unicode 数据门禁")
-        # 生成物与登记的摘要逐字一致，头部声明的版本必须是钉定版本；判据不读宿主 Unicode 数据。
-        python3 bootstrap/tools/gen-unicode-tables.py --check
-        ;;
     "后端义务门禁（警告级）")
         # 只报不拦：决策族归零之后，这个脚本用来盯「旧的判断有没有长回来」。
         python3 tools/backend-duty-check.py
@@ -113,97 +81,6 @@ run_body() {
     "能力普查门禁")
         # 拒绝所标的族必须等于该节点在契约里的小节：标错就把读者送到不含该节点的那一节。
         python3 tools/capability-census.py --check
-        ;;
-    "IR 契约清单门禁")
-        # 清单表由契约生成：契约加了节点而没重新生成时先红，双向检查才有意义。
-        python3 bootstrap/tools/gen-ir-contract-table.py --check
-        ;;
-    "测试分片门禁")
-        # 漏包会让用例无人执行而报告全绿，重包会让同一 target 跑两遍；两条都要开火。
-        python3 bootstrap/tools/test-shard-check.py --self-test
-        python3 bootstrap/tools/test-shard-check.py
-        ;;
-    "工作区奠基门禁")
-        # 首代产物是后面两段的输入；无论成败都落标记，等它的两段据产物自行报错。
-        local rc=0
-        .build/release/pini build bootstrap || rc=1
-        if [ "$rc" -eq 0 ]; then
-            local out
-            out="$(cd bootstrap && ./.build/release/bin/pini-bootstrap)" || rc=1
-            case "$out" in
-            "workspace-ok "*" true") ;;
-            *)
-                echo "工作区产物输出不符：$out" >&2
-                rc=1
-                ;;
-            esac
-        fi
-        touch "$jobs_dir/工作区奠基门禁.done"
-        return "$rc"
-        ;;
-    "测试分片-"*)
-        # 片内包清单来自分片表；空片说明表与片名脱节，按失败处理。
-        local shard_id="${1#测试分片-}" picked=0
-        local -a shard_args=(.build/release/pini test bootstrap)
-        while IFS=$'\t' read -r s pkg note; do
-            case "$s" in '' | '#'*) continue ;; esac
-            [ "$s" = "$shard_id" ] || continue
-            shard_args+=("--package=$pkg")
-            picked=$((picked + 1))
-        done < "$shard_file"
-        if [ "$picked" -eq 0 ]; then
-            echo " 行不通  [测试分片] $shard_id 没有包" >&2
-            return 1
-        fi
-        # 解释器通道跳过 自解析：它由 syntax 原生门禁执行，落在 syntax 所在的那一片。
-        if [ "$shard_id" = "$shard_syntax" ]; then
-            shard_args+=(--skip 自解析)
-        fi
-        # 读数对账：target 数与表里的包数不等，说明 --package 被忽略或某包没了测试目标。
-        local out rc=0 targets
-        out="$("${shard_args[@]}" 2>&1)" || rc=$?
-        printf '%s\n' "$out"
-        targets="$(printf '%s\n' "$out" |
-            sed -n 's/^测试目标: .*（\([0-9]*\) 个测试 target）$/\1/p' | head -1)"
-        if [ "${targets:-}" != "$picked" ]; then
-            echo " 行不通  [测试分片] $shard_id 跑了 ${targets:-未知} 个 target，表里是 $picked 个" >&2
-            rc=1
-        fi
-        return "$rc"
-        ;;
-    "自举测试入口自检")
-        # 失败夹具必须红、筛选与跳过必须绿、零命中必须非零：入口自身的判据先开火。
-        wait_marker 工作区奠基门禁
-        bash bootstrap/tools/test-gate.sh
-        ;;
-    "验收语料")
-        # 八类共二十六例，逐例驱动宿主与自举；已知跨通道差异在 divergence-baseline.tsv，只许缩小。
-        wait_marker 工作区奠基门禁
-        python3 bootstrap/tools/conformance.py
-        ;;
-    "support 原生测试门禁")
-        .build/release/pini test-llvm bootstrap/packages/support
-        ;;
-    "unicode 原生测试门禁")
-        .build/release/pini test-llvm bootstrap/packages/unicode
-        ;;
-    "diagnostics 原生测试门禁")
-        .build/release/pini test-llvm bootstrap/packages/diagnostics
-        ;;
-    "syntax 原生测试门禁")
-        .build/release/pini test-llvm bootstrap/packages/syntax
-        ;;
-    "module-loader 原生测试门禁")
-        .build/release/pini test-llvm bootstrap/packages/module-loader
-        ;;
-    "semantics 原生测试门禁")
-        .build/release/pini test-llvm bootstrap/packages/semantics
-        ;;
-    "driver 原生测试门禁")
-        .build/release/pini test-llvm bootstrap/packages/driver
-        ;;
-    "ir 原生测试门禁")
-        .build/release/pini test-llvm bootstrap/packages/ir
         ;;
     "格式门禁")
         # 语料已是规范形；豁免表在 tools/fmt-exempt.tsv，拒绝态与语法标本两类都受检，过期即红。
@@ -317,11 +194,8 @@ static_tasks=(
     "运行时 ABI 门禁"
     "内建清单门禁"
     "标量集合门禁"
-    "Unicode 数据门禁"
     "后端义务门禁（警告级）"
     "能力普查门禁"
-    "IR 契约清单门禁"
-    "测试分片门禁"
 )
 step_begin "静态门禁（${#static_tasks[@]} 项并发）"
 if ! run_pool 6 "${static_tasks[@]}"; then
@@ -335,7 +209,7 @@ step_begin "构建（宿主只出 release）"
 # 宿主只出 release：门禁跑的就是交付口径；debug 既慢又不代表它，故不留第二份产物。
 # 运行时段随全量 release 一起出，自举产物与宿主 LLVM 通道都链接它。
 swift build -c release --disable-sandbox
-. "$PWD/bootstrap/tools/runtime-lib.sh"
+. "$PWD/tools/runtime-lib.sh"
 runtime="$(pini_runtime_lib "$PWD")" || exit 1
 export PINI_RUNTIME_LIB="$runtime"
 export PINI_CLI_BIN="$PWD/.build/release/pini"
@@ -345,48 +219,23 @@ touch "$PWD/.build/release/pini"
 step_end
 
 if [ "$tier" = "build" ]; then
-    # 构建档只证明「编得过、链得过、自举产物能跑起来」；用例归本地合并钩子与 PR 档。
-    step_begin "构建验证（奠基）"
-    if ! run_pool 2 "工作区奠基门禁"; then
-        step_end
-        echo " 行不通  [流水线] 构建验证未通过" >&2
-        exit 1
-    fi
-    step_end
-else
-    # 片名读不出来就等于整批用例漏跑；静态门禁已对过账，这里再显式断一次。
-    if [ "${#shard_names[@]}" -eq 0 ]; then
-        echo " 行不通  [流水线] 分片表读不出片名，测试会整批漏跑" >&2
-        exit 1
-    fi
-    full_tasks=()
-    for shard_name in "${shard_names[@]}"; do
-        full_tasks+=("测试分片-$shard_name")
-    done
-    full_tasks+=(
-        "测试"
-        "工作区奠基门禁"
-        "示例门禁"
-        "差分探针门禁"
-        "自举测试入口自检"
-        "验收语料"
-        "semantics 原生测试门禁"
-        "syntax 原生测试门禁"
-        "格式门禁"
-        "ir 原生测试门禁"
-        "driver 原生测试门禁"
-        "module-loader 原生测试门禁"
-        "diagnostics 原生测试门禁"
-        "support 原生测试门禁"
-        "unicode 原生测试门禁"
-    )
-    step_begin "并流判据（${#full_tasks[@]} 项）"
-    if ! run_pool "$pool_width" "${full_tasks[@]}"; then
-        step_end
-        echo " 行不通  [流水线] 有阶段未通过，见各段末尾的标记" >&2
-        exit 1
-    fi
-    step_end
+    # 构建档只证明「编得过、链得过」；用例归本地合并钩子与 PR 档。
+    printf '\n=== 全绿（%s 档，总耗时 %ss）===\n' "$tier" "$(( $(date +%s) - script_start ))"
+    exit 0
 fi
+
+full_tasks=(
+    "测试"
+    "示例门禁"
+    "差分探针门禁"
+    "格式门禁"
+)
+step_begin "并流判据（${#full_tasks[@]} 项）"
+if ! run_pool "$pool_width" "${full_tasks[@]}"; then
+    step_end
+    echo " 行不通  [流水线] 有阶段未通过，见各段末尾的标记" >&2
+    exit 1
+fi
+step_end
 
 printf '\n=== 全绿（%s 档，总耗时 %ss）===\n' "$tier" "$(( $(date +%s) - script_start ))"

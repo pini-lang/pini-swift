@@ -1,6 +1,0 @@
-负宽度归零|test() -> ():
-    assert(nonNegativeWidth(0 - 4) == 0, "负宽度必须归零")
-
-位移使用归一宽度|test() -> ():
-    assert(advance(offset = 7, width = 0 - 2) == 7, "负宽度不能推动游标")
-    assert(advance(offset = 7, width = 3) == 10, "正宽度必须累加")

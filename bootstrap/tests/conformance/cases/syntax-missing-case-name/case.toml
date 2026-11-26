@@ -1,8 +1,0 @@
-[case]
-name = "枚举用例缺名字"
-category = "diagnostics"
-kind = "error"
-code = "E2-015"
-line = 2
-col = 2
-spec = "语言参考 4.1 模块结构：枚举体每行是用例名，缺名字报 E2-015"

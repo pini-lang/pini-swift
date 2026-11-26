@@ -1,5 +1,0 @@
-[case]
-name = "跨包导入"
-category = "path"
-kind = "pass"
-spec = "语言参考 模块导入与包可见性"

@@ -1,8 +1,0 @@
-[plan]
-version = 1
-translator = "pini-bind/1"
-
-[[package]]
-name = "mini"
-root = "pkg"
-script_hash = ""

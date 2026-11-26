@@ -1,5 +1,0 @@
-[api|import]
-_b = "../../b"
-
-甲|func(x: I32,) -> (I32,):
-    return x

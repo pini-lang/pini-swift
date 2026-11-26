@@ -1,6 +1,0 @@
-[case]
-name = "测试报告确定性"
-category = "determinism"
-kind = "stable"
-probe = "test"
-spec = "计划件 自洽验收：同一输入两次运行输出相同"

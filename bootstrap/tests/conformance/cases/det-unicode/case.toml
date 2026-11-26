@@ -1,6 +1,0 @@
-[case]
-name = "中文标识符确定性"
-category = "determinism"
-kind = "stable"
-probe = "check"
-spec = "计划件 输出顺序：所有对外产物显式排序"

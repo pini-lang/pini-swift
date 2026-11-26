@@ -1,8 +1,0 @@
-[case]
-name = "外部符号同名异型"
-category = "cinterop"
-kind = "error"
-code = "E3-019"
-line = 5
-col = 1
-spec = "诊断表 E3-019 外部符号同名异型；报在第二处"

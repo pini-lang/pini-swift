@@ -1,7 +1,0 @@
-[package]
-name = "beta"
-version = "1.4.0"
-
-[lib]
-name = "beta"
-entry = "src/api/beta.pini"

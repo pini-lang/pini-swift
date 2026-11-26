@@ -1,7 +1,0 @@
-; 非负宽度是文本游标的共同前置；公开入口只保留参数检查，不暴露内部实现路径。
-nonNegativeWidth|func(_width: I32,) -> (I32,):
-    return widthFloor(_width)
-
-; 位移只在宽度已经归一时计算，调用方不会读到负增量。
-advance|func(offset: I32, width: I32,) -> (I32,):
-    return offset + nonNegativeWidth(width)
