@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 跑一遍完整的 Linux 流水线：构建镜像 → 同步工作树 → 起容器跑 ci/entrypoint.sh。
 # 本地与远端共用这一份 —— GitHub Actions 那一步也只有 `bash ci/run.sh`。
+# 档位走 PINI_CI_TIER：full（默认，含全部用例）与 build（只到自举奠基）。
 #
 # 同步而非直接挂载：容器里的 Linux `.build` 会盖掉宿主的 macOS 增量缓存。
 # 工作副本固定在一处，`bootstrap/.build` 因此跨轮保留，自举编译器付增量而不是每轮全量重建。
@@ -56,6 +57,7 @@ rsync -a --delete \
 docker run --rm \
     --user "$(id -u):$(id -g)" \
     -e HOME=/tmp \
+    -e PINI_CI_TIER="${PINI_CI_TIER:-full}" \
     -v "$work":/src -w /src \
     -v "$cache_dir":/src/.build \
     "$image"

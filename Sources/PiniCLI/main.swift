@@ -1450,12 +1450,15 @@ struct TestInvocation {
     let path: String?
     let filter: String?
     let skip: [String]
+    /// 工作区分片：只跑点名的包，装载仍按整个工作区；空表示整片。
+    let packages: [String]
 }
 
 func parseTestInvocation(_ args: [String]) -> TestInvocation {
     var path: String?
     var filter: String?
     var skip: [String] = []
+    var packages: [String] = []
     var cursor = 2
     while cursor < args.count {
         let argument = args[cursor]
@@ -1487,6 +1490,20 @@ func parseTestInvocation(_ args: [String]) -> TestInvocation {
             cursor += 1
             continue
         }
+        if argument == "--package" {
+            guard cursor + 1 < args.count else {
+                printError("Error: --package 需要一个包名")
+                exit(2)
+            }
+            packages.append(args[cursor + 1])
+            cursor += 2
+            continue
+        }
+        if argument.hasPrefix("--package=") {
+            packages.append(String(argument.dropFirst("--package=".count)))
+            cursor += 1
+            continue
+        }
         guard !argument.hasPrefix("-") else {
             printError("Error: 未知选项 \(argument)")
             exit(2)
@@ -1500,14 +1517,16 @@ func parseTestInvocation(_ args: [String]) -> TestInvocation {
     }
     let normalized = (filter?.isEmpty ?? true) ? nil : filter
     let skipList = skip.filter { !$0.isEmpty }
-    return TestInvocation(path: path, filter: normalized, skip: skipList)
+    return TestInvocation(
+        path: path, filter: normalized, skip: skipList,
+        packages: packages.filter { !$0.isEmpty })
 }
 
 // `pini test [path]`：收集顶级 `|test` 逐条执行并汇总；path 可为工作区根、模块、目录或文件。
 // 工作区根按 `[[test]]` target 的拓扑序执行；模块内可再用路径收窄（显式路径可加回 `[build] exclude`）。
 // 全通过 0、有失败测试 1、文件/解析/框架/收集错误 2。
 func runTestPath(
-    _ path: String?, filter: String? = nil, skip: [String] = [],
+    _ path: String?, filter: String? = nil, skip: [String] = [], packages: [String] = [],
     channel: TestChannel = .interpreter
 ) {
     do {
@@ -1516,8 +1535,14 @@ func runTestPath(
             rootDirectory: path ?? FileManager.default.currentDirectoryPath)
         {
             try runWorkspaceTests(
-                plan: plan, rootLabel: path ?? ".", filter: filter, skip: skip, channel: channel)
+                plan: plan, rootLabel: path ?? ".", filter: filter, skip: skip,
+                packages: packages, channel: channel)
             return
+        }
+        // 分片只在工作区成立：模块模式不收集邻居包的让位主张，切出来的片与整片不同源。
+        guard packages.isEmpty else {
+            printError("Error: --package 只在工作区根上生效；模块、目录与文件用路径收窄")
+            exit(2)
         }
 
         // 无参：收集当前目录所属模块根
@@ -1570,13 +1595,14 @@ func runTestPath(
 /// 工作区测试入口：发现与执行在 `WorkspaceTestRunner`，这里只呈现报告并落退出码。
 private func runWorkspaceTests(
     plan: WorkspaceBuildPlan, rootLabel: String, filter: String?, skip: [String],
-    channel: TestChannel
+    packages: [String], channel: TestChannel
 ) throws {
     guard channel == .interpreter else {
         throw SharedBuildError(
             message: "工作区测试聚合走解释器通道；单模块原生测试请用 `pini test-llvm <path>`")
     }
-    let report = try WorkspaceTestRunner.run(plan: plan, filter: filter, skip: skip)
+    let report = try WorkspaceTestRunner.run(
+        plan: plan, filter: filter, skip: skip, packages: packages)
     for suite in report.suites {
         for warning in suite.warnings { emitSemanticWarning(warning) }
     }
@@ -2935,13 +2961,16 @@ case "build":
 case "test":
     // 测试子命令：path 可选；无参 = 收集当前目录所属模块或工作区。
     let invocation = parseTestInvocation(args)
-    runTestPath(invocation.path, filter: invocation.filter, skip: invocation.skip)
+    runTestPath(
+        invocation.path, filter: invocation.filter, skip: invocation.skip,
+        packages: invocation.packages)
 case "test-llvm":
     // 与 `test` **同一套**收集范围、门禁与报告；差别只在最后一步跑在 LLVM 通道上
     // （发射成原生程序再运行）。命名照 `run` / `run-llvm` 的既有惯例。
     let invocation = parseTestInvocation(args)
     runTestPath(
-        invocation.path, filter: invocation.filter, skip: invocation.skip, channel: .llvm)
+        invocation.path, filter: invocation.filter, skip: invocation.skip,
+        packages: invocation.packages, channel: .llvm)
 case "backends":
     printBackendMatrix(tsv: args.contains("--tsv"))
 case "emit":

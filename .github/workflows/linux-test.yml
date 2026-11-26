@@ -30,4 +30,7 @@ jobs:
         uses: docker/setup-buildx-action@v4
 
       - name: Run pipeline
+        # push 只验证构建（静态门禁 + 两次构建 + 奠基）；用例归本地合并钩子与 PR 档。
+        env:
+          PINI_CI_TIER: ${{ github.event_name == 'push' && 'build' || 'full' }}
         run: bash ci/run.sh
