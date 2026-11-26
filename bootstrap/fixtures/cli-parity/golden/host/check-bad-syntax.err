@@ -1,7 +1,0 @@
-Error: Parse Error [E2-001]
-  at bootstrap/fixtures/cli-parity/inputs/unclosed.pini:4:5
-
-      print(x)
-      ~
-
-expected ), got print

@@ -1,8 +1,0 @@
-[case]
-name = "函数签名缺返回类型"
-category = "diagnostics"
-kind = "error"
-code = "E2-013"
-line = 1
-col = 16
-spec = "语言参考 4.8 函数声明：签名必写 `-> (返回,)`，参数表后无返回箭头报 E2-013"

@@ -1,6 +1,0 @@
-[package]
-name = "shadower"
-
-[lib]
-name = "shadower"
-entry = "src/api.pini"

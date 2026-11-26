@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """格式门禁：仓库内可解析的 .pini 必须已是规范形。
 
-扫描 examples / Tests / bench。豁免逐行登记在 tools/fmt-exempt.tsv，分两类：
+扫描 examples / Tests / bench / Sources。豁免逐行登记在 tools/fmt-exempt.tsv，分两类：
 `unparseable` 是解析拒绝态夹具，没有规范形可打印；`variant` 是以非规范写法为被测对象的
 语法标本，格式化会删掉被测量的写法。两类都显式列出而不是静默跳过，且都受检——
 文件不存在、或豁免条件不再成立，都算过期，门禁失败。
@@ -15,7 +15,7 @@ import sys
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SCAN_ROOTS = ("examples", "Tests", "bench", "Sources", "bootstrap")
+SCAN_ROOTS = ("examples", "Tests", "bench", "Sources")
 EXEMPT = os.path.join(ROOT, "tools/fmt-exempt.tsv")
 DEFAULT_BIN = os.path.join(ROOT, ".build/release/pini")
 PRODUCT_BIN = os.path.join(ROOT, ".build/release/pini")

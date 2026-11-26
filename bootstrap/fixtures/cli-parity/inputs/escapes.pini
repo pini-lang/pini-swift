@@ -1,6 +1,0 @@
-; 夹具：转义、空串与插值各一例，记号清单的文本形态在此分叉。
-main|func() -> ():
-    print("a\nb\tc")
-    print("")
-    print("前\(1)后")
-    return

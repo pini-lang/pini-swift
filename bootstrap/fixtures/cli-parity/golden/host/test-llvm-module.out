@@ -1,6 +1,0 @@
-测试目标: 模块 mini（2 个文件，范围 <ROOT>/bootstrap/fixtures/test-basic/pkg）
- ✓ 首条通过
- ✗ 中条失败（<ROOT>/bootstrap/fixtures/test-basic/pkg/tests/basic_test.pini:8:5）: 故意失败
- ✓ 末条通过
- ✓ 包根
-结果: 3 通过, 1 失败

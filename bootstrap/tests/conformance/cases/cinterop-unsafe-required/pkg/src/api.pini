@@ -1,5 +1,0 @@
-[libc|foreign]
-toupper: (I32,) -> (I32,)
-
-转大写|func(c: I32,) -> (I32,):
-    return toupper(c)

@@ -1,5 +1,0 @@
-[case]
-name = "标准库成员让位"
-category = "legal"
-kind = "pass"
-spec = "语言参考 标准库装配与用户同名让位"

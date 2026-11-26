@@ -1,8 +1,0 @@
-[case]
-name = "泛型构造的名字不是声明"
-category = "illegal"
-kind = "error"
-code = "E3-002"
-line = 6
-col = 5
-spec = "语言参考 5.4 泛型调用：类型实参只能写在已声明的泛型模板上；主标签落在被调名字"

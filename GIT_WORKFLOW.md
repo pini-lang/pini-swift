@@ -133,8 +133,8 @@ PINI_RG=/path/to/rg git commit -m "..."
 5. 完成后合回 `main` 并（若有远程）推送。
 6. 宿主只构建 release：`swift build -c release --disable-sandbox`。门禁、钩子与 CI 只认
    `.build/release/pini`；`tools/host-profile-check.py` 会拦下脚本与命令里写回的 debug 二进制。
-7. 自举产物随工作区清单走：`bootstrap/pini.toml` 的 `profile` 是目录名，脚本里的
-   `bootstrap/.build/<profile>/` 必须与它一致，改清单就得同批改路径——同一个门禁会报出脱节的引用。
+7. 自举实现在 `pini-bootstrap` 仓：本仓不再包含自举树，也不再跑它的门禁。两边的对照
+   （差异普查、命令行对照、语料）归那个仓；本仓只守宿主实现与语言规范，不再有第二份源码。
 
 > 注意 缺 release 产物时门禁直接拒绝并打印构建命令，不静默回退 debug：两份产物的读数不可比，
 > 且 debug 下整套门禁慢数倍。

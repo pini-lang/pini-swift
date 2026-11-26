@@ -1,8 +1,0 @@
-[case]
-name = "外部符号非 C 名"
-category = "cinterop"
-kind = "error"
-code = "E3-020"
-line = 2
-col = 1
-spec = "诊断表 E3-020 外部符号名必须是 C 标识符"

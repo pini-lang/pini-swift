@@ -1,3 +1,0 @@
-; 构建脚本：一条翻译步，产物由装载面按计划并入本包。
-[cstr|given]
-头文件: String = "include/cstr.h"

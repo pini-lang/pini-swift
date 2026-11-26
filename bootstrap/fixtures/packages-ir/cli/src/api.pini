@@ -1,6 +1,0 @@
-[api|import]
-_app = "../../app"
-
-; 入口包：调用应用包，链接后的可执行返回 1。
-main|func() -> (I32,):
-    return 套用(n = 0)

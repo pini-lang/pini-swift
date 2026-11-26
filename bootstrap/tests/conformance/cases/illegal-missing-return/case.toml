@@ -1,8 +1,0 @@
-[case]
-name = "值返回体缺少返回路径"
-category = "illegal"
-kind = "error"
-code = "E4-041"
-line = 2
-col = 1
-spec = "语言参考 6.6：有路径既没有 return、末句也不是交出值的表达式即报 E4-041"

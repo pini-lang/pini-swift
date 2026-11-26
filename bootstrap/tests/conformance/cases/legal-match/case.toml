@@ -1,5 +1,0 @@
-[case]
-name = "枚举与匹配"
-category = "legal"
-kind = "pass"
-spec = "语言参考 枚举与匹配；穷尽性由声明面保证"

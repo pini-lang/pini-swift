@@ -1,5 +1,0 @@
-[case]
-name = "导入目标缺失"
-category = "path"
-kind = "reject"
-spec = "语言参考 导入路径：目标根必须是 Pini 模块"

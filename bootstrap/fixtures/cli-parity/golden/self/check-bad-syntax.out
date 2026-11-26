@@ -1,4 +1,0 @@
-./bootstrap/fixtures/cli-parity/inputs/unclosed.pini:4:5: 语法错误 [E2-001] 期望`)`，实际得到identifier
-  主标签 4:5-4:10 期望`)`，实际得到identifier
-
-workspace-check-failed 1

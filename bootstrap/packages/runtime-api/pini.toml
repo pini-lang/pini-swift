@@ -1,6 +1,0 @@
-[package]
-name = "runtime_api"
-
-[lib]
-name = "runtime-api"
-entry = "src/api/runtime.pini"

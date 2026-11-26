@@ -1,8 +1,0 @@
-[case]
-name = "类型实参落到非类型声明"
-category = "illegal"
-kind = "error"
-code = "E3-003"
-line = 9
-col = 8
-spec = "语言参考 5.4 泛型调用：类型实参须是类型名；主标签落在该实参"

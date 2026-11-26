@@ -1,3 +1,0 @@
-SIG|1|exprStmt(call(ident:print,string:"Hello, World!"))
-SIG|2|exprStmt(call(ident:print,string:"欢迎使用Pini语言"))
-SIG|3|return

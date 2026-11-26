@@ -1,8 +1,0 @@
-[case]
-name = "非泛型函数带显式类型实参"
-category = "illegal"
-kind = "error"
-code = "E4-006"
-line = 6
-col = 12
-spec = "语言参考 5.4 泛型调用：类型实参个数须与声明一致，非泛型函数按 0 个算；主标签落在被调名字"

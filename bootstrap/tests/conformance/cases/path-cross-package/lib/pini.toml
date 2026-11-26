@@ -1,6 +1,0 @@
-[package]
-name = "lib"
-
-[lib]
-name = "lib"
-entry = "src/api.pini"

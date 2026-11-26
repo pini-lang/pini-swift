@@ -1,3 +1,0 @@
-SIG|1|exprStmt@0|call@1|callee@2|print@3|arg []:@2|"Hello, World!"@3
-SIG|2|exprStmt@0|call@1|callee@2|print@3|arg []:@2|"欢迎使用Pini语言"@3
-SIG|3|(none)@1

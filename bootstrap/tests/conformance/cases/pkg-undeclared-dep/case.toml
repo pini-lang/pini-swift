@@ -1,6 +1,0 @@
-[case]
-name = "未声明依赖"
-category = "package"
-kind = "reject"
-host = "build"
-spec = "计划件 包归属与依赖对账：import 必须在 [require] 声明"

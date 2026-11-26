@@ -1,5 +1,0 @@
-; 深层实现目录也必须保持包可见，跨包不得因为这个路径而拿到该函数。
-widthFloor|func(_width: I32,) -> (I32,):
-    if _width < 0:
-        return 0
-    return _width

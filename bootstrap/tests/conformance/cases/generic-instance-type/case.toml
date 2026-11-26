@@ -1,8 +1,0 @@
-[case]
-name = "泛型类型构造实参过量"
-category = "illegal"
-kind = "error"
-code = "E4-006"
-line = 6
-col = 13
-spec = "语言参考 3.11 泛型：类型实参个数须与类型形参一致；主标签落在类型名"

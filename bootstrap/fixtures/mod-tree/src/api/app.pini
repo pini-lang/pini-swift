@@ -1,5 +1,0 @@
-[app|import]
-alpha = "../../deps/alpha"
-
-入口|func() -> (I32,):
-    return 1

@@ -1,9 +1,0 @@
-[package]
-name = "builddemo"
-
-[lib]
-name = "builddemo"
-entry = "src/api/main.pini"
-
-[ffi]
-libs = ["m"]

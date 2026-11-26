@@ -51,7 +51,7 @@
 也已接通——次代跑同一套 `test-gate.sh`，生成模块夹具与三类定向诊断由此由自产产物执行，
 两代计划文本逐字节相同。
 
-标准库成员与函数两种形态均已交付：`bootstrap/stdlib` 是独立源码包，驱动在工作区级装配一份，
+标准库成员与函数两种形态均已交付：`pini-bootstrap/stdlib` 是独立源码包，驱动在工作区级装配一份，
 默认开；装配源按路径升序、入口 `core.pini` 先，`algorithms.pini` 的泛型自由函数同批并入；编译器
 自身构建带 `--no-stdlib`，不反向 import 它。泛型函数只做自由函数与调用点显式类型实参，按实参
 单态化。浮点字面量已接通，取值走运行时的 strtod 口径，发射按宿主的常量文本口径出文本。
@@ -76,7 +76,7 @@
 
 据此取五条方针：
 
-- **单一源码树**：编译器源码只有 `bootstrap/` 一份，宿主只作种子，不维护第二套编译器。Pini 已满足。
+- **单一源码树**：编译器源码只有 `pini-bootstrap/` 一份，宿主只作种子，不维护第二套编译器。Pini 已满足。
 - **固定种子矩阵**：宿主提交、运行时库构建配置、LLVM 与 clang、Unicode 数据、目标三元组逐项登记；
   改任一项即整组重取读数、重跑全量，不拿旧读数补新差。
 - **代际阶梯与同结果**：首代 → 次代 → 三代，发射文本逐字节相同；每代跑同一套测试，报告逐字节相同。
@@ -100,7 +100,7 @@
 ## 终态目录
 
 ```text
-bootstrap/
+pini-bootstrap/
   pini.toml
   packages/
     support/
@@ -185,7 +185,7 @@ packages/<包名>/
 
 ### 标准库、工具与测试的位置
 
-- `bootstrap/stdlib/` 是独立源码包，由驱动按语言规则装配到用户模块；编译器各包不得通过反向 import 获取它。
+- `pini-bootstrap/stdlib/` 是独立源码包，由驱动按语言规则装配到用户模块；编译器各包不得通过反向 import 获取它。
 - `tooling/formatter` 只依赖 `syntax`、`support`、`diagnostics`，不得为了复用 CLI 而依赖 `driver`。
 - `tooling/language-server` 可以依赖 `syntax`、`semantics`、`module-loader`，不得依赖 LLVM。
 - `tooling/debugger` 通过独立调试接缝消费源码映射，不进入编译主依赖链。
@@ -314,7 +314,7 @@ NFC 会改变符号身份，属于语言面决定。实施前先修订 `docs/spe
 
 ### 工作区奠基
 
-清单模型收 `[workspace]`、`[lib]`、`[[bin]]`、`[[test]]`，`WorkspaceBuilder` 统一出依赖图、拓扑计划、target 源码集与产物路径。`bootstrap/` 立三包，多文件 import 与嵌套 `_internal` 可见性按祖先目录算，测试 target 与生产源码隔离；门禁覆盖拓扑序与真实产物执行。
+清单模型收 `[workspace]`、`[lib]`、`[[bin]]`、`[[test]]`，`WorkspaceBuilder` 统一出依赖图、拓扑计划、target 源码集与产物路径。`pini-bootstrap/` 立三包，多文件 import 与嵌套 `_internal` 可见性按祖先目录算，测试 target 与生产源码隔离；门禁覆盖拓扑序与真实产物执行。
 
 判据：两个库包加一个可执行包按拓扑序构建，跨包公开调用成功；未声明依赖、内部引用、循环依赖与接口漂移均被拒绝；测试源码与非法夹具不进入普通库产物。
 
@@ -463,7 +463,7 @@ NFC 会改变符号身份，属于语言面决定。实施前先修订 `docs/spe
 现况按词法与语法两处实物核对后可钉成一句：宿主已实现的构造远多于自举。特征声明与特征体、导出块、给定块、外部块、结构泛型头、内嵌组合、`实现` 行、`try` 表达式、`unsafe` 前缀、`unroll` 展开器、标签控制流、插值段子表达式、`=>` 箭头，以及 `[T,]`、`{T,}`、`{K: V,}`、`^T`、`?T` 五类类型写法，宿主侧都有对应物；`as` 转换的五层实现也在宿主侧贯通。故本批全部是追平宿主，判据可以拿宿主做结构对照，两侧都缺的构造为零。
 
 依据可逐条复核：自举关键字表按当前词表收满，解析器只按类别引用其中一部分；未按类别分派的词里，
-`try`、`await`、`wait`、`unsafe`、`detach`、`capture`、`unroll`、`export` 是缺口，`enum` 与 `object` 只在修饰符位按标识符文本比对，不按类别分派。宿主侧定义在 `Sources/PiniSyntax` 的关键字表与 `Parser.swift` 的四个解析函数，自举侧在 `bootstrap/packages/syntax/src/api` 的四个类别池与解析器引用集。
+`try`、`await`、`wait`、`unsafe`、`detach`、`capture`、`unroll`、`export` 是缺口，`enum` 与 `object` 只在修饰符位按标识符文本比对，不按类别分派。宿主侧定义在 `Sources/PiniSyntax` 的关键字表与 `Parser.swift` 的四个解析函数，自举侧在 `pini-bootstrap/packages/syntax/src/api` 的四个类别池与解析器引用集。
 
 交付覆盖：转换（`as` 中缀、目标类型解析、与数值提升的分工）、类型写法（五类类型位写法与行首声明分派互不干扰）、错误处理（`try` 的语句位单行、语句位块与表达式位三形态，`^右值` 脱糖为 `try 右值 else err: return err`）、声明块（特征声明与特征体、特征扩展、导出块、给定块、外部块与三个符号修饰）、声明头（类型参数的声明位置、内嵌组合行、`实现` 行）、语句（标签控制流、`capture`、`unroll`、`defer` 相邻单行）、前缀（`unsafe` 表达式）、异步（`=>` 声明与函数字面量、`await` / `wait` 前缀、`detach` 语句）、字面（插值段内子表达式、字典条目类型位 `{键: 类型 = 值,}`）。
 
@@ -655,7 +655,7 @@ Markdown；新增节点与契约同批改，否则自检先红。
 
 能力族当前十四族全声明，八十条里降载可达与发射接通分开计量：
 降载可达（源码写法能产出该节点）、发射接通（节点有分派分支）、族已声明（缺口文案分「族未声明」与
-「类别码 N 未接」）；三条同时成立才算用户可达。`bootstrap/tools/capability-reach.py` 逐节点给出
+「类别码 N 未接」）；三条同时成立才算用户可达。`pini-bootstrap/tools/capability-reach.py` 逐节点给出
 三列并汇总到族，`--check` 判「接通即声明、声明即至少接一条」，已进 `test-gate.sh`。
 
 判据：越出能力声明的节点必须报错；转储后端可以对全部族表态支持，但产出档次单列；族表与节点
@@ -740,7 +740,7 @@ Markdown；新增节点与契约同批改，否则自检先红。
 
 语料每例一个自带清单的极小工作区，期望写在用例清单里，来源是语言参考与诊断表；两条通道各跑
 一遍，按「码 + 区间」比对，措辞不进判据；两侧各加一个只读的结构化诊断开关。已知差异记进
-`bootstrap/tests/conformance/divergence-baseline.tsv`，只许缩小，某条转为一致时门禁反红提示
+`pini-bootstrap/tests/conformance/divergence-baseline.tsv`，只许缩小，某条转为一致时门禁反红提示
 删行。
 
 判据：两代发射文本逐字节相同；两代可执行文件各自跑同一套测试，报告逐字节相同；全部包逐个
@@ -789,11 +789,11 @@ Markdown；新增节点与契约同批改，否则自检先红。
 
 ### 标准库成员形态
 
-交付：`bootstrap/stdlib` 作为独立源码包，由驱动在工作区级装配一份，默认开；编译器自身构建用
+交付：`pini-bootstrap/stdlib` 作为独立源码包，由驱动在工作区级装配一份，默认开；编译器自身构建用
 `--no-stdlib`，编译器包不反向 import 它。十八个成员（trim、startsWith、endsWith、replace、repeat、
 padLeft、padRight、lastIndexOf、isEmpty、count、stripPrefix、stripSuffix、ensurePrefix、ensureSuffix、
 reversed、capitalized、center、truncate）可从用户模块直接调用；`upper`/`lower`/`trimLeft`/`trimRight`
-是语言基元，不属标准库装配面。宿主发行副本与 `bootstrap/stdlib` 由宿主测试逐字节比对。
+是语言基元，不属标准库装配面。宿主发行副本与 `pini-bootstrap/stdlib` 由宿主测试逐字节比对。
 
 判据：全量测试 693 项由自产产物跑通，十四包检查、降载、发射零缺口；单包夹具默认装配后
 `trim`/`upper` 端到端输出正确；语料二十九例通过、基线为零；自洽链两代门禁、计划文本、发射文本
@@ -888,7 +888,7 @@ reversed、capitalized、center、truncate）可从用户模块直接调用；`u
 目标：`algorithms.pini` 的二十六个泛型自由函数在自举侧有端到端语料；`fallbackIrType` 的下标
 后备撤除，下标类型只由推导表给出。
 
-交付：新语料 `bootstrap/tests/conformance/cases/stdlib-algorithms/` 逐条覆盖二十六个算法，含空数组、
+交付：新语料 `pini-bootstrap/tests/conformance/cases/stdlib-algorithms/` 逐条覆盖二十六个算法，含空数组、
 越界、负索引、`rotate` 取模、`insertAt` 夹紧、`removeAt` 越界与 `equalArrays` 长度不等；`lib` 与
 `test` 两单元各含一个闭包回归。泛型调用一律先 `let` 成局部再断言，不内嵌在返回位或比较左操作数
 （宿主把内嵌的泛型应用当成类型构造）。`ir` 的 `fallbackIrType` 删去下标分支，比较与逻辑、一元、
@@ -978,7 +978,7 @@ reversed、capitalized、center、truncate）可从用户模块直接调用；`u
 同一份程序两侧得到结构等价的产物。等价按对照表判，按「看起来能跑」判不算。
 
 宿主有二十一条命令（含 `help`、`version`）、四条通道（`llvm`、`c`、`json`、`embedded_min`）、
-单文件与目录两种入口。自举侧的当前差集以 `bootstrap/tests/parity/commands.tsv` 与
+单文件与目录两种入口。自举侧的当前差集以 `pini-bootstrap/tests/parity/commands.tsv` 与
 `channels.tsv` 为准，不按这里的描述推：普查起点是九条命令、两条通道、只认带 `[workspace]`
 的根（裸包目录报「缺必需的表」），此后入口已收四条通道、只读组已补三条，起点句不再代表现状。
 
@@ -1027,7 +1027,7 @@ COW 写时分裂的验收），都不经执行器，宿主两条通道已落地�
 
 ### 差异普查
 
-先出表，再动手。四张表落 `bootstrap/tests/parity/`，与语料基线同一套纪律：脚本重生成、只许缩小、
+先出表，再动手。四张表落 `pini-bootstrap/tests/parity/`，与语料基线同一套纪律：脚本重生成、只许缩小、
 某条转为一致即反红提示删行。
 
 - **命令表**：宿主每条命令的每个开关与退出码，对自举的同名项。缺项记「无」，形状不同记「异」。
@@ -1041,11 +1041,11 @@ COW 写时分裂的验收），都不经执行器，宿主两条通道已落地�
 判据：四张表可由脚本重生成，两次生成逐字节相同；表里每个「无」与「异」都有主题词条目，未定的写
 「待核」，不留空。
 
-交付：`bootstrap/tools/parity.py` 一次出四张表。命令表读两侧分派代码，通道表读宿主
+交付：`pini-bootstrap/tools/parity.py` 一次出四张表。命令表读两侧分派代码，通道表读宿主
 `backends --tsv` 与自举能力普查，诊断表读权威 TOML 与自举源码里的发码点，程序表起自举产物把
 `examples/` 逐个包成单包工作区跑 `check`、`lower`、`emit` 三条腿。生成与比对同脚本：`--check`
 验三张静态表，加 `--full` 连程序表；`test-gate.sh` 在能力可达之后调静态校验，表过期即红并
-指出重取命令。表落 `bootstrap/tests/parity/`。
+指出重取命令。表落 `pini-bootstrap/tests/parity/`。
 
 两处口径补面已交付，各落一份人工来源表；来源表不生成、只读，缺行时 `parity.py` 拒生成并报出码或
 命令名，故「不留空」是机械判据。
@@ -1087,7 +1087,7 @@ COW 写时分裂的验收），都不经执行器，宿主两条通道已落地�
 
 两份对照读数先清，再谈新增命令。程序表的失败例按三类归因：**缺符号**（作用域里没有那个名字）、
 **缺判定**（类型、成员、标签面的规则没接）、**缺语法构造**（解析期就断）。归因表落
-`bootstrap/tests/parity/`，与既有四张表同址同纪律。
+`pini-bootstrap/tests/parity/`，与既有四张表同址同纪律。
 
 诊断表的缺码按 **差异普查** 的依据列分类：参考件有条款的先补，只属宿主实现的不补，依据不明的
 转 **待核** 并写明缺哪一条款。补的是发码点，不是码表——登记数与宿主全集已一致。
@@ -1100,7 +1100,7 @@ COW 写时分裂的验收），都不经执行器，宿主两条通道已落地�
 
 交付（归因表）：`parity.py` 出程序表时同批出 **归因类** 与 **修复落点** 两列，规则按落点判，
 不按诊断码域段——`outer` 报在语义期、落点却在解析器，按码判会把它错记成缺符号。人工复核的例外
-落 `bootstrap/tests/parity/attribution-exceptions.tsv`，只记与规则不同的项；条目必须仍在失败集，
+落 `pini-bootstrap/tests/parity/attribution-exceptions.tsv`，只记与规则不同的项；条目必须仍在失败集，
 某条转绿即红并提示删行。门禁沿用既有 `parity.py --check`，不加新步。
 
 读数（当时，旧口径）：六十八例通过四十四，失败二十四——**缺语法构造** 六、**缺符号** 八、**缺判定** 八，
@@ -1327,8 +1327,8 @@ IR 面把标签串随类型带过去，元组成员读先认十进制序号、�
 逐行相同（仅表头注释变）——入口通道与包装等价；自洽链两代发射文本仍逐字节相同；全量测试
 七百一十一项通过。
 
-交付（对照夹具）：`bootstrap/tools/cli-parity.py` 用两侧产物跑同一批用例，期望按侧存
-`fixtures/cli-parity/golden/`，读数落 `bootstrap/tests/parity/cli.tsv`，门禁每次重比；产物旧于
+交付（对照夹具）：`pini-bootstrap/tools/cli-parity.py` 用两侧产物跑同一批用例，期望按侧存
+`fixtures/cli-parity/golden/`，读数落 `pini-bootstrap/tests/parity/cli.tsv`，门禁每次重比；产物旧于
 源码即拒跑，免得把上一批行为钉成期望。清单十四条：`check` 八条覆盖单文件、绝对路径、包目录、
 工作区根、两类语法错、一类语义错与缺件；`build` 一条收单文件；只读组五条（`version`、`tokens`、
 `tokens` 的转义标本、`backends` 与它的 `--tsv`）。自举侧显式传 `--stdlib`，标准库不按产物位置
@@ -1614,7 +1614,7 @@ LLVM 通道直接读悬垂指针）。
   签名为 `同同异`：退出码与诊断同、全文异。
 - **打印器**（已交付）：只做「解析后再打印」的保真打印，不做风格选项。落
   `syntax/src/api/printer.pini` 与 `driver` 的 `fmt` 入口，三条判据全部达成：幂等（233 个源码文件
-  连打两次逐字节相同）；整树零改动（`fmt --check bootstrap/packages bootstrap/stdlib` 零输出，
+  连打两次逐字节相同）；整树零改动（`fmt --check pini-bootstrap/packages pini-bootstrap/stdlib` 零输出，
   233 文件逐字节等于源）；与宿主逐字节相同（65 个示例两份输出全同）。注释按词法旁路表锚回——
   整行注随所属块缩进、行尾注留同源行末、块尾注挂上一锚点之后；打印器为此记录每行的源位置。
   对照夹具增五条，三条 `同同同`、两条 `同同异`（路径前缀与错误文案的通道差，均已登记）。
@@ -1663,7 +1663,7 @@ LLVM 通道直接读悬垂指针）。
 ## 宿主迁移评估
 
 问题是：何时把 Swift 宿主移出构建链，改用「Pini 编译器 + C 运行时」。今天两条实现并存——`Sources/`
-171 个文件、5.87 万行，含解释执行、语言服务、调试适配、REPL 与 C 头翻译；`bootstrap/` 的 `src` 层
+171 个文件、5.87 万行，含解释执行、语言服务、调试适配、REPL 与 C 头翻译；`pini-bootstrap/` 的 `src` 层
 146 个文件、4.47 万行，另有 88 个测试文件、1.36 万行。实现规模已接近（宿主约多三成），差不在行数，
 在命令、通道、诊断三张表与执行路径。
 
@@ -1703,7 +1703,7 @@ LLVM 通道直接读悬垂指针）。
 
 ## 导入形态整顿
 
-**现状**：`bootstrap/` 二百三十四个源文件里一百四十四个带导入块，条目三百零九条；二百九十九条是
+**现状**：`pini-bootstrap/` 二百三十四个源文件里一百四十四个带导入块，条目三百零九条；二百九十九条是
 注入式（`_别名 = "路径"`），十条是限定式。路径按文件层级写死：`src/api` 下二百零一条写 `../../../`，
 `tests` 下一百零八条写 `../../`。注入式把目标包的公开符号倒进本文件裸名空间，调用点看不出名字来自
 哪一层；`semantics/src/api/register.pini` 的 `package` 是限定式却从未使用，这类死导入也无人发现。
@@ -1859,7 +1859,7 @@ LLVM 通道直接读悬垂指针）。
 它接回本线排除项里的 C 头文件翻译器与 `|c` 导出面；由 Pini 启动 `clang` 已随 **命令面** 落地（进程族五条
 登记在 `docs/spec/runtime-abi.md`）。运行时重写、并行与远程缓存仍不做，
 理由见 **目标与边界** 与 **构建形态演进收尾：分波计划与共享缓存（已交付）**。开工前先读
-**差异普查** 的四张表与 `bootstrap/tests/parity/cli.tsv` 的签名：没有表就动手，等于拿印象当
+**差异普查** 的四张表与 `pini-bootstrap/tests/parity/cli.tsv` 的签名：没有表就动手，等于拿印象当
 差距；有表不读，等于白测。宿主迁移的时机与四段次序见 **宿主迁移评估**：编译器侧接近，执行与
 工具侧未到，冻结种子不在当前。**导入形态整顿** 已搁置：符号表按包平铺登记、不循导入路径生成，
 文件可见面得另行计算，翻转时收不到报错；**工具面** 之后重评，规模、三步与卡点见该节。

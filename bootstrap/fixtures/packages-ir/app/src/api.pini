@@ -1,6 +1,0 @@
-[api|import]
-_support = "../../support"
-
-; 应用包：跨包调用支持包，再供入口包调用。
-套用|func(n: I32,) -> (I32,):
-    return 公开(x = n)

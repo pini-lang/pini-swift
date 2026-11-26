@@ -1,5 +1,0 @@
-[b|import]
-_a = "../../pa"
-
-乙|func() -> ():
-    return

@@ -1,5 +1,0 @@
-[case]
-name = "NFC 等价拼写"
-category = "unicode"
-kind = "pass"
-spec = "计划件 标识符身份：查找键取 NFC，原始拼写保留"

@@ -1,25 +1,5 @@
-﻿# 格式门禁豁免：两类。unparseable = 解析拒绝态夹具，没有规范形可打印；
+# 格式门禁豁免：两类。unparseable = 解析拒绝态夹具，没有规范形可打印；
 # variant = 以非规范写法为被测对象的语法标本，规范化会删掉被测量的写法。
 # 判据：每行「路径<TAB>类别<TAB>原因」。两类都受检——unparseable 须仍解析失败，
 # variant 须仍可解析且仍不是规范形；文件不存在或条件不再成立即过期，门禁会红。
 examples/optional-sugar.pini	variant	语法标本：nil 与 ?T 糖，规范形归一为 Optional.none / Optional<T>
-bootstrap/tests/conformance/cases/diag-syntax/pkg/src/api.pini	unparseable	拒绝态：括号未闭合，语料的被测对象
-bootstrap/tests/conformance/cases/diag-mixed-scripts/pkg/src/api.pini	unparseable	拒绝态：标识符混用高风险脚本，语料的被测对象
-bootstrap/tests/conformance/cases/unicode-zero-width/pkg/src/api.pini	unparseable	拒绝态：标识符含零宽字符，语料的被测对象
-bootstrap/fixtures/cli-parity/inputs/unclosed.pini	unparseable	拒绝态：括号未闭合，对照夹具的被测输入
-bootstrap/fixtures/cli-parity/inputs/indent.pini	unparseable	拒绝态：缩进错乱，对照夹具的被测输入
-bootstrap/fixtures/cli-parity/inputs/fmt-dirty.pini	variant	语法标本：待整理写法，`fmt --check` 的被测输入
-bootstrap/tests/conformance/cases/syntax-implicit-self-method/pkg/src/api.pini	unparseable	拒绝态：类型体内函数未写 self 修饰符，语料的被测对象
-bootstrap/tests/conformance/cases/syntax-missing-block-end/pkg/src/api.pini	unparseable	拒绝态：块头缺闭合定界符，语料的被测对象
-bootstrap/tests/conformance/cases/syntax-missing-case-name/pkg/src/api.pini	unparseable	拒绝态：枚举用例缺名字，语料的被测对象
-bootstrap/tests/conformance/cases/syntax-missing-enum-name/pkg/src/api.pini	unparseable	拒绝态：枚举块头缺名字，语料的被测对象
-bootstrap/tests/conformance/cases/syntax-missing-field-name/pkg/src/api.pini	unparseable	拒绝态：字段行缺名字，语料的被测对象
-bootstrap/tests/conformance/cases/syntax-missing-generic-param/pkg/src/api.pini	unparseable	拒绝态：泛型形参表为空，语料的被测对象
-bootstrap/tests/conformance/cases/syntax-missing-label/pkg/src/api.pini	unparseable	拒绝态：标签语句缺标签名，语料的被测对象
-bootstrap/tests/conformance/cases/syntax-missing-method-name/pkg/src/api.pini	unparseable	拒绝态：扩展块方法缺名字，语料的被测对象
-bootstrap/tests/conformance/cases/syntax-missing-object-name/pkg/src/api.pini	unparseable	拒绝态：对象块头缺名字，语料的被测对象
-bootstrap/tests/conformance/cases/syntax-missing-return-type/pkg/src/api.pini	unparseable	拒绝态：函数签名缺返回箭头，语料的被测对象
-bootstrap/tests/conformance/cases/syntax-missing-struct-name/pkg/src/api.pini	unparseable	拒绝态：结构块头缺名字，语料的被测对象
-bootstrap/tests/conformance/cases/syntax-missing-trait-name/pkg/src/api.pini	unparseable	拒绝态：特征块头缺名字，语料的被测对象
-bootstrap/tests/conformance/cases/syntax-unexpected-eof/pkg/src/api.pini	unparseable	拒绝态：表达式写到一半文件结束，语料的被测对象
-bootstrap/tests/conformance/cases/unicode-combining-first/pkg/src/api.pini	unparseable	拒绝态：组合附加符号作首字符，语料的被测对象

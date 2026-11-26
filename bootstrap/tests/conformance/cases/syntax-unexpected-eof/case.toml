@@ -1,8 +1,0 @@
-[case]
-name = "表达式写到一半文件结束"
-category = "diagnostics"
-kind = "error"
-code = "E2-023"
-line = 2
-col = 9
-spec = "语言参考 13.2 语法文法：期待记号处已到文件末尾报 E2-023"

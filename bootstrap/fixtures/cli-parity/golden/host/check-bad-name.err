@@ -1,7 +1,0 @@
-Error: Semantic Error [E3-001]
-  at bootstrap/fixtures/cli-parity/inputs/undefined.pini:3:11
-
-      print(未定义)
-            ~
-
-undefined variable '未定义'
