@@ -23,7 +23,7 @@
 
 ### 0.3 量具口径
 
-**133 = `@_cdecl("pini_…")` 的匹配数**，即导出符号数，不是 `@_cdecl` 的字样出现数。
+**134 = `@_cdecl("pini_…")` 的匹配数**，即导出符号数，不是 `@_cdecl` 的字样出现数。
 两者相差 2：正文有两处注释提到 `@_cdecl` 却不导出符号。数出来差 1 或 2 时，先分清数的是哪一个。
 器械是 `tools/runtime-abi-check.py`。
 
@@ -34,7 +34,7 @@
 - 集合、并发、LazyRef、FFI 共用同一个运行时段，不另设独立 shim。
 - 新增符号同批登记本件，等式「清单数 = 导出数」是它唯一的自检方式。
 
-## 2. 符号清单（133 个）
+## 2. 符号清单（134 个）
 
 | 族 | 符号 | 数 |
 |---|---|---|
@@ -53,13 +53,14 @@
 | 字符串句柄 | `pini_str_handle_bytes` `pini_str_handle_len` `pini_str_handle_new` `pini_str_handle_release` `pini_str_handle_retain` | 5 |
 | 闭包 / 结构体胶水 | `pini_nominal_alloc` `pini_nominal_release` `pini_nominal_retain` `pini_slot_alloc` | 4 |
 | IO / 宿主查询 | `pini_append_file` `pini_argv` `pini_ensure_dir` `pini_exists` `pini_is_dir` `pini_list_dir` `pini_module_root` `pini_read_file` `pini_set_program_base` `pini_try_append_file` `pini_try_read_file` `pini_try_write_file` `pini_write_file` | 13 |
+| 行输入 | `pini_stdin_read_line` | 1 |
 | 进程 | `pini_process_release` `pini_process_spawn` `pini_process_stderr` `pini_process_stdout` `pini_process_wait` | 5 |
 | 任务 / 并发 | `pini_capabilities` `pini_scope_close` `pini_task_cancel` `pini_task_detach` `pini_task_is_cancelled` `pini_task_join` `pini_task_join_all` `pini_task_join_all_box` `pini_task_join_within` `pini_task_spawn` `pini_task_yield` | 11 |
 | 阻塞内建 | `pini_sleep` | 1 |
 | 让出族 | `pini_task_await` `pini_task_frame` `pini_task_slot` | 3 |
 | 调度驱动面 | `pini_task_bind_sched` `pini_task_state` | 2 |
 | 错误载荷 | `pini_cancel_error_create` `pini_error_code` `pini_error_create` `pini_error_from_enum` `pini_error_is_cancel` `pini_error_lookup` `pini_error_message` `pini_error_with_code` | 8 |
-| **合计** | | **133** |
+| **合计** | | **134** |
 
 ## 3. 语义约束
 
@@ -126,6 +127,14 @@
 - 两路输出是**句柄内视图**，NUL 结尾、不以长度定界；句柄释放后失效。调用方要留住须自己复制。
 - 起不来（可执行不存在、权限不足）即 `pini_panic`，不返错误码：调用方没有「进程没起来但继续」的分支。
 
+### 3.10 行输入
+
+- 一次调用读一行，**行终止符保留**：空行答 `"\n"`、EOF 答 `""`，两者因此可区分。
+- `limit` 是字节上限，由编译器传 `IOLimits.maxLineBytes`；切点落在多字节字符中间时按宽容解码
+  表示（替换字符），与解释器同一口径。
+- 返回计数串（+1），调用方按 `pini_str_release` 归还；不预读、不改标准流状态。
+- 拼写只有这一条：发射器不引 `stdin` 与 `__stdinp`，平台差异由 Swift 的 `readLine` 承担。
+
 ## 4. 零调用点登记
 
 以下符号当前没有发射器调用点。**零调用点不等于该删** —— 每个都是某条路线的锚点。
@@ -139,8 +148,8 @@
 | `pini_str_handle_bytes` `pini_str_handle_len` `pini_str_handle_retain` `pini_str_handle_release` | 4 | C 侧读字节与收账的入口；发射器只发 `pini_str_handle_new` |
 | `pini_double_bits` `pini_parse_double` | 2 | 只由自举编译器在编译期调用，发射器不产出 |
 
-本表与编译器侧清单互补：`BuiltinInventory.swift` 列出已接线的 106 条，本表列出其余 27 条，
-两者合计即第 2 节的 133。互补关系由 `tools/builtin-inventory-check.py` 校验。
+本表与编译器侧清单互补：`BuiltinInventory.swift` 列出已接线的 107 条，本表列出其余 27 条，
+两者合计即第 2 节的 134。互补关系由 `tools/builtin-inventory-check.py` 校验。
 
 ## 5. 维护条款
 

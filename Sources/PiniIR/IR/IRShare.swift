@@ -193,10 +193,9 @@ extension IRExpr {
         case .join(let future, let type, _):
             guard case .future = future.staticType else { return .borrowed }
             return type.holdsAShare ? .fresh : .inert
-        /// `readLine` 返回 `fgets` 填的栈缓冲：既不是新份额，也不会在帧外存活。
-        /// 这是一条独立缺口（契约第 4 节），不在这里假装它是 `fresh`。
+        /// `readLine` 返回运行时段刚造的计数串 ⇒ 新份额，与 `readFile` 同族。
         case .readLine:
-            return .borrowed
+            return .fresh
         }
     }
 }

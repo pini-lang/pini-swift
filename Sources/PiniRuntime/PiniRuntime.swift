@@ -1667,6 +1667,20 @@ public func pini_read_file(_ path: UnsafePointer<CChar>?) -> UnsafeMutablePointe
     return _bkStrDup(text)
 }
 
+// MARK: - 行输入（LLVM 腿）
+
+/// `readLine()`：从标准输入读一行，返回值带计数头（+1），调用方按 `pini_str_release` 归还。
+/// 保留行终止符，故空行（`"\n"`）与 EOF（`""`）可区分；`limit` 由编译器按 `IOLimits.maxLineBytes`
+/// 传入，数值属语言契约。经运行时段而非 `fgets`，是为抹平 `stdin` 与 `__stdinp` 的平台拼写差异。
+@_cdecl("pini_stdin_read_line")
+public func pini_stdin_read_line(_ limit: Int32) -> UnsafeMutablePointer<CChar> {
+    let line = readLine(strippingNewline: false) ?? ""
+    let cap = max(0, Int(limit))
+    let bytes = line.utf8
+    guard bytes.count > cap else { return _bkStrDup(line) }
+    return _bkStrDup(String(decoding: bytes.prefix(cap), as: UTF8.self))
+}
+
 // MARK: - FFI：Pini String → C 串
 
 /// 把 Swift String 落成 NUL 结尾、`malloc` 分配的 UTF-8 C 串：调用方负责 free，与解释器的
