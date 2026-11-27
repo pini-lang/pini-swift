@@ -1952,9 +1952,6 @@ clang-repl 同路。Ruby 的 MJIT 同样用子进程编译再装载，3.3 退役
 临时 `main`），会话源码落 `.build/repl/`；`debug` 接求值器逐句暂停点，命令词与宿主同一套
 （`c`/`n`/`s`/`q`/`b`/`l`/`p`/`bt`），会话夹具按命令序列比对输出。`E5-010`、`E5-019`、`E5-020`
 三条按保留差异处置，退出条件见 `tests/parity/diagnostic-disposition.tsv`。
-- **发布与种子**：把自产产物定为默认发布物，并在 `seed/bin.toml` 登记 `arm64-apple-macosx` 与
-  `linux-amd64` 两条首代二进制摘要；Linux 那条由 CI 构建后回传，摘要未到手前不写该行。判据见
-  **宿主迁移评估** 的 **冻结种子**。升种子 rev 的前置是宿主那条提交先进远端，否则取种取不到。
 
 执行表余二十一例按 `tests/parity/execution-disposition.tsv` 逐条收，随执行线只剩四例（容器字面量、
 延迟引用、取址、数学自由函数）；保留差异十七例等并发、FFI 与析构语义面。
