@@ -34,6 +34,8 @@ extension BuiltinSpec {
         case character, string, nominal, io, task, blocking, yielding, scheduler, error
         /// 字符串句柄：C 侧可持有的串。五个入口里只有 `new` 有发射器调用点。
         case stringHandle
+        /// 行输入：读标准输入的一行。拼写只此一条，平台差异收在运行时的 Swift 实现里。
+        case stdin
     }
 }
 
@@ -404,6 +406,10 @@ public enum Builtins {
         BuiltinSpec(
             symbol: "pini_set_program_base", signature: .init(result: "void", parameters: ["ptr"]),
             family: .io, lowerings: ["<entry>"]
+        ),
+        BuiltinSpec(
+            symbol: "pini_stdin_read_line", signature: .init(result: "ptr", parameters: ["i32"]),
+            family: .stdin, lowerings: ["readLine"]
         ),
         BuiltinSpec(
             symbol: "pini_try_append_file", signature: .init(result: "i64", parameters: ["ptr", "ptr"]),

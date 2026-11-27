@@ -65,6 +65,7 @@ FAMILY = {
     "stringHandle": "字符串句柄",
     "nominal": "闭包 / 结构体胶水",
     "io": "IO / 宿主查询",
+    "stdin": "行输入",
     "task": "任务 / 并发",
     "blocking": "阻塞内建",
     "yielding": "让出族",

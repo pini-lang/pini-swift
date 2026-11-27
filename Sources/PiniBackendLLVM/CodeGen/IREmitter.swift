@@ -653,10 +653,9 @@ public final class IREmitter {
         if usesFileTryAppend {
             tail += Builtins.declaration(for: "pini_try_append_file")
         }
-        // `readLine` 会拉进 libc 行读取器与 stdin 流全局（macOS 上拼作 `__stdinp`）。
+        // `readLine` 走运行时段的一条入口：平台差异（`stdin` 与 `__stdinp`）收在 Swift 侧。
         if usesReadLine {
-            tail += "declare ptr @fgets(ptr, i32, ptr)\n"
-            tail += "@__stdinp = external global ptr\n"
+            tail += Builtins.declaration(for: "pini_stdin_read_line")
         }
         // 任务族的 C ABI。只有真发过派发 / 等待 / 剪枝的模块才带它们。本段接派发、阻塞等待、
         // 剪枝三个符号；`join_all` / `capabilities` 的调用点尚未接线，故这里也不声明它们。
@@ -3348,25 +3347,12 @@ public final class IREmitter {
         IRType.tuple(labels: [], fieldTypes: []).llvmSpelling
     }
 
-    /// `readLine()`：定长栈缓冲，由 `fgets` 从 stdin 填入，作为 String 交出；
-    /// 上限、保留的行终止符与缓冲大小都取自解释器的共享限额。
-    ///  注意  EOF 时 `fgets` 给 NULL，按 `%s` 打印它是未定义行为，故守卫替换成 ""。
+    /// `readLine()`：调运行时段的一行读取入口，字节上限按 `IOLimits.maxLineBytes` 传入 ——
+    /// 数值属语言契约，运行时段只执行。返回值是计数串（+1），份额归 `fresh`，按 `pini_str_release` 归还。
     private func emitReadLine() -> IRValue {
         usesReadLine = true
-        let bufferSize = IOLimits.lineBufferSize
-        let buffer = freshSlot(for: "readline.buffer")
-        bodyIR += builder.fmtAlloca(name: buffer, type: "[\(bufferSize) x i8]") + "\n"
-        let base = builder.freshTemp()
-        bodyIR += builder.fmtGEP(name: base, aggregate: "[\(bufferSize) x i8]", base: buffer, indices: [0, 0]) + "\n"
-        let stream = builder.freshTemp()
-        bodyIR += builder.fmtLoad(name: stream, type: "ptr", ptr: "@__stdinp") + "\n"
-        let line = builder.freshTemp()
-        bodyIR += " \(line) = call ptr @fgets(ptr \(base), i32 \(bufferSize), ptr \(stream))\n"
-        let exhausted = builder.freshTemp()
-        bodyIR += " \(exhausted) = icmp eq ptr \(line), null\n"
-        let empty = emitStringConstant("")
         let text = builder.freshTemp()
-        bodyIR += " \(text) = select i1 \(exhausted), ptr \(empty.ssaName), ptr \(line)\n"
+        bodyIR += " \(text) = call ptr @pini_stdin_read_line(i32 \(IOLimits.maxLineBytes))\n"
         // 用 `i8*` 的理由同 `emitFileRead`：`emitScalarPrint` 把它路由到 %s。
         return IRValue(llvmType: "i8*", ssaName: text)
     }
