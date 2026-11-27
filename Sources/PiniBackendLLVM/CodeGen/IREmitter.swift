@@ -2775,7 +2775,9 @@ public final class IREmitter {
                     ?? returnType.llvmSpelling
                 bodyIR += " \(temp) = call \(head) \(callee)(\(argList))\n"
                 releaseCallArguments(args)
-                return IRValue(llvmType: returnType.llvmSpelling, ssaName: temp)
+                let produced = IRValue(llvmType: returnType.llvmSpelling, ssaName: temp)
+                holdCallResult(produced, type: returnType)
+                return produced
             }
             let head = variadic.map { "void \($0.callType)" } ?? "void"
             bodyIR += " call \(head) \(callee)(\(argList))\n"
@@ -5116,6 +5118,24 @@ public final class IREmitter {
         for value in values { releaseHeldTemporary(value) }
     }
 
+    /// 调用结果入账：被调方在 `return` 上已按移交办，调用方接手的是一份干净的 +1。
+    ///  注意  不入账就没有任何消费点会还它 —— 比较、实参与丢弃位置都只处理账上的临时值。
+    private func holdCallResult(_ value: IRValue, type: IRType) {
+        guard !value.ssaName.isEmpty else { return }
+        switch type.shareClass {
+        case .aggregate:
+            if type.holdsAShare { holdAggregate(name: value.ssaName, type: type) }
+        case .valueBox, .retained:
+            if isRefcountedString(type) {
+                holdString(value.ssaName)
+            } else {
+                holdBox(name: value.ssaName, type: type)
+            }
+        case .inert:
+            break
+        }
+    }
+
     /// C 变参调用点的实参表。固定前缀原样传，变参尾按 C 的默认实参提升改写形状。
     /// 这件事必须在这里做：LLVM 看到的是 IR，不是源码，`clang` 替我们补不了。
     private func emitVariadicArguments(
@@ -5449,6 +5469,9 @@ public final class IREmitter {
                 op: op, operandType: lhsValue.llvmType, operandIRType: lhsType, temp: temp,
                 lhs: lhsValue, rhs: rhsValue)
             bodyIR += " \(temp) = \(predicate)\n"
+            // 比较只读操作数：本层新造的那份（拼接结果、调用返回）用完即还，借用值不在账上。
+            releaseOperand(lhs, lhsValue)
+            releaseOperand(rhs, rhsValue)
             return IRValue(llvmType: "i1", ssaName: temp)
         }
 
@@ -6298,7 +6321,9 @@ public final class IREmitter {
             let retTemp = builder.freshTemp()
             bodyIR += " \(retTemp) = call \(returnType.llvmSpelling) \(code)(\(argList.joined(separator: ", ")))\n"
             releaseCallArguments(argValues)
-            return IRValue(llvmType: returnType.llvmSpelling, ssaName: retTemp)
+            let produced = IRValue(llvmType: returnType.llvmSpelling, ssaName: retTemp)
+            holdCallResult(produced, type: returnType)
+            return produced
         }
         bodyIR += " call void \(code)(\(argList.joined(separator: ", ")))\n"
         releaseCallArguments(argValues)
