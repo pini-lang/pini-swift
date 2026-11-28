@@ -1155,7 +1155,7 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
                     location: IRExecutor.noLocation
                 )
             }
-            return try RuntimeOps.decodePointer(raw)
+            return try RuntimeOps.loadThrough(raw)
 
         case .pointerStore(let pointer, let value, _):
             // 与解释器的 `store` 内建一致：按指针的元素类型编码，窄元素截断。
@@ -1165,7 +1165,7 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
                     location: IRExecutor.noLocation
                 )
             }
-            try RuntimeOps.encode(try evaluate(value), to: raw.pointer, type: raw.elemType)
+            try RuntimeOps.storeThrough(raw, value: try evaluate(value))
             return .null
 
         case .foreignDataAddress(let name, _):
@@ -1177,12 +1177,21 @@ public final class IRExecutor: DebugHookHost, @unchecked Sendable {
             return .rawPointer(address)
 
         case .addressOfVar(let name, _):
-            // 与解释器对齐：`&x` 把值快照进新内存，因此经指针写入不会落到变量身上。
-            // 真引用语义不由本节点承担：取真引用会与 AST 通道的行为不一致。
-            return try RuntimeOps.snapshotPointer(
-                of: try currentEnv.get(name: name),
-                location: IRExecutor.noLocation
-            )
+            // `&名` 指向变量槽：读写回到绑定，之后给变量赋新值经指针读得到。
+            // 槽没有真实地址，传给 C 由 `ptrArg` 拒绝 —— 解释通道本就不承载外部调用。
+            guard let captured = try currentEnv.captureSlot(name: name) else {
+                throw RuntimeError.undefinedVariable(name: name, location: IRExecutor.noLocation)
+            }
+            let current = try currentEnv.get(name: name)
+            // 占位分配只让 `pointer` 非空；槽形态的读写一律走闭包，不解引用它。
+            let placeholder = UnsafeMutableRawPointer.allocate(byteCount: 1, alignment: 1)
+            return .rawPointer(
+                RawPointerValue(
+                    pointer: placeholder, elemType: RawPointerValue.elemType(for: current),
+                    freesMemory: true,
+                    slot: PointerSlot(
+                        read: captured.read, write: captured.write, identity: captured.identity)
+                ))
 
         case .lazyRefConstruct(let closure, _):
             // 与 `Interpreter.makeLazyRefBox` 一致：实参是初始化闭包，盒子自身带着「只算一次」的规则。

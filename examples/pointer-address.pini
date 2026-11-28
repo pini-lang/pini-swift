@@ -1,6 +1,6 @@
 ; 取址：`&x` 之后再写 x —— 目标语义是两通道都读真地址的新值
 ; 运行：pini run examples/pointer-address.pini / pini run-llvm examples/pointer-address.pini
-; 预期输出：LLVM 与自举 run 打 9，宿主 run 仍打 7（快照）；缺口登记在 tools/ir-parity-baseline.tsv
+; 预期输出：run、run-llvm 与自举 run 同打 9，`&x` 指向变量槽而非快照
 main|func() -> ():
     var x: I64 = 7
     var p = unsafe (&x)

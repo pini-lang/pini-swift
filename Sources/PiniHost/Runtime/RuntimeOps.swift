@@ -364,6 +364,22 @@ public enum RuntimeOps {
         }
     }
 
+    /// 经指针读：槽指针读绑定当前值，裸指针按元素类型解码。
+    static func loadThrough(_ rp: RawPointerValue) throws -> Value {
+        if let slot = rp.slot { return try slot.read() }
+        return try decodePointer(rp)
+    }
+
+    /// 经指针写：槽指针写回绑定，裸指针按元素类型编码。
+    /// 槽形态在写入点拷出值语义箱，与经内存写后源变量再改不影响读点同效。
+    static func storeThrough(_ rp: RawPointerValue, value: Value) throws {
+        if let slot = rp.slot {
+            try slot.write(copyIfStruct(value))
+            return
+        }
+        try encode(value, to: rp.pointer, type: rp.elemType)
+    }
+
     static func decomposePatternRow(_ element: Value, patternCount: Int, location: SourceLocation) throws -> [Value] {
         let fields: [Value]
         switch element {
@@ -654,6 +670,12 @@ public enum RuntimeOps {
                 reason: "\(name)：第 1 个参数须为 `*T` 指针",
                 location: SourceLocation(line: 0, column: 0, fileName: ""))
         }
+        // 槽指针的地址只是占位：交给 C 会让外部读到垃圾，宁可在这里拒绝。
+        if rp.slot != nil {
+            throw RuntimeError.invalidOperation(
+                reason: "\(name)：`&变量` 在解释通道里没有可供外部使用的地址",
+                location: SourceLocation(line: 0, column: 0, fileName: ""))
+        }
         return rp
     }
 
@@ -669,20 +691,6 @@ public enum RuntimeOps {
         if path.hasPrefix("./") || path.hasPrefix("../") { return path }
         guard let base = programBase else { return path }
         return base + "/" + path
-    }
-
-    static func snapshotPointer(of value: Value, location: SourceLocation) throws -> Value {
-        switch value {
-        case .rawPointer(let rp):
-            // 指针取址：返回自身（地址即值；`*T` 的 T 保持元素类型不变）。
-            return value
-        default:
-            let elem = RawPointerValue.elemType(for: value) ?? .simple(name: "U8", location: location)
-            let stride = RawPointerValue.stride(of: elem) ?? 1
-            let ptr = UnsafeMutableRawPointer.allocate(byteCount: stride, alignment: 1)
-            try Self.encode(value, to: ptr, type: elem)
-            return .rawPointer(RawPointerValue(pointer: ptr, elemType: elem, freesMemory: true))
-        }
     }
 
     static func stringifyValue(_ value: Value) -> String {

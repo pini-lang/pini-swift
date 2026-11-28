@@ -121,6 +121,38 @@ public class Environment {
         return nil
     }
 
+    /// 变量槽：钉住声明所在的作用域层，交出读写闭包与身份串。
+    /// 之后进入内层声明同名变量不改它的指向；该层被整体丢弃后读写报未定义，与悬垂指针同义。
+    /// 未找到该名字返回 nil，由调用方决定报错还是回退。
+    public func captureSlot(
+        name: String
+    ) throws -> (read: () throws -> Value, write: (Value) throws -> Void, identity: String)? {
+        for i in (0..<scopes.count).reversed() {
+            guard scopes[i][name] != nil else { continue }
+            let index = i
+            let missing = RuntimeError.undefinedVariable(
+                name: name, location: SourceLocation(line: 0, column: 0, fileName: ""))
+            // 弱引用：`var p = &x` 会让值链回环境，强引用则成环，只能等进程结束。
+            let read: () throws -> Value = { [weak self] in
+                guard let self, let binding = self.scopes[index][name] else { throw missing }
+                return binding.value
+            }
+            let write: (Value) throws -> Void = { [weak self] value in
+                guard let self, let binding = self.scopes[index][name] else { throw missing }
+                guard binding.isMutable else {
+                    throw RuntimeError.immutableVariable(
+                        name: name, location: SourceLocation(line: 0, column: 0, fileName: ""))
+                }
+                self.scopes[index][name] = Binding(value: value, isMutable: true)
+            }
+            return (read, write, "\(ObjectIdentifier(self)).\(name)")
+        }
+        if let enclosing = enclosing {
+            return try enclosing.captureSlot(name: name)
+        }
+        return nil
+    }
+
     /// 快照当前作用域内所有绑定（名称 + 值），供调试器在停止点展示局部变量。
     /// 外层作用域在前，内层覆盖在后。
     public func listBindings() -> [(name: String, value: Value)] {
