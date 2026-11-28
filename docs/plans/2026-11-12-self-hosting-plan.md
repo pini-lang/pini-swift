@@ -647,3 +647,4 @@ NFC 会改变符号身份，属于语言面决定。实施前先修订 `docs/spe
 | **llvm 全文** | 两侧产物不可混链，差分分类见 `docs/plans/readings/2026-11-25-llvm-parity.md` | 不做 | 宿主函数顺序确定性且有人认领发射器重写 |
 | **导入形态整顿** | 搁置；符号表按包平铺，不循导入路径 | 不做 | 符号表按导入路径产 |
 | **种子预置** | `pini-bootstrap/tools/seed.sh` 仍克隆并构建宿主 | 不做 | 首个 release 上线后一次真实取种 |
+| **结果匹配** | 宿主 `check` 对 Result 主体不判臂名、绑定数与穷尽：`typeNameOf` 推不出 `Result<T>`，三例语料 `diag-result-match-*` 在宿主侧均无诊断；自举侧已补 ok / err 臂名、绑定数与穷尽，差异记在 `tests/conformance/divergence-baseline.tsv` | 立项 | 宿主补 `Result<T>` 类型名推导后重开，届时删基线条目 |
