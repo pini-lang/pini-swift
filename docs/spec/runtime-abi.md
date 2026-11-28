@@ -34,7 +34,7 @@
 - 集合、并发、LazyRef、FFI 共用同一个运行时段，不另设独立 shim。
 - 新增符号同批登记本件，等式「清单数 = 导出数」是它唯一的自检方式。
 
-## 2. 符号清单（134 个）
+## 2. 符号清单（135 个）
 
 | 族 | 符号 | 数 |
 |---|---|---|
@@ -52,7 +52,7 @@
 | 字符串面 | `pini_str_alloc` `pini_str_append_cstr` `pini_str_concat` `pini_str_dup` `pini_str_from_cstr` `pini_str_header_bytes` `pini_str_refcount` `pini_str_table_min_cap` `pini_str_release` `pini_str_retain` `pini_string_char_at` `pini_string_contains` `pini_string_count` `pini_string_index_of` `pini_string_lower` `pini_string_slice` `pini_string_split` `pini_string_trim_left` `pini_string_trim_right` `pini_string_upper` `pini_substring` | 21 |
 | 字符串句柄 | `pini_str_handle_bytes` `pini_str_handle_len` `pini_str_handle_new` `pini_str_handle_release` `pini_str_handle_retain` | 5 |
 | 闭包 / 结构体胶水 | `pini_nominal_alloc` `pini_nominal_release` `pini_nominal_retain` `pini_slot_alloc` | 4 |
-| IO / 宿主查询 | `pini_append_file` `pini_argv` `pini_ensure_dir` `pini_exists` `pini_is_dir` `pini_list_dir` `pini_module_root` `pini_read_file` `pini_set_program_base` `pini_try_append_file` `pini_try_read_file` `pini_try_write_file` `pini_write_file` | 13 |
+| IO / 宿主查询 | `pini_append_file` `pini_argv` `pini_ensure_dir` `pini_exe_dir` `pini_exists` `pini_is_dir` `pini_list_dir` `pini_module_root` `pini_read_file` `pini_set_program_base` `pini_try_append_file` `pini_try_read_file` `pini_try_write_file` `pini_write_file` | 14 |
 | 行输入 | `pini_stdin_read_line` | 1 |
 | 进程 | `pini_process_release` `pini_process_spawn` `pini_process_stderr` `pini_process_stdout` `pini_process_wait` | 5 |
 | 任务 / 并发 | `pini_capabilities` `pini_scope_close` `pini_task_cancel` `pini_task_detach` `pini_task_is_cancelled` `pini_task_join` `pini_task_join_all` `pini_task_join_all_box` `pini_task_join_within` `pini_task_spawn` `pini_task_yield` | 11 |
@@ -60,7 +60,7 @@
 | 让出族 | `pini_task_await` `pini_task_frame` `pini_task_slot` | 3 |
 | 调度驱动面 | `pini_task_bind_sched` `pini_task_state` | 2 |
 | 错误载荷 | `pini_cancel_error_create` `pini_error_code` `pini_error_create` `pini_error_from_enum` `pini_error_is_cancel` `pini_error_lookup` `pini_error_message` `pini_error_with_code` | 8 |
-| **合计** | | **134** |
+| **合计** | | **135** |
 
 ## 3. 语义约束
 
@@ -135,9 +135,15 @@
 - 返回计数串（+1），调用方按 `pini_str_release` 归还；不预读、不改标准流状态。
 - 拼写只有这一条：发射器不引 `stdin` 与 `__stdinp`，平台差异由 Swift 的 `readLine` 承担。
 
+### 3.11 工具链位置
+
+- `pini_exe_dir` 返回可执行文件所在目录，供工具链定位随行的标准库与运行时库；与程序基准无关。
+- 返回值是**借用**指针、活到进程结束，调用方不释放；取不到答空串。
+
 ## 4. 零调用点登记
 
-以下符号当前没有发射器调用点。**零调用点不等于该删** —— 每个都是某条路线的锚点。
+以下符号没有内建发射点：多数是零调用点，`pini_exe_dir` 只经外部块调用。
+**不进内建不等于该删** —— 每个都是某条路线的锚点。
 
 | 符号 | 数量 | 处置 |
 |---|---|---|
@@ -147,9 +153,10 @@
 | `pini_str_alloc` `pini_str_header_bytes` `pini_str_refcount` `pini_str_table_min_cap` `pini_handle_shares` `pini_scope_close` | 6 | 只被 ABI 测试或宿主直接调用；`pini_str_alloc` 的拼接调用点已并入 `pini_str_concat` |
 | `pini_str_handle_bytes` `pini_str_handle_len` `pini_str_handle_retain` `pini_str_handle_release` | 4 | C 侧读字节与收账的入口；发射器只发 `pini_str_handle_new` |
 | `pini_double_bits` `pini_parse_double` | 2 | 只由自举编译器在编译期调用，发射器不产出 |
+| `pini_exe_dir` | 1 | 自举工具链经外部块调用（hostproc）；不进内建清单，发射器不按内建产出 |
 
-本表与编译器侧清单互补：`BuiltinInventory.swift` 列出已接线的 107 条，本表列出其余 27 条，
-两者合计即第 2 节的 134。互补关系由 `tools/builtin-inventory-check.py` 校验。
+本表与编译器侧清单互补：`BuiltinInventory.swift` 列出已接线的 107 条，本表列出其余 28 条，
+两者合计即第 2 节的 135。互补关系由 `tools/builtin-inventory-check.py` 校验。
 
 ## 5. 维护条款
 
