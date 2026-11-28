@@ -12,8 +12,8 @@ main|func() -> ():
     var all = joinAll(xs)
     var r = wait all
     match r:
-        case ok(v,):
+        case .ok(v,):
             print(v)
-        case err(e,):
+        case .err(e,):
             print(e)
     return

@@ -30,15 +30,15 @@ main|func() -> ():
     wait b
     var r = wait compute(21)
     match r:
-        case ok(v,):
+        case .ok(v,):
             print(v)
-        case err(e,):
+        case .err(e,):
             print(e)
     var bad = wait compute(0 - 1)
     match bad:
-        case ok(v,):
+        case .ok(v,):
             print(v)
-        case err(e,):
+        case .err(e,):
             print(e)
     print("done")
     return

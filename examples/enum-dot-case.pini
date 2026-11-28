@@ -14,9 +14,9 @@
 
 取半径|func(_s: 形状,) -> (F64,):
     match _s:
-        case 圆(r,):
+        case .圆(r,):
             return r
-        case 矩形(w, h,):
+        case .矩形(w, h,):
             return w
     return 0.0
 

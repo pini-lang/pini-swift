@@ -208,7 +208,8 @@ public enum Desugar {
                         pattern: $0.pattern,
                         bindings: $0.bindings,
                         block: desugar($0.block),
-                        location: $0.location)
+                        location: $0.location,
+                        spelling: $0.spelling)
                 },
                 location: loc)
         case .expressionStmt(let expr, let loc):

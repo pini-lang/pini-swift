@@ -10,12 +10,12 @@
 main|func() -> ():
     var d: 方向 = .北
     match d:
-        case 东:
+        case .东:
             print("向东")
-        case 南:
+        case .南:
             print("向南")
-        case 西:
+        case .西:
             print("向西")
-        case 北:
+        case .北:
             print("向北")
     return

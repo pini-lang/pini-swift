@@ -14,9 +14,9 @@ main|func() -> ():
     var t = 慢任务()
     var r = joinWithin(t, 100)
     match r:
-        case ok(v,):
+        case .ok(v,):
             print(v)
-        case err(e,):
+        case .err(e,):
             if isCancel(e):
                 print("已超时取消")
             else:
@@ -26,9 +26,9 @@ main|func() -> ():
     u.cancel()
     var r2 = wait u
     match r2:
-        case ok(v,):
+        case .ok(v,):
             print(v)
-        case err(e,):
+        case .err(e,):
             if isCancel(e):
                 print("已手动取消")
             else:

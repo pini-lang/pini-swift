@@ -2385,6 +2385,7 @@ public class Parser {
             advance()
 
             let pattern: MatchPattern
+            var spelling: EnumCaseSpelling = .bare
             if case .identifier("_", _) = currentToken {
                 advance()
                 pattern = .wildcard
@@ -2400,14 +2401,35 @@ public class Parser {
             } else if case .boolLiteral(let b, _) = currentToken {
                 advance()
                 pattern = .boolLiteral(b)
-            } else if case .identifier(let name, _) = currentToken {
+            } else if case .dot(_) = currentToken {
+                advance()
+                guard case .identifier(let name, _) = currentToken else {
+                    throw ParserError.unexpectedToken(
+                        expected: "identifier (case name after `.`)", actual: currentToken.typeName,
+                        location: currentLocation)
+                }
                 advance()
                 pattern = .enumCase(name)
+                spelling = .inferred
+            } else if case .identifier(let first, let firstLoc) = currentToken {
+                // 枚举项只收限定名 `形状.圆`：点后必须是标识符。裸名与其余写法一律报在
+                // 名字处；游标留在名字上，恢复时的重同步从这一行起跳，不牵连后续分支。
+                guard case .dot(_) = peek(offset: 1), case .identifier(let leaf, _) = peek(offset: 2) else {
+                    throw ParserError.invalidStatement(
+                        reason: "枚举项须写限定名 `枚举.项` 或点号推断 `.项`；裸名 `\(first)` 不再是 match 模式",
+                        location: firstLoc)
+                }
+                advance()
+                advance()
+                advance()
+                pattern = .enumCase(leaf)
+                spelling = .qualified(owner: first)
             } else if case .keyword(.nil, _) = currentToken {
                 advance()
                 // `nil` 在匹配模式中 = `Optional.none`；映射为 `.enumCase("none")`
                 // （与既有 `case none:` 同构，解释器 matchCaseMatches 按 caseName == "none" 命中）。
                 pattern = .enumCase("none")
+                spelling = .nilKeyword
             } else {
                 throw ParserError.unexpectedToken(expected: "match pattern (case name / literal / _)", actual: currentToken.typeName, location: currentLocation)
             }
@@ -2456,7 +2478,8 @@ public class Parser {
                     pattern: pattern,
                     bindings: bindings,
                     block: caseBlock,
-                    location: caseLoc
+                    location: caseLoc,
+                    spelling: spelling
                 ))
 
             skipNewlines()

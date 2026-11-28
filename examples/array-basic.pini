@@ -19,9 +19,9 @@ main|func() -> ():
     ; 需要 Optional 参与 match 时走 `.get(i)`（越界返回 .none）；
     ; 下标 `w[i]` 直接给元素，越界 panic。
     match w.get(1):
-        case some(v,):
+        case .some(v,):
             w[1] = v + 5
-        case none:
+        case .none:
             pass
     print(w[0])
     print(w[1])

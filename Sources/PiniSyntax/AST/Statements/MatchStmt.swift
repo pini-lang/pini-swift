@@ -23,18 +23,48 @@ public enum MatchPattern: Equatable, CustomStringConvertible, Sendable {
     }
 }
 
+/// 枚举措辞：拼写形态决定打印器原样还原，语义层只认叶名，形态只用于校验与输出。
+/// 裸名是过渡形态，解析器收窄后仅剩 `nil`、点号推断与限定名三种。
+public enum EnumCaseSpelling: Equatable, Sendable {
+    /// `case nil:`：关键字形态，语义等同 `Optional.none`。
+    case nilKeyword
+    /// `case 圆(...)`：裸名，父枚举由被匹配值类型决定。
+    case bare
+    /// `case .圆(...)`：点号推断，父枚举由被匹配值类型决定。
+    case inferred
+    /// `case 形状.圆(...)`：限定名，父枚举写明，须与被匹配值类型一致。
+    case qualified(owner: String)
+
+    /// 拼写前缀：`nil` 由模式名单独处理，这里只补点与父枚举。
+    public var namePrefix: String {
+        switch self {
+        case .nilKeyword, .bare: return ""
+        case .inferred: return "."
+        case .qualified(let owner): return owner + "."
+        }
+    }
+}
+
 /// match 的单个分支：模式 + 绑定 + 子块。
 public struct MatchCase: Equatable, ASTNode, Sendable {
     public let pattern: MatchPattern
     public let bindings: [MatchBinding]
     public let block: Block
     public let location: SourceLocation
+    public let spelling: EnumCaseSpelling
 
-    public init(pattern: MatchPattern, bindings: [MatchBinding], block: Block, location: SourceLocation) {
+    public init(
+        pattern: MatchPattern,
+        bindings: [MatchBinding],
+        block: Block,
+        location: SourceLocation,
+        spelling: EnumCaseSpelling = .bare
+    ) {
         self.pattern = pattern
         self.bindings = bindings
         self.block = block
         self.location = location
+        self.spelling = spelling
     }
 }
 

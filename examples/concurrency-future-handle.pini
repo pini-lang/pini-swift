@@ -12,9 +12,9 @@ main|func() -> ():
     f.cancel()
     var r = wait f
     match r:
-        case ok(v,):
+        case .ok(v,):
             print(v)
-        case err(e,):
+        case .err(e,):
             if isCancel(e):
                 print("已被取消") ; isCancel 是对错误值的判断
             else:
@@ -23,9 +23,9 @@ main|func() -> ():
     var g = slow()
     var r2 = joinWithin(g, 10)
     match r2:
-        case ok(v,):
+        case .ok(v,):
             print(v)
-        case err(e,):
+        case .err(e,):
             if isCancel(e):
                 print("已超时")
     ; fire-and-forget：detach 把句柄从父作用域剪枝，不消费结果（语句形式）。

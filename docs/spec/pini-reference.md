@@ -285,7 +285,7 @@ TODO(中文关键字)：宿主编译器尚未提供选择中文词表的入口�
 | 记号 | 方向 | 出现处 |
 |---|---|---|
 | `=` | **值的注入方向** | 实参标签 `f(a = 1)`、字典条目 `{"k" = 1,}`、元组标签 `(a = 1,)`、默认参数 `n: I32 = 1`、枚举具名构造 `E(x = 1)` |
-| `:` | **类型与块的标注方向 + 值的取出方向** | 类型标注 `n: I32`、块开启 `if c:`、match 具名绑定 `case A(x: v):` |
+| `:` | **类型与块的标注方向 + 值的取出方向** | 类型标注 `n: I32`、块开启 `if c:`、match 具名绑定 `case .A(x: v):` |
 
 切片 `a[i:j]` 的 `:` 是**分隔符**，不属关联记号，不受本规则约束。
 
@@ -608,13 +608,16 @@ let 形 = 形状.圆(原点, 3.14)
 
 ```
 match 形:
-    case 形状.圆(_, 半径):
+    case .圆(_, 半径):
         return 3.14 * 半径 * 半径
-    case 形状.矩形(左上, 右下):
+    case .矩形(左上, 右下):
         return 宽(左上, 右下) * 高(左上, 右下)
-    case 形状.点:
+    case .点:
         return 0.0
 ```
+
+枚举措辞两种写法等价：点号 `.圆` 由被匹配值的类型定父枚举，要写明父枚举时写
+`形状.圆`。裸名 `圆` 不是合法模式，见 §6.3。
 
 ### 3.6 元组类型 `[Provisional]`
 
@@ -712,7 +715,7 @@ let b: ?I32 = nil
 
 ```
 match 可选值:
-    case some(值,):
+    case .some(值,):
         ...
     case nil:
         pass
@@ -1092,11 +1095,11 @@ y: I32 = 0
 [[形状]]
 面积|self() -> F64:
     match self:
-        case 形状.圆(_, 半径):
+        case .圆(_, 半径):
             return 3.14 * 半径 * 半径
-        case 形状.矩形(左上, 右下):
+        case .矩形(左上, 右下):
             return 宽(左上, 右下) * 高(左上, 右下)
-        case 形状.点:
+        case .点:
             return 0.0
 ```
 
@@ -1899,13 +1902,28 @@ match 值:
 - `case` 缩进进 `match` 子块
 - 通配兜底为 `case _:`
 - 无 `default:`
+- 枚举措辞两种：点号 `.圆` 由被匹配值的类型定父枚举；限定名 `形状.圆` 写明父枚举。
+  裸名 `圆` 与 `default` 都**不是**合法模式 → 解析期错误
 - 枚举 match 缺变体且无 `case _:` → 编译期错误 `nonExhaustiveMatch`
 - 字面量 match 静态不检查穷尽性；未命中且无 `case _:` 时**运行时静默**（不 panic）
 - `case` 的名字按**被匹配值的类型**解析：名字不属于该类型的枚举 → 编译期错误 `unknownMatchCase`
   （如标量上写枚举用例）；被匹配值的类型判不出时不校验
+- 限定名写明的父枚举须与被匹配值的类型一致 → 否则同样是 `unknownMatchCase`
 - 被匹配值是枚举时，**字面量臂**（int/float/string/bool）永不匹配 → 同样 `unknownMatchCase`
 
 **枚举解构**：
+
+```
+match 形状:
+    case .圆(_, 半径):
+        return 3.14 * 半径 * 半径
+    case .矩形(左上, 右下):
+        return ...
+    case .点:
+        return 0.0
+```
+
+**用限定名写明父枚举**：
 
 ```
 match 形状:
@@ -2247,7 +2265,7 @@ _父: WeakRef<节点> = .none
 ```
 快照.value         ; 返回 Optional<T>
 match 快照.value:
-    case some(目标,):
+    case .some(目标,):
         目标.方法()
     case nil:
         pass
@@ -2269,7 +2287,7 @@ let 弱节点 = weak 节点
 节点.绑定回调(func () -> ():
     capture 弱节点
     match 弱节点.value:
-        case some(目标,):
+        case .some(目标,):
             目标.方法()
         case nil:
             pass
@@ -2462,7 +2480,7 @@ _句柄: ?异步句柄 = nil
 {{异步资源持有者}}
 asyncDeinit|self() => ():
     match self._句柄:
-        case some(句柄,):
+        case .some(句柄,):
             await 句柄.关闭()
             self._句柄 = nil
         case nil:
@@ -4569,7 +4587,10 @@ pattern-tuple   ::= (IDENT | '_') { ',' (IDENT | '_') } [ ',' ];
 
 match-stmt      ::= 'match' expression ':' { match-case };
 match-case      ::= 'case' match-pattern control-block;
-match-pattern   ::= '_' | INT | FLOAT | STRING | BOOL | IDENT | 'nil';
+match-pattern   ::= '_' | INT | FLOAT | STRING | BOOL | 'nil' | case-pattern;
+case-pattern    ::= '.' IDENT [case-bindings] | IDENT '.' IDENT [case-bindings];
+case-bindings   ::= '(' [match-binding { ',' match-binding } [',']] ')';
+match-binding   ::= [IDENT ':'] IDENT;
 
 try-stmt        ::= try-expr;
 try-expr        ::= 'try' expression 'else' IDENT try-handler;
@@ -4729,7 +4750,6 @@ generic-params  ::= IDENT [':' type-annotation] {',' IDENT [':' type-annotation]
 以下产生式**不代表当前语言**，仅作为未来采纳时的 graft point。采纳须走变更治理流程 + 版本 bump。
 
 ```
-(* G51 挪入：match 守卫与标量绑定 *)
-match-case      ::= 'case' match-pattern ['if' expression] [match-binding] control-block;
-match-binding   ::= '(' [IDENT ':' IDENT | IDENT] {',' [IDENT ':' IDENT | IDENT]} ')';
+(* G51 挪入：match 守卫 *)
+match-case      ::= 'case' match-pattern ['if' expression] control-block;
 ```
