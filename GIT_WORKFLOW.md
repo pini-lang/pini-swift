@@ -83,6 +83,18 @@ ID 命名规则：`human:<handle>` 或 `agent:<handle>`，需**全局唯一**且
 注意 规范改动先在本仓定判据，再由 `pini-bootstrap` 的实现在同一轮追平；两笔提交的主题
 各写清判据侧与实现侧，便于 `git log` 对上。
 
+### 4.2 提交之后：合并、验证与升种子
+
+- **合并前**：分支上跑完 §4.1 的门禁，`git fetch` 确认 `main` 最新。
+- **合并**：`git merge --no-ff <branch>`。合并提交由 `pre-merge-commit` 在容器里跑
+  `ci/run.sh`；Docker 不在就拒绝，不降级放行。
+- **推送**：合并通过后推 `origin main`。
+- **回退**：合并在钩子上失败就回分支修；已推送的 `main` 出错用新提交前滚，不在 `main` 上
+  rebase 或 force push。
+- **供种子钉住**：合并后的 `main` 哈希即 `pini-bootstrap` 的 `seed/pin.toml` 要钉的值。
+  只改规范与文档不升种子，改 `Sources/` 或 `Package.swift` 才升；`seed/bin.toml` 重登、
+  生成器与全量门禁的步骤见对方仓 §4.2。
+
 ---
 
 ## 5. 防弹跳强制（可选启用，推荐）
