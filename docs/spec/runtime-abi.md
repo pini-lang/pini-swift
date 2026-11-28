@@ -109,11 +109,6 @@
 - Pini 侧不参与这套计数：句柄在 IR 里是 `stringHandle`（份额归 inert），创建点交出那一份，
   C 拿到后自己收账。
 
-### 3.11 工具链位置
-
-- `pini_exe_dir` 返回可执行文件所在目录，供工具链定位随行的标准库与运行时库；与程序基准无关。
-- 返回值是**借用**指针、活到进程结束，调用方不释放；取不到答空串。
-
 ### 3.8 建目录
 
 - `pini_ensure_dir` 幂等：目录已存在即成功，不报错也不清空。
@@ -140,6 +135,11 @@
 - 返回计数串（+1），调用方按 `pini_str_release` 归还；不预读、不改标准流状态。
 - 拼写只有这一条：发射器不引 `stdin` 与 `__stdinp`，平台差异由 Swift 的 `readLine` 承担。
 
+### 3.11 工具链位置
+
+- `pini_exe_dir` 返回可执行文件所在目录，供工具链定位随行的标准库与运行时库；与程序基准无关。
+- 返回值是**借用**指针、活到进程结束，调用方不释放；取不到答空串。
+
 ## 4. 零调用点登记
 
 以下符号当前没有发射器调用点。**零调用点不等于该删** —— 每个都是某条路线的锚点。
@@ -152,9 +152,10 @@
 | `pini_str_alloc` `pini_str_header_bytes` `pini_str_refcount` `pini_str_table_min_cap` `pini_handle_shares` `pini_scope_close` | 6 | 只被 ABI 测试或宿主直接调用；`pini_str_alloc` 的拼接调用点已并入 `pini_str_concat` |
 | `pini_str_handle_bytes` `pini_str_handle_len` `pini_str_handle_retain` `pini_str_handle_release` | 4 | C 侧读字节与收账的入口；发射器只发 `pini_str_handle_new` |
 | `pini_double_bits` `pini_parse_double` | 2 | 只由自举编译器在编译期调用，发射器不产出 |
+| `pini_exe_dir` | 1 | 自举工具链经外部块调用：hostproc 按它定位随行标准库与运行时库，发射器不产出 |
 
-本表与编译器侧清单互补：`BuiltinInventory.swift` 列出已接线的 107 条，本表列出其余 27 条，
-两者合计即第 2 节的 134。互补关系由 `tools/builtin-inventory-check.py` 校验。
+本表与编译器侧清单互补：`BuiltinInventory.swift` 列出已接线的 107 条，本表列出其余 28 条，
+两者合计即第 2 节的 135。互补关系由 `tools/builtin-inventory-check.py` 校验。
 
 ## 5. 维护条款
 
