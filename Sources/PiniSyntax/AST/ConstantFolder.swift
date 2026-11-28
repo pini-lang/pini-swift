@@ -111,7 +111,8 @@ public enum ConstantFolder {
                 cases: cases.map {
                     MatchCase(
                         pattern: $0.pattern, bindings: $0.bindings, block: fold($0.block),
-                        location: $0.location, spelling: $0.spelling)
+                        location: $0.location, spelling: $0.spelling,
+                        patternLocation: $0.patternLocation)
                 },
                 location: loc)
         case .expressionStmt(let expr, let loc):
