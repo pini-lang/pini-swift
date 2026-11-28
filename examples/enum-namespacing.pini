@@ -11,9 +11,9 @@
 ; 普通匹配：按被匹配值类型（形状）解析 case，跨枚举同名 圆 不串味
 取形状半径|func(_s: 形状,) -> (F64,):
     match _s:
-        case 圆(r,):
+        case .圆(r,):
             return r
-        case 矩形(w, h,):
+        case .矩形(w, h,):
             return w
     return 0.0
 
@@ -26,10 +26,10 @@ main|func() -> ():
     ; 穷尽性校验：限定值 形状.圆(1.0) 把校验锁定到 形状，
     ; 跨枚举同名 case 不会误报穷尽性。
     match 形状.圆(1.0):
-        case 圆(r,):
+        case .圆(r,):
             print(r)
             return
-        case 矩形(w, h,):
+        case .矩形(w, h,):
             print(w)
             return
     return

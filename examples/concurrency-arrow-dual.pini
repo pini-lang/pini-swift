@@ -12,8 +12,8 @@ main|func() -> ():
     var cmp = seven <= 7 ; 中缀：seven <= 7 = 比较（得到 true）
     print(cmp)
     match joined:
-        case ok(v,):
+        case .ok(v,):
             print(v) ; 打印 7
-        case err(e,):
+        case .err(e,):
             print(e)
     return

@@ -4,14 +4,14 @@
 main|func() -> ():
     var a = Optional.some(42)
     match a:
-        case some(v,):
+        case .some(v,):
             print(v)
-        case none:
+        case .none:
             print("none")
     var b: Optional<I32> = Optional.none
     match b:
-        case some(v,):
+        case .some(v,):
             print(v)
-        case none:
+        case .none:
             print("none")
     return

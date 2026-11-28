@@ -5,12 +5,12 @@ main|func() -> ():
     ; nil 等价于 Optional.none（表达式位置）；载荷类型靠标注定
     var a: ?I32 = Optional.none
     match a:
-        case none:
+        case .none:
             print("none")
     ; Optional.none 等价于 nil（match 模式位置可用 case nil:）
     var b: ?I32 = Optional.none
     match b:
-        case none:
+        case .none:
             print("none")
     ; 带类型注解的 nil：值位需要标注，否则推不出 Optional<T> 的 T
     var c: Optional<I32> = nil
@@ -20,7 +20,7 @@ main|func() -> ():
     ; nil 与 Optional.none 同值（同一解释器路径）
     var d: Optional<I32> = Optional.none
     match d:
-        case none:
+        case .none:
             print("none")
     ; 前缀 ?T 可选类型糖（= Optional<T>），值位同样吃 nil
     var e: ?I32 = nil
@@ -30,6 +30,6 @@ main|func() -> ():
     ; ?T 与 Optional<T> 同类型，可互相赋值
     var f: Optional<I32> = e
     match f:
-        case none:
+        case .none:
             print("q-assign")
     return

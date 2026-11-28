@@ -11,9 +11,9 @@ fetchPrice|func(_id: I32,) => (I32,):
 aggregate|func() => (I32,):
     var a = await fetchPrice(1) ; 在此 await，得到 Result
     match a:
-        case ok(v,):
+        case .ok(v,):
             return ok(v)
-        case err(e,):
+        case .err(e,):
             return ok(0)
 
 ; —— 终点：一个「普通同步」函数，没有 `=>` ——
@@ -22,8 +22,8 @@ aggregate|func() => (I32,):
 main|func() -> ():
     var r = wait aggregate() ; 异步传染的终点：非 async 函数也能等待
     match r:
-        case ok(v,):
+        case .ok(v,):
             print(v) ; 预期打印 10
-        case err(e,):
+        case .err(e,):
             print("err")
     return

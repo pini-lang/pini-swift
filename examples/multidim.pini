@@ -6,9 +6,9 @@ main|func() -> ():
     ; 安全路径：`.get(i)` 给 Optional，match 取元素（随处可用，无需 unsafe 上下文）
     var 行 = m[1]
     match 行.get(2):
-        case some(v,):
+        case .some(v,):
             print(v) ; 期望 6
-        case none:
+        case .none:
             print(0)
     ; 强制解包路径：零散 `unsafe` 消耗点局部提供 unsafe 上下文（函数整体仍是安全的 |func）
     print(unsafe m[2][1]) ; 期望 8：m[2]→some([7,8,9])，! 剥出内层数组；[1]→some(8)，再 ! 取裸值

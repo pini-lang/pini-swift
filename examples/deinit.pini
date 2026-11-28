@@ -17,8 +17,8 @@ main|func() -> ():
     首个 = 资源()
     首个.名 = "乙"
     match 观察.value:
-        case none:
+        case .none:
             print("已释放")
-        case some(值,):
+        case .some(值,):
             print(值.名)
     return

@@ -2411,17 +2411,19 @@ public class Parser {
                 advance()
                 pattern = .enumCase(name)
                 spelling = .inferred
-            } else if case .identifier(let first, _) = currentToken {
-                advance()
-                // 限定名 `形状.圆`：点后必须是标识符，否则按裸名收尾，把点留给块起始的报错。
-                if case .dot(_) = currentToken, case .identifier(let leaf, _) = peek(offset: 1) {
-                    advance()
-                    advance()
-                    pattern = .enumCase(leaf)
-                    spelling = .qualified(owner: first)
-                } else {
-                    pattern = .enumCase(first)
+            } else if case .identifier(let first, let firstLoc) = currentToken {
+                // 枚举项只收限定名 `形状.圆`：点后必须是标识符。裸名与其余写法一律报在
+                // 名字处；游标留在名字上，恢复时的重同步从这一行起跳，不牵连后续分支。
+                guard case .dot(_) = peek(offset: 1), case .identifier(let leaf, _) = peek(offset: 2) else {
+                    throw ParserError.invalidStatement(
+                        reason: "枚举项须写限定名 `枚举.项` 或点号推断 `.项`；裸名 `\(first)` 不再是 match 模式",
+                        location: firstLoc)
                 }
+                advance()
+                advance()
+                advance()
+                pattern = .enumCase(leaf)
+                spelling = .qualified(owner: first)
             } else if case .keyword(.nil, _) = currentToken {
                 advance()
                 // `nil` 在匹配模式中 = `Optional.none`；映射为 `.enumCase("none")`

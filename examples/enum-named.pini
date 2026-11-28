@@ -7,25 +7,25 @@ plus
 
 取文本|func(_t: Token,) -> (String,):
     match _t:
-        case identifier(text, loc,):
+        case .identifier(text, loc,):
             return text
-        case plus:
+        case .plus:
             return "plus"
     return "?"
 
 具名取文本|func(_t: Token,) -> (String,):
     match _t:
-        case identifier(text: s, loc: l,):
+        case .identifier(text: s, loc: l,):
             return s
-        case plus:
+        case .plus:
             return "plus"
     return "?"
 
 取位置|func(_t: Token,) -> (I32,):
     match _t:
-        case identifier(_, l,):
+        case .identifier(_, l,):
             return l
-        case plus:
+        case .plus:
             return 0
     return -1
 
