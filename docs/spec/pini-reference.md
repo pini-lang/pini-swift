@@ -725,6 +725,9 @@ match 可选值:
 
 `^T` ≡ `Result<T, E>`
 
+`E` 在 `^T` 里不自由：取内建错误值 `Error` 或 `CancelError`，失败码 `1` / `2`（见 §9.7）。
+需要别的错误类型时写完整的 `Result<T, E>`。
+
 ```
 let r: ^I32 = .ok(42)
 let e: ^I32 = .err(Error())
@@ -732,6 +735,26 @@ let e: ^I32 = .err(Error())
 
 - `.ok(值)` / `.err(错)`
 - `^右值` 解包糖 ≡ `try 右值 else err: return err`
+
+**解包**：
+
+```
+match 结果值:
+    case .ok(值,):
+        ...
+    case .err(错,):
+        ...
+```
+
+臂写点号 `.ok` / `.err`，括号必须给出，括号内子模式数等于载荷数（两者都是 `1`）。
+`case .ok:` 报 `E4-005`；写别的名字报 `E3-006`；两臂缺一且无 `case _:` 报 `E3-007`。
+限定名只认 `Result.ok` / `Result.err`，写其它所有者按 `E3-006` 处理。
+
+**err 分支绑定的类型**：`Error` 与 `CancelError` 的共同上界，可读 `.message`、可 `isCancel`、
+可直接 `print`（见 §8.4）。
+
+TODO(err 载荷还型) 降载把 err 载荷当擦除后的机器字，臂内绑定拿不到错误值类型，`.message`
+等成员读无法定型。承接：IR 契约补还型入口后，匹配臂按 `Error` 上界定型。
 
 **函数返回 Result**：
 
@@ -1908,6 +1931,7 @@ match 值:
 - 字面量 match 静态不检查穷尽性；未命中且无 `case _:` 时**运行时静默**（不 panic）
 - `case` 的名字按**被匹配值的类型**解析：名字不属于该类型的枚举 → 编译期错误 `unknownMatchCase`
   （如标量上写枚举用例）；被匹配值的类型判不出时不校验
+- `^T` 的 `ok` / `err` 同按被匹配值的类型解析，臂写法与穷尽性见 §3.9
 - `nil` 只在可空类型上成立；不可空类型上写 `case nil:` → 同样 `unknownMatchCase`
 - 限定名写明的父枚举须与被匹配值的类型一致 → 否则同样是 `unknownMatchCase`
 - 被匹配值是枚举时，**字面量臂**（int/float/string/bool）永不匹配 → 同样 `unknownMatchCase`
@@ -3630,6 +3654,8 @@ _数学.计算()         ; 也可限定调用
 ```
 ^T     ≡ Result<T, E>
 ```
+
+`E` 的取值与 `^T` 的失败码见 §3.9；解包臂的写法、绑定数与穷尽性同见 §3.9。
 
 **构造**：
 
