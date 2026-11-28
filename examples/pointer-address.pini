@@ -1,6 +1,6 @@
-; 取址：`&x` 之后再写 x —— 解释器读快照里的旧值，LLVM 读真地址的新值
+; 取址：`&x` 之后再写 x —— 目标语义是两通道都读真地址的新值
 ; 运行：pini run examples/pointer-address.pini / pini run-llvm examples/pointer-address.pini
-; 预期输出：run 打 7、run-llvm 打 9；差异已裁「统一到真引用」，登记在 tools/ir-parity-baseline.tsv
+; 预期输出：LLVM 与自举 run 打 9，宿主 run 仍打 7（快照）；缺口登记在 tools/ir-parity-baseline.tsv
 main|func() -> ():
     var x: I64 = 7
     var p = unsafe (&x)

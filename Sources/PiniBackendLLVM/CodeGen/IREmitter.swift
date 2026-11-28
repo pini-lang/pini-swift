@@ -1203,6 +1203,16 @@ public final class IREmitter {
         return address
     }
 
+    /// 临时缓冲的槽：普通体收在入口块，可恢复体落任务帧 —— 体让出等于从栈返回，栈上的槽活不过那次返回。
+    ///  行不通  就地发：循环体里的那一格每轮向栈要一次，栈到函数返回才还，长循环按迭代数吃满栈。
+    private func entryAlloca(name: String, type: String) {
+        guard frameMode == .resumable else {
+            slotAllocas += builder.fmtAlloca(name: name, type: type) + "\n"
+            return
+        }
+        frameSlotDecls.append((name: name, spelling: type))
+    }
+
     /// 声明一个值变量的槽：被闭包捕获的那一族走堆槽，其余照旧（栈 alloca / 帧槽）。
     /// 捕获必须上堆，因为闭包 env 存的就是这个槽的地址，而闭包可能比创建帧活得久 ——
     /// 栈上的槽随帧作废。上堆后帧与闭包读写同一个盒；堆槽不登记释放，寿命归闭包。
@@ -1967,7 +1977,7 @@ public final class IREmitter {
                 let spelling = payloadSpelling(matchCase, slot)
                 let value = loadPayload(matchCase, scrutineeValue.ssaName, slot, spelling)
                 let slotName = freshSlot(for: bindingName)
-                bodyIR += builder.fmtAlloca(name: slotName, type: spelling) + "\n"
+                entryAlloca(name: slotName, type: spelling)
                 // 绑定变量持有一份独立份额：载荷仍属于聚合，聚合（含临时值）在分派结束后归还。
                 if let bindingType = payloadType(matchCase, slot), bindingType.holdsAShare {
                     _ = retainCounted(value, type: bindingType)
@@ -2079,7 +2089,7 @@ public final class IREmitter {
         let loweredValue = emitExpr(value)
         let storedValue = applyAdopt(adopt, loweredValue, type: elementType)
         let boxPtr = builder.freshTemp()
-        bodyIR += builder.fmtAlloca(name: boxPtr, type: elemSpelling) + "\n"
+        entryAlloca(name: boxPtr, type: elemSpelling)
         bodyIR += builder.fmtStore(value: storedValue.ssaName, type: elemSpelling, ptr: boxPtr) + "\n"
         let raw = builder.freshTemp()
         bodyIR += " \(raw) = bitcast %pini_array* \(containerValue.ssaName) to ptr\n"
@@ -2368,7 +2378,7 @@ public final class IREmitter {
         bodyIR += " \(len) = call i32 @\(lenFn)(ptr \(raw))\n"
 
         let indexSlot = freshSlot(for: "for.index")
-        bodyIR += builder.fmtAlloca(name: indexSlot, type: "i32") + "\n"
+        entryAlloca(name: indexSlot, type: "i32")
         bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: indexSlot) + "\n"
 
         bodyIR += builder.fmtBr(labelName: condLabel) + "\n"
@@ -2775,7 +2785,9 @@ public final class IREmitter {
                     ?? returnType.llvmSpelling
                 bodyIR += " \(temp) = call \(head) \(callee)(\(argList))\n"
                 releaseCallArguments(args)
-                return IRValue(llvmType: returnType.llvmSpelling, ssaName: temp)
+                let produced = IRValue(llvmType: returnType.llvmSpelling, ssaName: temp)
+                holdCallResult(produced, type: returnType)
+                return produced
             }
             let head = variadic.map { "void \($0.callType)" } ?? "void"
             bodyIR += " call \(head) \(callee)(\(argList))\n"
@@ -3277,7 +3289,7 @@ public final class IREmitter {
         usesFileTryRead = true
         let pathValue = emitExpr(path)
         let errSlot = freshSlot(for: "tryread.err")
-        bodyIR += builder.fmtAlloca(name: errSlot, type: "i64") + "\n"
+        entryAlloca(name: errSlot, type: "i64")
         let content = builder.freshTemp()
         bodyIR +=
             " \(content) = call ptr @pini_try_read_file(ptr \(pathValue.ssaName), ptr \(errSlot))\n"
@@ -3729,7 +3741,7 @@ public final class IREmitter {
         let accept = "@\(IRName.mangle(PredefinedDecls.acceptMethodName))__\(typeName)"
         let pick = "@\(IRName.mangle(PredefinedDecls.pickMethodName))__\(typeName)"
         let binding = builder.freshTemp()
-        bodyIR += builder.fmtAlloca(name: binding, type: "[3 x ptr]") + "\n"
+        entryAlloca(name: binding, type: "[3 x ptr]")
         for (index, value) in [sched.ssaName, accept, pick].enumerated() {
             let field = builder.freshTemp()
             bodyIR += builder.fmtGEPByteOffset(name: field, base: binding, offset: "\(index * 8)") + "\n"
@@ -4566,13 +4578,13 @@ public final class IREmitter {
         bodyIR += " \(create) = call ptr @pini_array_create(i32 \(length))\n"
         emitAggregateElementHooks(create, elementType: elementType)
         let handleSlot = builder.freshTemp()
-        bodyIR += builder.fmtAlloca(name: handleSlot, type: "%pini_array*") + "\n"
+        entryAlloca(name: handleSlot, type: "%pini_array*")
         let createHandle = builder.freshTemp()
         bodyIR += " \(createHandle) = bitcast ptr \(create) to %pini_array*\n"
         bodyIR += builder.fmtStore(value: createHandle, type: "%pini_array*", ptr: handleSlot) + "\n"
 
         let kSlot = builder.freshTemp()
-        bodyIR += builder.fmtAlloca(name: kSlot, type: "i32") + "\n"
+        entryAlloca(name: kSlot, type: "i32")
         bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: kSlot) + "\n"
         let id = builder.freshLabel()
         let condLabel = "slice.cond.\(id)"
@@ -4652,7 +4664,7 @@ public final class IREmitter {
         let (elemSpelling, width, elemTag) = arrayElementABI(elementType, allowAggregate: true)
         adoptElement(elementNode, elementValue, type: elementType)
         let boxPtr = builder.freshTemp()
-        bodyIR += builder.fmtAlloca(name: boxPtr, type: elemSpelling) + "\n"
+        entryAlloca(name: boxPtr, type: elemSpelling)
         bodyIR += builder.fmtStore(value: elementValue.ssaName, type: elemSpelling, ptr: boxPtr) + "\n"
         let raw = builder.freshTemp()
         bodyIR += " \(raw) = bitcast %pini_array* \(receiver.ssaName) to ptr\n"
@@ -4783,7 +4795,7 @@ public final class IREmitter {
         let effective = tailCountIndex(index: indexValue.ssaName, count: count)
 
         let slot = builder.freshTemp()
-        bodyIR += builder.fmtAlloca(name: slot, type: aggregate) + "\n"
+        entryAlloca(name: slot, type: aggregate)
         let id = builder.freshLabel()
         let someLabel = "get.some.\(id)"
         let noneLabel = "get.none.\(id)"
@@ -4846,7 +4858,7 @@ public final class IREmitter {
             " \(present) = call i32 @pini_dict_contains(ptr \(raw), ptr \(keyBox), "
             + "i32 \(keyWidth), i32 \(keyTag))\n"
         let slot = builder.freshTemp()
-        bodyIR += builder.fmtAlloca(name: slot, type: aggregate) + "\n"
+        entryAlloca(name: slot, type: aggregate)
         let id = builder.freshLabel()
         let someLabel = "dget.some.\(id)"
         let noneLabel = "dget.none.\(id)"
@@ -5116,6 +5128,24 @@ public final class IREmitter {
         for value in values { releaseHeldTemporary(value) }
     }
 
+    /// 调用结果入账：被调方在 `return` 上已按移交办，调用方接手的是一份干净的 +1。
+    ///  注意  不入账就没有任何消费点会还它 —— 比较、实参与丢弃位置都只处理账上的临时值。
+    private func holdCallResult(_ value: IRValue, type: IRType) {
+        guard !value.ssaName.isEmpty else { return }
+        switch type.shareClass {
+        case .aggregate:
+            if type.holdsAShare { holdAggregate(name: value.ssaName, type: type) }
+        case .valueBox, .retained:
+            if isRefcountedString(type) {
+                holdString(value.ssaName)
+            } else {
+                holdBox(name: value.ssaName, type: type)
+            }
+        case .inert:
+            break
+        }
+    }
+
     /// C 变参调用点的实参表。固定前缀原样传，变参尾按 C 的默认实参提升改写形状。
     /// 这件事必须在这里做：LLVM 看到的是 IR，不是源码，`clang` 替我们补不了。
     private func emitVariadicArguments(
@@ -5204,7 +5234,7 @@ public final class IREmitter {
         for (index, element) in elements.enumerated() {
             let value = emitExpr(element)
             let boxPtr = builder.freshTemp()
-            bodyIR += builder.fmtAlloca(name: boxPtr, type: elemSpelling) + "\n"
+            entryAlloca(name: boxPtr, type: elemSpelling)
             bodyIR += builder.fmtStore(value: value.ssaName, type: elemSpelling, ptr: boxPtr) + "\n"
             adoptElement(element, value, type: elementType)
             let nextRaw = builder.freshTemp()
@@ -5298,7 +5328,7 @@ public final class IREmitter {
     /// 与集合元素使用（C ABI 以指针传箱）。
     private func boxValue(_ value: IRValue, spelling: String) -> String {
         let boxPtr = builder.freshTemp()
-        bodyIR += builder.fmtAlloca(name: boxPtr, type: spelling) + "\n"
+        entryAlloca(name: boxPtr, type: spelling)
         bodyIR += builder.fmtStore(value: value.ssaName, type: spelling, ptr: boxPtr) + "\n"
         return boxPtr
     }
@@ -5406,7 +5436,7 @@ public final class IREmitter {
     private func emitShortCircuit(op: IRLogicalOp, lhs: IRExpr, rhs: IRExpr) -> IRValue {
         let left = emitExpr(lhs)
         let slot = builder.freshTemp()
-        bodyIR += builder.fmtAlloca(name: slot, type: "i1") + "\n"
+        entryAlloca(name: slot, type: "i1")
         bodyIR += builder.fmtStore(value: left.ssaName, type: "i1", ptr: slot) + "\n"
         let id = builder.freshLabel()
         let rhsLabel = "logic.rhs.\(id)"
@@ -5449,6 +5479,9 @@ public final class IREmitter {
                 op: op, operandType: lhsValue.llvmType, operandIRType: lhsType, temp: temp,
                 lhs: lhsValue, rhs: rhsValue)
             bodyIR += " \(temp) = \(predicate)\n"
+            // 比较只读操作数：本层新造的那份（拼接结果、调用返回）用完即还，借用值不在账上。
+            releaseOperand(lhs, lhsValue)
+            releaseOperand(rhs, rhsValue)
             return IRValue(llvmType: "i1", ssaName: temp)
         }
 
@@ -5694,7 +5727,7 @@ public final class IREmitter {
             let count = builder.freshTemp()
             bodyIR += " \(count) = call i32 @pini_array_len(ptr \(raw))\n"
             let kSlot = builder.freshTemp()
-            bodyIR += builder.fmtAlloca(name: kSlot, type: "i32") + "\n"
+            entryAlloca(name: kSlot, type: "i32")
             bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: kSlot) + "\n"
             let id = builder.freshLabel()
             let condLabel = "fmt.cond.\(id)"
@@ -5922,7 +5955,7 @@ public final class IREmitter {
             let count = builder.freshTemp()
             bodyIR += " \(count) = call i32 @pini_dict_len(ptr \(raw))\n"
             let kSlot = builder.freshTemp()
-            bodyIR += builder.fmtAlloca(name: kSlot, type: "i32") + "\n"
+            entryAlloca(name: kSlot, type: "i32")
             bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: kSlot) + "\n"
             let id = builder.freshLabel()
             let condLabel = "fmtd.cond.\(id)"
@@ -5991,7 +6024,7 @@ public final class IREmitter {
             let count = builder.freshTemp()
             bodyIR += " \(count) = call i32 @pini_set_len(ptr \(raw))\n"
             let kSlot = builder.freshTemp()
-            bodyIR += builder.fmtAlloca(name: kSlot, type: "i32") + "\n"
+            entryAlloca(name: kSlot, type: "i32")
             bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: kSlot) + "\n"
             let id = builder.freshLabel()
             let condLabel = "fmts.cond.\(id)"
@@ -6298,7 +6331,9 @@ public final class IREmitter {
             let retTemp = builder.freshTemp()
             bodyIR += " \(retTemp) = call \(returnType.llvmSpelling) \(code)(\(argList.joined(separator: ", ")))\n"
             releaseCallArguments(argValues)
-            return IRValue(llvmType: returnType.llvmSpelling, ssaName: retTemp)
+            let produced = IRValue(llvmType: returnType.llvmSpelling, ssaName: retTemp)
+            holdCallResult(produced, type: returnType)
+            return produced
         }
         bodyIR += " call void \(code)(\(argList.joined(separator: ", ")))\n"
         releaseCallArguments(argValues)
@@ -6779,7 +6814,7 @@ public final class IREmitter {
         for (index, paramType) in paramTypes.enumerated() {
             let spelling = paramType.llvmSpelling
             let slot = "%arg\(index)_slot"
-            bodyIR += builder.fmtAlloca(name: slot, type: spelling) + "\n"
+            entryAlloca(name: slot, type: spelling)
             bodyIR += builder.fmtStore(value: "%arg\(index)", type: spelling, ptr: slot) + "\n"
             // 体内语句按源码名引用形参；声明顺序与 `paramTypes` 一一对应
             // （IRLowerer 的契约）。
@@ -6857,14 +6892,14 @@ public final class IREmitter {
     /// 追加走 `pini_str_append_cstr` 的容量倍增，结果长度不再有 4096 字节上限，总代价 O(总长)。
     private func emitArrayJoin(array: IRValue, sep: String, elementType: IRType) -> IRValue {
         let bufSlot = builder.freshTemp()
-        bodyIR += builder.fmtAlloca(name: bufSlot, type: "i8*") + "\n"
+        entryAlloca(name: bufSlot, type: "i8*")
         bodyIR += builder.fmtStore(value: "null", type: "i8*", ptr: bufSlot) + "\n"
         let raw = builder.freshTemp()
         bodyIR += " \(raw) = bitcast %pini_array* \(array.ssaName) to ptr\n"
         let count = builder.freshTemp()
         bodyIR += " \(count) = call i32 @pini_array_len(ptr \(raw))\n"
         let idxSlot = builder.freshTemp()
-        bodyIR += builder.fmtAlloca(name: idxSlot, type: "i32") + "\n"
+        entryAlloca(name: idxSlot, type: "i32")
         bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: idxSlot) + "\n"
         let id = builder.freshLabel()
         let header = "join.hdr.\(id)"
@@ -6942,7 +6977,7 @@ public final class IREmitter {
     private func emitInterpString(parts: [IRExpr]) -> IRValue {
         guard !parts.isEmpty else { return emitStringConstant("") }
         let bufSlot = builder.freshTemp()
-        bodyIR += builder.fmtAlloca(name: bufSlot, type: "i8*") + "\n"
+        entryAlloca(name: bufSlot, type: "i8*")
         bodyIR += builder.fmtStore(value: "null", type: "i8*", ptr: bufSlot) + "\n"
         for part in parts {
             let piece = emitStringPiece(part)
@@ -6991,7 +7026,7 @@ public final class IREmitter {
         switch type {
         case .i32:
             let buf = builder.freshTemp()
-            bodyIR += " \(buf) = alloca i8, i64 32\n"
+            entryAlloca(name: buf, type: "[32 x i8]")
             bodyIR += " call i32 (ptr, i64, ptr, ...) @snprintf(ptr \(buf), i64 31, ptr @fmt_int, i32 \(value.ssaName))\n"
             return IRValue(llvmType: "i8*", ssaName: buf)
         case .f64:
@@ -7010,7 +7045,7 @@ public final class IREmitter {
             return charToCString(value)
         case .array(let elementType):
             let bufSlot = builder.freshTemp()
-            bodyIR += builder.fmtAlloca(name: bufSlot, type: "i8*") + "\n"
+            entryAlloca(name: bufSlot, type: "i8*")
             bodyIR += builder.fmtStore(value: "null", type: "i8*", ptr: bufSlot) + "\n"
             let open = emitStringConstant("[")
             appendToBuffer(open.ssaName, bufferSlot: bufSlot)
@@ -7019,7 +7054,7 @@ public final class IREmitter {
             let count = builder.freshTemp()
             bodyIR += " \(count) = call i32 @pini_array_len(ptr \(raw))\n"
             let idxSlot = builder.freshTemp()
-            bodyIR += builder.fmtAlloca(name: idxSlot, type: "i32") + "\n"
+            entryAlloca(name: idxSlot, type: "i32")
             bodyIR += builder.fmtStore(value: "0", type: "i32", ptr: idxSlot) + "\n"
             let id = builder.freshLabel()
             let header = "sarr.hdr.\(id)"
