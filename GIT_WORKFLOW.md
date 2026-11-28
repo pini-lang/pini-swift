@@ -91,9 +91,9 @@ ID 命名规则：`human:<handle>` 或 `agent:<handle>`，需**全局唯一**且
 - **推送**：合并通过后推 `origin main`。
 - **回退**：合并在钩子上失败就回分支修；已推送的 `main` 出错用新提交前滚，不在 `main` 上
   rebase 或 force push。
-- **供种子钉住**：合并后的 `main` 哈希即 `pini-bootstrap` 的 `seed/pin.toml` 要钉的值。
-  只改规范与文档不升种子，改 `Sources/` 或 `Package.swift` 才升；`seed/bin.toml` 重登、
-  生成器与全量门禁的步骤见对方仓 §4.2。
+- **供种子钉住**：合并后的 `main` 哈希是 `pini-bootstrap` 的 `seed/pin.toml` 要钉的值，
+  条件是改了 `Sources/` 或 `Package.swift`。只改规范与文档时 rev 不动；对方改了自己的
+  源码则只重登产物摘要。换宿主与重登的步骤见对方仓 §4.2。
 
 ---
 
