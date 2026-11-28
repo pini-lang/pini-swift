@@ -2276,11 +2276,20 @@ public func pini_module_root() -> UnsafeMutablePointer<CChar>? {
 
 /// `pini_exe_dir` —— 可执行文件所在目录的绝对路径，工具链按它定位随行的标准库与运行时库。
 /// 与进程工作目录、程序基准都无关；软链先解到实体文件，随行资源才落在真实安装处。
-/// 取不到答空串。分配契约同 `pini_module_root`：带头串、调用方按 `pini_str_release` 归还。
+/// 返回值是**借用**指针、活到进程结束，调用方不释放；取不到答空串。
 @_cdecl("pini_exe_dir")
 public func pini_exe_dir() -> UnsafeMutablePointer<CChar>? {
-    _bkStrDup(_bkExecutableDirectory())
+    _bkExeDirLock.lock()
+    defer { _bkExeDirLock.unlock() }
+    if let cached = _bkExeDirCached { return cached }
+    let buffer = strdup(_bkExecutableDirectory())
+    _bkExeDirCached = buffer
+    return buffer
 }
+
+/// 目录只解析一次：结果是进程级常量，重复查询不该重复分配。
+nonisolated(unsafe) private var _bkExeDirCached: UnsafeMutablePointer<CChar>? = nil
+private let _bkExeDirLock = NSLock()
 
 /// 可执行文件目录：Darwin 走 `_NSGetExecutablePath`，Linux 读 `/proc/self/exe`，末路取 `argv[0]`。
 /// 三路都经一遍软链解析：经 PATH 里的软链调用时，随行资源要落在实体产物旁而不是软链所在目录。
