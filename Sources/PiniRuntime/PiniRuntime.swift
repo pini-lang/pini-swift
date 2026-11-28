@@ -2274,6 +2274,51 @@ public func pini_module_root() -> UnsafeMutablePointer<CChar>? {
     return _bkStrDup(base ?? FileManager.default.currentDirectoryPath)
 }
 
+/// `pini_exe_dir` —— 可执行文件所在目录的绝对路径，工具链按它定位随行的标准库与运行时库。
+/// 与进程工作目录、程序基准都无关；软链先解到实体文件，随行资源才落在真实安装处。
+/// 取不到答空串。分配契约同 `pini_module_root`：带头串、调用方按 `pini_str_release` 归还。
+@_cdecl("pini_exe_dir")
+public func pini_exe_dir() -> UnsafeMutablePointer<CChar>? {
+    _bkStrDup(_bkExecutableDirectory())
+}
+
+/// 可执行文件目录：Darwin 走 `_NSGetExecutablePath`，Linux 读 `/proc/self/exe`，末路取 `argv[0]`。
+/// 三路都经一遍软链解析：经 PATH 里的软链调用时，随行资源要落在实体产物旁而不是软链所在目录。
+private func _bkExecutableDirectory() -> String {
+    let raw = _bkExecutablePath()
+    guard !raw.isEmpty else { return "" }
+    let resolved = URL(fileURLWithPath: raw).resolvingSymlinksInPath().path
+    return (resolved as NSString).deletingLastPathComponent
+}
+
+/// 可执行文件路径的裸取法；拿不到答空串，由调用方转成目录。
+private func _bkExecutablePath() -> String {
+    #if canImport(Darwin)
+        var size = UInt32(4096)
+        var buffer = [CChar](repeating: 0, count: Int(size))
+        var ok = _NSGetExecutablePath(&buffer, &size) == 0
+        if !ok {
+            buffer = [CChar](repeating: 0, count: max(Int(size), 1))
+            ok = _NSGetExecutablePath(&buffer, &size) == 0
+        }
+        if ok, !buffer.isEmpty {
+            return buffer.withUnsafeBufferPointer { String(cString: $0.baseAddress!) }
+        }
+    #elseif canImport(Glibc)
+        var buffer = [CChar](repeating: 0, count: 4096)
+        let written = readlink("/proc/self/exe", &buffer, buffer.count - 1)
+        if written > 0 {
+            buffer[Int(written)] = 0
+            return buffer.withUnsafeBufferPointer { String(cString: $0.baseAddress!) }
+        }
+    #endif
+    guard let first = CommandLine.arguments.first, !first.isEmpty else { return "" }
+    return URL(
+        fileURLWithPath: first,
+        relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    ).standardized.path
+}
+
 /// `substring(start, end) -> String`：第 2 参数是 end（绝对下标）而非长度，按字素簇切、负值尾计数、
 /// 双端夹取到 `[0, len]`、`hi <= lo` 得空串——逐字节 memcpy 表达不了字素语义。分配也必须在此发生：
 /// 调用点 `alloca` 在循环里不到函数返回不回收。语义镜像 `IRExecutor.stringSubstring`；结果 strdup、调用方释放。
