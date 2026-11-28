@@ -2383,6 +2383,7 @@ public class Parser {
 
             let caseLoc = currentLocation
             advance()
+            let patternLoc = currentLocation
 
             let pattern: MatchPattern
             var spelling: EnumCaseSpelling = .bare
@@ -2479,7 +2480,8 @@ public class Parser {
                     bindings: bindings,
                     block: caseBlock,
                     location: caseLoc,
-                    spelling: spelling
+                    spelling: spelling,
+                    patternLocation: patternLoc
                 ))
 
             skipNewlines()

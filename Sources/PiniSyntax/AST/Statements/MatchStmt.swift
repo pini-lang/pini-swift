@@ -50,21 +50,26 @@ public struct MatchCase: Equatable, ASTNode, Sendable {
     public let pattern: MatchPattern
     public let bindings: [MatchBinding]
     public let block: Block
+    /// `case` 关键字的位置：语句与块级诊断的锚点。
     public let location: SourceLocation
     public let spelling: EnumCaseSpelling
+    /// 模式起点：模式级诊断报这里，与自举侧同一列。
+    public let patternLocation: SourceLocation
 
     public init(
         pattern: MatchPattern,
         bindings: [MatchBinding],
         block: Block,
         location: SourceLocation,
-        spelling: EnumCaseSpelling = .bare
+        spelling: EnumCaseSpelling = .bare,
+        patternLocation: SourceLocation
     ) {
         self.pattern = pattern
         self.bindings = bindings
         self.block = block
         self.location = location
         self.spelling = spelling
+        self.patternLocation = patternLocation
     }
 }
 

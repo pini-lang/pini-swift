@@ -98,7 +98,7 @@ package enum PredefinedDecls {
                                             location: loc),
                                     ],
                                     location: loc),
-                                location: loc),
+                                location: loc, patternLocation: loc),
                             MatchCase(
                                 pattern: .enumCase("none"), bindings: [],
                                 block: Block(
@@ -109,7 +109,7 @@ package enum PredefinedDecls {
                                             location: loc)
                                     ],
                                     location: loc),
-                                location: loc),
+                                location: loc, patternLocation: loc),
                         ],
                         location: loc),
                 ],

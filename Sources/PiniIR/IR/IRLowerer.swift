@@ -5370,7 +5370,9 @@ public enum IRLowerer {
             // 故在此就拒，不让它变成永不会执行的分支。
             for matchCase in cases {
                 if case .enumCase(let name) = matchCase.pattern {
-                    throw SemanticError.unknownMatchCase(caseName: name, location: matchCase.location)
+                    let shown = (matchCase.spelling == .nilKeyword) ? "nil" : name
+                    throw SemanticError.unknownMatchCase(
+                        caseName: shown, location: matchCase.patternLocation)
                 }
             }
             var irCases: [IRMatchCase] = []

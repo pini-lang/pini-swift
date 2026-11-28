@@ -2590,7 +2590,7 @@ public final class TypeChecker {
                 TypeError.argumentCountMismatch(
                     expected: fields.count,
                     got: c.bindings.count,
-                    location: c.location
+                    location: c.patternLocation
                 ))
             return
         }

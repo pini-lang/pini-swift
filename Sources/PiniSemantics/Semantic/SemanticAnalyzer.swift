@@ -1031,7 +1031,7 @@ public final class SemanticAnalyzer {
         if !resolvedPatterns.isEmpty && !unresolvedEnumCases.isEmpty {
             let bad = unresolvedEnumCases[0]
             if case .enumCase(let name) = bad.pattern {
-                throw SemanticError.unknownMatchCase(caseName: name, location: bad.location)
+                throw SemanticError.unknownMatchCase(caseName: name, location: bad.patternLocation)
             }
         }
 
@@ -1043,11 +1043,13 @@ public final class SemanticAnalyzer {
             return
         }
 
+        // 主体确定不是枚举：任何枚举项都不属于它，`nil` 也不例外。只按叶名查表会漏掉
+        // 拼写错误与内建 some/none/ok/err，让 check 与 emit 分叉。
         if isDefinitelyNonEnumType(scrutineeType) {
             for mc in cases {
-                if case .enumCase(let name) = mc.pattern, !(enumCaseParents[name] ?? []).isEmpty {
-                    throw SemanticError.unknownMatchCase(caseName: name, location: mc.location)
-                }
+                guard case .enumCase(let name) = mc.pattern else { continue }
+                let shown = (mc.spelling == .nilKeyword) ? "nil" : name
+                throw SemanticError.unknownMatchCase(caseName: shown, location: mc.patternLocation)
             }
         }
     }
@@ -1066,14 +1068,17 @@ public final class SemanticAnalyzer {
                 // 跨枚举同名时叶名同时属于两个父枚举。
                 if case .qualified(let owner) = mc.spelling, owner != enumName {
                     throw SemanticError.unknownMatchCase(
-                        caseName: owner + "." + name, location: mc.location)
+                        caseName: owner + "." + name, location: mc.patternLocation)
                 }
                 if !(enumCaseParents[name] ?? []).contains(enumName) {
-                    throw SemanticError.unknownMatchCase(caseName: name, location: mc.location)
+                    throw SemanticError.unknownMatchCase(caseName: name, location: mc.patternLocation)
+                }
+                if let dup = duplicateBinding(mc.bindings) {
+                    throw SemanticError.redeclaredSymbol(name: dup, location: mc.patternLocation)
                 }
             case .intLiteral, .floatLiteral, .stringLiteral, .boolLiteral:
                 // 被匹配值是枚举 ⇒ 字面量与任何用例都不相等
-                throw SemanticError.unknownMatchCase(caseName: mc.pattern.description, location: mc.location)
+                throw SemanticError.unknownMatchCase(caseName: mc.pattern.description, location: mc.patternLocation)
             }
         }
         let allCases = enumAllCases[enumName] ?? []
@@ -1083,6 +1088,15 @@ public final class SemanticAnalyzer {
             return
         }
         throw SemanticError.nonExhaustiveMatch(missingCases: missing, location: location)
+    }
+
+    /// 臂内绑定重名：`_` 是占位不查，返回首个重复的名字。
+    private func duplicateBinding(_ bindings: [MatchBinding]) -> String? {
+        var seen = Set<String>()
+        for binding in bindings where binding.varName != "_" {
+            if !seen.insert(binding.varName).inserted { return binding.varName }
+        }
+        return nil
     }
 
     private func checkBlock(_ block: Block) throws {

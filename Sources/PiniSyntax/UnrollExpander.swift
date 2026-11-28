@@ -197,7 +197,7 @@ extension UnrollExpander {
                         MatchCase(
                             pattern: $0.pattern, bindings: $0.bindings,
                             block: block($0.block, map: map), location: $0.location,
-                            spelling: $0.spelling)
+                            spelling: $0.spelling, patternLocation: $0.patternLocation)
                     },
                     location: loc)
             case .scopedBlock(let label, let body, let loc):
