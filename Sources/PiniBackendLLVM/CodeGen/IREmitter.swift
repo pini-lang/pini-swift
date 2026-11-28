@@ -1203,10 +1203,14 @@ public final class IREmitter {
         return address
     }
 
-    /// 临时缓冲的栈槽：与局部槽同规，`alloca` 收在入口块。
+    /// 临时缓冲的槽：普通体收在入口块，可恢复体落任务帧 —— 体让出等于从栈返回，栈上的槽活不过那次返回。
     ///  行不通  就地发：循环体里的那一格每轮向栈要一次，栈到函数返回才还，长循环按迭代数吃满栈。
     private func entryAlloca(name: String, type: String) {
-        slotAllocas += builder.fmtAlloca(name: name, type: type) + "\n"
+        guard frameMode == .resumable else {
+            slotAllocas += builder.fmtAlloca(name: name, type: type) + "\n"
+            return
+        }
+        frameSlotDecls.append((name: name, spelling: type))
     }
 
     /// 声明一个值变量的槽：被闭包捕获的那一族走堆槽，其余照旧（栈 alloca / 帧槽）。
@@ -7022,7 +7026,7 @@ public final class IREmitter {
         switch type {
         case .i32:
             let buf = builder.freshTemp()
-            entryAlloca(name: buf, type: "i8, i64 32")
+            entryAlloca(name: buf, type: "[32 x i8]")
             bodyIR += " call i32 (ptr, i64, ptr, ...) @snprintf(ptr \(buf), i64 31, ptr @fmt_int, i32 \(value.ssaName))\n"
             return IRValue(llvmType: "i8*", ssaName: buf)
         case .f64:
