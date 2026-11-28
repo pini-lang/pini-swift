@@ -304,18 +304,39 @@ public enum Value {
     case null
 }
 
-/// `*T` 原始指针的运行时承载：`pointer` 是裸地址（C ABI，不泄漏 Swift 类型），`elemType` 给 load/store 的编解码宽度，
-/// `freesMemory` 表示解释器是否负责释放（`&` 快照内存归解释器，`malloc` 内存归用户的 `free`）。
-/// 引用语义：复制共享同一地址，`copyIfStruct` 对非 `.structInstance` 原样返回。
+/// 变量槽指针：`&名` 的读写入口回到绑定所在的作用域层，不经内存地址。
+/// `identity` 由环境身份与变量名拼成：同一变量的两次取址相等，不同变量不等。
+/// 层被整体丢弃后读写报未定义，与悬垂指针同义。
+public final class PointerSlot {
+    public let read: () throws -> Value
+    public let write: (Value) throws -> Void
+    public let identity: String
+
+    public init(read: @escaping () throws -> Value, write: @escaping (Value) throws -> Void, identity: String) {
+        self.read = read
+        self.write = write
+        self.identity = identity
+    }
+}
+
+/// `*T` 原始指针：`pointer` 是裸地址（C ABI），`elemType` 给 load/store 的编解码宽度，
+/// `freesMemory` 表示解释器是否负责释放。`slot` 非 nil 时是槽指针，读写回到变量绑定，
+/// `pointer` 只占位、不解引用也不可传给 C；引用语义下复制共享同一地址。
 public final class RawPointerValue {
     public let pointer: UnsafeMutableRawPointer
     public let elemType: TypeAnnotation?
+    /// 槽指针的读写入口；裸地址形态为 nil。
+    public let slot: PointerSlot?
     private let freesMemory: Bool
 
-    public init(pointer: UnsafeMutableRawPointer, elemType: TypeAnnotation?, freesMemory: Bool) {
+    public init(
+        pointer: UnsafeMutableRawPointer, elemType: TypeAnnotation?, freesMemory: Bool,
+        slot: PointerSlot? = nil
+    ) {
         self.pointer = pointer
         self.elemType = elemType
         self.freesMemory = freesMemory
+        self.slot = slot
     }
 
     deinit {
@@ -340,7 +361,7 @@ public final class RawPointerValue {
         }
     }
 
-    /// 从值推断 `*T` 元素类型（`&` 快照 / addressof 用）。int→I64、float→F64、bool→Bool。
+    /// 从值推断 `*T` 元素类型（槽指针的占位元素类型用）。int→I64、float→F64、bool→Bool。
     public static func elemType(for value: Value) -> TypeAnnotation? {
         switch value {
         case .int: return .simple(name: "I64", location: SourceLocation(line: 0, column: 0, fileName: "<builtin>"))
@@ -539,6 +560,9 @@ extension Value: Equatable {
         case (.set(let l), .set(let r)):
             return l == r
         case (.rawPointer(let l), .rawPointer(let r)):
+            // 槽指针按变量身份比：槽形态没有可比的内存地址，按占位地址比会让两个不同变量相等。
+            if let ls = l.slot, let rs = r.slot { return ls.identity == rs.identity }
+            if l.slot != nil || r.slot != nil { return false }
             return l.pointer == r.pointer
         case (.null, .null): return true
         default: return false

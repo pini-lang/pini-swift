@@ -1,4 +1,3 @@
 ﻿# IR 差分探针的已知缺口：四列，TAB 分隔 —— fixture / verdict / 处置 / 理由。
 # 处置只写 declared（语言按文档如此，两通道本就不该相同）或 debt（实现待修，登记只为让门禁能跑）。
 # 只许缩小 —— 某行转绿时探针会红，提示删掉它。
-examples/pointer-address.pini	GAP_BEHAVIOR	debt	宿主解释器 `&x` 取快照（打 7），LLVM 与自举取真地址（打 9）；ir-contract 已裁统一到真引用，宿主求值器待修
