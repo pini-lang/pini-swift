@@ -108,7 +108,11 @@ public enum ConstantFolder {
             // match 的通配兜底以 `case _:` 进入 cases，无独立字段。
             return .matchStatement(
                 value: fold(val),
-                cases: cases.map { MatchCase(pattern: $0.pattern, bindings: $0.bindings, block: fold($0.block), location: $0.location) },
+                cases: cases.map {
+                    MatchCase(
+                        pattern: $0.pattern, bindings: $0.bindings, block: fold($0.block),
+                        location: $0.location, spelling: $0.spelling)
+                },
                 location: loc)
         case .expressionStmt(let expr, let loc):
             return .expressionStmt(expr: fold(expr), location: loc)

@@ -812,7 +812,7 @@ extension Printer {
     }
 
     static func matchCaseHead(_ node: MatchCase, hints: PrintHints) -> String {
-        let pattern = matchPattern(node.pattern, hints: hints)
+        let pattern = matchPattern(node.pattern, spelling: node.spelling, hints: hints)
         guard !node.bindings.isEmpty else { return "case \(pattern):" }
         let parts = node.bindings.map { binding -> String in
             guard let param = binding.paramName else { return binding.varName }
@@ -821,10 +821,12 @@ extension Printer {
         return "case \(pattern)(" + parts.joined(separator: ", ") + ",):"
     }
 
-    static func matchPattern(_ pattern: MatchPattern, hints: PrintHints) -> String {
+    static func matchPattern(_ pattern: MatchPattern, spelling: EnumCaseSpelling, hints: PrintHints) -> String {
         switch pattern {
         case .wildcard: return "_"
-        case .enumCase(let name): return name
+        case .enumCase(let name):
+            if case .nilKeyword = spelling { return "nil" }
+            return spelling.namePrefix + name
         case .intLiteral(let value, let location):
             return hints.spelling(at: location) ?? "\(value)"
         case .floatLiteral(let value, let location):

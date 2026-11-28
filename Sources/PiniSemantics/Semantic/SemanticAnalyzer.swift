@@ -1062,6 +1062,12 @@ public final class SemanticAnalyzer {
             case .wildcard:
                 continue
             case .enumCase(let name):
+                // 限定名自带父枚举：与主体类型不符即报。按叶名查表会放过这种错，因为
+                // 跨枚举同名时叶名同时属于两个父枚举。
+                if case .qualified(let owner) = mc.spelling, owner != enumName {
+                    throw SemanticError.unknownMatchCase(
+                        caseName: owner + "." + name, location: mc.location)
+                }
                 if !(enumCaseParents[name] ?? []).contains(enumName) {
                     throw SemanticError.unknownMatchCase(caseName: name, location: mc.location)
                 }

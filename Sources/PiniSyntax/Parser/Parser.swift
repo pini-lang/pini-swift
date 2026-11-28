@@ -2385,6 +2385,7 @@ public class Parser {
             advance()
 
             let pattern: MatchPattern
+            var spelling: EnumCaseSpelling = .bare
             if case .identifier("_", _) = currentToken {
                 advance()
                 pattern = .wildcard
@@ -2400,14 +2401,33 @@ public class Parser {
             } else if case .boolLiteral(let b, _) = currentToken {
                 advance()
                 pattern = .boolLiteral(b)
-            } else if case .identifier(let name, _) = currentToken {
+            } else if case .dot(_) = currentToken {
+                advance()
+                guard case .identifier(let name, _) = currentToken else {
+                    throw ParserError.unexpectedToken(
+                        expected: "identifier (case name after `.`)", actual: currentToken.typeName,
+                        location: currentLocation)
+                }
                 advance()
                 pattern = .enumCase(name)
+                spelling = .inferred
+            } else if case .identifier(let first, _) = currentToken {
+                advance()
+                // 限定名 `形状.圆`：点后必须是标识符，否则按裸名收尾，把点留给块起始的报错。
+                if case .dot(_) = currentToken, case .identifier(let leaf, _) = peek(offset: 1) {
+                    advance()
+                    advance()
+                    pattern = .enumCase(leaf)
+                    spelling = .qualified(owner: first)
+                } else {
+                    pattern = .enumCase(first)
+                }
             } else if case .keyword(.nil, _) = currentToken {
                 advance()
                 // `nil` 在匹配模式中 = `Optional.none`；映射为 `.enumCase("none")`
                 // （与既有 `case none:` 同构，解释器 matchCaseMatches 按 caseName == "none" 命中）。
                 pattern = .enumCase("none")
+                spelling = .nilKeyword
             } else {
                 throw ParserError.unexpectedToken(expected: "match pattern (case name / literal / _)", actual: currentToken.typeName, location: currentLocation)
             }
@@ -2456,7 +2476,8 @@ public class Parser {
                     pattern: pattern,
                     bindings: bindings,
                     block: caseBlock,
-                    location: caseLoc
+                    location: caseLoc,
+                    spelling: spelling
                 ))
 
             skipNewlines()
