@@ -142,7 +142,8 @@
 
 ## 4. 零调用点登记
 
-以下符号当前没有发射器调用点。**零调用点不等于该删** —— 每个都是某条路线的锚点。
+以下符号没有内建发射点：多数是零调用点，`pini_exe_dir` 只经外部块调用。
+**不进内建不等于该删** —— 每个都是某条路线的锚点。
 
 | 符号 | 数量 | 处置 |
 |---|---|---|
@@ -152,7 +153,7 @@
 | `pini_str_alloc` `pini_str_header_bytes` `pini_str_refcount` `pini_str_table_min_cap` `pini_handle_shares` `pini_scope_close` | 6 | 只被 ABI 测试或宿主直接调用；`pini_str_alloc` 的拼接调用点已并入 `pini_str_concat` |
 | `pini_str_handle_bytes` `pini_str_handle_len` `pini_str_handle_retain` `pini_str_handle_release` | 4 | C 侧读字节与收账的入口；发射器只发 `pini_str_handle_new` |
 | `pini_double_bits` `pini_parse_double` | 2 | 只由自举编译器在编译期调用，发射器不产出 |
-| `pini_exe_dir` | 1 | 自举工具链经外部块调用：hostproc 按它定位随行标准库与运行时库，发射器不产出 |
+| `pini_exe_dir` | 1 | 自举工具链经外部块调用（hostproc）；不进内建清单，发射器不按内建产出 |
 
 本表与编译器侧清单互补：`BuiltinInventory.swift` 列出已接线的 107 条，本表列出其余 28 条，
 两者合计即第 2 节的 135。互补关系由 `tools/builtin-inventory-check.py` 校验。
